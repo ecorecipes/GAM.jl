@@ -63,7 +63,7 @@ end
 # ============================================================================
 
 """
-    ELFFamily(; qu=0.5, co=0.1, theta=0.0, link=IdentityLink(), estimate_theta=false)
+    ELFFamily(; qu=0.5, co=0.1, theta=0.0, estimate_theta=false)
 
 Extended Log-F family for quantile regression (Fasiolo et al., 2020).
 
@@ -504,7 +504,7 @@ function qgam(formula, data, qu::Real;
     end
 
     # Step 5: Fit the quantile model with ELF family
-    elf = ELFFamily(qu=qu, co=fill(co, n), theta=Float64(lsig), link=IdentityLink())
+    elf = ELFFamily(qu=qu, co=fill(co, n), theta=Float64(lsig))
     fit = gam(formula, data; family=elf, control=control, kwargs...)
 
     return fit
@@ -598,7 +598,7 @@ function _tune_learn_fast(formula, data, qu::Real, co::Real, var_hat::Real, gaus
 
     # Objective: mean out-of-sample pinball loss over bootstrap samples
     function _boot_pinball_loss(lsig_val)
-        elf = ELFFamily(qu=qu, co=fill(co, n), theta=lsig_val, link=IdentityLink())
+        elf = ELFFamily(qu=qu, co=fill(co, n), theta=lsig_val)
         total_loss = 0.0
         n_valid = 0
 

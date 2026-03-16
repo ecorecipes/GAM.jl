@@ -310,6 +310,7 @@ function gamlss(formulas, data, family::UnivariateDistribution;
     control::MPFitControl = mp_control(),
     sp = nothing, trace::Bool = false)
 
+    _validate_gamlss_family(family)
     K = _gamlss_nparams(family)
     actual_links = links === nothing ? _gamlss_default_links(family) : links
     length(actual_links) == K || throw(ArgumentError(
