@@ -76,4 +76,36 @@
         df = DataFrame(x=collect(x), y=sin.(collect(x)))
         @test_throws ArgumentError gam(@formula(y ~ s(x)), df; optimizer=:invalid)
     end
+
+    @testset "Distributions.logpdf derivatives consistency" begin
+        # Verify ForwardDiff through Distributions.logpdf gives correct derivatives
+        # This validates the core mechanism of the general fit method
+        using ForwardDiff, GLM
+
+        Random.seed!(99)
+        test_cases = [
+            (Normal(), IdentityLink(), 1.5, 0.8),
+            (Poisson(), LogLink(), 3.0, 1.2),
+            (Bernoulli(), LogitLink(), 1.0, 0.5),
+            (Gamma(), InverseLink(), 2.0, 0.4),
+        ]
+
+        for (fam, lnk, y_val, eta_val) in test_cases
+            # Helper that builds ℓ(η) = logpdf(D(linkinv(η)), y)
+            ll_fn = let f = fam, l = lnk, yv = y_val
+                η -> logpdf(GAM._make_distribution(f, GLM.linkinv(l, η)), yv)
+            end
+
+            dl_fd = ForwardDiff.derivative(ll_fn, eta_val)
+            d2l_fd = ForwardDiff.derivative(
+                η -> ForwardDiff.derivative(ll_fn, η), eta_val)
+
+            h = 1e-5
+            dl_num = (ll_fn(eta_val + h) - ll_fn(eta_val - h)) / (2h)
+            d2l_num = (ll_fn(eta_val + h) - 2 * ll_fn(eta_val) + ll_fn(eta_val - h)) / h^2
+
+            @test abs(dl_fd - dl_num) < 1e-5
+            @test abs(d2l_fd - d2l_num) < 1e-3
+        end
+    end
 end
