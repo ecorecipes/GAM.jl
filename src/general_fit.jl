@@ -191,74 +191,27 @@ end
 # ═══════════════════════════════════════════════════════════════════════
 
 """
+    _make_distribution(family, mu) -> Distribution
+
+Construct a Distributions.jl distribution instance parameterized by mean μ.
+This is the core mapping from GLM family + mean to a proper distribution.
+For families with unknown scale (Normal, Gamma), uses unit scale — the scale
+parameter is profiled out in the REML/LAML objective.
+"""
+_make_distribution(::Normal, mu::Real) = Normal(mu, 1.0)
+_make_distribution(::Poisson, mu::Real) = Poisson(max(mu, 1e-10))
+_make_distribution(::Union{Binomial,Bernoulli}, mu::Real) = Bernoulli(clamp(mu, 1e-10, 1 - 1e-10))
+_make_distribution(::Gamma, mu::Real) = Gamma(1.0, max(mu, 1e-10))   # shape=1, scale=μ
+_make_distribution(::InverseGaussian, mu::Real) = InverseGaussian(max(mu, 1e-10), 1.0)
+
+"""
     _total_loglik(family, y, mu, weights) -> Float64
 
-Total log-likelihood Σ w_i · logpdf(family(μ_i), y_i).
-Uses Distributions.jl for the density evaluation.
+Total log-likelihood: Σ wᵢ · logpdf(D(μᵢ), yᵢ)
+
+Uses Distributions.jl for all families. The distribution is constructed via
+`_make_distribution`, which maps a GLM family + mean to a proper distribution.
 """
-function _total_loglik(family::Normal, y::Vector{Float64},
-    mu::Vector{Float64}, weights::Vector{Float64})
-    # For Normal, scale unknown — compute up to the same terms as R
-    # ℓ = -½ Σ w_i (y_i - μ_i)² (up to constant in σ²)
-    ll = 0.0
-    @inbounds for i in eachindex(y)
-        ll -= 0.5 * weights[i] * (y[i] - mu[i])^2
-    end
-    return ll
-end
-
-function _total_loglik(family::Poisson, y::Vector{Float64},
-    mu::Vector{Float64}, weights::Vector{Float64})
-    ll = 0.0
-    @inbounds for i in eachindex(y)
-        mu_i = max(mu[i], 1e-10)
-        if y[i] > 0
-            ll += weights[i] * (y[i] * log(mu_i) - mu_i)
-        else
-            ll -= weights[i] * mu_i
-        end
-    end
-    return ll
-end
-
-function _total_loglik(family::BinomialLike, y::Vector{Float64},
-    mu::Vector{Float64}, weights::Vector{Float64})
-    ll = 0.0
-    @inbounds for i in eachindex(y)
-        mu_i = clamp(mu[i], 1e-10, 1.0 - 1e-10)
-        if y[i] > 0
-            ll += weights[i] * y[i] * log(mu_i)
-        end
-        if y[i] < 1
-            ll += weights[i] * (1.0 - y[i]) * log(1.0 - mu_i)
-        end
-    end
-    return ll
-end
-
-function _total_loglik(family::Gamma, y::Vector{Float64},
-    mu::Vector{Float64}, weights::Vector{Float64})
-    ll = 0.0
-    @inbounds for i in eachindex(y)
-        mu_i = max(mu[i], 1e-10)
-        y_i = max(y[i], 1e-10)
-        ll += weights[i] * (-y_i / mu_i - log(mu_i))
-    end
-    return ll
-end
-
-function _total_loglik(family::InverseGaussian, y::Vector{Float64},
-    mu::Vector{Float64}, weights::Vector{Float64})
-    ll = 0.0
-    @inbounds for i in eachindex(y)
-        mu_i = max(mu[i], 1e-10)
-        y_i = max(y[i], 1e-10)
-        ll -= weights[i] * 0.5 * (y_i / mu_i^2 - 2.0 / mu_i)
-    end
-    return ll
-end
-
-# Fallback: use Distributions.logpdf via ForwardDiff
 function _total_loglik(family::UnivariateDistribution, y::Vector{Float64},
     mu::Vector{Float64}, weights::Vector{Float64})
     ll = 0.0
@@ -269,31 +222,46 @@ function _total_loglik(family::UnivariateDistribution, y::Vector{Float64},
     return ll
 end
 
-"""Construct a Distribution instance with mean μ, matching the family type."""
-function _make_distribution(::Normal, mu::Real)
-    Normal(mu, 1.0)
-end
-function _make_distribution(::Poisson, mu::Real)
-    Poisson(max(mu, 1e-10))
-end
-function _make_distribution(::Union{Binomial, Bernoulli}, mu::Real)
-    Bernoulli(clamp(mu, 1e-10, 1.0 - 1e-10))
-end
-function _make_distribution(::Gamma, mu::Real)
-    # Gamma with mean μ, shape 1 (scale estimated separately)
-    Gamma(1.0, max(mu, 1e-10))
-end
-
 """
     _loglik_eta_derivs(family, link, y, mu, eta, weights) -> (dl_deta, d2l_deta2)
 
-First and second derivatives of the log-likelihood w.r.t. the linear predictor η.
+First and second derivatives of log-likelihood w.r.t. linear predictor η.
 
-dl_deta[i]   = w_i · ∂ℓ_i/∂η_i
-d2l_deta2[i] = w_i · ∂²ℓ_i/∂η_i²
+    dl_deta[i]   = wᵢ · ∂ℓᵢ/∂ηᵢ
+    d2l_deta2[i] = wᵢ · ∂²ℓᵢ/∂ηᵢ²
 
-Uses analytical formulas for standard families, ForwardDiff for others.
+Primary implementation: ForwardDiff through `logpdf(D(linkinv(η)), y)`.
+Analytical fast-paths are provided for canonical link + standard family
+combinations where the derivatives have simple closed forms.
 """
+function _loglik_eta_derivs(family::UnivariateDistribution, link::GLM.Link,
+    y::Vector{Float64}, mu::Vector{Float64},
+    eta::Vector{Float64}, weights::Vector{Float64})
+    n = length(y)
+    dl = similar(y)
+    d2l = similar(y)
+
+    @inbounds for i in 1:n
+        yi = y[i]
+        wi = weights[i]
+
+        # ℓᵢ(η) = logpdf(D(linkinv(η)), yᵢ)
+        function ll_of_eta(η::T) where T <: Real
+            mu_val = GLM.linkinv(link, η)
+            d = _make_distribution(family, mu_val)
+            return logpdf(d, yi)
+        end
+
+        dl[i] = wi * ForwardDiff.derivative(ll_of_eta, eta[i])
+        d2l[i] = wi * ForwardDiff.derivative(
+            η -> ForwardDiff.derivative(ll_of_eta, η), eta[i])
+    end
+    return dl, d2l
+end
+
+# ─── Analytical fast-paths for canonical links ───────────────────────
+# These give identical results to the ForwardDiff path but avoid AD overhead.
+
 function _loglik_eta_derivs(family::Normal, link::IdentityLink,
     y::Vector{Float64}, mu::Vector{Float64},
     eta::Vector{Float64}, weights::Vector{Float64})
@@ -315,8 +283,8 @@ function _loglik_eta_derivs(family::Poisson, link::LogLink,
     d2l = similar(y)
     @inbounds for i in 1:n
         mu_i = max(mu[i], 1e-10)
-        dl[i] = weights[i] * (y[i] - mu_i)     # ∂ℓ/∂η = y - μ
-        d2l[i] = -weights[i] * mu_i             # ∂²ℓ/∂η² = -μ
+        dl[i] = weights[i] * (y[i] - mu_i)
+        d2l[i] = -weights[i] * mu_i
     end
     return dl, d2l
 end
@@ -329,8 +297,8 @@ function _loglik_eta_derivs(family::BinomialLike, link::LogitLink,
     d2l = similar(y)
     @inbounds for i in 1:n
         mu_i = clamp(mu[i], 1e-10, 1.0 - 1e-10)
-        dl[i] = weights[i] * (y[i] - mu_i)                  # ∂ℓ/∂η = y - μ
-        d2l[i] = -weights[i] * mu_i * (1.0 - mu_i)          # ∂²ℓ/∂η² = -μ(1-μ)
+        dl[i] = weights[i] * (y[i] - mu_i)
+        d2l[i] = -weights[i] * mu_i * (1.0 - mu_i)
     end
     return dl, d2l
 end
@@ -344,40 +312,9 @@ function _loglik_eta_derivs(family::Gamma, link::InverseLink,
     @inbounds for i in 1:n
         mu_i = max(mu[i], 1e-10)
         y_i = max(y[i], 1e-10)
-        # For Gamma with inverse link: η = 1/μ, μ = 1/η
-        # ℓ = -yη + log(η) (up to constant)
-        # ∂ℓ/∂η = -y + 1/η = μ - y = -(y - μ)
-        # ∂²ℓ/∂η² = -1/η² = -μ²
+        # η = 1/μ → ℓ = -yη + log(η), ∂ℓ/∂η = μ-y, ∂²ℓ/∂η² = -μ²
         dl[i] = weights[i] * (mu_i - y_i)
         d2l[i] = -weights[i] * mu_i^2
-    end
-    return dl, d2l
-end
-
-# General fallback: ForwardDiff through link and logpdf
-function _loglik_eta_derivs(family::UnivariateDistribution, link::GLM.Link,
-    y::Vector{Float64}, mu::Vector{Float64},
-    eta::Vector{Float64}, weights::Vector{Float64})
-    n = length(y)
-    dl = similar(y)
-    d2l = similar(y)
-
-    @inbounds for i in 1:n
-        yi = y[i]
-        wi = weights[i]
-
-        # ℓ_i(η) = logpdf(family(linkinv(η)), y_i)
-        function ll_of_eta(η::T) where T <: Real
-            mu_val = GLM.linkinv(link, η)
-            d = _make_distribution(family, mu_val)
-            return logpdf(d, yi)
-        end
-
-        # First derivative
-        dl[i] = wi * ForwardDiff.derivative(ll_of_eta, eta[i])
-        # Second derivative
-        d2l[i] = wi * ForwardDiff.derivative(
-            η -> ForwardDiff.derivative(ll_of_eta, η), eta[i])
     end
     return dl, d2l
 end
