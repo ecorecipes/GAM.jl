@@ -1,0 +1,133 @@
+---
+title: "GAMLSS: R Comparison"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+engine: knitr
+---
+
+## Overview
+
+This vignette shows the R equivalent of the GAMLSS models fit in `09_gamlss.qmd`, using the `gamlss` package with `gamlss.add` for smooth terms via `ga()`.
+
+## Setup
+
+```{r}
+library(gamlss)
+library(gamlss.add)
+library(mgcv)
+```
+
+## Normal Location-Scale
+
+```{r}
+df <- read.csv("../data_normal_ls.csv")
+cat(sprintf("n = %d, y range: [%.2f, %.2f]\n", nrow(df), min(df$y), max(df$y)))
+```
+
+### Fit
+
+```{r}
+m <- gamlss(y ~ ga(~s(x, k = 15, bs = "cr")),
+            sigma.formula = ~ ga(~s(x, k = 10, bs = "cr")),
+            family = NO(), data = df, trace = FALSE,
+            control = gamlss.control(n.cyc = 100, trace = FALSE))
+summary(m)
+```
+
+### Results
+
+```{r}
+mu_fit <- fitted(m, "mu")
+sigma_fit <- fitted(m, "sigma")
+cat(sprintf("μ: cor with truth = %.5f\n", cor(mu_fit, df$mu_true)))
+cat(sprintf("σ: cor with truth = %.5f\n", cor(sigma_fit, df$sigma_true)))
+```
+
+### Plot
+
+```{r}
+par(mfrow = c(1, 2))
+plot(df$x, df$y, pch = ".", col = "grey70", main = "Location (μ)",
+     xlab = "x", ylab = "y")
+lines(df$x, mu_fit, col = "blue", lwd = 2)
+lines(df$x, df$mu_true, col = "red", lty = 2, lwd = 2)
+legend("topright", c("Fitted", "True"), col = c("blue", "red"), lty = c(1, 2))
+
+plot(df$x, sigma_fit, type = "l", col = "blue", lwd = 2,
+     main = "Scale (σ)", xlab = "x", ylab = "σ",
+     ylim = range(c(sigma_fit, df$sigma_true)))
+lines(df$x, df$sigma_true, col = "red", lty = 2, lwd = 2)
+legend("topright", c("Fitted", "True"), col = c("blue", "red"), lty = c(1, 2))
+```
+
+## Gamma Location-Scale
+
+```{r}
+df_g <- read.csv("../data_gamma_ls.csv")
+```
+
+### Fit
+
+The R `gamlss` Gamma family `GA()` uses the same (μ, σ) parameterization as GAM.jl's `GammaLocationScale()`:
+
+```{r}
+m_g <- gamlss(y ~ ga(~s(x, k = 15, bs = "cr")),
+              sigma.formula = ~ ga(~s(x, k = 10, bs = "cr")),
+              family = GA(), data = df_g, trace = FALSE,
+              control = gamlss.control(n.cyc = 100, trace = FALSE))
+```
+
+### Results
+
+```{r}
+mu_g <- fitted(m_g, "mu")
+sigma_g <- fitted(m_g, "sigma")
+cat(sprintf("μ: cor with truth = %.5f\n", cor(mu_g, df_g$mu_true)))
+cat(sprintf("σ: cor with truth = %.5f\n", cor(sigma_g, df_g$sigma_true)))
+```
+
+## Beta Regression
+
+```{r}
+df_b <- read.csv("../data_beta_reg.csv")
+```
+
+### Fit
+
+The R `gamlss` Beta family `BE()` uses (μ, σ) where σ = 1/(1+φ). We use `BEINF0` or `BE` depending on boundary handling:
+
+```{r}
+m_b <- gamlss(y ~ ga(~s(x, k = 15, bs = "cr")),
+              sigma.formula = ~ 1,
+              family = BE(), data = df_b, trace = FALSE,
+              control = gamlss.control(n.cyc = 100, trace = FALSE))
+```
+
+### Results
+
+```{r}
+mu_b <- fitted(m_b, "mu")
+cat(sprintf("μ: cor with truth = %.5f\n", cor(mu_b, df_b$mu_true)))
+```
+
+## Comparison with mgcv::gaulss
+
+The `mgcv` package also supports some location-scale families via `gaulss()`, `gammals()`, etc.:
+
+```{r}
+m_mgcv <- gam(list(y ~ s(x, k = 15, bs = "cr"),
+                    ~ s(x, k = 10, bs = "cr")),
+              family = gaulss(), data = df)
+
+mu_mgcv <- fitted(m_mgcv)[, 1]
+# mgcv gaulss returns 1/σ in the second component
+sigma_mgcv <- 1 / fitted(m_mgcv)[, 2]
+
+cat(sprintf("mgcv μ: cor with truth = %.5f\n", cor(mu_mgcv, df$mu_true)))
+cat(sprintf("mgcv σ: cor with truth = %.5f\n", cor(sigma_mgcv, df$sigma_true)))
+```
