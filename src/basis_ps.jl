@@ -87,26 +87,33 @@ function _smooth_construct(::PSpline, spec::SmoothSpec, data, user_knots)
     m_order = spec.m === nothing ? 2 : spec.m  # difference penalty order
     spline_order = m_order + 2  # B-spline order (degree + 1), default = cubic
 
-    # Interior knots
-    n_interior = k - spline_order
-    n_interior >= 1 || throw(ArgumentError(
-        "k=$k too small for P-spline of order $spline_order (need k ≥ $(spline_order + 1))"))
+    # R's mgcv P-spline knot placement (smooth.construct.pspline.smooth.spec):
+    # nk = k - m[2] + 1 evenly-spaced knots from min(x) to max(x)
+    # Then extend by m[2] = (spline_order-1) knots on each side
+    m2 = spline_order - 1  # = degree
+    nk = k - m2 + 1
+    nk >= 2 || throw(ArgumentError(
+        "k=$k too small for P-spline of order $spline_order (need k ≥ $(m2 + 2))"))
 
     lo, hi = minimum(x), maximum(x)
-    dx = (hi - lo) * 0.001
 
     if user_knots !== nothing
         interior = Float64.(user_knots)
+        dk = length(interior) > 1 ? interior[2] - interior[1] : (hi - lo)
+        knot_vec = vcat(
+            [interior[1] - dk * i for i in m2:-1:1],
+            interior,
+            [interior[end] + dk * i for i in 1:m2],
+        )
     else
-        interior = knot_quantiles(x, n_interior)
+        k_new = range(lo, hi, length=nk) |> collect
+        dk = k_new[2] - k_new[1]
+        knot_vec = vcat(
+            [k_new[1] - dk * i for i in m2:-1:1],
+            k_new,
+            [k_new[end] + dk * i for i in 1:m2],
+        )
     end
-
-    # Full knot vector: boundary knots repeated spline_order times + interior
-    knot_vec = vcat(
-        fill(lo - dx, spline_order),
-        interior,
-        fill(hi + dx, spline_order),
-    )
 
     # B-spline basis
     X = _bspline_basis(x, knot_vec, spline_order)
@@ -133,8 +140,6 @@ end
 
 function _smooth_construct(::BSplineBasis, spec::SmoothSpec, data, user_knots)
     # B-spline basis with integrated squared derivative penalty
-    # Uses same B-spline basis as P-spline but with a derivative-based penalty
-    # that is computed via Gauss-Legendre quadrature of the squared d-th derivative
     length(spec.term_vars) == 1 ||
         throw(ArgumentError("B-splines only support 1d smooths"))
     var = spec.term_vars[1]
@@ -145,24 +150,30 @@ function _smooth_construct(::BSplineBasis, spec::SmoothSpec, data, user_knots)
     m_order = spec.m === nothing ? 2 : spec.m  # derivative penalty order
     spline_order = m_order + 2
 
-    n_interior = k - spline_order
-    n_interior >= 1 || throw(ArgumentError(
-        "k=$k too small for B-spline of order $spline_order (need k ≥ $(spline_order + 1))"))
+    m2 = spline_order - 1
+    nk = k - m2 + 1
+    nk >= 2 || throw(ArgumentError(
+        "k=$k too small for B-spline of order $spline_order (need k ≥ $(m2 + 2))"))
 
     lo, hi = minimum(x), maximum(x)
-    dx = (hi - lo) * 0.001
 
     if user_knots !== nothing
         interior = Float64.(user_knots)
+        dk = length(interior) > 1 ? interior[2] - interior[1] : (hi - lo)
+        knot_vec = vcat(
+            [interior[1] - dk * i for i in m2:-1:1],
+            interior,
+            [interior[end] + dk * i for i in 1:m2],
+        )
     else
-        interior = knot_quantiles(x, n_interior)
+        k_new = range(lo, hi, length=nk) |> collect
+        dk = k_new[2] - k_new[1]
+        knot_vec = vcat(
+            [k_new[1] - dk * i for i in m2:-1:1],
+            k_new,
+            [k_new[end] + dk * i for i in 1:m2],
+        )
     end
-
-    knot_vec = vcat(
-        fill(lo - dx, spline_order),
-        interior,
-        fill(hi + dx, spline_order),
-    )
 
     X = _bspline_basis(x, knot_vec, spline_order)
     actual_k = size(X, 2)
