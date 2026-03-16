@@ -719,10 +719,12 @@ function scam(gf::GamFormula, data;
 
     method in (:GCV, :UBRE, :REML) ||
         throw(ArgumentError("method must be :GCV, :UBRE, or :REML, got :$method"))
+    _validate_gam_family(family)
 
     if link === nothing
         link = GLM.canonicallink(family)
     end
+    _validate_link(link, family)
 
     y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
     f = term(gf.response) ~ term(1)

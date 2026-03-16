@@ -7,6 +7,114 @@ _needs_scale_estimate(::InverseGaussian) = true
 _needs_scale_estimate(::Any) = false
 _needs_scale_estimate(f::ExtendedFamily) = _estimates_scale(f)
 
+# ============================================================================
+# Family and link validation
+# ============================================================================
+
+const _SUPPORTED_GAM_FAMILIES = (Normal, Poisson, Binomial, Bernoulli, Gamma, InverseGaussian)
+
+const _FAMILY_HINTS = Dict{String,String}(
+    "Beta" => "Use BetaFamily() for single-parameter beta regression in gam(), " *
+              "or BetaRegression() for (μ, φ) GAMLSS via gamlss().",
+    "NegativeBinomial" => "Use NegBinFamily() for gam(), " *
+              "or NegativeBinomialLocationScale() for (μ, σ) GAMLSS via gamlss().",
+    "Exponential" => "The Exponential is a special case of Gamma(shape=1). " *
+              "Use Gamma() with a log link instead.",
+    "LogNormal" => "GAM models the mean on a link scale. " *
+              "Use Normal() with a log link: gam(...; family=Normal(), link=LogLink()).",
+    "Laplace" => "Not directly supported. Consider qgam() for robust/quantile regression.",
+    "Categorical" => "Not supported. For binary outcomes use Bernoulli() or Binomial().",
+)
+
+const _GAMLSS_DIST_HINTS = Dict{String,String}(
+    "Gamma" => "Use GammaLocationScale() which parameterizes Gamma as (μ=mean, σ=CV).",
+    "Beta" => "Use BetaRegression() which parameterizes Beta as (μ=mean, φ=precision).",
+    "NegativeBinomial" => "Use NegativeBinomialLocationScale() which parameterizes NB as (μ=mean, σ=overdispersion).",
+    "InverseGaussian" => "Use InverseGaussianLocationScale() which parameterizes IG as (μ=mean, σ=CV).",
+    "Exponential" => "Use GammaLocationScale() (Exponential is Gamma with shape=1).",
+    "Poisson" => "Poisson has only one parameter (λ=mean). Use gam() instead, " *
+                 "or NegativeBinomialLocationScale() if you need overdispersion.",
+    "Binomial" => "Binomial has only one parameter (p). Use gam() instead.",
+    "Bernoulli" => "Bernoulli has only one parameter (p). Use gam() instead.",
+)
+
+# Valid link–family combinations (not exhaustive, but catches clear mistakes)
+# Valid link–family combinations: catch clearly incompatible pairs via dispatch
+_check_link_family(::GLM.Link, ::Any) = nothing  # default: no error
+
+_check_link_family(::LogitLink, ::Normal) =
+    "LogitLink constrains μ ∈ (0,1) — did you mean IdentityLink() or LogLink()?"
+_check_link_family(::LogitLink, ::Poisson) =
+    "LogitLink constrains μ ∈ (0,1) — did you mean LogLink()?"
+_check_link_family(::LogitLink, ::Gamma) =
+    "LogitLink constrains μ ∈ (0,1) — did you mean LogLink() or InverseLink()?"
+_check_link_family(::LogitLink, ::InverseGaussian) =
+    "LogitLink constrains μ ∈ (0,1) — did you mean LogLink()?"
+_check_link_family(::InverseLink, ::Bernoulli) =
+    "InverseLink is not appropriate for binary data — did you mean LogitLink()?"
+_check_link_family(::InverseLink, ::Binomial) =
+    "InverseLink is not appropriate for binary data — did you mean LogitLink()?"
+
+"""
+    _validate_gam_family(family)
+
+Check that `family` is supported by `gam()`. Throws ArgumentError with a
+helpful hint for common mistakes (e.g., using Beta() instead of BetaFamily()).
+"""
+function _validate_gam_family(family::UnivariateDistribution)
+    if family isa Union{_SUPPORTED_GAM_FAMILIES...}
+        return nothing
+    end
+    fname = string(nameof(typeof(family)))
+    hint = get(_FAMILY_HINTS, fname, "")
+    msg = "Unsupported family for gam(): $(typeof(family)).\n" *
+          "Supported families: Normal(), Poisson(), Binomial(), Bernoulli(), Gamma(), InverseGaussian().\n" *
+          "Extended families: NegBinFamily(), TweedieFamily(), BetaFamily()."
+    if !isempty(hint)
+        msg *= "\nHint: $hint"
+    end
+    throw(ArgumentError(msg))
+end
+_validate_gam_family(::ExtendedFamily) = nothing
+
+"""
+    _validate_link(link, family)
+
+Check that `link` is a reasonable choice for `family`. Throws ArgumentError
+for clearly incompatible combinations.
+"""
+function _validate_link(link::GLM.Link, family)
+    msg = _check_link_family(link, family)
+    if msg !== nothing
+        throw(ArgumentError(
+            "Incompatible link $(nameof(typeof(link))) for family $(nameof(typeof(family))). $msg"))
+    end
+    return nothing
+end
+
+"""
+    _validate_gamlss_family(family)
+
+Check that a Distributions.jl type is supported for direct use in gamlss().
+Only Normal() is supported directly; other distributions need reparameterized types.
+"""
+function _validate_gamlss_family(family::UnivariateDistribution)
+    if hasmethod(_gamlss_nparams, Tuple{typeof(family)})
+        return nothing
+    end
+    fname = string(nameof(typeof(family)))
+    hint = get(_GAMLSS_DIST_HINTS, fname, "")
+    msg = "Unsupported distribution for gamlss(): $(typeof(family)).\n" *
+          "Only Normal() can be passed directly (its params match Distributions.jl).\n" *
+          "For other distributions, use a reparameterized family type:\n" *
+          "  GammaLocationScale(), BetaRegression(), NegativeBinomialLocationScale(),\n" *
+          "  InverseGaussianLocationScale(), GEVFamily(), GPDFamily()."
+    if !isempty(hint)
+        msg *= "\nHint: $hint"
+    end
+    throw(ArgumentError(msg))
+end
+
 """
     gam(formula::FormulaTerm, data; family=Normal(), link=nothing,
         method=:REML, weights=nothing, control=gam_control())
@@ -58,9 +166,11 @@ function gam(f::FormulaTerm, data;
         throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
     optimizer in (:pirls, :general) ||
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
+    _validate_gam_family(family)
 
     if family isa ExtendedFamily
         link_eff = link === nothing ? _default_link(family) : link
+        _validate_link(link_eff, family)
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control)
@@ -68,6 +178,7 @@ function gam(f::FormulaTerm, data;
         if link === nothing
             link = GLM.canonicallink(family)
         end
+        _validate_link(link, family)
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
             method, optimizer, weights, control)
@@ -86,9 +197,11 @@ function gam(gf::GamFormula, data;
         throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
     optimizer in (:pirls, :general) ||
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
+    _validate_gam_family(family)
 
     if family isa ExtendedFamily
         link_eff = link === nothing ? _default_link(family) : link
+        _validate_link(link_eff, family)
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
         f = term(gf.response) ~ term(1)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
@@ -97,6 +210,7 @@ function gam(gf::GamFormula, data;
         if link === nothing
             link = GLM.canonicallink(family)
         end
+        _validate_link(link, family)
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
         f = term(gf.response) ~ term(1)
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
