@@ -757,3 +757,5 @@ end
 
 # Bayesian GAM end-to-end tests (requires Turing.jl extension)
 @eval include("test_bayes_e2e.jl")
+
+@eval include("test_formula_support.jl")

@@ -212,3 +212,87 @@ function _te_label(vars, by, interaction_only::Bool)
     fname = interaction_only ? "ti" : "te"
     return "$fname($vstr$bstr)"
 end
+
+# ─── Basis-type convenience functions for @formula ─────────────────────────
+#
+# These let users write `@formula(y ~ cr(x, 20))` instead of needing
+# `@gam_formula(y ~ s(x, k=20, bs=:cr))` for the most common basis types.
+# Each is a thin wrapper around `s()` with a fixed `bs` argument.
+
+"""
+    cr(vars...; k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+
+Cubic regression spline smooth term. Equivalent to `s(vars...; bs=:cr, ...)`.
+Usable in `@formula`: `@formula(y ~ cr(x, 20))`.
+"""
+function cr(vars::Symbol...; k::Int = -1, by = nothing, id = nothing,
+    sp = nothing, fx::Bool = false, m = nothing)
+    return s(vars...; bs = :cr, k = k, by = by, id = id, sp = sp, fx = fx, m = m)
+end
+
+"""
+    tp(vars...; k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+
+Thin plate regression spline smooth term. Equivalent to `s(vars...; bs=:tp, ...)`.
+"""
+function tp(vars::Symbol...; k::Int = -1, by = nothing, id = nothing,
+    sp = nothing, fx::Bool = false, m = nothing)
+    return s(vars...; bs = :tp, k = k, by = by, id = id, sp = sp, fx = fx, m = m)
+end
+
+"""
+    ts(vars...; k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+
+Thin plate regression spline with shrinkage. Equivalent to `s(vars...; bs=:ts, ...)`.
+"""
+function ts(vars::Symbol...; k::Int = -1, by = nothing, id = nothing,
+    sp = nothing, fx::Bool = false, m = nothing)
+    return s(vars...; bs = :ts, k = k, by = by, id = id, sp = sp, fx = fx, m = m)
+end
+
+"""
+    cs(vars...; k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+
+Cubic regression spline with shrinkage. Equivalent to `s(vars...; bs=:cs, ...)`.
+"""
+function cs(vars::Symbol...; k::Int = -1, by = nothing, id = nothing,
+    sp = nothing, fx::Bool = false, m = nothing)
+    return s(vars...; bs = :cs, k = k, by = by, id = id, sp = sp, fx = fx, m = m)
+end
+
+"""
+    cc(vars...; k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+
+Cyclic cubic regression spline. Equivalent to `s(vars...; bs=:cc, ...)`.
+"""
+function cc(vars::Symbol...; k::Int = -1, by = nothing, id = nothing,
+    sp = nothing, fx::Bool = false, m = nothing)
+    return s(vars...; bs = :cc, k = k, by = by, id = id, sp = sp, fx = fx, m = m)
+end
+
+"""
+    ps(vars...; k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+
+P-spline smooth term. Equivalent to `s(vars...; bs=:ps, ...)`.
+"""
+function ps(vars::Symbol...; k::Int = -1, by = nothing, id = nothing,
+    sp = nothing, fx::Bool = false, m = nothing)
+    return s(vars...; bs = :ps, k = k, by = by, id = id, sp = sp, fx = fx, m = m)
+end
+
+# Accept Term objects from @formula context
+for fname in (:cr, :tp, :ts, :cs, :cc, :ps)
+    @eval function $fname(vars::Union{Symbol, StatsModels.AbstractTerm}...; kwargs...)
+        syms = map(vars) do v
+            v isa Symbol ? v :
+            (v isa Term ? v.sym :
+             throw(ArgumentError("expected Symbol or Term, got $(typeof(v))")))
+        end
+        return $fname(syms...; kwargs...)
+    end
+end
+
+# Register aliases so _is_smooth_function recognizes them
+function _register_smooth_aliases()
+    push!(_SMOOTH_ALIASES, cr, tp, ts, cs, cc, ps)
+end
