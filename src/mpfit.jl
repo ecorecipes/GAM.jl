@@ -502,21 +502,10 @@ const evgam_control = mp_control
 """
     evgam(formulas, data, family; control=mp_control(), sp=nothing, trace=false)
 
-Fit a multi-parameter GAM for extreme value distributions.
+Fit a multi-parameter GAM. Alias for [`gamlss`](@ref) — any `MultiParameterFamily`
+works here (GEV, GPD, EGPD, GaussianLS, GammaLS, etc.).
 
-# Arguments
-- `formulas`: a vector of `GamFormula` or `FormulaTerm`, one per distribution parameter.
-  If a single formula is given, it is reused for all parameters.
-- `data`: a Tables.jl-compatible data source (DataFrame, NamedTuple of vectors, etc.)
-- `family`: a `MultiParameterFamily` (e.g., `GEVFamily()`, `GPDFamily()`)
-
-# Keyword Arguments
-- `control`: fitting control parameters (see `mp_control`)
-- `sp`: fixed smoothing parameters (vector of log λ values). If `nothing`, estimate via REML.
-- `trace`: print iteration progress
-
-# Returns
-A `MultiParameterModel` with fitted coefficients, smoothing parameters, covariance, etc.
+See [`gamlss`](@ref) for full documentation.
 
 # Example
 ```julia
