@@ -153,20 +153,26 @@ function initial_eta(::NegBinLS, y::AbstractVector)
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# gamlss() interface
+# gamlss() — unified interface for all multi-parameter families
 # ═══════════════════════════════════════════════════════════════════════
 
 """
     gamlss(formulas, data, family; control, sp, trace) -> MultiParameterModel
 
-Fit a Generalized Additive Model for Location, Scale, and Shape.
+Fit a Generalized Additive Model for Location, Scale, and Shape (GAMLSS).
+
+This is the unified interface for **all** multi-parameter distribution models,
+including GAMLSS location-scale families, extreme value models (GEV, GPD),
+and extended GPD models. The `evgam` function is an alias.
 
 # Arguments
 - `formulas`: a vector of `@gam_formula` or `FormulaTerm`, one per distribution
-  parameter. E.g., `[mu_formula, sigma_formula]` for a 2-parameter family.
-  A single formula is replicated for all parameters.
+  parameter. A single formula is replicated for all parameters.
 - `data`: a table (DataFrame, NamedTuple, etc.)
-- `family`: a `MultiParameterFamily` (e.g., `GaussianLS()`, `GammaLS()`)
+- `family`: any `MultiParameterFamily`:
+  - **GAMLSS**: `GaussianLS()`, `GammaLS()`, `BetaLS()`, `NegBinLS()`
+  - **Extreme value**: `GEVFamily()`, `GPDFamily()`
+  - **Extended GPD**: `EGPD1Family()`, `EGPD2Family()`, etc.
 - `control`: fitting control parameters (see [`mp_control`](@ref))
 - `sp`: optional fixed smoothing parameters (log scale)
 - `trace`: print iteration progress
@@ -175,18 +181,13 @@ Fit a Generalized Additive Model for Location, Scale, and Shape.
 ```julia
 using GAM, DataFrames
 
-n = 500
-x = range(0, 2π; length=n)
-μ_true = sin.(x)
-σ_true = 0.5 .+ 0.3 .* cos.(x)
-y = μ_true .+ σ_true .* randn(n)
-df = DataFrame(x=collect(x), y=y)
+# Gaussian location-scale
+m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+           df, GaussianLS())
 
-# Fit Gaussian location-scale model
-m = gamlss(
-    [@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
-    df, GaussianLS()
-)
+# GEV extreme value (same interface)
+m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+           df, GEVFamily())
 ```
 """
 function gamlss(formulas, data, family::MultiParameterFamily;
