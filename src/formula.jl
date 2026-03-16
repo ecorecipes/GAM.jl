@@ -1,5 +1,56 @@
 # StatsModels formula integration — SmoothTerm for @formula / @gam_formula
 
+# ─── @formula support: convert FunctionTerm{typeof(s)} to SmoothSpec ──────
+
+"""
+    _is_smooth_function(f)
+
+Return `true` if `f` is a GAM smooth-constructing function (`s`, `te`, `ti`,
+or a basis-specific alias like `cr`, `tp`, `ps`).
+"""
+function _is_smooth_function(f)
+    f === s && return true
+    f === te && return true
+    f === ti && return true
+    f in _SMOOTH_ALIASES && return true
+    return false
+end
+
+# Populated after basis-alias definitions in smoothspec.jl
+const _SMOOTH_ALIASES = Set{Function}()
+
+"""
+    _functionterm_to_smoothspec(ft::FunctionTerm) → SmoothSpec
+
+Convert a StatsModels `FunctionTerm` produced by `@formula(y ~ s(x, 10))` into
+a [`SmoothSpec`](@ref). The positional-argument convention is:
+
+| Argument type     | Interpretation          |
+|:------------------|:------------------------|
+| `Term`            | variable name           |
+| `ConstantTerm{Int}` | basis dimension `k`  |
+
+Keyword arguments (`k=10`, `bs=:cr`, etc.) are **not** supported in `@formula`
+because StatsModels does not parse them. Use `@gam_formula` for that syntax.
+"""
+function _functionterm_to_smoothspec(ft::StatsModels.FunctionTerm)
+    var_syms = Symbol[]
+    k_val = -1
+
+    for arg in ft.args
+        if arg isa Term
+            push!(var_syms, arg.sym)
+        elseif arg isa ConstantTerm
+            k_val = round(Int, arg.n)
+        end
+    end
+
+    isempty(var_syms) && throw(ArgumentError(
+        "Smooth term $(ft.exorig) requires at least one variable"))
+
+    return ft.f(var_syms...; k = k_val)
+end
+
 """
     SmoothTerm <: AbstractTerm
 
@@ -263,6 +314,10 @@ function setup_gam(f::FormulaTerm, data;
     for term in rhs_terms
         if term isa AppliedSmoothTerm || term isa SmoothTerm
             ast = term isa SmoothTerm ? AppliedSmoothTerm(term.spec, nothing) : term
+            push!(smooth_terms, ast)
+        elseif term isa StatsModels.FunctionTerm && _is_smooth_function(term.f)
+            spec = _functionterm_to_smoothspec(term)
+            ast = AppliedSmoothTerm(spec, nothing)
             push!(smooth_terms, ast)
         else
             push!(para_terms, term)

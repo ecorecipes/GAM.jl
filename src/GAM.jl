@@ -68,6 +68,12 @@ export
     s,
     te,
     ti,
+    cr,
+    tp,
+    ts,
+    cs,
+    cc,
+    ps,
     SmoothSpec,
     SmoothTerm,
 
@@ -252,5 +258,8 @@ include("diagnostics.jl")
 include("gratia.jl")
 include("plots.jl")
 include("show.jl")
+
+# Register basis-alias functions so @formula recognizes them as smooth terms
+_register_smooth_aliases()
 
 end # module GAM
