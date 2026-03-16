@@ -743,5 +743,8 @@ end
 # SCAM unit tests (no R needed)
 @eval include("test_scam.jl")
 
+# General fit (WPS algorithm) tests
+@eval include("test_general_fit.jl")
+
 # Gratia diagnostics unit tests (no R needed)
 @eval include("test_gratia.jl")
