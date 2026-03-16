@@ -96,10 +96,61 @@
     end
 
     @testset "Family interface completeness" begin
-        for fam in [GaussianLS(), GammaLS(), BetaLS(), NegBinLS()]
+        for fam in [GaussianLS(), GammaLS(), BetaLS(), NegBinLS(),
+                    GammaLocationScale(), BetaRegression(),
+                    NegativeBinomialLocationScale(), InverseGaussianLocationScale()]
             @test nparams(fam) == 2
             @test length(param_names(fam)) == 2
             @test length(GAM.param_links(fam)) == 2
         end
+    end
+
+    @testset "gamlss with Normal() directly" begin
+        Random.seed!(50)
+        n = 300
+        x = collect(range(0, 2π; length=n))
+        μ_true = sin.(x)
+        σ_true = 0.5 .+ 0.2 .* cos.(x)
+        y = μ_true .+ σ_true .* randn(n)
+        df = DataFrame(x=x, y=y)
+
+        # Direct Distributions.jl type
+        m1 = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+                     df, Normal())
+        @test m1.converged
+        @test cor(m1.fitted_eta[1], μ_true) > 0.99
+
+        # Legacy alias gives identical result
+        m2 = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+                     df, GaussianLS())
+        @test maximum(abs.(m1.fitted_eta[1] - m2.fitted_eta[1])) < 1e-10
+    end
+
+    @testset "gamlss with custom links" begin
+        Random.seed!(51)
+        n = 200
+        x = collect(range(0, 2π; length=n))
+        y = sin.(x) .+ 0.5 .* randn(n)
+        df = DataFrame(x=x, y=y)
+
+        # Normal with LogLink for σ (default) vs IdentityLink
+        m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+                   df, Normal(); links=[IdentityLink(), LogLink()])
+        @test m.converged
+    end
+
+    @testset "GammaLocationScale with custom links" begin
+        Random.seed!(52)
+        n = 300
+        x = collect(range(0.1, 3.0; length=n))
+        μ_true = 1.0 .+ 0.5 .* sin.(2.0 .* x)
+        y = [rand(Gamma(1 / 0.09, μ * 0.09)) for μ in μ_true]
+        df = DataFrame(x=x, y=y)
+
+        m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+                   df, GammaLocationScale(links=[LogLink(), LogLink()]))
+        @test m.converged
+        μ_fit = exp.(m.fitted_eta[1])
+        @test cor(μ_fit, μ_true) > 0.9
     end
 end
