@@ -308,7 +308,11 @@ m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
 function gamlss(formulas, data, family::UnivariateDistribution;
     links::Union{Nothing, Vector{<:GLM.Link}} = nothing,
     control::MPFitControl = mp_control(),
-    sp = nothing, trace::Bool = false)
+    sp = nothing, trace::Bool = false,
+    priors::Union{PriorSpec, Nothing} = nothing,
+    sampler::Any = nothing,
+    nsamples::Int = 2000,
+    nchains::Int = 4)
 
     _validate_gamlss_family(family)
     K = _gamlss_nparams(family)
@@ -318,13 +322,27 @@ function gamlss(formulas, data, family::UnivariateDistribution;
     pnames = _gamlss_param_names(family)
 
     df = DistFamily(family, actual_links, pnames)
+
+    if priors !== nothing
+        return _fit_gamlss_bayes(formulas, data, df, priors;
+            sampler = sampler, nsamples = nsamples, nchains = nchains)
+    end
     return gamlss(formulas, data, df; control = control, sp = sp, trace = trace)
 end
 
 function gamlss(formulas, data, family::MultiParameterFamily;
-    links = nothing,  # ignored — links are part of the family
+    links = nothing,
     control::MPFitControl = mp_control(),
-    sp = nothing, trace::Bool = false)
+    sp = nothing, trace::Bool = false,
+    priors::Union{PriorSpec, Nothing} = nothing,
+    sampler::Any = nothing,
+    nsamples::Int = 2000,
+    nchains::Int = 4)
+
+    if priors !== nothing
+        return _fit_gamlss_bayes(formulas, data, family, priors;
+            sampler = sampler, nsamples = nsamples, nchains = nchains)
+    end
 
     ctrl = MPFitControl(control.inner_maxit, control.inner_tol,
         control.outer_maxit, control.outer_tol,

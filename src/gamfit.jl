@@ -160,27 +160,39 @@ function gam(f::FormulaTerm, data;
     method::Symbol = :REML,
     optimizer::Symbol = :pirls,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    control::GamControl = gam_control())
+    control::GamControl = gam_control(),
+    priors::Union{PriorSpec, Nothing} = nothing,
+    sampler::Any = nothing,
+    nsamples::Int = 2000,
+    nchains::Int = 4)
+
+    _validate_gam_family(family)
+    link_eff = if family isa ExtendedFamily
+        link === nothing ? _default_link(family) : link
+    else
+        link === nothing ? GLM.canonicallink(family) : link
+    end
+    _validate_link(link_eff, family)
+
+    # Bayesian dispatch: when priors are provided, use Turing backend
+    if priors !== nothing
+        return _fit_gam_bayes(f, data, family, link_eff, priors;
+            sampler = sampler, nsamples = nsamples, nchains = nchains,
+            weights = weights)
+    end
 
     method in (:REML, :ML, :GCV, :UBRE) ||
         throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
     optimizer in (:pirls, :general) ||
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
-    _validate_gam_family(family)
 
     if family isa ExtendedFamily
-        link_eff = link === nothing ? _default_link(family) : link
-        _validate_link(link_eff, family)
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control)
     else
-        if link === nothing
-            link = GLM.canonicallink(family)
-        end
-        _validate_link(link, family)
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
-        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
+        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, optimizer, weights, control)
     end
 end
@@ -191,29 +203,42 @@ function gam(gf::GamFormula, data;
     method::Symbol = :REML,
     optimizer::Symbol = :pirls,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    control::GamControl = gam_control())
+    control::GamControl = gam_control(),
+    priors::Union{PriorSpec, Nothing} = nothing,
+    sampler::Any = nothing,
+    nsamples::Int = 2000,
+    nchains::Int = 4)
+
+    _validate_gam_family(family)
+    link_eff = if family isa ExtendedFamily
+        link === nothing ? _default_link(family) : link
+    else
+        link === nothing ? GLM.canonicallink(family) : link
+    end
+    _validate_link(link_eff, family)
+
+    # Bayesian dispatch: when priors are provided, use Turing backend
+    if priors !== nothing
+        f = term(gf.response) ~ term(1)
+        return _fit_gam_bayes(f, data, family, link_eff, priors;
+            sampler = sampler, nsamples = nsamples, nchains = nchains,
+            weights = weights, gam_formula = gf)
+    end
 
     method in (:REML, :ML, :GCV, :UBRE) ||
         throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
     optimizer in (:pirls, :general) ||
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
-    _validate_gam_family(family)
 
     if family isa ExtendedFamily
-        link_eff = link === nothing ? _default_link(family) : link
-        _validate_link(link_eff, family)
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
         f = term(gf.response) ~ term(1)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control)
     else
-        if link === nothing
-            link = GLM.canonicallink(family)
-        end
-        _validate_link(link, family)
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
         f = term(gf.response) ~ term(1)
-        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
+        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, optimizer, weights, control)
     end
 end

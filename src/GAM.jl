@@ -197,7 +197,18 @@ export
     RootogramData,
     model_edf,
     overview,
-    OverviewTable
+    OverviewTable,
+
+    # Bayesian GAM support (Turing.jl extension)
+    PriorSpec,
+    get_prior,
+    default_priors,
+    BayesGamModel,
+    smooth2random,
+    SmoothMixedModel,
+    gam_matrices,
+    gam_smooth,
+    s2r_predict
 
 # Type aliases matching GLM.jl convention
 const FP = AbstractFloat
@@ -216,6 +227,7 @@ include("basis_gp.jl")
 include("basis_extra.jl")
 include("basis_scam.jl")
 include("penalty.jl")
+include("smooth2random.jl")
 include("formula.jl")
 include("pirls.jl")
 include("extended_families.jl")
@@ -223,14 +235,16 @@ include("pirls_extended.jl")
 include("reml.jl")
 include("general_fit.jl")
 include("outer.jl")
-include("gamfit.jl")
-include("bam.jl")
-include("ginla.jl")
 include("multiparameter.jl")
 include("evfamilies.jl")
 include("egpd_families.jl")
 include("mpfit.jl")
+include("priors.jl")
+include("bayes_types.jl")
 include("gamlss.jl")
+include("gamfit.jl")
+include("bam.jl")
+include("ginla.jl")
 include("qgam.jl")
 include("scam.jl")
 include("statsbase.jl")
