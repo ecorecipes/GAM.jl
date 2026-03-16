@@ -746,5 +746,8 @@ end
 # General fit (WPS algorithm) tests
 @eval include("test_general_fit.jl")
 
+# GAMLSS tests
+@eval include("test_gamlss.jl")
+
 # Gratia diagnostics unit tests (no R needed)
 @eval include("test_gratia.jl")

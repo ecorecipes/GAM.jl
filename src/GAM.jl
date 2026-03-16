@@ -140,6 +140,13 @@ export
     nll_derivs!,
     nll_obs,
 
+    # GAMLSS families
+    GaussianLS,
+    GammaLS,
+    BetaLS,
+    NegBinLS,
+    gamlss,
+
     # EGPD families
     EGPD1Family,
     EGPD2Family,
@@ -218,6 +225,7 @@ include("multiparameter.jl")
 include("evfamilies.jl")
 include("egpd_families.jl")
 include("mpfit.jl")
+include("gamlss.jl")
 include("qgam.jl")
 include("scam.jl")
 include("statsbase.jl")
