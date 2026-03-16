@@ -246,7 +246,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
     if n_sp == 0
         S_total = zeros(p, p)
-        result = pirls_extended(X, y, S_total, family;
+        result = pirls_extended(X, y, S_total, family, link;
             weights = weights, control = control)
         return penalty.sp, result
     end
@@ -258,7 +258,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         S_total = total_penalty(penalty, log_sp, p)
 
         start = prev_result === nothing ? nothing : prev_result.coefficients
-        result = pirls_extended(X, y, S_total, family;
+        result = pirls_extended(X, y, S_total, family, link;
             weights = weights, start = start, control = control)
 
         if !result.converged && control.trace
@@ -336,7 +336,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     # Final P-IRLS with converged parameters
     penalty.sp .= log_sp
     S_total = total_penalty(penalty, log_sp, p)
-    final_result = pirls_extended(X, y, S_total, family;
+    final_result = pirls_extended(X, y, S_total, family, link;
         weights = weights, start = prev_result.coefficients,
         control = control)
 

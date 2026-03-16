@@ -4,7 +4,7 @@
 # estimation of extra parameters (NB theta, Beta phi) during iteration.
 
 """
-    pirls_extended(X, y, S_total, family::ExtendedFamily;
+    pirls_extended(X, y, S_total, family::ExtendedFamily, link::GLM.Link;
         weights, offset, start, control)
 
 Run penalized IRLS for an extended family. Similar to `pirls()` but
@@ -13,13 +13,13 @@ periodically estimates extra parameters (theta, phi, etc.).
 """
 function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
     S_total::Matrix{Float64},
-    family::ExtendedFamily;
+    family::ExtendedFamily,
+    link::GLM.Link;
     weights::Vector{Float64} = ones(length(y)),
     offset::Vector{Float64} = zeros(length(y)),
     start::Union{Vector{Float64}, Nothing} = nothing,
     control::GamControl = gam_control())
 
-    link = _get_link(family)
     n, p = size(X)
 
     # Initialize

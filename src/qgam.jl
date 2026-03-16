@@ -87,18 +87,17 @@ mutable struct ELFFamily <: ExtendedFamily
     qu::Float64
     co::Vector{Float64}     # can be vector (per-observation smoothness)
     theta::Float64           # log(sigma)
-    link::GLM.Link
     estimate_theta::Bool
 end
 
 function ELFFamily(; qu::Real=0.5, co=0.1, theta::Real=0.0,
-                   link::GLM.Link=IdentityLink(), estimate_theta::Bool=false)
+                   estimate_theta::Bool=false)
     0.0 < qu < 1.0 || throw(ArgumentError("qu must be in (0, 1), got $qu"))
     co_vec = co isa AbstractVector ? Float64.(co) : Float64[co]
-    return ELFFamily(Float64(qu), co_vec, Float64(theta), link, estimate_theta)
+    return ELFFamily(Float64(qu), co_vec, Float64(theta), estimate_theta)
 end
 
-_get_link(f::ELFFamily) = f.link
+_default_link(::ELFFamily) = IdentityLink()
 _family_name(::ELFFamily) = "ELF"
 _has_extra_param(f::ELFFamily) = f.estimate_theta
 _estimates_scale(::ELFFamily) = false

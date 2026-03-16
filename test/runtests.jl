@@ -356,10 +356,10 @@ end
         f = NegBinFamily()
         @test f isa ExtendedFamily
         @test f.theta == 1.0
-        @test f.link isa LogLink
+        @test GAM._default_link(f) isa LogLink
         @test f.estimate_theta == true
 
-        f2 = NegBinFamily(theta=5.0, link=LogLink(), estimate_theta=false)
+        f2 = NegBinFamily(theta=5.0, estimate_theta=false)
         @test f2.theta == 5.0
         @test f2.estimate_theta == false
     end
@@ -368,7 +368,7 @@ end
         f = TweedieFamily()
         @test f isa ExtendedFamily
         @test f.p == 1.5
-        @test f.link isa LogLink
+        @test GAM._default_link(f) isa LogLink
         @test f.estimate_p == false
 
         f2 = TweedieFamily(p=1.8)
@@ -379,10 +379,10 @@ end
         f = BetaFamily()
         @test f isa ExtendedFamily
         @test f.phi == 1.0
-        @test f.link isa LogitLink
+        @test GAM._default_link(f) isa LogitLink
         @test f.estimate_phi == true
 
-        f2 = BetaFamily(phi=10.0, link=LogitLink(), estimate_phi=false)
+        f2 = BetaFamily(phi=10.0, estimate_phi=false)
         @test f2.phi == 10.0
     end
 
@@ -483,7 +483,7 @@ end
         S_total = zeros(2, 2)
         family = NegBinFamily(theta=1.0)
 
-        result = GAM.pirls_extended(X, y, S_total, family; control=gam_control(maxit=100))
+        result = GAM.pirls_extended(X, y, S_total, family, LogLink(); control=gam_control(maxit=100))
         @test result.converged
         @test result.deviance >= 0
         @test isfinite(result.deviance)
@@ -510,7 +510,7 @@ end
         S_total = zeros(2, 2)
         family = BetaFamily(phi=1.0)
 
-        result = GAM.pirls_extended(X, y, S_total, family; control=gam_control(maxit=100))
+        result = GAM.pirls_extended(X, y, S_total, family, LogitLink(); control=gam_control(maxit=100))
         @test result.converged
         @test result.deviance >= 0
         @test isfinite(result.deviance)
