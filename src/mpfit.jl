@@ -1,0 +1,697 @@
+# Multi-parameter model fitting
+#
+# Inner loop: penalized Newton for β given λ
+# Outer loop: BFGS on REML criterion for log(λ)
+# User API: evgam() function
+
+using LinearAlgebra
+using Statistics: mean, std
+
+# ============================================================================
+# Inner Newton solver
+# ============================================================================
+
+"""
+    MPFitControl
+
+Control parameters for multi-parameter model fitting.
+"""
+struct MPFitControl
+    inner_maxit::Int
+    inner_tol::Float64
+    outer_maxit::Int
+    outer_tol::Float64
+    step_max::Float64
+    trace::Bool
+end
+
+function mp_control(; inner_maxit::Int=100, inner_tol::Real=1e-6,
+                      outer_maxit::Int=100, outer_tol::Real=1e-5,
+                      step_max::Real=1.0, trace::Bool=false)
+    MPFitControl(inner_maxit, Float64(inner_tol), outer_maxit, Float64(outer_tol),
+                 Float64(step_max), trace)
+end
+
+"""
+    mp_newton_inner(family, y, X_list, β, S, control) → (β, nll_pen, g, H, converged)
+
+Penalized Newton optimization for coefficients β given penalty S.
+Minimizes NLL(β) + 0.5 β'Sβ.
+"""
+function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
+                         X_list::Vector{Matrix{Float64}}, β::Vector{Float64},
+                         S::Matrix{Float64}, control::MPFitControl)
+    K = nparams(family)
+    n = length(y)
+    p = length(β)
+    ncols = deriv_ncols(K)
+    derivs = Matrix{Float64}(undef, n, ncols)
+    H = Matrix{Float64}(undef, p, p)
+
+    param_offsets = cumsum([0; [size(X, 2) for X in X_list]])
+
+    converged = false
+    nll_pen = Inf
+    nll_pen_prev = Inf
+
+    for iter in 1:control.inner_maxit
+        # Compute linear predictors
+        η_list = _compute_eta(X_list, β, param_offsets, K)
+
+        # Compute NLL and derivatives
+        nll_val = nll_total(family, y, η_list)
+        nll_derivs!(family, derivs, y, η_list)
+
+        # Assemble gradient and Hessian
+        g = assemble_gradient(derivs, X_list)
+        assemble_hessian!(H, derivs, X_list)
+
+        # Add penalty
+        pen = 0.5 * dot(β, S * β)
+        nll_pen_new = nll_val + pen
+        g .+= S * β
+        H .+= S
+
+        # Check convergence: gradient norm
+        grad_max = maximum(abs, g)
+        if grad_max < control.inner_tol
+            nll_pen = nll_pen_new
+            converged = true
+            break
+        end
+
+        # Check convergence: objective change (relative)
+        if iter > 1 && isfinite(nll_pen_prev)
+            obj_rel = abs(nll_pen_new - nll_pen_prev) / (abs(nll_pen_new) + 1.0)
+            if obj_rel < 1e-8
+                nll_pen = nll_pen_new
+                converged = true
+                break
+            end
+        end
+
+        # Newton step with Cholesky
+        H_sym = Symmetric(H)
+        F = _safe_cholesky(H_sym)
+        if F === nothing
+            # Escalating diagonal perturbation
+            diag_base = max(1e-6 * maximum(abs, diag(H)), 1e-8)
+            for attempt in 0:5
+                diag_add = diag_base * 10.0^attempt
+                H_pert = copy(H)
+                for i in 1:p
+                    H_pert[i, i] += diag_add
+                end
+                F = _safe_cholesky(Symmetric(H_pert))
+                F !== nothing && break
+            end
+            if F === nothing
+                # Last resort: use identity-scaled step
+                δ = g ./ max(1.0, maximum(abs, g))
+            else
+                δ = F \ g
+            end
+        else
+            δ = F \ g
+        end
+
+        # Step halving with simple decrease (matching evgam's approach)
+        step = min(1.0, control.step_max)
+        β_new = β .- step .* δ
+        η_new = _compute_eta(X_list, β_new, param_offsets, K)
+        nll_new = nll_total(family, y, η_new) + 0.5 * dot(β_new, S * β_new)
+
+        for _ in 1:15
+            if isfinite(nll_new) && nll_new < nll_pen_new
+                break
+            end
+            step *= 0.5
+            if step < 1e-12
+                break
+            end
+            β_new = β .- step .* δ
+            η_new = _compute_eta(X_list, β_new, param_offsets, K)
+            nll_new = nll_total(family, y, η_new) + 0.5 * dot(β_new, S * β_new)
+        end
+
+        # Check step size convergence (matching evgam)
+        step_mean = step * sum(abs, δ) / length(δ)
+        if step_mean < 1e-12
+            nll_pen = isfinite(nll_new) ? nll_new : nll_pen_new
+            converged = true
+            break
+        end
+
+        # Accept step even if no decrease, as long as finite
+        if !isfinite(nll_new)
+            nll_pen = nll_pen_new
+            converged = grad_max < 1e-2
+            break
+        end
+
+        nll_pen_prev = nll_pen_new
+        β .= β_new
+        nll_pen = nll_new
+
+        if control.trace && iter % 10 == 0
+            @info "  Inner iteration $iter: nll_pen = $(round(nll_pen, digits=4)), max|g| = $(round(grad_max, sigdigits=3))"
+        end
+    end
+
+    # Final gradient/Hessian at converged β
+    η_list = _compute_eta(X_list, β, param_offsets, K)
+    nll_derivs!(family, derivs, y, η_list)
+    g = assemble_gradient(derivs, X_list)
+    assemble_hessian!(H, derivs, X_list)
+    g .+= S * β
+    H .+= S
+
+    return β, nll_pen, g, H, converged
+end
+
+function _compute_eta(X_list, β, param_offsets, K)
+    η_list = Vector{Vector{Float64}}(undef, K)
+    for k in 1:K
+        s = param_offsets[k] + 1
+        e = param_offsets[k + 1]
+        η_list[k] = X_list[k] * @view(β[s:e])
+    end
+    return η_list
+end
+
+function _safe_cholesky(A::Symmetric)
+    try
+        return cholesky(A)
+    catch
+        return nothing
+    end
+end
+
+# ============================================================================
+# Hessian-based smoothing parameter initialization (matching R evgam's .guess)
+# ============================================================================
+
+"""
+Initialize log smoothing parameters using the unpenalized Hessian diagonal,
+following R evgam's approach: λ_j ≈ H_diag / S_diag × scaling_factor.
+This avoids under-/over-smoothing parameters with different curvature scales.
+"""
+function _init_log_sp_hessian(family::MultiParameterFamily, y::AbstractVector,
+                               X_list::Vector{Matrix{Float64}},
+                               Sl::Vector{Matrix{Float64}},
+                               β_init::Vector{Float64},
+                               param_offsets::Vector{Int}, nsp::Int)
+    if nsp == 0
+        return Float64[]
+    end
+
+    K = nparams(family)
+    n = length(y)
+    p = length(β_init)
+    ncols = deriv_ncols(K)
+    derivs = Matrix{Float64}(undef, n, ncols)
+    H = Matrix{Float64}(undef, p, p)
+
+    # Evaluate unpenalized Hessian at initial β
+    η_list = _compute_eta(X_list, β_init, param_offsets, K)
+    nll_derivs!(family, derivs, y, η_list)
+    assemble_hessian!(H, derivs, X_list)
+
+    log_sp = zeros(nsp)
+    for j in 1:nsp
+        Sj = Sl[j]
+        # Ratio of mean Hessian diagonal to mean penalty diagonal for non-zero entries
+        s_diag = diag(Sj)
+        h_diag = diag(H)
+
+        # Find overlap: indices where penalty has non-zero entries
+        nz = findall(d -> abs(d) > 1e-12, s_diag)
+        if isempty(nz)
+            log_sp[j] = 0.0
+            continue
+        end
+
+        h_mean = mean(abs.(h_diag[nz]))
+        s_mean = mean(abs.(s_diag[nz]))
+
+        if s_mean > 1e-12 && h_mean > 1e-12
+            # Scale factor of 1.5 matches R evgam's .guess heuristic
+            log_sp[j] = log(h_mean * 1.5 / s_mean)
+        end
+    end
+
+    return log_sp
+end
+
+# ============================================================================
+# REML criterion
+# ============================================================================
+
+"""
+    mp_reml(log_sp, family, y, X_list, Sl, β_init, param_offsets, control)
+    → (reml_val, β_opt, gradient)
+
+Compute REML criterion for given log smoothing parameters.
+REML = NLL_pen(β*) + 0.5 log|H*| - 0.5 log|S| + const
+"""
+function mp_reml(log_sp::Vector{Float64}, family::MultiParameterFamily,
+                 y::AbstractVector, X_list::Vector{Matrix{Float64}},
+                 Sl::Vector{Matrix{Float64}}, β_init::Vector{Float64},
+                 param_offsets::Vector{Int}, control::MPFitControl;
+                 Mp::Int=0)
+    p = length(β_init)
+    K = nparams(family)
+
+    # Build penalty from current smoothing parameters
+    S = zeros(p, p)
+    for (j, Sj) in enumerate(Sl)
+        S .+= exp(log_sp[j]) .* Sj
+    end
+
+    # Inner Newton
+    β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control)
+
+    # log|H| — penalized Hessian determinant
+    F_H = _safe_cholesky(Symmetric(H))
+    if F_H === nothing
+        return 1e20, β_opt, zeros(length(log_sp))
+    end
+    logdetH = 2.0 * sum(log.(diag(F_H.L)))
+
+    # log|S+| — penalty determinant (only non-zero eigenvalues)
+    logdetS = _logdet_penalty(Sl, log_sp, p)
+
+    # REML = NLL_pen + 0.5 log|H| - 0.5 log|S+| + 0.5 Mp log(2π)
+    reml_val = nll_pen + 0.5 * logdetH - 0.5 * logdetS + 0.5 * Mp * log(2π)
+
+    if !isfinite(reml_val)
+        reml_val = 1e20
+    end
+
+    return reml_val, β_opt, g
+end
+
+"""Log determinant of penalty (sum of log of non-zero eigenvalues)."""
+function _logdet_penalty(Sl::Vector{Matrix{Float64}}, log_sp::Vector{Float64}, p::Int)
+    S = zeros(p, p)
+    for (j, Sj) in enumerate(Sl)
+        S .+= exp(log_sp[j]) .* Sj
+    end
+    if any(!isfinite, S)
+        return 0.0
+    end
+    eigs = eigvals(Symmetric(S))
+    pos = filter(e -> e > 1e-10, eigs)
+    return isempty(pos) ? 0.0 : sum(log, pos)
+end
+
+# ============================================================================
+# BFGS outer optimization
+# ============================================================================
+
+"""
+    mp_bfgs_outer(family, y, X_list, Sl, β_init, log_sp_init, param_offsets, control)
+    → (log_sp_opt, β_opt, reml_val)
+
+BFGS optimization of REML criterion w.r.t. log smoothing parameters.
+Uses finite-difference gradients of REML.
+"""
+function mp_bfgs_outer(family::MultiParameterFamily, y::AbstractVector,
+                       X_list::Vector{Matrix{Float64}},
+                       Sl::Vector{Matrix{Float64}},
+                       β_init::Vector{Float64},
+                       log_sp_init::Vector{Float64},
+                       param_offsets::Vector{Int},
+                       control::MPFitControl;
+                       Mp::Int=0)
+    nsp = length(log_sp_init)
+    if nsp == 0
+        # No smoothing parameters to optimize
+        p = length(β_init)
+        S = zeros(p, p)
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control)
+        return Float64[], β_opt, nll_pen
+    end
+
+    log_sp = copy(log_sp_init)
+    β_current = copy(β_init)
+
+    # Initial REML
+    reml_val, β_current, _ = mp_reml(log_sp, family, y, X_list, Sl, β_current,
+                                      param_offsets, control; Mp=Mp)
+
+    # BFGS state
+    B = Matrix{Float64}(I, nsp, nsp)  # inverse Hessian approximation
+
+    for outer_iter in 1:control.outer_maxit
+        # Finite-difference REML gradient
+        grad = _fd_reml_gradient(log_sp, family, y, X_list, Sl, β_current,
+                                 param_offsets, control, reml_val; Mp=Mp)
+
+        grad_max = maximum(abs, grad)
+        if grad_max < control.outer_tol
+            if control.trace
+                @info "Outer converged (gradient) at iteration $outer_iter: REML = $(round(reml_val, digits=4))"
+            end
+            break
+        end
+
+        # BFGS search direction
+        direction = -(B * grad)
+
+        # Line search
+        step = 1.0
+        # Clamp log_sp to prevent overflow in exp()
+        log_sp_new = clamp.(log_sp .+ step .* direction, -30.0, 30.0)
+        reml_new, β_new, _ = mp_reml(log_sp_new, family, y, X_list, Sl, β_current,
+                                      param_offsets, control; Mp=Mp)
+
+        # Backtracking
+        for _ in 1:20
+            if isfinite(reml_new) && reml_new < reml_val - 1e-4 * step * dot(grad, direction)
+                break
+            end
+            step *= 0.5
+            if step < 1e-10
+                break
+            end
+            log_sp_new = clamp.(log_sp .+ step .* direction, -30.0, 30.0)
+            reml_new, β_new, _ = mp_reml(log_sp_new, family, y, X_list, Sl, β_current,
+                                          param_offsets, control; Mp=Mp)
+        end
+
+        if !isfinite(reml_new) || reml_new >= reml_val
+            # No improvement — try steepest descent with tiny step
+            step = 0.01
+            log_sp_new = clamp.(log_sp .- step .* grad, -30.0, 30.0)
+            reml_new, β_new, _ = mp_reml(log_sp_new, family, y, X_list, Sl, β_current,
+                                          param_offsets, control; Mp=Mp)
+            if !isfinite(reml_new) || reml_new >= reml_val
+                if control.trace
+                    @info "Outer iteration $outer_iter: no improvement, stopping"
+                end
+                break
+            end
+        end
+
+        # Check relative REML convergence
+        reml_rel_change = abs(reml_new - reml_val) / (abs(reml_val) + 1.0)
+        sp_change = maximum(abs, log_sp_new .- log_sp)
+
+        # BFGS update
+        s_vec = log_sp_new .- log_sp
+        grad_new = _fd_reml_gradient(log_sp_new, family, y, X_list, Sl, β_new,
+                                     param_offsets, control, reml_new; Mp=Mp)
+        y_vec = grad_new .- grad
+        sy = dot(s_vec, y_vec)
+
+        if sy > 1e-10
+            ρ = 1.0 / sy
+            I_mat = Matrix{Float64}(I, nsp, nsp)
+            B = (I_mat - ρ * s_vec * y_vec') * B * (I_mat - ρ * y_vec * s_vec') + ρ * s_vec * s_vec'
+        end
+
+        log_sp .= log_sp_new
+        β_current .= β_new
+        reml_val = reml_new
+
+        if control.trace
+            @info "Outer iteration $outer_iter: REML = $(round(reml_val, digits=4)), max|grad| = $(round(grad_max, sigdigits=3)), Δsp = $(round(sp_change, sigdigits=3))"
+        end
+
+        # Early stop if both REML and smoothing parameters barely changed
+        if reml_rel_change < 1e-8 && sp_change < 1e-4
+            if control.trace
+                @info "Outer converged (REML change) at iteration $outer_iter: REML = $(round(reml_val, digits=4))"
+            end
+            break
+        end
+    end
+
+    return log_sp, β_current, reml_val
+end
+
+function _fd_reml_gradient(log_sp, family, y, X_list, Sl, β, param_offsets, control, f0; Mp=0)
+    nsp = length(log_sp)
+    grad = Vector{Float64}(undef, nsp)
+    h = 1e-3
+    for i in 1:nsp
+        log_sp_p = copy(log_sp)
+        log_sp_m = copy(log_sp)
+        log_sp_p[i] += h
+        log_sp_m[i] -= h
+        fp, _, _ = mp_reml(log_sp_p, family, y, X_list, Sl, β, param_offsets, control; Mp=Mp)
+        fm, _, _ = mp_reml(log_sp_m, family, y, X_list, Sl, β, param_offsets, control; Mp=Mp)
+        grad[i] = (fp - fm) / (2h)
+    end
+    return grad
+end
+
+# ============================================================================
+# Covariance matrices
+# ============================================================================
+
+"""Compute Vp (posterior covariance) and Vc (corrected covariance)."""
+function mp_covariance(family::MultiParameterFamily, y::AbstractVector,
+                       X_list::Vector{Matrix{Float64}}, β::Vector{Float64},
+                       S::Matrix{Float64}, param_offsets::Vector{Int})
+    K = nparams(family)
+    n = length(y)
+    p = length(β)
+    ncols = deriv_ncols(K)
+
+    derivs = Matrix{Float64}(undef, n, ncols)
+    η_list = _compute_eta(X_list, β, param_offsets, K)
+    nll_derivs!(family, derivs, y, η_list)
+
+    H0 = Matrix{Float64}(undef, p, p)
+    assemble_hessian!(H0, derivs, X_list)
+
+    H = H0 .+ S
+    F = _safe_cholesky(Symmetric(H))
+    if F !== nothing
+        Vp = inv(F)
+    else
+        Vp = pinv(H)
+    end
+
+    # For now Vc = Vp (corrected covariance requires smoothing parameter uncertainty)
+    Vc = copy(Vp)
+
+    return Vp, Vc, H0
+end
+
+# ============================================================================
+# User API: evgam()
+# ============================================================================
+
+"""
+    EvgamControl
+
+Control parameters for evgam fitting.
+"""
+const EvgamControl = MPFitControl
+
+"""
+    evgam_control(; kwargs...) → EvgamControl
+
+Create control parameters for `evgam`. See `mp_control` for keyword arguments.
+"""
+const evgam_control = mp_control
+
+"""
+    evgam(formulas, data, family; control=mp_control(), sp=nothing, trace=false)
+
+Fit a multi-parameter GAM for extreme value distributions.
+
+# Arguments
+- `formulas`: a vector of `GamFormula` or `FormulaTerm`, one per distribution parameter.
+  If a single formula is given, it is reused for all parameters.
+- `data`: a Tables.jl-compatible data source (DataFrame, NamedTuple of vectors, etc.)
+- `family`: a `MultiParameterFamily` (e.g., `GEVFamily()`, `GPDFamily()`)
+
+# Keyword Arguments
+- `control`: fitting control parameters (see `mp_control`)
+- `sp`: fixed smoothing parameters (vector of log λ values). If `nothing`, estimate via REML.
+- `trace`: print iteration progress
+
+# Returns
+A `MultiParameterModel` with fitted coefficients, smoothing parameters, covariance, etc.
+
+# Example
+```julia
+using GAM, DataFrames
+# GEV model: location and log-scale depend on x, shape is constant
+m = evgam(
+    [@gam_formula(y ~ s(x, bs=:cr, k=10)),   # location μ
+     @gam_formula(y ~ s(x, bs=:cr, k=8)),    # log-scale ψ
+     @gam_formula(y ~ 1)],                     # shape ξ
+    df, GEVFamily()
+)
+```
+"""
+function evgam(formulas, data, family::MultiParameterFamily;
+               control::MPFitControl=mp_control(),
+               sp=nothing, trace::Bool=control.trace)
+    ctrl = MPFitControl(control.inner_maxit, control.inner_tol,
+                        control.outer_maxit, control.outer_tol,
+                        control.step_max, trace)
+    K = nparams(family)
+
+    # Handle single formula → replicate for all parameters
+    if formulas isa FormulaTerm || formulas isa GamFormula
+        formulas = fill(formulas, K)
+    end
+    length(formulas) == K || throw(ArgumentError(
+        "Expected $K formulas for $(typeof(family)), got $(length(formulas))"))
+
+    # Extract response from first formula
+    cols = Tables.columntable(data)
+    y = _extract_response(formulas[1], cols)
+    n = length(y)
+
+    # Build design matrices and smooth terms for each parameter
+    X_list = Vector{Matrix{Float64}}(undef, K)
+    smooths_list = Vector{Vector{ConstructedSmooth}}(undef, K)
+    offset = 0
+
+    for k in 1:K
+        Xk, smoothsk = _build_design_matrix(formulas[k], cols, n, offset)
+        X_list[k] = Xk
+        smooths_list[k] = smoothsk
+        offset += size(Xk, 2)
+    end
+
+    p = offset  # total coefficients
+    param_offsets = cumsum([0; [size(X, 2) for X in X_list]])
+
+    # Build penalty matrices
+    Sl = build_penalty_matrices(smooths_list, param_offsets)
+    nsp = length(Sl)
+
+    # Count null space dimension for REML constant
+    Mp = sum(1 + sum(sm.null_dim for sm in smooths; init=0) for smooths in smooths_list)
+
+    # Initial values
+    η_init = initial_eta(family, y)
+    β_init = zeros(p)
+    for k in 1:K
+        s = param_offsets[k] + 1
+        e = param_offsets[k + 1]
+        pk = e - s + 1
+        # Set intercept to mean of initial η, rest to 0
+        β_init[s] = mean(η_init[k])
+    end
+
+    # Smoothing parameters — use Hessian-based initialization (matching R evgam)
+    if sp !== nothing
+        log_sp = Float64.(sp)
+    else
+        log_sp = _init_log_sp_hessian(family, y, X_list, Sl, β_init, param_offsets, nsp)
+    end
+
+    # Fit
+    if sp !== nothing || nsp == 0
+        # Fixed smoothing parameters — just inner Newton
+        S = zeros(p, p)
+        for (j, Sj) in enumerate(Sl)
+            S .+= exp(log_sp[j]) .* Sj
+        end
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl)
+        reml_val = nll_pen
+    else
+        # Estimate smoothing parameters via BFGS on REML
+        log_sp, β_opt, reml_val = mp_bfgs_outer(family, y, X_list, Sl, β_init,
+                                                  log_sp, param_offsets, ctrl; Mp=Mp)
+        conv = true
+    end
+
+    # Final fitted values
+    η_fit = _compute_eta(X_list, β_opt, param_offsets, K)
+
+    # Build final penalty for covariance computation
+    S = zeros(p, p)
+    for (j, Sj) in enumerate(Sl)
+        if j <= length(log_sp)
+            S .+= exp(log_sp[j]) .* Sj
+        end
+    end
+
+    # Covariance
+    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets)
+
+    # EDF
+    edf = diag(Vp * H0)
+
+    # NLL at optimum
+    nll_val = nll_total(family, y, η_fit)
+
+    # idpars
+    idpars = Vector{Int}(undef, p)
+    for k in 1:K
+        s = param_offsets[k] + 1
+        e = param_offsets[k + 1]
+        idpars[s:e] .= k
+    end
+
+    return MultiParameterModel(
+        family, β_opt, η_fit, X_list, smooths_list, log_sp,
+        edf, Vp, Vc, nll_val, reml_val, y, n, conv, idpars, param_offsets
+    )
+end
+
+# ============================================================================
+# Internal helpers for design matrix construction
+# ============================================================================
+
+function _extract_response(formula, cols)
+    if formula isa GamFormula
+        resp_sym = formula.response
+    else
+        lhs = formula.lhs
+        resp_sym = lhs isa Term ? lhs.sym : Symbol(string(lhs))
+    end
+    return Float64.(Tables.getcolumn(cols, resp_sym))
+end
+
+function _build_design_matrix(formula, cols, n, global_offset)
+    if formula isa GamFormula
+        return _build_gam_design(formula, cols, n, global_offset)
+    else
+        return _build_parametric_design(formula, cols, n, global_offset)
+    end
+end
+
+function _build_gam_design(gf::GamFormula, cols, n, global_offset)
+    # Use existing setup_gam infrastructure to build design matrix + smooths
+    # Build intercept + parametric + smooth terms
+    smooth_specs = gf.smooth_specs
+
+    # Parametric part: intercept
+    X_parts = Matrix{Float64}[ones(n, 1)]
+    col_offset = global_offset + 1  # intercept occupies 1 column
+
+    # Smooth terms — smooth_construct already absorbs constraints
+    smooths = ConstructedSmooth[]
+    for spec in smooth_specs
+        cs = smooth_construct(spec, cols)
+
+        # Update parameter indices to global
+        k_eff = size(cs.X, 2)
+        cs.first_para = col_offset + 1
+        cs.last_para = col_offset + k_eff
+        col_offset += k_eff
+
+        push!(X_parts, cs.X)
+        push!(smooths, cs)
+    end
+
+    X = hcat(X_parts...)
+    return X, smooths
+end
+
+function _build_parametric_design(formula::FormulaTerm, cols, n, global_offset)
+    # Pure parametric formula (intercept only for now)
+    X = ones(n, 1)
+    return X, ConstructedSmooth[]
+end

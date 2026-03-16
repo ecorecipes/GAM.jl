@@ -1,0 +1,133 @@
+---
+title: "Extreme Value GAMs"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+---
+
+## Introduction
+
+This vignette demonstrates extreme value GAMs using the R **evgam** package, fitting the same simulated data as the Julia vignette for comparison.
+
+## Setup
+
+```{r}
+library(evgam)
+library(mgcv)
+```
+
+## GEV model
+
+### Load GEV data
+
+We load the same data as the Julia vignette: block maxima with covariate-dependent location and scale.
+
+```{r}
+dat_gev <- read.csv("../data_gev.csv")
+n <- nrow(dat_gev)
+x <- dat_gev$x
+y_gev <- dat_gev$y
+
+mu_true <- 5 + 2 * sin(2 * pi * x)
+logsigma_true <- -0.5 + 0.5 * x
+sigma_true <- exp(logsigma_true)
+xi_true <- 0.1
+
+summary(dat_gev)
+```
+
+### Fit the GEV model
+
+In R evgam, we specify a list of formulas—one per distribution parameter.
+
+```{r}
+m_gev <- evgam(
+  list(y ~ s(x, k = 10, bs = "cr"),   # location μ(x)
+       ~ s(x, k = 8, bs = "cr"),       # log-scale ψ(x)
+       ~ 1),                            # shape ξ (constant)
+  data = dat_gev,
+  family = "gev"
+)
+summary(m_gev)
+```
+
+### Examine parameter estimates
+
+```{r}
+mu_hat <- predict(m_gev)$location
+psi_hat <- predict(m_gev)$logscale
+xi_hat <- coef(m_gev)
+
+cat("Location fitted range:", range(mu_hat), "\n")
+cat("Location true range:", range(mu_true), "\n")
+cat("Correlation (location):", cor(mu_hat, mu_true), "\n")
+
+cat("Log-scale fitted range:", range(psi_hat), "\n")
+cat("Log-scale true range:", range(logsigma_true), "\n")
+cat("Correlation (log-scale):", cor(psi_hat, logsigma_true), "\n")
+```
+
+### Compare fitted vs true
+
+```{r}
+rmse_mu <- sqrt(mean((mu_hat - mu_true)^2))
+rmse_psi <- sqrt(mean((psi_hat - logsigma_true)^2))
+cat("RMSE (location):", round(rmse_mu, 3), "\n")
+cat("RMSE (log-scale):", round(rmse_psi, 3), "\n")
+```
+
+## GPD model
+
+### Load GPD data
+
+```{r}
+dat_gpd <- read.csv("../data_gpd.csv")
+n_gpd <- nrow(dat_gpd)
+x_gpd <- dat_gpd$x
+y_gpd <- dat_gpd$y
+
+logsigma_gpd_true <- 0.5 * sin(2 * pi * x_gpd)
+sigma_gpd_true <- exp(logsigma_gpd_true)
+xi_gpd_true <- 0.15
+
+summary(dat_gpd)
+```
+
+### Fit the GPD model
+
+```{r}
+m_gpd <- evgam(
+  list(y ~ s(x, k = 10, bs = "cr"),   # log-scale ψ(x)
+       ~ 1),                            # shape ξ (constant)
+  data = dat_gpd,
+  family = "gpd"
+)
+summary(m_gpd)
+```
+
+### Examine GPD estimates
+
+```{r}
+psi_gpd_hat <- predict(m_gpd)$logscale
+cat("Log-scale fitted range:", range(psi_gpd_hat), "\n")
+cat("Log-scale true range:", range(logsigma_gpd_true), "\n")
+cat("Correlation (log-scale):", cor(psi_gpd_hat, logsigma_gpd_true), "\n")
+```
+
+## Comparison with Julia
+
+The R evgam and Julia GAM.jl `evgam` functions share the same interface structure:
+
+| R evgam | Julia GAM.jl |
+|---------|--------------|
+| `evgam(list(y ~ s(x), ~ s(x), ~ 1), family="gev")` | `evgam([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x)), @gam_formula(y ~ 1)], GEVFamily())` |
+| `predict(m)$location` | `param_eta(m, 1)` |
+| `predict(m)$logscale` | `param_eta(m, 2)` |
+| `family = "gev"` | `GEVFamily()` |
+| `family = "gpd"` | `GPDFamily()` |

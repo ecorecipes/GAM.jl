@@ -1,0 +1,344 @@
+# Outer iteration — smoothing parameter optimization
+#
+# Uses the Extended Fellner-Schall (EFS) update from Wood & Fasiolo (2017),
+# which is the default in mgcv. This is a simple, monotonically convergent
+# iteration that avoids the complexities of Newton optimization on REML.
+
+"""
+    outer_iteration(X, y, smooths, penalty, family, link;
+                    method, weights, control)
+
+Run the outer iteration to optimize smoothing parameters.
+Uses the Extended Fellner-Schall (EFS) method for robust convergence.
+Returns updated `log_sp` and final `PirlsResult`.
+"""
+function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
+    smooths::Vector{<:ConstructedSmooth},
+    penalty::PenaltySetup,
+    family::UnivariateDistribution, link::GLM.Link;
+    method::Symbol = :REML,
+    weights::Vector{Float64} = ones(length(y)),
+    control::GamControl = gam_control())
+
+    n, p = size(X)
+    n_sp = length(penalty.sp)
+
+    if n_sp == 0
+        S_total = zeros(p, p)
+        result = pirls(X, y, S_total, family, link;
+            weights = weights, control = control)
+        return penalty.sp, result
+    end
+
+    log_sp = copy(penalty.sp)
+    prev_result = nothing
+
+    is_gaussian_identity = family isa Normal && link isa GLM.IdentityLink
+    XtWX_cached = nothing
+    Xty_cached = nothing
+    Xw_buf = similar(X)  # pre-allocate buffer
+
+    if is_gaussian_identity
+        # Precompute X'WX and X'Wy once — both are constant
+        XtWX_cached = zeros(p, p)
+        @inbounds for i in 1:n
+            sw = sqrt(weights[i])
+            for j in 1:p
+                Xw_buf[i, j] = X[i, j] * sw
+            end
+        end
+        BLAS.syrk!('U', 'T', 1.0, Xw_buf, 0.0, XtWX_cached)
+        @inbounds for j in 1:p
+            for k in (j + 1):p
+                XtWX_cached[k, j] = XtWX_cached[j, k]
+            end
+        end
+        Xty_cached = X' * (weights .* y)
+    end
+
+    A_buf = zeros(p, p)
+    score_hist = Float64[]
+
+    for outer_iter in 1:(control.outer_maxit)
+        # Inner: P-IRLS for current smoothing parameters
+        S_total = total_penalty(penalty, log_sp, p)
+
+        if is_gaussian_identity
+            # Direct solve — no IRLS iteration, no O(np²) recompute
+            result = pirls_gaussian(X, y, S_total, XtWX_cached, Xty_cached;
+                weights = weights)
+        else
+            start = prev_result === nothing ? nothing : prev_result.coefficients
+            result = pirls(X, y, S_total, family, link;
+                weights = weights, start = start, control = control)
+        end
+
+        if !result.converged && control.trace
+            @warn "P-IRLS did not converge at outer iteration $outer_iter"
+        end
+
+        beta = result.coefficients
+        w = result.working_weights
+
+        # Estimate scale
+        edf_total = sum(result.edf_vec)
+        if _needs_scale_estimate(family)
+            scale_est = max(result.pearson / (n - edf_total), 1e-10)
+        else
+            scale_est = 1.0
+        end
+
+        # Smoothing parameter update — method-dependent
+        if XtWX_cached !== nothing
+            copyto!(A_buf, XtWX_cached)
+            @inbounds for j in 1:p, k in 1:p
+                A_buf[j, k] += S_total[j, k]
+            end
+        else
+            _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n, Xw_buf)
+        end
+        A_chol = cholesky(Symmetric(copy(A_buf)))
+        Ainv = inv(A_chol)
+
+        log_sp_new = copy(log_sp)
+        sp_idx = 1
+        max_change = 0.0
+
+        # Newton optimization with analytical gradient + FD Hessian
+        # (matching mgcv's newton() optimizer — used for GCV, REML, and ML)
+        gamma = control.gamma
+        scale_param = _needs_scale_estimate(family) ? -1.0 : 1.0
+
+        # Get analytical gradient (and score for step control)
+        cur_score, cur_grad = reml_score(X, y, penalty, log_sp, family, link,
+            weights, result; method = method, gamma = gamma,
+            scale = scale_param)
+
+        # Approximate Hessian via finite differences on the gradient
+        h_fd = 1e-4
+        hess_diag = zeros(n_sp)
+        for j in 1:n_sp
+            lsp_p = copy(log_sp); lsp_p[j] += h_fd
+            S_p = total_penalty(penalty, lsp_p, p)
+            if is_gaussian_identity
+                r_p = pirls_gaussian(X, y, S_p, XtWX_cached, Xty_cached;
+                    weights = weights)
+            else
+                r_p = pirls(X, y, S_p, family, link;
+                    weights = weights, start = beta, control = control)
+            end
+            _, grad_p = reml_score(X, y, penalty, lsp_p, family, link,
+                weights, r_p; method = method, gamma = gamma,
+                scale = scale_param)
+            hess_diag[j] = (grad_p[j] - cur_grad[j]) / h_fd
+        end
+
+        # Newton step with safeguards (like R's newton())
+        for j in 1:n_sp
+            if hess_diag[j] > eps()
+                step = -cur_grad[j] / hess_diag[j]
+            else
+                step = -sign(cur_grad[j]) * min(abs(cur_grad[j]) * 2.0, 2.0)
+            end
+            step = clamp(step, -5.0, 5.0)
+            log_sp_new[j] = clamp(log_sp[j] + step, -15.0, 15.0)
+            max_change = max(max_change, abs(log_sp_new[j] - log_sp[j]))
+        end
+
+        # Step halving if score didn't improve
+        S_trial = total_penalty(penalty, log_sp_new, p)
+        if is_gaussian_identity
+            r_trial = pirls_gaussian(X, y, S_trial, XtWX_cached, Xty_cached;
+                weights = weights)
+        else
+            r_trial = pirls(X, y, S_trial, family, link;
+                weights = weights, start = beta, control = control)
+        end
+        trial_score, _ = reml_score(X, y, penalty, log_sp_new, family, link,
+            weights, r_trial; method = method, gamma = gamma,
+            scale = scale_param)
+
+        for half_iter in 1:30
+            if trial_score <= cur_score
+                break
+            end
+            log_sp_new .= (log_sp .+ log_sp_new) ./ 2.0
+            S_trial = total_penalty(penalty, log_sp_new, p)
+            if is_gaussian_identity
+                r_trial = pirls_gaussian(X, y, S_trial, XtWX_cached, Xty_cached;
+                    weights = weights)
+            else
+                r_trial = pirls(X, y, S_trial, family, link;
+                    weights = weights, start = beta, control = control)
+            end
+            trial_score, _ = reml_score(X, y, penalty, log_sp_new, family, link,
+                weights, r_trial; method = method, gamma = gamma,
+                scale = scale_param)
+        end
+        max_change = maximum(abs.(log_sp_new .- log_sp))
+
+        # Compute score for convergence tracking
+        push!(score_hist, trial_score)
+
+        if control.trace
+            println("Outer iter $outer_iter: score=$(@sprintf("%.6f", trial_score)), " *
+                    "sp=[$(join([@sprintf("%.4f", exp(s)) for s in log_sp_new], ", "))]" *
+                    ", edf=$(round(edf_total; digits=2))")
+        end
+
+        log_sp .= log_sp_new
+        prev_result = result
+
+        # Convergence check: step small and score stable
+        if max_change < control.epsilon * 10
+            if control.trace
+                println("Outer iteration converged at iteration $outer_iter")
+            end
+            break
+        end
+        if length(score_hist) > 3 && max_change < 0.05
+            recent = score_hist[max(1, end - 3):end]
+            if maximum(abs.(diff(recent))) < control.epsilon
+                if control.trace
+                    println("Outer iteration converged at iteration $outer_iter")
+                end
+                break
+            end
+        end
+    end
+
+    # Final solve with converged parameters
+    penalty.sp .= log_sp
+    S_total = total_penalty(penalty, log_sp, p)
+    if is_gaussian_identity
+        final_result = pirls_gaussian(X, y, S_total, XtWX_cached, Xty_cached;
+            weights = weights)
+    else
+        final_result = pirls(X, y, S_total, family, link;
+            weights = weights, start = prev_result.coefficients,
+            control = control)
+    end
+
+    return log_sp, final_result
+end
+
+# ============================================================================
+# Extended family outer iteration
+# ============================================================================
+
+"""
+    outer_iteration(X, y, smooths, penalty, family::ExtendedFamily;
+                    method, weights, control)
+
+Outer iteration for extended families. Uses EFS updates with
+`pirls_extended` and periodic extra-parameter estimation.
+"""
+function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
+    smooths::Vector{<:ConstructedSmooth},
+    penalty::PenaltySetup,
+    family::ExtendedFamily, link::GLM.Link;
+    method::Symbol = :REML,
+    weights::Vector{Float64} = ones(length(y)),
+    control::GamControl = gam_control())
+
+    n, p = size(X)
+    n_sp = length(penalty.sp)
+
+    if n_sp == 0
+        S_total = zeros(p, p)
+        result = pirls_extended(X, y, S_total, family;
+            weights = weights, control = control)
+        return penalty.sp, result
+    end
+
+    log_sp = copy(penalty.sp)
+    prev_result = nothing
+
+    for outer_iter in 1:(control.outer_maxit)
+        S_total = total_penalty(penalty, log_sp, p)
+
+        start = prev_result === nothing ? nothing : prev_result.coefficients
+        result = pirls_extended(X, y, S_total, family;
+            weights = weights, start = start, control = control)
+
+        if !result.converged && control.trace
+            @warn "P-IRLS did not converge at outer iteration $outer_iter"
+        end
+
+        beta = result.coefficients
+        w = result.working_weights
+
+        # Scale estimation
+        edf_total = sum(result.edf_vec)
+        if _estimates_scale(family)
+            scale_est = max(result.pearson / (n - edf_total), 1e-10)
+        else
+            scale_est = 1.0
+        end
+
+        # EFS update for each smoothing parameter
+        A_buf = zeros(p, p)
+        _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n)
+        A_chol = cholesky(Symmetric(A_buf))
+        Ainv = inv(A_chol)
+
+        log_sp_new = copy(log_sp)
+        sp_idx = 1
+        max_change = 0.0
+
+        for block in penalty.blocks
+            idx = block.start:block.stop
+            beta_block = beta[idx]
+
+            for Si in block.S
+                λ = exp(log_sp[sp_idx])
+                rank_j = Float64(block.rank)
+
+                bSb = dot(beta_block, Si * beta_block)
+                Ainv_block = Ainv[idx, idx]
+                trVS = tr(Ainv_block * Si)  # tr(A⁻¹ S_j), no λ factor
+
+                # R-style: a = max(0, rank/λ - trVS)
+                a = max(0.0, rank_j / λ - trVS)
+
+                if a > 0 && bSb > eps()
+                    r = scale_est * a / bSb
+                    log_sp_new[sp_idx] = clamp(log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
+                end
+
+                max_change = max(max_change, abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
+                sp_idx += 1
+            end
+        end
+
+        if control.trace
+            println("Outer iter $outer_iter: " *
+                    "sp=[$(join([@sprintf("%.4f", exp(s)) for s in log_sp], ", "))]" *
+                    ", edf=$(round(edf_total; digits=2))")
+        end
+
+        log_sp .= log_sp_new
+        prev_result = result
+
+        # Update extra parameter after each outer iteration
+        if _has_extra_param(family)
+            estimate_theta!(family, y, result.fitted_values, weights, scale_est)
+        end
+
+        if max_change < control.epsilon * 10
+            if control.trace
+                println("Outer iteration converged at iteration $outer_iter")
+            end
+            break
+        end
+    end
+
+    # Final P-IRLS with converged parameters
+    penalty.sp .= log_sp
+    S_total = total_penalty(penalty, log_sp, p)
+    final_result = pirls_extended(X, y, S_total, family;
+        weights = weights, start = prev_result.coefficients,
+        control = control)
+
+    return log_sp, final_result
+end

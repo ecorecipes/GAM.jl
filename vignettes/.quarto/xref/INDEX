@@ -1,0 +1,82 @@
+{
+  "01_introduction/01_introduction.qmd": {
+    "01_introduction.html": "d933e6ea",
+    "01_introduction.md": "d787858e",
+    "01_introduction.tex": "3c55e062"
+  },
+  "02_basis_types/02_basis_types.qmd": {
+    "02_basis_types.html": "284a03b0",
+    "02_basis_types.md": "aa4dbe19",
+    "02_basis_types.tex": "c72185aa"
+  },
+  "03_multiple_smooths/03_multiple_smooths.qmd": {
+    "03_multiple_smooths.html": "1ffee949",
+    "03_multiple_smooths.md": "ae4997fa",
+    "03_multiple_smooths.tex": "e60d9948"
+  },
+  "04_families/04_families.qmd": {
+    "04_families.html": "40e2837e",
+    "04_families.md": "cacd686d",
+    "04_families.tex": "6122ff4f"
+  },
+  "05_diagnostics/05_diagnostics.qmd": {
+    "05_diagnostics.html": "9965e992",
+    "05_diagnostics.md": "64b48f98",
+    "05_diagnostics.tex": "42c3f3e3"
+  },
+  "06_extreme_values/06_extreme_values.qmd": {
+    "06_extreme_values.html": "3b9e0667",
+    "06_extreme_values.md": "7264476b",
+    "06_extreme_values.tex": "3175979c"
+  },
+  "07_shape_constraints/07_shape_constraints.qmd": {
+    "07_shape_constraints.html": "a5c7f240",
+    "07_shape_constraints.md": "da55c72b",
+    "07_shape_constraints.tex": "4d5ce602"
+  },
+  "08_quantile_regression/08_quantile_regression.qmd": {
+    "08_quantile_regression.html": "c059cf2d",
+    "08_quantile_regression.md": "5a2aa346",
+    "08_quantile_regression.tex": "e31aeec1"
+  },
+  "01_introduction/R/01_introduction.qmd": {
+    "01_introduction.html": "f9bc536c",
+    "01_introduction.md": "a5da01f6",
+    "01_introduction.tex": "a57fa9a8"
+  },
+  "02_basis_types/R/02_basis_types.qmd": {
+    "02_basis_types.html": "b7db1b92",
+    "02_basis_types.md": "9d79b2e8",
+    "02_basis_types.tex": "96c91642"
+  },
+  "04_families/R/04_families.qmd": {
+    "04_families.html": "46d8fd30",
+    "04_families.md": "ea13e00d",
+    "04_families.tex": "e10420f4"
+  },
+  "03_multiple_smooths/R/03_multiple_smooths.qmd": {
+    "03_multiple_smooths.html": "355a13a2",
+    "03_multiple_smooths.md": "dce4e3d7",
+    "03_multiple_smooths.tex": "dc2190bf"
+  },
+  "06_extreme_values/R/06_extreme_values.qmd": {
+    "06_extreme_values.html": "e586a949",
+    "06_extreme_values.md": "77b89726",
+    "06_extreme_values.tex": "682a0585"
+  },
+  "07_shape_constraints/R/07_shape_constraints.qmd": {
+    "07_shape_constraints.html": "04130a52",
+    "07_shape_constraints.md": "cb07c672",
+    "07_shape_constraints.tex": "f636f3df"
+  },
+  "05_diagnostics/R/05_diagnostics.qmd": {
+    "05_diagnostics.html": "254dc34b",
+    "05_diagnostics.md": "d7b3bb77",
+    "05_diagnostics.tex": "c9caca6d"
+  },
+  "08_quantile_regression/R/08_quantile_regression.qmd": {
+    "08_quantile_regression.html": "885ad865",
+    "08_quantile_regression.md": "424ddcbb",
+    "08_quantile_regression.tex": "54270b1f"
+  }
+}

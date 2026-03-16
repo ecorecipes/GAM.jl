@@ -1,0 +1,263 @@
+---
+title: "Non-Gaussian Response Distributions"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+engine: julia
+---
+
+## Overview
+
+GAMs are not limited to Gaussian responses. By specifying a **family** (distribution) and **link function**, we can model count data, binary outcomes, positive continuous data, and more. The general model is:
+
+$$
+g(\mu_i) = \beta_0 + f_1(x_{1i}) + \cdots + f_p(x_{pi}), \quad y_i \sim \text{Family}(\mu_i, \phi)
+$$
+
+This vignette demonstrates three common non-Gaussian families:
+
+| Family | Link | Response type | Example |
+|--------|------|---------------|---------|
+| Poisson | log | Counts | Species counts, event rates |
+| Binomial | logit | Binary / proportions | Presence–absence, disease status |
+| Gamma | inverse (or log) | Positive continuous | Waiting times, claim sizes |
+
+## Setup
+
+```{julia}
+using GAM
+using CSV
+using StatsAPI: residuals, fitted, r2, deviance
+using Statistics: mean
+using GLM: LogLink, LogitLink
+
+using DataFrames
+using Plots
+using Distributions
+```
+
+## Poisson GAM — count data
+
+### Simulating count data
+
+We simulate counts from a Poisson distribution with a smooth log-rate:
+
+$$
+y_i \sim \text{Poisson}(\mu_i), \quad \log(\mu_i) = 1 + 1.5 \sin(2\pi x_i)
+$$
+
+```{julia}
+df_pois = CSV.read("data_poisson.csv", DataFrame)
+x = df_pois.x
+n = nrow(df_pois)
+η = 1.0 .+ 1.5 .* sin.(2π .* x)
+```
+
+### Fitting the model
+
+```{julia}
+m_pois = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df_pois;
+    family = Poisson(), link = LogLink())
+m_pois
+```
+
+### Smooth estimate
+
+```{julia}
+se_pois = smooth_estimates(m_pois; n = 200)
+x_grid = se_pois.covariates[:x]
+
+p1 = plot(x_grid, se_pois.estimate;
+    ribbon = 2 .* se_pois.se,
+    fillalpha = 0.2,
+    label = "s(x) ± 2SE",
+    linewidth = 2,
+    xlabel = "x",
+    ylabel = "f(x) [log scale]",
+    title = "Poisson GAM — smooth on link scale")
+plot!(p1, x, η .- mean(η);
+    label = "true f(x)",
+    linestyle = :dash,
+    linewidth = 2,
+    color = :red)
+p1
+```
+
+### Deviance residuals
+
+```{julia}
+resid_pois = residuals(m_pois; type = :deviance)
+
+p2 = scatter(fitted(m_pois), resid_pois;
+    xlabel = "Fitted values",
+    ylabel = "Deviance residuals",
+    title = "Poisson GAM — residuals",
+    alpha = 0.4,
+    markersize = 3,
+    label = false)
+hline!(p2, [0]; linestyle = :dash, color = :gray, label = false)
+p2
+```
+
+## Binomial GAM — binary data
+
+### Simulating binary data
+
+We simulate binary outcomes from a logistic model:
+
+$$
+y_i \sim \text{Bernoulli}(p_i), \quad \text{logit}(p_i) = -0.5 + 2\sin(2\pi x_i)
+$$
+
+```{julia}
+df_bin = CSV.read("data_binomial.csv", DataFrame)
+x_bin = df_bin.x
+η_bin = -0.5 .+ 2.0 .* sin.(2π .* x_bin)
+```
+
+### Fitting the model
+
+```{julia}
+m_bin = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df_bin;
+    family = Binomial(), link = LogitLink())
+m_bin
+```
+
+### Smooth estimate
+
+```{julia}
+se_bin = smooth_estimates(m_bin; n = 200)
+x_grid_bin = se_bin.covariates[:x]
+
+p3 = plot(x_grid_bin, se_bin.estimate;
+    ribbon = 2 .* se_bin.se,
+    fillalpha = 0.2,
+    label = "s(x) ± 2SE",
+    linewidth = 2,
+    xlabel = "x",
+    ylabel = "f(x) [logit scale]",
+    title = "Binomial GAM — smooth on link scale")
+plot!(p3, x_bin, η_bin .- mean(η_bin);
+    label = "true f(x)",
+    linestyle = :dash,
+    linewidth = 2,
+    color = :red)
+p3
+```
+
+### Deviance residuals
+
+```{julia}
+resid_bin = residuals(m_bin; type = :deviance)
+
+p4 = scatter(fitted(m_bin), resid_bin;
+    xlabel = "Fitted values (probability)",
+    ylabel = "Deviance residuals",
+    title = "Binomial GAM — residuals",
+    alpha = 0.4,
+    markersize = 3,
+    label = false)
+hline!(p4, [0]; linestyle = :dash, color = :gray, label = false)
+p4
+```
+
+## Gamma GAM — positive continuous data
+
+### Simulating positive continuous data
+
+We simulate positive continuous data from a Gamma distribution with a smooth log-mean:
+
+$$
+y_i \sim \text{Gamma}(\text{shape}, \text{scale}_i), \quad \log(\mu_i) = 1 + \sin(2\pi x_i)
+$$
+
+```{julia}
+df_gam = CSV.read("data_gamma.csv", DataFrame)
+x_gam = df_gam.x
+η_gam = 1.0 .+ sin.(2π .* x_gam)
+```
+
+### Fitting the model
+
+We use `Gamma()` with `LogLink()` (log link is more commonly used in practice than the canonical inverse link):
+
+```{julia}
+m_gam = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df_gam;
+    family = Gamma(), link = LogLink())
+m_gam
+```
+
+### Smooth estimate
+
+```{julia}
+se_gam = smooth_estimates(m_gam; n = 200)
+x_grid_gam = se_gam.covariates[:x]
+
+p5 = plot(x_grid_gam, se_gam.estimate;
+    ribbon = 2 .* se_gam.se,
+    fillalpha = 0.2,
+    label = "s(x) ± 2SE",
+    linewidth = 2,
+    xlabel = "x",
+    ylabel = "f(x) [log scale]",
+    title = "Gamma GAM — smooth on link scale")
+plot!(p5, x_gam, η_gam .- mean(η_gam);
+    label = "true f(x)",
+    linestyle = :dash,
+    linewidth = 2,
+    color = :red)
+p5
+```
+
+### Deviance residuals
+
+```{julia}
+resid_gam = residuals(m_gam; type = :deviance)
+
+p6 = scatter(fitted(m_gam), resid_gam;
+    xlabel = "Fitted values",
+    ylabel = "Deviance residuals",
+    title = "Gamma GAM — residuals",
+    alpha = 0.4,
+    markersize = 3,
+    label = false)
+hline!(p6, [0]; linestyle = :dash, color = :gray, label = false)
+p6
+```
+
+## Comparison
+
+```{julia}
+println("Family        EDF      Dev.Expl(%)   Scale")
+println("─" ^ 55)
+for (name, m) in [("Poisson", m_pois), ("Binomial", m_bin), ("Gamma", m_gam)]
+    e = round(edf(m)[1]; digits = 2)
+    de = round(r2(m) * 100; digits = 1)
+    sc = round(m.scale; digits = 4)
+    println("$(rpad(name, 14))$(lpad(string(e), 6))  $(lpad(string(de), 12))  $(lpad(string(sc), 8))")
+end
+```
+
+### All smooth estimates together
+
+```{julia}
+plot(p1, p3, p5; layout = (1, 3), size = (1000, 350))
+```
+
+## Summary
+
+In this vignette we:
+
+1. Simulated count data and fitted a **Poisson GAM** with a log link
+2. Simulated binary data and fitted a **Binomial GAM** with a logit link
+3. Simulated positive continuous data and fitted a **Gamma GAM** with a log link
+4. Examined smooth estimates and deviance residuals for each family
+5. Compared EDF and deviance explained across families
+
+Each family uses a different link function to map the linear predictor to the mean of the response distribution, but the smooth estimation machinery is the same.

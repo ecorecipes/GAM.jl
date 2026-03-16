@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.9.28">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="GAM.jl Contributors">
+
+<title>Shape-Constrained Additive Models</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="07_shape_constraints_files/libs/clipboard/clipboard.min.js"></script>
+<script src="07_shape_constraints_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="07_shape_constraints_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="07_shape_constraints_files/libs/quarto-html/popper.min.js"></script>
+<script src="07_shape_constraints_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="07_shape_constraints_files/libs/quarto-html/anchor.min.js"></script>
+<link href="07_shape_constraints_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="07_shape_constraints_files/libs/quarto-html/quarto-syntax-highlighting-49e51e44f424ea8c7044b429bdbbbfe2.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="07_shape_constraints_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="07_shape_constraints_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="07_shape_constraints_files/libs/bootstrap/bootstrap-138a6193a3bd40baf1e627da441a4734.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+<div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+  <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#introduction" id="toc-introduction" class="nav-link active" data-scroll-target="#introduction">Introduction</a></li>
+  <li><a href="#setup" id="toc-setup" class="nav-link" data-scroll-target="#setup">Setup</a></li>
+  <li><a href="#available-basis-types" id="toc-available-basis-types" class="nav-link" data-scroll-target="#available-basis-types">Available basis types</a></li>
+  <li><a href="#example-1-monotone-increasing-dose-response" id="toc-example-1-monotone-increasing-dose-response" class="nav-link" data-scroll-target="#example-1-monotone-increasing-dose-response">Example 1: Monotone increasing (dose-response)</a>
+  <ul class="collapse">
+  <li><a href="#simulate-data" id="toc-simulate-data" class="nav-link" data-scroll-target="#simulate-data">Simulate data</a></li>
+  <li><a href="#fit-unconstrained-gam-vs-scam" id="toc-fit-unconstrained-gam-vs-scam" class="nav-link" data-scroll-target="#fit-unconstrained-gam-vs-scam">Fit unconstrained GAM vs SCAM</a></li>
+  <li><a href="#compare-fitted-values" id="toc-compare-fitted-values" class="nav-link" data-scroll-target="#compare-fitted-values">Compare fitted values</a></li>
+  <li><a href="#verify-monotonicity" id="toc-verify-monotonicity" class="nav-link" data-scroll-target="#verify-monotonicity">Verify monotonicity</a></li>
+  </ul></li>
+  <li><a href="#example-2-convex-function" id="toc-example-2-convex-function" class="nav-link" data-scroll-target="#example-2-convex-function">Example 2: Convex function</a>
+  <ul class="collapse">
+  <li><a href="#simulate-data-1" id="toc-simulate-data-1" class="nav-link" data-scroll-target="#simulate-data-1">Simulate data</a></li>
+  <li><a href="#fit-with-convexity-constraint" id="toc-fit-with-convexity-constraint" class="nav-link" data-scroll-target="#fit-with-convexity-constraint">Fit with convexity constraint</a></li>
+  <li><a href="#verify-convexity" id="toc-verify-convexity" class="nav-link" data-scroll-target="#verify-convexity">Verify convexity</a></li>
+  </ul></li>
+  <li><a href="#example-3-monotone-increasing-and-concave-diminishing-returns" id="toc-example-3-monotone-increasing-and-concave-diminishing-returns" class="nav-link" data-scroll-target="#example-3-monotone-increasing-and-concave-diminishing-returns">Example 3: Monotone increasing and concave (diminishing returns)</a>
+  <ul class="collapse">
+  <li><a href="#simulate-data-2" id="toc-simulate-data-2" class="nav-link" data-scroll-target="#simulate-data-2">Simulate data</a></li>
+  <li><a href="#fit-with-monotone-increasing-concave-constraint" id="toc-fit-with-monotone-increasing-concave-constraint" class="nav-link" data-scroll-target="#fit-with-monotone-increasing-concave-constraint">Fit with monotone increasing + concave constraint</a></li>
+  <li><a href="#verify-constraints" id="toc-verify-constraints" class="nav-link" data-scroll-target="#verify-constraints">Verify constraints</a></li>
+  </ul></li>
+  <li><a href="#scam-fitting-details" id="toc-scam-fitting-details" class="nav-link" data-scroll-target="#scam-fitting-details">SCAM fitting details</a></li>
+  <li><a href="#comparing-all-constraint-types" id="toc-comparing-all-constraint-types" class="nav-link" data-scroll-target="#comparing-all-constraint-types">Comparing all constraint types</a></li>
+  <li><a href="#summary" id="toc-summary" class="nav-link" data-scroll-target="#summary">Summary</a></li>
+  </ul>
+<div class="quarto-alternate-formats"><h2>Other Formats</h2><ul><li><a href="07_shape_constraints.md"><i class="bi bi-file-code"></i>Github (GFM)</a></li><li><a href="07_shape_constraints.pdf"><i class="bi bi-file-pdf"></i>PDF</a></li></ul></div></nav>
+</div>
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Shape-Constrained Additive Models</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    <div>
+    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-contents">
+             <p>GAM.jl Contributors </p>
+          </div>
+  </div>
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="introduction" class="level2">
+<h2 class="anchored" data-anchor-id="introduction">Introduction</h2>
+<p>Standard GAMs estimate smooth functions without restrictions on their shape. In many applications, however, domain knowledge dictates that a relationship should be monotonically increasing (e.g., dose-response), convex (e.g., cost curves), or satisfy other shape constraints.</p>
+<p><strong>Shape-Constrained Additive Models (SCAMs)</strong> enforce these constraints using SCOP-splines (Shape Constrained P-splines), where B-spline coefficients are reparameterized through cumulative sums and exponentiation to guarantee the desired shape.</p>
+<p>GAM.jl implements SCAM fitting following the approach of the R <a href="https://cran.r-project.org/package=scam">scam</a> package (Pya &amp; Wood, 2015).</p>
+</section>
+<section id="setup" class="level2">
+<h2 class="anchored" data-anchor-id="setup">Setup</h2>
+<div id="2" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">GAM</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">StatsAPI</span>: predict</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">DataFrames</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">CSV</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">Random</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">Statistics</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="available-basis-types" class="level2">
+<h2 class="anchored" data-anchor-id="available-basis-types">Available basis types</h2>
+<p>GAM.jl supports 8 shape-constrained basis types, specified via the <code>bs</code> argument in <code>s()</code>:</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 35%">
+<col style="width: 29%">
+<col style="width: 35%">
+</colgroup>
+<thead>
+<tr class="header">
+<th><code>bs</code> symbol</th>
+<th>Constraint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>:mpi</code></td>
+<td>Monotone increasing</td>
+<td><span class="math inline">\(f'(x) \geq 0\)</span></td>
+</tr>
+<tr class="even">
+<td><code>:mpd</code></td>
+<td>Monotone decreasing</td>
+<td><span class="math inline">\(f'(x) \leq 0\)</span></td>
+</tr>
+<tr class="odd">
+<td><code>:cx</code></td>
+<td>Convex</td>
+<td><span class="math inline">\(f''(x) \geq 0\)</span></td>
+</tr>
+<tr class="even">
+<td><code>:cv</code></td>
+<td>Concave</td>
+<td><span class="math inline">\(f''(x) \leq 0\)</span></td>
+</tr>
+<tr class="odd">
+<td><code>:micx</code></td>
+<td>Monotone increasing &amp; convex</td>
+<td><span class="math inline">\(f'(x) \geq 0\)</span> and <span class="math inline">\(f''(x) \geq 0\)</span></td>
+</tr>
+<tr class="even">
+<td><code>:micv</code></td>
+<td>Monotone increasing &amp; concave</td>
+<td><span class="math inline">\(f'(x) \geq 0\)</span> and <span class="math inline">\(f''(x) \leq 0\)</span></td>
+</tr>
+<tr class="odd">
+<td><code>:mdcx</code></td>
+<td>Monotone decreasing &amp; convex</td>
+<td><span class="math inline">\(f'(x) \leq 0\)</span> and <span class="math inline">\(f''(x) \geq 0\)</span></td>
+</tr>
+<tr class="even">
+<td><code>:mdcv</code></td>
+<td>Monotone decreasing &amp; concave</td>
+<td><span class="math inline">\(f'(x) \leq 0\)</span> and <span class="math inline">\(f''(x) \leq 0\)</span></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example-1-monotone-increasing-dose-response" class="level2">
+<h2 class="anchored" data-anchor-id="example-1-monotone-increasing-dose-response">Example 1: Monotone increasing (dose-response)</h2>
+<p>A dose-response relationship is naturally monotone increasing—higher doses should not decrease the response.</p>
+<section id="simulate-data" class="level3">
+<h3 class="anchored" data-anchor-id="simulate-data">Simulate data</h3>
+<p>True function: <span class="math inline">\(f(x) = 3(1 - e^{-5x})\)</span>, a saturating exponential.</p>
+<div id="4" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> CSV.<span class="fu">read</span>(<span class="st">"data.csv"</span>, DataFrame)</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> df.x; y <span class="op">=</span> df.y</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>n <span class="op">=</span> <span class="fu">nrow</span>(df)</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>f_true <span class="op">=</span> <span class="fl">3.0</span> <span class="op">.*</span> (<span class="fl">1.0</span> <span class="op">.-</span> <span class="fu">exp</span>.(<span class="op">-</span><span class="fl">5.0</span> <span class="op">.*</span> x))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>200-element Vector{Float64}:
+ 0.0035813093739730517
+ 0.020641315576114705
+ 0.02346605588919992
+ 0.033901484075778865
+ 0.05864430830768941
+ 0.10801952103761714
+ 0.1159700766851749
+ 0.4060464108647236
+ 0.5120548610923702
+ 0.5307120418037653
+ ⋮
+ 2.973608911275417
+ 2.9750097790978067
+ 2.975626021707947
+ 2.975630618230438
+ 2.9766280983687334
+ 2.9769268870331884
+ 2.9774612640729052
+ 2.977972722359742
+ 2.9786316912891824</code></pre>
+</div>
+</div>
+</section>
+<section id="fit-unconstrained-gam-vs-scam" class="level3">
+<h3 class="anchored" data-anchor-id="fit-unconstrained-gam-vs-scam">Fit unconstrained GAM vs SCAM</h3>
+<div id="6" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>m_gam <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)), df)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>m_scam <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>mpi)), df)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>Generalized Additive Model
+
+Formula: y ~ 1
+
+Family: Normal
+Link:   IdentityLink
+Method: GCV
+
+Parametric coefficients:
+──────────────────────────────────────────────────
+               Coef.  Std. Error       t  Pr(&gt;|t|)
+──────────────────────────────────────────────────
+(Intercept)  2.41623   0.0203741  118.59    &lt;1e-99
+──────────────────────────────────────────────────
+
+Approximate significance of smooth terms:
+──────────────────────────────────────────────────
+Smooth                    edf   Ref.df
+──────────────────────────────────────────────────
+s(x,bs=mpi)              3.42       14
+──────────────────────────────────────────────────
+
+R² (adj) = 0.877   Deviance explained = 87.9%
+Scale est. = 0.0830   n = 200</code></pre>
+</div>
+</div>
+</section>
+<section id="compare-fitted-values" class="level3">
+<h3 class="anchored" data-anchor-id="compare-fitted-values">Compare fitted values</h3>
+<div id="8" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>yhat_gam <span class="op">=</span> <span class="fu">predict</span>(m_gam)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>yhat_scam <span class="op">=</span> <span class="fu">predict</span>(m_scam)</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>rmse_gam <span class="op">=</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_gam <span class="op">.-</span> f_true)<span class="op">.^</span><span class="fl">2</span>))</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>rmse_scam <span class="op">=</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_scam <span class="op">.-</span> f_true)<span class="op">.^</span><span class="fl">2</span>))</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"RMSE (unconstrained GAM): "</span>, <span class="fu">round</span>(rmse_gam, digits<span class="op">=</span><span class="fl">4</span>))</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"RMSE (SCAM, monotone increasing): "</span>, <span class="fu">round</span>(rmse_scam, digits<span class="op">=</span><span class="fl">4</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>RMSE (unconstrained GAM): 0.0509
+RMSE (SCAM, monotone increasing): 0.05</code></pre>
+</div>
+</div>
+</section>
+<section id="verify-monotonicity" class="level3">
+<h3 class="anchored" data-anchor-id="verify-monotonicity">Verify monotonicity</h3>
+<p>The SCAM fit should be monotonically non-decreasing:</p>
+<div id="10" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>diffs <span class="op">=</span> <span class="fu">diff</span>(yhat_scam)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Min successive difference (SCAM): "</span>, <span class="fu">round</span>(<span class="fu">minimum</span>(diffs), digits<span class="op">=</span><span class="fl">6</span>))</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"All non-decreasing: "</span>, <span class="fu">all</span>(diffs <span class="op">.&gt;=</span> <span class="op">-</span><span class="fl">1e-10</span>))</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>diffs_gam <span class="op">=</span> <span class="fu">diff</span>(yhat_gam)</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Min successive difference (GAM): "</span>, <span class="fu">round</span>(<span class="fu">minimum</span>(diffs_gam), digits<span class="op">=</span><span class="fl">6</span>))</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"GAM all non-decreasing: "</span>, <span class="fu">all</span>(diffs_gam <span class="op">.&gt;=</span> <span class="op">-</span><span class="fl">1e-10</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Min successive difference (SCAM): 1.0e-6
+All non-decreasing: true
+Min successive difference (GAM): -0.001143
+GAM all non-decreasing: false</code></pre>
+</div>
+</div>
+</section>
+</section>
+<section id="example-2-convex-function" class="level2">
+<h2 class="anchored" data-anchor-id="example-2-convex-function">Example 2: Convex function</h2>
+<p>Cost functions and accelerating growth curves are often convex.</p>
+<section id="simulate-data-1" class="level3">
+<h3 class="anchored" data-anchor-id="simulate-data-1">Simulate data</h3>
+<p>True function: <span class="math inline">\(f(x) = 2x^2\)</span></p>
+<div id="12" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>df_cx <span class="op">=</span> CSV.<span class="fu">read</span>(<span class="st">"data_cx.csv"</span>, DataFrame)</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>x_cx <span class="op">=</span> df_cx.x</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>y_cx <span class="op">=</span> df_cx.y</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>df2 <span class="op">=</span> <span class="fu">DataFrame</span>(y<span class="op">=</span>y_cx, x<span class="op">=</span>x_cx)</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>f_true2 <span class="op">=</span> <span class="fl">2.0</span> <span class="op">.*</span> x_cx<span class="op">.^</span><span class="fl">2</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>200-element Vector{Float64}:
+  1.0272883703943119e-6
+  3.432112166702789e-5
+  4.439952989195642e-5
+  9.299474682423356e-5
+  0.0002806088263862691
+  0.0009682147886231632
+  0.0011190438882596383
+  0.01522772751099268
+  0.0252194799807833
+  0.027288906139353326
+  ⋮
+ 16.131253365630887
+ 16.50515289191781
+ 16.677748261268793
+ 16.679055387058067
+ 16.969970851777763
+ 17.06003934671803
+ 17.22468501346472
+ 17.386733601386684
+ 17.602323327505694</code></pre>
+</div>
+</div>
+</section>
+<section id="fit-with-convexity-constraint" class="level3">
+<h3 class="anchored" data-anchor-id="fit-with-convexity-constraint">Fit with convexity constraint</h3>
+<div id="14" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>m_cx <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cx)), df2)</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>yhat_cx <span class="op">=</span> <span class="fu">predict</span>(m_cx)</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>rmse_cx <span class="op">=</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_cx <span class="op">.-</span> f_true2)<span class="op">.^</span><span class="fl">2</span>))</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"RMSE (convex SCAM): "</span>, <span class="fu">round</span>(rmse_cx, digits<span class="op">=</span><span class="fl">4</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>RMSE (convex SCAM): 6.7682</code></pre>
+</div>
+</div>
+</section>
+<section id="verify-convexity" class="level3">
+<h3 class="anchored" data-anchor-id="verify-convexity">Verify convexity</h3>
+<p>For a convex function, second differences should be non-negative:</p>
+<div id="16" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>first_diffs <span class="op">=</span> <span class="fu">diff</span>(yhat_cx)</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>second_diffs <span class="op">=</span> <span class="fu">diff</span>(first_diffs)</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Min second difference: "</span>, <span class="fu">round</span>(<span class="fu">minimum</span>(second_diffs), digits<span class="op">=</span><span class="fl">6</span>))</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"All convex: "</span>, <span class="fu">all</span>(second_diffs <span class="op">.&gt;=</span> <span class="op">-</span><span class="fl">1e-10</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Min second difference: -0.058956
+All convex: false</code></pre>
+</div>
+</div>
+</section>
+</section>
+<section id="example-3-monotone-increasing-and-concave-diminishing-returns" class="level2">
+<h2 class="anchored" data-anchor-id="example-3-monotone-increasing-and-concave-diminishing-returns">Example 3: Monotone increasing and concave (diminishing returns)</h2>
+<p>Many real-world relationships show diminishing returns: the function increases but at a decreasing rate. This corresponds to a monotone increasing and concave constraint.</p>
+<section id="simulate-data-2" class="level3">
+<h3 class="anchored" data-anchor-id="simulate-data-2">Simulate data</h3>
+<p>True function: <span class="math inline">\(f(x) = 3\sqrt{x}\)</span></p>
+<div id="18" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>df_micv <span class="op">=</span> CSV.<span class="fu">read</span>(<span class="st">"data_micv.csv"</span>, DataFrame)</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>x_micv <span class="op">=</span> df_micv.x</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>y_micv <span class="op">=</span> df_micv.y</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>df3 <span class="op">=</span> <span class="fu">DataFrame</span>(y<span class="op">=</span>y_micv, x<span class="op">=</span>x_micv)</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>f_true3 <span class="op">=</span> <span class="fl">3.0</span> <span class="op">.*</span> <span class="fu">sqrt</span>.(x_micv)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>200-element Vector{Float64}:
+ 0.28433012053092904
+ 0.3147719315378547
+ 0.4367684974148984
+ 0.6450893906079926
+ 0.6710266215708789
+ 0.7191942516143257
+ 0.7684079109443924
+ 0.7961350004577783
+ 0.8628160497074876
+ 0.863633819984572
+ ⋮
+ 2.9213968959339702
+ 2.9269944201302573
+ 2.931574047285353
+ 2.932008562111724
+ 2.936811966893178
+ 2.9438191889181957
+ 2.946733349169081
+ 2.9558267325908676
+ 2.988406288812731</code></pre>
+</div>
+</div>
+</section>
+<section id="fit-with-monotone-increasing-concave-constraint" class="level3">
+<h3 class="anchored" data-anchor-id="fit-with-monotone-increasing-concave-constraint">Fit with monotone increasing + concave constraint</h3>
+<div id="20" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>m_micv <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>micv)), df3)</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>yhat_micv <span class="op">=</span> <span class="fu">predict</span>(m_micv)</span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>rmse_micv <span class="op">=</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_micv <span class="op">.-</span> f_true3)<span class="op">.^</span><span class="fl">2</span>))</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"RMSE (monotone increasing + concave): "</span>, <span class="fu">round</span>(rmse_micv, digits<span class="op">=</span><span class="fl">4</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>RMSE (monotone increasing + concave): 1.5212</code></pre>
+</div>
+</div>
+</section>
+<section id="verify-constraints" class="level3">
+<h3 class="anchored" data-anchor-id="verify-constraints">Verify constraints</h3>
+<div id="22" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>first_diffs_micv <span class="op">=</span> <span class="fu">diff</span>(yhat_micv)</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>second_diffs_micv <span class="op">=</span> <span class="fu">diff</span>(first_diffs_micv)</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Min first difference (monotonicity): "</span>, <span class="fu">round</span>(<span class="fu">minimum</span>(first_diffs_micv), digits<span class="op">=</span><span class="fl">6</span>))</span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Max second difference (concavity): "</span>, <span class="fu">round</span>(<span class="fu">maximum</span>(second_diffs_micv), digits<span class="op">=</span><span class="fl">6</span>))</span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Monotone increasing: "</span>, <span class="fu">all</span>(first_diffs_micv <span class="op">.&gt;=</span> <span class="op">-</span><span class="fl">1e-10</span>))</span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Concave: "</span>, <span class="fu">all</span>(second_diffs_micv <span class="op">.&lt;=</span> <span class="fl">1e-10</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Min first difference (monotonicity): 8.0e-6
+Max second difference (concavity): 0.01685
+Monotone increasing: true
+Concave: false</code></pre>
+</div>
+</div>
+</section>
+</section>
+<section id="scam-fitting-details" class="level2">
+<h2 class="anchored" data-anchor-id="scam-fitting-details">SCAM fitting details</h2>
+<p>The <code>scam</code> function accepts the same arguments as <code>gam</code>, with additional control via <code>scam_control</code>:</p>
+<div id="24" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>ctrl <span class="op">=</span> <span class="fu">scam_control</span>(</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>    epsilon<span class="op">=</span><span class="fl">1e-7</span>,        <span class="co"># convergence tolerance</span></span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>    maxit<span class="op">=</span><span class="fl">200</span>,           <span class="co"># max Newton iterations</span></span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a>    outer_maxit<span class="op">=</span><span class="fl">200</span>,     <span class="co"># max outer (smoothing parameter) iterations</span></span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a>    trace<span class="op">=</span><span class="cn">false</span>,         <span class="co"># print iteration progress</span></span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a>    gamma<span class="op">=</span><span class="fl">1.0</span>,           <span class="co"># GCV inflation factor</span></span>
+<span id="cb22-7"><a href="#cb22-7" aria-hidden="true" tabindex="-1"></a>    not_exp<span class="op">=</span><span class="cn">false</span>        <span class="co"># use exp() transform (default); true for softplus</span></span>
+<span id="cb22-8"><a href="#cb22-8" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-10"><a href="#cb22-10" aria-hidden="true" tabindex="-1"></a>m_ctrl <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>mpi)), df; control<span class="op">=</span>ctrl)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>Generalized Additive Model
+
+Formula: y ~ 1
+
+Family: Normal
+Link:   IdentityLink
+Method: GCV
+
+Parametric coefficients:
+──────────────────────────────────────────────────
+               Coef.  Std. Error       t  Pr(&gt;|t|)
+──────────────────────────────────────────────────
+(Intercept)  2.41623   0.0203741  118.59    &lt;1e-99
+──────────────────────────────────────────────────
+
+Approximate significance of smooth terms:
+──────────────────────────────────────────────────
+Smooth                    edf   Ref.df
+──────────────────────────────────────────────────
+s(x,bs=mpi)              3.42       14
+──────────────────────────────────────────────────
+
+R² (adj) = 0.877   Deviance explained = 87.9%
+Scale est. = 0.0830   n = 200</code></pre>
+</div>
+</div>
+<p>If no shape-constrained basis types are detected, <code>scam</code> automatically falls back to standard <code>gam</code> fitting:</p>
+<div id="26" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>m_fallback <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)), df)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>Generalized Additive Model
+
+Formula: y ~ 1
+
+Family: Normal
+Link:   IdentityLink
+Method: GCV
+
+Parametric coefficients:
+──────────────────────────────────────────────────
+               Coef.  Std. Error       t  Pr(&gt;|t|)
+──────────────────────────────────────────────────
+(Intercept)  2.41623   0.0204657  118.06    &lt;1e-99
+──────────────────────────────────────────────────
+
+Approximate significance of smooth terms:
+──────────────────────────────────────────────────
+Smooth                    edf   Ref.df
+──────────────────────────────────────────────────
+s(x,bs=cr)               4.80       14
+──────────────────────────────────────────────────
+
+R² (adj) = 0.876   Deviance explained = 87.9%
+Scale est. = 0.0838   n = 200</code></pre>
+</div>
+</div>
+</section>
+<section id="comparing-all-constraint-types" class="level2">
+<h2 class="anchored" data-anchor-id="comparing-all-constraint-types">Comparing all constraint types</h2>
+<p>Let’s fit each basis type to appropriate test data:</p>
+<div id="28" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="bu">Random</span>.<span class="fu">seed!</span>(<span class="fl">42</span>)</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>x_test <span class="op">=</span> <span class="fu">sort</span>(<span class="fu">rand</span>(<span class="fl">200</span>))</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Monotone increasing: f(x) = x^2 (increasing on [0,1])</span></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>y_mpi <span class="op">=</span> x_test<span class="op">.^</span><span class="fl">2</span> <span class="op">.+</span> <span class="fl">0.1</span> <span class="op">.*</span> <span class="fu">randn</span>(<span class="fl">200</span>)</span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Monotone decreasing: f(x) = 1 - x^2</span></span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a>y_mpd <span class="op">=</span> (<span class="fl">1.0</span> <span class="op">.-</span> x_test<span class="op">.^</span><span class="fl">2</span>) <span class="op">.+</span> <span class="fl">0.1</span> <span class="op">.*</span> <span class="fu">randn</span>(<span class="fl">200</span>)</span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Convex: f(x) = x^2</span></span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a>y_cx <span class="op">=</span> x_test<span class="op">.^</span><span class="fl">2</span> <span class="op">.+</span> <span class="fl">0.1</span> <span class="op">.*</span> <span class="fu">randn</span>(<span class="fl">200</span>)</span>
+<span id="cb26-10"><a href="#cb26-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Concave: f(x) = sqrt(x)</span></span>
+<span id="cb26-11"><a href="#cb26-11" aria-hidden="true" tabindex="-1"></a>y_cv <span class="op">=</span> <span class="fu">sqrt</span>.(x_test) <span class="op">.+</span> <span class="fl">0.1</span> <span class="op">.*</span> <span class="fu">randn</span>(<span class="fl">200</span>)</span>
+<span id="cb26-12"><a href="#cb26-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-13"><a href="#cb26-13" aria-hidden="true" tabindex="-1"></a>basis_types <span class="op">=</span> [<span class="op">:</span>mpi, <span class="op">:</span>mpd, <span class="op">:</span>cx, <span class="op">:</span>cv, <span class="op">:</span>micx, <span class="op">:</span>micv, <span class="op">:</span>mdcx, <span class="op">:</span>mdcv]</span>
+<span id="cb26-14"><a href="#cb26-14" aria-hidden="true" tabindex="-1"></a>y_data <span class="op">=</span> <span class="fu">Dict</span>(</span>
+<span id="cb26-15"><a href="#cb26-15" aria-hidden="true" tabindex="-1"></a>    <span class="op">:</span>mpi <span class="op">=&gt;</span> y_mpi, <span class="op">:</span>mpd <span class="op">=&gt;</span> y_mpd, <span class="op">:</span>cx <span class="op">=&gt;</span> y_cx, <span class="op">:</span>cv <span class="op">=&gt;</span> y_cv,</span>
+<span id="cb26-16"><a href="#cb26-16" aria-hidden="true" tabindex="-1"></a>    <span class="op">:</span>micx <span class="op">=&gt;</span> y_cx, <span class="op">:</span>micv <span class="op">=&gt;</span> y_cv, <span class="op">:</span>mdcx <span class="op">=&gt;</span> y_mpd, <span class="op">:</span>mdcv <span class="op">=&gt;</span> (<span class="fl">1.0</span> <span class="op">.-</span> <span class="fu">sqrt</span>.(x_test)) <span class="op">.+</span> <span class="fl">0.1</span> <span class="op">.*</span> <span class="fu">randn</span>(<span class="fl">200</span>)</span>
+<span id="cb26-17"><a href="#cb26-17" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb26-18"><a href="#cb26-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-19"><a href="#cb26-19" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> bs <span class="kw">in</span> basis_types</span>
+<span id="cb26-20"><a href="#cb26-20" aria-hidden="true" tabindex="-1"></a>    df_test <span class="op">=</span> <span class="fu">DataFrame</span>(y<span class="op">=</span>y_data[bs], x<span class="op">=</span>x_test)</span>
+<span id="cb26-21"><a href="#cb26-21" aria-hidden="true" tabindex="-1"></a>    m_test <span class="op">=</span> <span class="fu">scam</span>(<span class="fu">GamFormula</span>(<span class="op">:</span>y, <span class="dt">Symbol</span>[], <span class="cn">true</span>, [<span class="fu">s</span>(<span class="op">:</span>x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=</span>bs)]), df_test)</span>
+<span id="cb26-22"><a href="#cb26-22" aria-hidden="true" tabindex="-1"></a>    yhat <span class="op">=</span> <span class="fu">predict</span>(m_test)</span>
+<span id="cb26-23"><a href="#cb26-23" aria-hidden="true" tabindex="-1"></a>    <span class="fu">println</span>(<span class="st">"bs=:</span><span class="sc">$</span>bs<span class="st"> — EDF: </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">sum</span>(m_test.edf), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, range: [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(yhat), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(yhat), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span>
+<span id="cb26-24"><a href="#cb26-24" aria-hidden="true" tabindex="-1"></a><span class="cf">end</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>bs=:mpi — EDF: 3.0, range: [-0.04, 1.0]
+bs=:mpd — EDF: 3.04, range: [0.02, 1.06]
+bs=:cx — EDF: 1.0, range: [-0.02, 0.99]
+bs=:cv — EDF: 2.19, range: [0.13, 0.98]
+bs=:micx — EDF: 1.0, range: [-0.02, 0.99]
+bs=:micv — EDF: 2.42, range: [0.13, 0.98]
+bs=:mdcx — EDF: 1.0, range: [0.14, 1.19]
+bs=:mdcv — EDF: 1.0, range: [-0.05, 0.7]</code></pre>
+</div>
+</div>
+</section>
+<section id="summary" class="level2">
+<h2 class="anchored" data-anchor-id="summary">Summary</h2>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Feature</th>
+<th>GAM.jl (<code>scam</code>)</th>
+<th>R <code>scam</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Fitting function</td>
+<td><code>scam(formula, data)</code></td>
+<td><code>scam(formula, data=dat)</code></td>
+</tr>
+<tr class="even">
+<td>Monotone increasing</td>
+<td><code>bs=:mpi</code></td>
+<td><code>bs="mpi"</code></td>
+</tr>
+<tr class="odd">
+<td>Monotone decreasing</td>
+<td><code>bs=:mpd</code></td>
+<td><code>bs="mpd"</code></td>
+</tr>
+<tr class="even">
+<td>Convex</td>
+<td><code>bs=:cx</code></td>
+<td><code>bs="cx"</code></td>
+</tr>
+<tr class="odd">
+<td>Concave</td>
+<td><code>bs=:cv</code></td>
+<td><code>bs="cv"</code></td>
+</tr>
+<tr class="even">
+<td>Mono. inc. + convex</td>
+<td><code>bs=:micx</code></td>
+<td><code>bs="micx"</code></td>
+</tr>
+<tr class="odd">
+<td>Mono. inc. + concave</td>
+<td><code>bs=:micv</code></td>
+<td><code>bs="micv"</code></td>
+</tr>
+<tr class="even">
+<td>Mono. dec. + convex</td>
+<td><code>bs=:mdcx</code></td>
+<td><code>bs="mdcx"</code></td>
+</tr>
+<tr class="odd">
+<td>Mono. dec. + concave</td>
+<td><code>bs=:mdcv</code></td>
+<td><code>bs="mdcv"</code></td>
+</tr>
+<tr class="even">
+<td>Control parameters</td>
+<td><code>scam_control()</code></td>
+<td><code>scam.control()</code></td>
+</tr>
+</tbody>
+</table>
+<p>Shape constraints are enforced through the SCOP-spline reparameterization using the exponential function, ensuring constraints hold exactly at the spline knots and approximately between them.</p>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

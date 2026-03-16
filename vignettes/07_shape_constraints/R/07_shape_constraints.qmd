@@ -1,0 +1,166 @@
+---
+title: "Shape-Constrained Additive Models"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+---
+
+## Introduction
+
+This vignette demonstrates shape-constrained additive models using the R **scam** package, fitting the same simulated data as the Julia vignette for comparison.
+
+## Setup
+
+```{r}
+library(scam)
+library(mgcv)
+```
+
+## Example 1: Monotone increasing (dose-response)
+
+### Load data
+
+True function: $f(x) = 3(1 - e^{-5x})$
+
+```{r}
+dat <- read.csv("../data.csv")
+x <- dat$x
+y <- dat$y
+n <- nrow(dat)
+f_true <- 3.0 * (1.0 - exp(-5.0 * x))
+```
+
+### Fit unconstrained GAM vs SCAM
+
+```{r}
+m_gam <- gam(y ~ s(x, k = 15, bs = "cr"), data = dat)
+m_scam <- scam(y ~ s(x, k = 15, bs = "mpi"), data = dat)
+```
+
+### Compare fitted values
+
+```{r}
+yhat_gam <- predict(m_gam)
+yhat_scam <- predict(m_scam)
+
+rmse_gam <- sqrt(mean((yhat_gam - f_true)^2))
+rmse_scam <- sqrt(mean((yhat_scam - f_true)^2))
+
+cat("RMSE (unconstrained GAM):", round(rmse_gam, 4), "\n")
+cat("RMSE (SCAM, monotone increasing):", round(rmse_scam, 4), "\n")
+```
+
+### Verify monotonicity
+
+```{r}
+diffs_scam <- diff(yhat_scam)
+diffs_gam <- diff(yhat_gam)
+
+cat("Min successive difference (SCAM):", round(min(diffs_scam), 6), "\n")
+cat("All non-decreasing (SCAM):", all(diffs_scam >= -1e-10), "\n")
+cat("Min successive difference (GAM):", round(min(diffs_gam), 6), "\n")
+cat("All non-decreasing (GAM):", all(diffs_gam >= -1e-10), "\n")
+```
+
+## Example 2: Convex function
+
+### Simulate data
+
+True function: $f(x) = 2x^2$
+
+```{r}
+dat_cx <- read.csv("../data_cx.csv")
+x_cx <- dat_cx$x
+y_cx <- dat_cx$y
+
+dat2 <- data.frame(y = y_cx, x = x_cx)
+f_true2 <- 2 * x_cx^2
+```
+
+### Fit with convexity constraint
+
+```{r}
+m_cx <- scam(y ~ s(x, k = 15, bs = "cx"), data = dat2)
+
+yhat_cx <- predict(m_cx)
+rmse_cx <- sqrt(mean((yhat_cx - f_true2)^2))
+cat("RMSE (convex SCAM):", round(rmse_cx, 4), "\n")
+```
+
+### Verify convexity
+
+```{r}
+first_diffs <- diff(yhat_cx)
+second_diffs <- diff(first_diffs)
+cat("Min second difference:", round(min(second_diffs), 6), "\n")
+cat("All convex:", all(second_diffs >= -1e-10), "\n")
+```
+
+## Example 3: Monotone increasing and concave
+
+### Simulate data
+
+True function: $f(x) = 3\sqrt{x}$
+
+```{r}
+dat_micv <- read.csv("../data_micv.csv")
+x_micv <- dat_micv$x
+y_micv <- dat_micv$y
+
+dat3 <- data.frame(y = y_micv, x = x_micv)
+f_true3 <- 3 * sqrt(x_micv)
+```
+
+### Fit with monotone increasing + concave constraint
+
+```{r}
+m_micv <- scam(y ~ s(x, k = 15, bs = "micv"), data = dat3)
+
+yhat_micv <- predict(m_micv)
+rmse_micv <- sqrt(mean((yhat_micv - f_true3)^2))
+cat("RMSE (monotone increasing + concave):", round(rmse_micv, 4), "\n")
+```
+
+### Verify constraints
+
+```{r}
+first_diffs_micv <- diff(yhat_micv)
+second_diffs_micv <- diff(first_diffs_micv)
+cat("Min first difference (monotonicity):", round(min(first_diffs_micv), 6), "\n")
+cat("Max second difference (concavity):", round(max(second_diffs_micv), 6), "\n")
+cat("Monotone increasing:", all(first_diffs_micv >= -1e-10), "\n")
+cat("Concave:", all(second_diffs_micv <= 1e-10), "\n")
+```
+
+## SCAM model summaries
+
+```{r}
+summary(m_scam)
+```
+
+```{r}
+summary(m_cx)
+```
+
+```{r}
+summary(m_micv)
+```
+
+## Comparison table
+
+| Feature | R `scam` | Julia GAM.jl `scam` |
+|---------|----------|---------------------|
+| Monotone increasing | `bs="mpi"` | `bs=:mpi` |
+| Monotone decreasing | `bs="mpd"` | `bs=:mpd` |
+| Convex | `bs="cx"` | `bs=:cx` |
+| Concave | `bs="cv"` | `bs=:cv` |
+| Mono. inc. + convex | `bs="micx"` | `bs=:micx` |
+| Mono. inc. + concave | `bs="micv"` | `bs=:micv` |
+| Mono. dec. + convex | `bs="mdcx"` | `bs=:mdcx` |
+| Mono. dec. + concave | `bs="mdcv"` | `bs=:mdcv` |
