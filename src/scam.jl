@@ -735,6 +735,7 @@ function scam(gf::GamFormula, data;
         # No shape constraints — fall back to standard GAM
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
             method == :GCV ? :GCV : method == :UBRE ? :GCV : :REML,
+            :pirls,
             weights === nothing ? nothing : Float64.(weights),
             gam_control(
                 epsilon = control.epsilon,

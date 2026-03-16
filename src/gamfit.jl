@@ -50,11 +50,14 @@ function gam(f::FormulaTerm, data;
     family::Union{UnivariateDistribution, ExtendedFamily} = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
+    optimizer::Symbol = :pirls,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control())
 
     method in (:REML, :ML, :GCV, :UBRE) ||
         throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
+    optimizer in (:pirls, :general) ||
+        throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
     if family isa ExtendedFamily
         link_eff = _get_link(family)
@@ -67,7 +70,7 @@ function gam(f::FormulaTerm, data;
         end
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
-            method, weights, control)
+            method, optimizer, weights, control)
     end
 end
 
@@ -75,11 +78,14 @@ function gam(gf::GamFormula, data;
     family::Union{UnivariateDistribution, ExtendedFamily} = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
+    optimizer::Symbol = :pirls,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control())
 
     method in (:REML, :ML, :GCV, :UBRE) ||
         throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
+    optimizer in (:pirls, :general) ||
+        throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
     if family isa ExtendedFamily
         link_eff = _get_link(family)
@@ -94,12 +100,12 @@ function gam(gf::GamFormula, data;
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
         f = term(gf.response) ~ term(1)
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
-            method, weights, control)
+            method, optimizer, weights, control)
     end
 end
 
 function _fit_gam(y, X, smooths, n_parametric, f, data,
-    family, link, method, weights, control)
+    family, link, method, optimizer, weights, control)
     n, p = size(X)
 
     # Weights
@@ -114,8 +120,13 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
     _initial_sp(X, penalty)
 
     # Outer iteration: optimize smoothing parameters
-    log_sp, result = outer_iteration(X, y, smooths, penalty, family, link;
-        method = method, weights = wts, control = control)
+    if optimizer == :general
+        log_sp, result = outer_iteration_general(X, y, smooths, penalty, family, link;
+            method = method, weights = wts, control = control)
+    else
+        log_sp, result = outer_iteration(X, y, smooths, penalty, family, link;
+            method = method, weights = wts, control = control)
+    end
 
     # Compute per-smooth EDF
     edf_per_smooth = smooth_edf(result.edf_vec, smooths)
