@@ -1,0 +1,7 @@
+project:
+  type: default
+
+engine: julia
+
+julia:
+  project: "."

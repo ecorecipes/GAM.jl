@@ -1,0 +1,283 @@
+---
+title: "Model Diagnostics and Visualization"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+---
+
+## Introduction
+
+This vignette demonstrates model diagnostics and visualization using **mgcv** and **gratia** in R. We fit the same Gu & Wahba (1991) example as the Julia vignette and compare diagnostic outputs.
+
+## Setup
+
+```{r}
+library(mgcv)
+library(gratia)
+```
+
+## Load Gu–Wahba example data
+
+```{r}
+dat <- read.csv("../data.csv")
+n <- nrow(dat)
+x0 <- dat$x0; x1 <- dat$x1; x2 <- dat$x2; x3 <- dat$x3
+y <- dat$y
+
+f0 <- function(x) 2 * sin(pi * x)
+f1 <- function(x) exp(2 * x)
+f2 <- function(x) 0.2 * x^11 * (10 * (1 - x))^6 + 10 * (10 * x)^3 * (1 - x)^10
+f3 <- function(x) rep(0, length(x))
+
+head(dat)
+```
+
+## Fit the GAM
+
+```{r}
+m <- gam(y ~ s(x0, k = 10, bs = "cr") + s(x1, k = 10, bs = "cr") +
+             s(x2, k = 10, bs = "cr") + s(x3, k = 10, bs = "cr"),
+         data = dat, method = "REML")
+summary(m)
+```
+
+## Model overview
+
+gratia's `overview` provides a tidy summary of all smooth terms.
+
+```{r}
+overview(m)
+```
+
+## Smooth estimates
+
+`smooth_estimates` evaluates each smooth on a regular grid with pointwise standard errors.
+
+```{r}
+se <- smooth_estimates(m, n = 200)
+head(se)
+```
+
+### Plotting smooth estimates with true functions
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+true_fns <- list(f0, f1, f2, f3)
+x_vars <- c("x0", "x1", "x2", "x3")
+fn_labels <- c(
+  expression(f[0](x[0]) == 2*sin(pi*x)),
+  expression(f[1](x[1]) == exp(2*x)),
+  expression(f[2](x[2]) ~ "Gu-Wahba"),
+  expression(f[3](x[3]) == 0)
+)
+
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+for (i in 1:4) {
+  se_i <- smooth_estimates(m, select = paste0("s(", x_vars[i], ")"), n = 200)
+  x_grid <- se_i[[x_vars[i]]]
+  est <- se_i[[".estimate"]]
+  se_vals <- se_i[[".se"]]
+
+  f_grid <- true_fns[[i]](x_grid)
+  f_grid <- f_grid - mean(f_grid)
+
+  ylims <- range(c(est - 2 * se_vals, est + 2 * se_vals, f_grid))
+  plot(x_grid, est, type = "l", lwd = 2, col = "steelblue",
+       ylim = ylims, xlab = x_vars[i], ylab = paste0("f(", x_vars[i], ")"),
+       main = fn_labels[i])
+  polygon(c(x_grid, rev(x_grid)),
+          c(est - 2 * se_vals, rev(est + 2 * se_vals)),
+          col = adjustcolor("steelblue", alpha.f = 0.2), border = NA)
+  lines(x_grid, f_grid, lty = 2, lwd = 2, col = "red")
+  legend("topright", c("estimate", "truth"), lty = c(1, 2),
+         col = c("steelblue", "red"), lwd = 2, cex = 0.7, bg = "white")
+}
+```
+
+### gratia's built-in `draw`
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+draw(m, residuals = TRUE, rug = FALSE)
+```
+
+## Partial residuals
+
+Partial residuals overlaid on smooth estimates show how well the smooth captures the data pattern.
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+x_data <- list(x0, x1, x2, x3)
+pr <- partial_residuals(m)
+
+for (i in 1:4) {
+  se_i <- smooth_estimates(m, select = paste0("s(", x_vars[i], ")"), n = 200)
+  x_grid <- se_i[[x_vars[i]]]
+  est <- se_i[[".estimate"]]
+  se_vals <- se_i[[".se"]]
+
+  plot(x_grid, est, type = "l", lwd = 2, col = "steelblue",
+       xlab = x_vars[i], ylab = paste0("f(", x_vars[i], ")"),
+       main = paste0("s(", x_vars[i], ")"),
+       ylim = range(c(est - 2 * se_vals, est + 2 * se_vals, pr[[i]])))
+  polygon(c(x_grid, rev(x_grid)),
+          c(est - 2 * se_vals, rev(est + 2 * se_vals)),
+          col = adjustcolor("steelblue", alpha.f = 0.2), border = NA)
+  points(x_data[[i]], pr[[i]], pch = 16, cex = 0.5, col = adjustcolor("grey40", 0.4))
+}
+```
+
+## Derivatives
+
+`derivatives` computes finite-difference derivatives with confidence intervals.
+
+```{r}
+d <- derivatives(m, type = "central", n = 200)
+head(d)
+```
+
+### Plotting derivatives
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+for (i in 1:4) {
+  d_i <- derivatives(m, select = paste0("s(", x_vars[i], ")"),
+                     type = "central", n = 200)
+  x_grid <- d_i[[x_vars[i]]]
+  deriv <- d_i[[".derivative"]]
+  lower <- d_i[[".lower_ci"]]
+  upper <- d_i[[".upper_ci"]]
+  sig <- (lower > 0) | (upper < 0)
+
+  ylims <- range(c(lower, upper))
+  plot(x_grid, deriv, type = "l", lwd = 2, col = "steelblue",
+       ylim = ylims, xlab = x_vars[i], ylab = "derivative",
+       main = paste0("d/d", x_vars[i]))
+  polygon(c(x_grid, rev(x_grid)),
+          c(lower, rev(upper)),
+          col = adjustcolor("steelblue", alpha.f = 0.2), border = NA)
+  abline(h = 0, lty = 2, col = "grey50")
+
+  if (any(sig)) {
+    rug(x_grid[sig], col = "red", lwd = 2, side = 1)
+  }
+}
+```
+
+Second-order derivatives:
+
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+d2 <- derivatives(m, select = "s(x0)", order = 2, n = 200)
+x_grid <- d2[["x0"]]
+deriv <- d2[[".derivative"]]
+lower <- d2[[".lower_ci"]]
+upper <- d2[[".upper_ci"]]
+
+plot(x_grid, deriv, type = "l", lwd = 2, col = "darkorange",
+     ylim = range(c(lower, upper)),
+     xlab = expression(x[0]), ylab = "second derivative",
+     main = "Second derivative of s(x0)")
+polygon(c(x_grid, rev(x_grid)),
+        c(lower, rev(upper)),
+        col = adjustcolor("darkorange", alpha.f = 0.2), border = NA)
+abline(h = 0, lty = 2, col = "grey50")
+```
+
+## Model diagnostics with `appraise`
+
+`appraise` produces the four standard diagnostic plots: QQ, residuals vs linear predictor, histogram, and observed vs fitted.
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+appraise(m)
+```
+
+## Posterior simulation
+
+### Smooth samples (spaghetti plot)
+
+`smooth_samples` draws posterior realizations of individual smooth functions.
+
+```{r}
+#| fig-width: 8
+#| fig-height: 5
+ss <- smooth_samples(m, select = "s(x0)", n = 50, seed = 42)
+
+se_x0 <- smooth_estimates(m, select = "s(x0)", n = 100)
+x_grid <- se_x0[["x0"]]
+est <- se_x0[[".estimate"]]
+
+draws <- unique(ss[[".draw"]])
+ylims <- range(ss[[".value"]])
+
+plot(NULL, xlim = range(x_grid), ylim = ylims,
+     xlab = expression(x[0]), ylab = expression(f(x[0])),
+     main = "50 posterior draws of s(x0)")
+for (dr in draws) {
+  idx <- ss[[".draw"]] == dr
+  lines(ss[["x0"]][idx], ss[[".value"]][idx],
+        col = adjustcolor("steelblue", 0.15), lwd = 0.5)
+}
+lines(x_grid, est, col = "red", lwd = 2)
+legend("topright", c("posterior draws", "point estimate"),
+       col = c("steelblue", "red"), lwd = c(1, 2), cex = 0.8)
+```
+
+### Fitted samples
+
+`fitted_samples` draws posterior samples of fitted values.
+
+```{r}
+fs <- fitted_samples(m, n = 200, seed = 42)
+cat("Fitted samples: ", nrow(fs), "rows x", length(unique(fs[[".draw"]])), "draws\n")
+```
+
+## Concurvity
+
+```{r}
+model_concurvity(m)
+```
+
+Pairwise concurvity:
+
+```{r}
+model_concurvity(m, pairwise = TRUE)
+```
+
+## Basis dimension check
+
+```{r}
+k.check(m)
+```
+
+## Summary
+
+Both GAM.jl and gratia provide equivalent diagnostic interfaces:
+
+| gratia (R) | GAM.jl (Julia) |
+|------------|-----------------|
+| `overview()` | `overview()` |
+| `smooth_estimates()` | `smooth_estimates()` |
+| `derivatives()` | `derivatives()` |
+| `appraise()` | `appraise()` |
+| `posterior_samples()` | `posterior_samples()` |
+| `fitted_samples()` | `fitted_samples()` |
+| `smooth_samples()` | `smooth_samples()` |
+| `partial_residuals()` | `partial_residuals()` |
+| `model_concurvity()` | `concurvity()` |
+| `k.check()` | `k_check()` |

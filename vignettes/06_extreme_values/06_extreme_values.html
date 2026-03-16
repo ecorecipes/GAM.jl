@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.9.28">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="GAM.jl Contributors">
+
+<title>Extreme Value GAMs</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="06_extreme_values_files/libs/clipboard/clipboard.min.js"></script>
+<script src="06_extreme_values_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="06_extreme_values_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="06_extreme_values_files/libs/quarto-html/popper.min.js"></script>
+<script src="06_extreme_values_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="06_extreme_values_files/libs/quarto-html/anchor.min.js"></script>
+<link href="06_extreme_values_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="06_extreme_values_files/libs/quarto-html/quarto-syntax-highlighting-49e51e44f424ea8c7044b429bdbbbfe2.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="06_extreme_values_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="06_extreme_values_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="06_extreme_values_files/libs/bootstrap/bootstrap-138a6193a3bd40baf1e627da441a4734.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+<div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+  <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#introduction" id="toc-introduction" class="nav-link active" data-scroll-target="#introduction">Introduction</a></li>
+  <li><a href="#setup" id="toc-setup" class="nav-link" data-scroll-target="#setup">Setup</a></li>
+  <li><a href="#gev-model" id="toc-gev-model" class="nav-link" data-scroll-target="#gev-model">GEV model</a>
+  <ul class="collapse">
+  <li><a href="#simulate-gev-data" id="toc-simulate-gev-data" class="nav-link" data-scroll-target="#simulate-gev-data">Simulate GEV data</a></li>
+  <li><a href="#fit-the-gev-model" id="toc-fit-the-gev-model" class="nav-link" data-scroll-target="#fit-the-gev-model">Fit the GEV model</a></li>
+  <li><a href="#examine-parameter-estimates" id="toc-examine-parameter-estimates" class="nav-link" data-scroll-target="#examine-parameter-estimates">Examine parameter estimates</a></li>
+  <li><a href="#compare-fitted-vs-true-functions" id="toc-compare-fitted-vs-true-functions" class="nav-link" data-scroll-target="#compare-fitted-vs-true-functions">Compare fitted vs true functions</a></li>
+  </ul></li>
+  <li><a href="#gpd-model" id="toc-gpd-model" class="nav-link" data-scroll-target="#gpd-model">GPD model</a>
+  <ul class="collapse">
+  <li><a href="#simulate-gpd-data" id="toc-simulate-gpd-data" class="nav-link" data-scroll-target="#simulate-gpd-data">Simulate GPD data</a></li>
+  <li><a href="#fit-the-gpd-model" id="toc-fit-the-gpd-model" class="nav-link" data-scroll-target="#fit-the-gpd-model">Fit the GPD model</a></li>
+  <li><a href="#examine-gpd-estimates" id="toc-examine-gpd-estimates" class="nav-link" data-scroll-target="#examine-gpd-estimates">Examine GPD estimates</a></li>
+  </ul></li>
+  <li><a href="#model-structure" id="toc-model-structure" class="nav-link" data-scroll-target="#model-structure">Model structure</a></li>
+  <li><a href="#summary" id="toc-summary" class="nav-link" data-scroll-target="#summary">Summary</a></li>
+  </ul>
+<div class="quarto-alternate-formats"><h2>Other Formats</h2><ul><li><a href="06_extreme_values.md"><i class="bi bi-file-code"></i>Github (GFM)</a></li><li><a href="06_extreme_values.pdf"><i class="bi bi-file-pdf"></i>PDF</a></li></ul></div></nav>
+</div>
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Extreme Value GAMs</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    <div>
+    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-contents">
+             <p>GAM.jl Contributors </p>
+          </div>
+  </div>
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="introduction" class="level2">
+<h2 class="anchored" data-anchor-id="introduction">Introduction</h2>
+<p>Extreme value theory (EVT) provides a principled framework for modeling the tails of distributions. Two key models are:</p>
+<ul>
+<li><p><strong>Generalized Extreme Value (GEV)</strong> distribution for block maxima: <span class="math inline">\(Y \sim \text{GEV}(\mu, \sigma, \xi)\)</span> with CDF <span class="math display">\[F(y) = \exp\left\{-\left[1 + \xi\left(\frac{y-\mu}{\sigma}\right)\right]^{-1/\xi}\right\}\]</span></p></li>
+<li><p><strong>Generalized Pareto Distribution (GPD)</strong> for threshold exceedances: <span class="math inline">\(Y \mid Y &gt; u \sim \text{GPD}(\sigma, \xi)\)</span> with survival function <span class="math display">\[\bar{F}(y) = \left[1 + \xi\left(\frac{y-u}{\sigma}\right)\right]^{-1/\xi}\]</span></p></li>
+</ul>
+<p>GAM.jl’s <code>evgam</code> function fits <strong>multi-parameter GAMs</strong> where each distribution parameter can depend on covariates through smooth functions, following the approach of the R <a href="https://cran.r-project.org/package=evgam">evgam</a> package.</p>
+</section>
+<section id="setup" class="level2">
+<h2 class="anchored" data-anchor-id="setup">Setup</h2>
+<div id="2" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">GAM</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">StatsAPI</span>: fitted</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">LinearAlgebra</span>: diag</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">DataFrames</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">CSV</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">Random</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="im">using</span> <span class="bu">Statistics</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="gev-model" class="level2">
+<h2 class="anchored" data-anchor-id="gev-model">GEV model</h2>
+<section id="simulate-gev-data" class="level3">
+<h3 class="anchored" data-anchor-id="simulate-gev-data">Simulate GEV data</h3>
+<p>We generate block maxima where the location and scale vary smoothly with a covariate <span class="math inline">\(x\)</span>:</p>
+<ul>
+<li>Location: <span class="math inline">\(\mu(x) = 5 + 2\sin(2\pi x)\)</span></li>
+<li>Log-scale: <span class="math inline">\(\log\sigma(x) = -0.5 + 0.5x\)</span>, so <span class="math inline">\(\sigma(x) = \exp(-0.5 + 0.5x)\)</span></li>
+<li>Shape: <span class="math inline">\(\xi = 0.1\)</span> (constant, light upper tail)</li>
+</ul>
+<div id="4" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>df_gev <span class="op">=</span> CSV.<span class="fu">read</span>(<span class="st">"data_gev.csv"</span>, DataFrame)</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>n <span class="op">=</span> <span class="fu">nrow</span>(df_gev)</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> df_gev.x</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>y_gev <span class="op">=</span> df_gev.y</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>mu_true <span class="op">=</span> <span class="fl">5.0</span> <span class="op">.+</span> <span class="fl">2.0</span> <span class="op">.*</span> <span class="fu">sin</span>.(<span class="fl">2</span>π <span class="op">.*</span> x)</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>logsigma_true <span class="op">=</span> <span class="op">-</span><span class="fl">0.5</span> <span class="op">.+</span> <span class="fl">0.5</span> <span class="op">.*</span> x</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>sigma_true <span class="op">=</span> <span class="fu">exp</span>.(logsigma_true)</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>xi_true <span class="op">=</span> <span class="fl">0.1</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"GEV data: n = </span><span class="sc">$</span>(<span class="fu">nrow</span>(df_gev))<span class="st">, y range = [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(y_gev), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(y_gev), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>GEV data: n = 500, y range = [1.79, 17.11]</code></pre>
+</div>
+</div>
+</section>
+<section id="fit-the-gev-model" class="level3">
+<h3 class="anchored" data-anchor-id="fit-the-gev-model">Fit the GEV model</h3>
+<p>We specify one formula per distribution parameter. The GEV has three parameters: location <span class="math inline">\(\mu\)</span>, log-scale <span class="math inline">\(\psi = \log\sigma\)</span>, and shape <span class="math inline">\(\xi\)</span>.</p>
+<div id="6" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>m_gev <span class="op">=</span> <span class="fu">evgam</span>(</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr)),   <span class="co"># location μ(x)</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">8</span>, bs<span class="op">=:</span>cr)),    <span class="co"># log-scale ψ(x)</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fl">1</span>)],                    <span class="co"># shape ξ (constant)</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    df_gev,</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="fu">GEVFamily</span>()</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>MultiParameterModel{GEVFamily}(GEVFamily(), [5.03575721467988, 1.0567378495424555, 1.8347040405862556, 1.7675525476410623, 0.7382184362270459, -0.6734160615174861, -1.87616838624342, -1.875822210687198, -1.048649702132332, 0.13553037547976876, -0.28478658643206256, 0.021556740188645902, -0.00507656045672668, 0.19205319646126917, 0.07744269816269825, 0.3177109072672473, 0.27950322755362383, 0.5705699647706117, 0.14056457679305315], [[4.126734214041588, 4.388349707587003, 6.969154381405394, 3.4182683270038257, 3.2135040579218255, 4.552496360294016, 3.047193916690016, 6.3908790506602715, 3.1313189876136582, 3.0203943139062366  …  4.94574408128136, 5.0506314735837226, 3.5129847285234597, 5.958348734513575, 4.976540774109172, 6.808860414480998, 3.10280800297557, 6.894195687729036, 6.675598421429263, 5.374767263544945], [-0.061130555855113566, 0.006531323324514241, -0.4095817187991974, -0.16653611733860435, -0.22439215765071147, -0.3531661994480928, -0.1031396715260265, -0.44040301606468224, -0.19269991084383442, -0.11589906357607509  …  0.16111763376288016, -0.3074864791403382, -0.167896297965453, -0.23273231684670706, -0.31529417849837665, -0.42851522764270433, -0.11306611669608617, -0.3824604044657684, -0.42806733994851376, -0.6313958075266126], [0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315  …  0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315, 0.14056457679305315]], [[1.0 -0.12291896228955582 … 0.8438166805691195 0.0447707000334424; 1.0 -0.10509884017847809 … 0.7007569184507677 0.2480101534139755; … ; 1.0 0.2449317510546628 … -0.09659396556034537 -0.029036447114687874; 1.0 0.21491894137543813 … -0.2890406423684066 -0.08668591615307703], [1.0 -0.14143801811295187 … 0.700577309129319 0.24661821243013488; 1.0 -0.12337120529887255 … 0.535191584651037 0.42519514492899374; … ; 1.0 0.7263085982326665 … -0.13936080706666798 -0.05448994539787703; 1.0 -0.01898755923276018 … -0.34094434872632795 -0.13153300201052215], [1.0; 1.0; … ; 1.0; 1.0;;]], Vector{ConstructedSmooth}[[ConstructedSmooth(s(x,bs=cr), k=9, rank=8)], [ConstructedSmooth(s(x,bs=cr), k=7, rank=6)], []], [-6.3032850747461415, 5.535318490047107], [0.9999999999999998, 0.8082165064770308, 0.8982330603041361, 0.8660398086140217, 0.8188458560451166, 0.8501776255703807, 0.8420743862225211, 0.8574198363163759, 0.8494973238217659, 0.7533910749398995, 1.0, 0.09379067733336287, 0.012960749274820379, -0.0004490707743497682, 0.05794494686197777, 0.1636913268898361, 0.4488480903365161, 0.22966766043372275, 1.0], [0.0015474541282104546 -0.00020573617622095648 … 0.00023823624706932394 -0.00045889746338239674; -0.00020573617622095648 0.009538622539615857 … -0.0013008469353775034 -3.7598383087106716e-5; … ; 0.00023823624706932394 -0.0013008469353775034 … 0.005649716556922878 -5.328559542508736e-5; -0.00045889746338239674 -3.7598383087106716e-5 … -5.328559542508736e-5 0.0012938854197885835], [0.0015474541282104546 -0.00020573617622095648 … 0.00023823624706932394 -0.00045889746338239674; -0.00020573617622095648 0.009538622539615857 … -0.0013008469353775034 -3.7598383087106716e-5; … ; 0.00023823624706932394 -0.0013008469353775034 … 0.005649716556922878 -5.328559542508736e-5; -0.00045889746338239674 -3.7598383087106716e-5 … -5.328559542508736e-5 0.0012938854197885835], 687.4688957848009, 724.9254300992998, [3.61243275935754, 3.67482461810157, 9.62757006978756, 3.69647266955379, 2.71978270287675, 4.41916781818956, 5.22956108002974, 6.91351275491862, 2.94614214388403, 3.05242715532112  …  6.6881523752481, 6.13741568442759, 2.67682063492149, 5.60200152317484, 5.3446107515215, 7.51096177983951, 5.13960141854121, 7.06772185929518, 6.75388645855366, 5.87620827444264], 500, true, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3], [0, 10, 18, 19])</code></pre>
+</div>
+</div>
+</section>
+<section id="examine-parameter-estimates" class="level3">
+<h3 class="anchored" data-anchor-id="examine-parameter-estimates">Examine parameter estimates</h3>
+<div id="8" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Number of parameters: "</span>, <span class="fu">nparams</span>(m_gev))</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Converged: "</span>, m_gev.converged)</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Negative log-likelihood: "</span>, <span class="fu">round</span>(m_gev.nll, digits<span class="op">=</span><span class="fl">2</span>))</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"REML score: "</span>, <span class="fu">round</span>(m_gev.reml, digits<span class="op">=</span><span class="fl">2</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Number of parameters: 3
+Converged: true
+Negative log-likelihood: 687.47
+REML score: 724.93</code></pre>
+</div>
+</div>
+<p>Location parameter coefficients and fitted values:</p>
+<div id="10" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>mu_coefs <span class="op">=</span> <span class="fu">param_coef</span>(m_gev, <span class="fl">1</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>mu_hat <span class="op">=</span> <span class="fu">param_eta</span>(m_gev, <span class="fl">1</span>)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Location coefficients (first 5): "</span>, <span class="fu">round</span>.(mu_coefs[<span class="fl">1</span><span class="op">:</span><span class="fu">min</span>(<span class="fl">5</span>, <span class="fu">length</span>(mu_coefs))], digits<span class="op">=</span><span class="fl">3</span>))</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Location fitted range: [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(mu_hat), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(mu_hat), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Location true range: [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(mu_true), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(mu_true), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Location coefficients (first 5): [5.036, 1.057, 1.835, 1.768, 0.738]
+Location fitted range: [3.02, 7.03]
+Location true range: [3.0, 7.0]</code></pre>
+</div>
+</div>
+<p>Log-scale parameter:</p>
+<div id="12" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>psi_coefs <span class="op">=</span> <span class="fu">param_coef</span>(m_gev, <span class="fl">2</span>)</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>psi_hat <span class="op">=</span> <span class="fu">param_eta</span>(m_gev, <span class="fl">2</span>)</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Log-scale coefficients (first 5): "</span>, <span class="fu">round</span>.(psi_coefs[<span class="fl">1</span><span class="op">:</span><span class="fu">min</span>(<span class="fl">5</span>, <span class="fu">length</span>(psi_coefs))], digits<span class="op">=</span><span class="fl">3</span>))</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Log-scale fitted range: [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(psi_hat), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(psi_hat), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Log-scale true range: [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(logsigma_true), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(logsigma_true), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Log-scale coefficients (first 5): [-0.285, 0.022, -0.005, 0.192, 0.077]
+Log-scale fitted range: [-0.72, 0.23]
+Log-scale true range: [-0.5, -0.0]</code></pre>
+</div>
+</div>
+<p>Shape parameter (constant):</p>
+<div id="14" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>xi_coefs <span class="op">=</span> <span class="fu">param_coef</span>(m_gev, <span class="fl">3</span>)</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Shape coefficient: "</span>, <span class="fu">round</span>(xi_coefs[<span class="fl">1</span>], digits<span class="op">=</span><span class="fl">4</span>))</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"True shape: "</span>, xi_true)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Shape coefficient: 0.1406
+True shape: 0.1</code></pre>
+</div>
+</div>
+</section>
+<section id="compare-fitted-vs-true-functions" class="level3">
+<h3 class="anchored" data-anchor-id="compare-fitted-vs-true-functions">Compare fitted vs true functions</h3>
+<div id="16" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>ord <span class="op">=</span> <span class="fu">sortperm</span>(x)</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>x_sorted <span class="op">=</span> x[ord]</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>cor_mu <span class="op">=</span> <span class="fu">cor</span>(mu_hat, mu_true)</span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>cor_psi <span class="op">=</span> <span class="fu">cor</span>(psi_hat, logsigma_true)</span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Correlation (fitted vs true location): "</span>, <span class="fu">round</span>(cor_mu, digits<span class="op">=</span><span class="fl">4</span>))</span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Correlation (fitted vs true log-scale): "</span>, <span class="fu">round</span>(cor_psi, digits<span class="op">=</span><span class="fl">4</span>))</span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"RMSE (location): "</span>, <span class="fu">round</span>(<span class="fu">sqrt</span>(<span class="fu">mean</span>((mu_hat <span class="op">.-</span> mu_true)<span class="op">.^</span><span class="fl">2</span>)), digits<span class="op">=</span><span class="fl">3</span>))</span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"RMSE (log-scale): "</span>, <span class="fu">round</span>(<span class="fu">sqrt</span>(<span class="fu">mean</span>((psi_hat <span class="op">.-</span> logsigma_true)<span class="op">.^</span><span class="fl">2</span>)), digits<span class="op">=</span><span class="fl">3</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Correlation (fitted vs true location): 0.9952
+Correlation (fitted vs true log-scale): 0.9294
+RMSE (location): 0.137
+RMSE (log-scale): 0.078</code></pre>
+</div>
+</div>
+</section>
+</section>
+<section id="gpd-model" class="level2">
+<h2 class="anchored" data-anchor-id="gpd-model">GPD model</h2>
+<section id="simulate-gpd-data" class="level3">
+<h3 class="anchored" data-anchor-id="simulate-gpd-data">Simulate GPD data</h3>
+<p>For threshold exceedances, we simulate GPD data with covariate-dependent scale:</p>
+<ul>
+<li>Log-scale: <span class="math inline">\(\log\sigma(x) = 0.5\sin(2\pi x)\)</span></li>
+<li>Shape: <span class="math inline">\(\xi = 0.15\)</span> (constant)</li>
+</ul>
+<div id="18" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>df_gpd <span class="op">=</span> CSV.<span class="fu">read</span>(<span class="st">"data_gpd.csv"</span>, DataFrame)</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>n_gpd <span class="op">=</span> <span class="fu">nrow</span>(df_gpd)</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>x_gpd <span class="op">=</span> df_gpd.x</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>y_gpd <span class="op">=</span> df_gpd.y</span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>logsigma_gpd_true <span class="op">=</span> <span class="fl">0.5</span> <span class="op">.*</span> <span class="fu">sin</span>.(<span class="fl">2</span>π <span class="op">.*</span> x_gpd)</span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>sigma_gpd_true <span class="op">=</span> <span class="fu">exp</span>.(logsigma_gpd_true)</span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>xi_gpd_true <span class="op">=</span> <span class="fl">0.15</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"GPD data: n = </span><span class="sc">$</span>(<span class="fu">nrow</span>(df_gpd))<span class="st">, y range = [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(y_gpd), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(y_gpd), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>GPD data: n = 500, y range = [0.0, 12.35]</code></pre>
+</div>
+</div>
+</section>
+<section id="fit-the-gpd-model" class="level3">
+<h3 class="anchored" data-anchor-id="fit-the-gpd-model">Fit the GPD model</h3>
+<p>The GPD has two parameters: log-scale <span class="math inline">\(\psi = \log\sigma\)</span> and shape <span class="math inline">\(\xi\)</span>.</p>
+<div id="20" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>m_gpd <span class="op">=</span> <span class="fu">evgam</span>(</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr)),   <span class="co"># log-scale ψ(x)</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fl">1</span>)],                    <span class="co"># shape ξ (constant)</span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>    df_gpd,</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>    <span class="fu">GPDFamily</span>()</span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="1">
+<pre><code>MultiParameterModel{GPDFamily}(GPDFamily(0.0), [0.5450726881561836, 0.013086764370393232, -0.08368519528052595, -0.18239474615531107, -0.2353408877799045, -0.20832219535144175, -0.11654571029497318, 0.013229778244121668, 0.16707417844396122, 0.33338903230227485, 0.06247171544782025], [[0.3577935695283461, 0.7794061560120417, 0.6544652843543906, 0.5075820928598772, 0.41492666575218645, 0.3743163845304675, 0.4785103613700817, 0.36187380149813975, 0.5381706196878926, 0.7259924097833405  …  0.4227634267306696, 0.4839241978637074, 0.3861320299329595, 0.4511418412659719, 0.5093398577748521, 0.37336011914853356, 0.6137645537651298, 0.5968937304049368, 0.3616634865516851, 0.358534209284181], [0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025  …  0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025, 0.06247171544782025]], [[1.0 -0.12422550358987869 … -0.12041743435729219 -0.04021065844661173; 1.0 -0.13042251125561038 … 0.8517930129845935 0.012142638611563268; … ; 1.0 -0.12187198223679759 … -0.1213315197755695 -0.03914430141811147; 1.0 -0.10861130400117934 … -0.11520961231045121 -0.042781265610324345], [1.0; 1.0; … ; 1.0; 1.0;;]], Vector{ConstructedSmooth}[[ConstructedSmooth(s(x,bs=cr), k=9, rank=8)], []], [-1.9119511844845183], [0.9999999999999999, 0.16404837868544128, 0.22437994267231673, 0.23704204019053154, 0.3109504630741439, 0.27400672973917534, 0.30326634330557056, 0.23199599770986642, 0.4702912068964238, 0.3841770006978796, 0.9999999999999993], [0.004374091255490973 0.0003075018650097088 … -0.000369184474079302 -0.002251355206836136; 0.0003075018650097088 0.002687986032007845 … -0.0017151650248313855 -0.0003399697108287152; … ; -0.000369184474079302 -0.0017151650248313855 … 0.019284487355467294 0.00031686469460187345; -0.002251355206836136 -0.0003399697108287152 … 0.00031686469460187345 0.0023876889888026155], [0.004374091255490973 0.0003075018650097088 … -0.000369184474079302 -0.002251355206836136; 0.0003075018650097088 0.002687986032007845 … -0.0017151650248313855 -0.0003399697108287152; … ; -0.000369184474079302 -0.0017151650248313855 … 0.019284487355467294 0.00031686469460187345; -0.002251355206836136 -0.0003399697108287152 … 0.00031686469460187345 0.0023876889888026155], 803.7722021860658, 817.567907284217, [0.298876567416734, 0.524216785894067, 1.04822076082263, 0.0130278358764623, 0.29082640401221, 1.19023184531972, 3.99792235758352, 1.25837987311792, 2.0204555276891, 6.86338808021889  …  0.770574164299274, 0.00416939151483722, 1.78205624511358, 0.311453594119774, 0.684430309093354, 0.599251905263417, 3.09788959300914, 3.16043401450683, 0.707524055537864, 0.205472579356741], 500, true, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2], [0, 10, 11])</code></pre>
+</div>
+</div>
+</section>
+<section id="examine-gpd-estimates" class="level3">
+<h3 class="anchored" data-anchor-id="examine-gpd-estimates">Examine GPD estimates</h3>
+<div id="22" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Converged: "</span>, m_gpd.converged)</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Negative log-likelihood: "</span>, <span class="fu">round</span>(m_gpd.nll, digits<span class="op">=</span><span class="fl">2</span>))</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>psi_gpd_hat <span class="op">=</span> <span class="fu">param_eta</span>(m_gpd, <span class="fl">1</span>)</span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>xi_gpd_hat <span class="op">=</span> <span class="fu">param_coef</span>(m_gpd, <span class="fl">2</span>)</span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Log-scale fitted range: [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(psi_gpd_hat), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(psi_gpd_hat), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Log-scale true range: [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(logsigma_gpd_true), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(logsigma_gpd_true), digits<span class="op">=</span><span class="fl">2</span>))<span class="st">]"</span>)</span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Shape estimate: "</span>, <span class="fu">round</span>(xi_gpd_hat[<span class="fl">1</span>], digits<span class="op">=</span><span class="fl">4</span>))</span>
+<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"True shape: "</span>, xi_gpd_true)</span>
+<span id="cb20-11"><a href="#cb20-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-12"><a href="#cb20-12" aria-hidden="true" tabindex="-1"></a>cor_gpd <span class="op">=</span> <span class="fu">cor</span>(psi_gpd_hat, logsigma_gpd_true)</span>
+<span id="cb20-13"><a href="#cb20-13" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Correlation (fitted vs true log-scale): "</span>, <span class="fu">round</span>(cor_gpd, digits<span class="op">=</span><span class="fl">4</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Converged: true
+Negative log-likelihood: 803.77
+Log-scale fitted range: [0.36, 0.9]
+Log-scale true range: [-0.5, 0.5]
+Shape estimate: 0.0625
+True shape: 0.15
+Correlation (fitted vs true log-scale): -0.2538</code></pre>
+</div>
+</div>
+</section>
+</section>
+<section id="model-structure" class="level2">
+<h2 class="anchored" data-anchor-id="model-structure">Model structure</h2>
+<p>The <code>MultiParameterModel</code> returned by <code>evgam</code> stores:</p>
+<div id="24" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Type: "</span>, <span class="fu">typeof</span>(m_gev))</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Total coefficients: "</span>, <span class="fu">length</span>(m_gev.coefficients))</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"EDFs: "</span>, <span class="fu">round</span>.(m_gev.edf, digits<span class="op">=</span><span class="fl">2</span>))</span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Log smoothing parameters: "</span>, <span class="fu">round</span>.(m_gev.sp, digits<span class="op">=</span><span class="fl">2</span>))</span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Covariance matrix size: "</span>, <span class="fu">size</span>(m_gev.Vp))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Type: MultiParameterModel{GEVFamily}
+Total coefficients: 19
+EDFs: [1.0, 0.81, 0.9, 0.87, 0.82, 0.85, 0.84, 0.86, 0.85, 0.75, 1.0, 0.09, 0.01, -0.0, 0.06, 0.16, 0.45, 0.23, 1.0]
+Log smoothing parameters: [-6.3, 5.54]
+Covariance matrix size: (19, 19)</code></pre>
+</div>
+</div>
+<p>Standard errors via the posterior covariance:</p>
+<div id="26" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>se_all <span class="op">=</span> <span class="fu">sqrt</span>.(<span class="fu">diag</span>(m_gev.Vp))</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Standard errors (first 5): "</span>, <span class="fu">round</span>.(se_all[<span class="fl">1</span><span class="op">:</span><span class="fu">min</span>(<span class="fl">5</span>, <span class="fu">length</span>(se_all))], digits<span class="op">=</span><span class="fl">4</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Standard errors (first 5): [0.0393, 0.0977, 0.0853, 0.0911, 0.0973]</code></pre>
+</div>
+</div>
+</section>
+<section id="summary" class="level2">
+<h2 class="anchored" data-anchor-id="summary">Summary</h2>
+<p>GAM.jl’s <code>evgam</code> provides:</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Feature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>GEVFamily()</code></td>
+<td>GEV distribution (3 parameters: μ, log σ, ξ)</td>
+</tr>
+<tr class="even">
+<td><code>GPDFamily()</code></td>
+<td>GPD distribution (2 parameters: log σ, ξ)</td>
+</tr>
+<tr class="odd">
+<td>Multi-formula interface</td>
+<td>One formula per distribution parameter</td>
+</tr>
+<tr class="even">
+<td>REML smoothing</td>
+<td>Automatic smoothing parameter estimation</td>
+</tr>
+<tr class="odd">
+<td><code>param_coef(m, k)</code></td>
+<td>Coefficients for parameter k</td>
+</tr>
+<tr class="even">
+<td><code>param_eta(m, k)</code></td>
+<td>Fitted linear predictor for parameter k</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

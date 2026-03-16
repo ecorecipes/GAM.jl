@@ -1,0 +1,170 @@
+---
+title: "Introduction to GAMs with GAM.jl"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+engine: julia
+---
+
+## Overview
+
+A **Generalized Additive Model (GAM)** extends the linear model by replacing linear predictor terms with smooth functions of covariates. The model takes the form:
+
+$$
+g(\mu_i) = \beta_0 + f_1(x_{1i}) + f_2(x_{2i}) + \cdots + f_p(x_{pi})
+$$
+
+where $g$ is a link function, $\mu_i = \mathbb{E}(y_i | \mathbf{x}_i)$, and each $f_j$ is a smooth function estimated from the data using penalized regression splines.
+
+The smooth functions are represented as linear combinations of basis functions:
+
+$$
+f_j(x) = \sum_{k=1}^{K_j} \beta_{jk} \, b_{jk}(x)
+$$
+
+Smoothness is controlled by a wiggliness penalty, and the smoothing parameter $\lambda$ is estimated automatically (e.g., by REML).
+
+This vignette demonstrates fitting a simple GAM to simulated data using **GAM.jl**.
+
+## Setup
+
+```{julia}
+using GAM
+using CSV
+using StatsAPI: nobs, deviance, predict, coef, residuals, r2
+using DataFrames
+using Plots
+```
+
+## Simulating data
+
+We simulate $n = 200$ observations from a sine curve with Gaussian noise:
+
+$$
+y_i = \sin(2\pi x_i) + \varepsilon_i, \quad \varepsilon_i \sim \mathcal{N}(0, 0.3^2)
+$$
+
+```{julia}
+df = CSV.read("data.csv", DataFrame)
+x = df.x
+y = df.y
+n = nrow(df)
+first(df, 5)
+```
+
+## Fitting a GAM
+
+We fit a GAM with a cubic regression spline (`bs=:cr`) smooth of `x` using 15 basis functions:
+
+```{julia}
+m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df)
+```
+
+The model summary shows parametric coefficients, smooth term EDF, deviance explained, and scale estimate.
+
+### Coefficients and deviance explained
+
+```{julia}
+println("Number of observations: ", nobs(m))
+println("EDF per smooth:         ", round.(edf(m); digits = 2))
+println("Deviance explained:     ", round(r2(m) * 100; digits = 1), "%")
+println("Scale estimate:         ", round(m.scale; digits = 4))
+```
+
+## Smooth estimates
+
+The `smooth_estimates()` function evaluates the estimated smooth on a regular grid and returns pointwise standard errors:
+
+```{julia}
+se = smooth_estimates(m; n = 200)
+x_grid = se.covariates[:x]
+f_hat = se.estimate
+f_se = se.se
+```
+
+We plot the smooth estimate with ±2 SE confidence bands, overlaying the true function:
+
+```{julia}
+plot(x_grid, f_hat;
+    ribbon = 2 .* f_se,
+    fillalpha = 0.25,
+    label = "s(x) ± 2SE",
+    xlabel = "x",
+    ylabel = "f(x)",
+    title = "Estimated smooth with confidence band",
+    linewidth = 2)
+plot!(x_grid, sin.(2π .* x_grid);
+    label = "true f(x)",
+    linestyle = :dash,
+    linewidth = 2,
+    color = :red)
+scatter!(df.x, df.y;
+    label = "data",
+    alpha = 0.3,
+    markersize = 2,
+    color = :gray)
+```
+
+## Prediction at new points
+
+We can predict at new covariate values, optionally with standard errors:
+
+```{julia}
+x_new = DataFrame(x = collect(range(0, 1; length = 50)))
+μ_hat, se_hat = predict(m, x_new; type = :response, se = true)
+
+plot(x_new.x, μ_hat;
+    ribbon = 2 .* se_hat,
+    fillalpha = 0.2,
+    label = "predicted ± 2SE",
+    xlabel = "x",
+    ylabel = "ŷ",
+    title = "Predictions at new data",
+    linewidth = 2)
+scatter!(df.x, df.y;
+    label = "observed",
+    alpha = 0.3,
+    markersize = 2,
+    color = :gray)
+```
+
+## Smoothing parameters and REML
+
+GAM.jl estimates the smoothing parameter $\lambda$ by minimizing the Restricted Maximum Likelihood (REML) criterion by default. REML is generally preferred over GCV because it:
+
+- Avoids the tendency to undersmooth
+- Provides more stable estimates
+- Has a natural Bayesian interpretation
+
+The fitted model stores the estimated smoothing parameters:
+
+```{julia}
+println("Estimation method: ", m.method)
+```
+
+## Model diagnostics
+
+The `gam_check()` function provides a quick diagnostic summary:
+
+```{julia}
+gam_check(m)
+```
+
+## Summary
+
+In this vignette we:
+
+1. Simulated data from a sine curve with Gaussian noise
+2. Fitted a GAM using a cubic regression spline with `k = 15` basis functions
+3. Examined the model summary, EDF, and deviance explained
+4. Visualized the smooth estimate with confidence bands
+5. Predicted at new data points with standard errors
+6. Discussed REML-based smoothing parameter estimation
+
+The next vignette compares different smooth basis types.

@@ -1,0 +1,243 @@
+---
+title: "Shape-Constrained Additive Models"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+engine: julia
+---
+
+## Introduction
+
+Standard GAMs estimate smooth functions without restrictions on their shape. In many applications, however, domain knowledge dictates that a relationship should be monotonically increasing (e.g., dose-response), convex (e.g., cost curves), or satisfy other shape constraints.
+
+**Shape-Constrained Additive Models (SCAMs)** enforce these constraints using SCOP-splines (Shape Constrained P-splines), where B-spline coefficients are reparameterized through cumulative sums and exponentiation to guarantee the desired shape.
+
+GAM.jl implements SCAM fitting following the approach of the R [scam](https://cran.r-project.org/package=scam) package (Pya & Wood, 2015).
+
+## Setup
+
+```{julia}
+using GAM
+using StatsAPI: predict
+using DataFrames
+using CSV
+using Random
+using Statistics
+```
+
+## Available basis types
+
+GAM.jl supports 8 shape-constrained basis types, specified via the `bs` argument in `s()`:
+
+| `bs` symbol | Constraint | Description |
+|-------------|-----------|-------------|
+| `:mpi` | Monotone increasing | $f'(x) \geq 0$ |
+| `:mpd` | Monotone decreasing | $f'(x) \leq 0$ |
+| `:cx`  | Convex | $f''(x) \geq 0$ |
+| `:cv`  | Concave | $f''(x) \leq 0$ |
+| `:micx` | Monotone increasing & convex | $f'(x) \geq 0$ and $f''(x) \geq 0$ |
+| `:micv` | Monotone increasing & concave | $f'(x) \geq 0$ and $f''(x) \leq 0$ |
+| `:mdcx` | Monotone decreasing & convex | $f'(x) \leq 0$ and $f''(x) \geq 0$ |
+| `:mdcv` | Monotone decreasing & concave | $f'(x) \leq 0$ and $f''(x) \leq 0$ |
+
+## Example 1: Monotone increasing (dose-response)
+
+A dose-response relationship is naturally monotone increasing—higher doses should not decrease the response.
+
+### Simulate data
+
+True function: $f(x) = 3(1 - e^{-5x})$, a saturating exponential.
+
+```{julia}
+df = CSV.read("data.csv", DataFrame)
+x = df.x; y = df.y
+n = nrow(df)
+f_true = 3.0 .* (1.0 .- exp.(-5.0 .* x))
+```
+
+### Fit unconstrained GAM vs SCAM
+
+```{julia}
+m_gam = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df)
+m_scam = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), df)
+```
+
+### Compare fitted values
+
+```{julia}
+yhat_gam = predict(m_gam)
+yhat_scam = predict(m_scam)
+
+rmse_gam = sqrt(mean((yhat_gam .- f_true).^2))
+rmse_scam = sqrt(mean((yhat_scam .- f_true).^2))
+
+println("RMSE (unconstrained GAM): ", round(rmse_gam, digits=4))
+println("RMSE (SCAM, monotone increasing): ", round(rmse_scam, digits=4))
+```
+
+### Verify monotonicity
+
+The SCAM fit should be monotonically non-decreasing:
+
+```{julia}
+diffs = diff(yhat_scam)
+println("Min successive difference (SCAM): ", round(minimum(diffs), digits=6))
+println("All non-decreasing: ", all(diffs .>= -1e-10))
+
+diffs_gam = diff(yhat_gam)
+println("Min successive difference (GAM): ", round(minimum(diffs_gam), digits=6))
+println("GAM all non-decreasing: ", all(diffs_gam .>= -1e-10))
+```
+
+## Example 2: Convex function
+
+Cost functions and accelerating growth curves are often convex.
+
+### Simulate data
+
+True function: $f(x) = 2x^2$
+
+```{julia}
+df_cx = CSV.read("data_cx.csv", DataFrame)
+x_cx = df_cx.x
+y_cx = df_cx.y
+
+df2 = DataFrame(y=y_cx, x=x_cx)
+f_true2 = 2.0 .* x_cx.^2
+```
+
+### Fit with convexity constraint
+
+```{julia}
+m_cx = scam(@gam_formula(y ~ s(x, k=15, bs=:cx)), df2)
+
+yhat_cx = predict(m_cx)
+rmse_cx = sqrt(mean((yhat_cx .- f_true2).^2))
+println("RMSE (convex SCAM): ", round(rmse_cx, digits=4))
+```
+
+### Verify convexity
+
+For a convex function, second differences should be non-negative:
+
+```{julia}
+first_diffs = diff(yhat_cx)
+second_diffs = diff(first_diffs)
+println("Min second difference: ", round(minimum(second_diffs), digits=6))
+println("All convex: ", all(second_diffs .>= -1e-10))
+```
+
+## Example 3: Monotone increasing and concave (diminishing returns)
+
+Many real-world relationships show diminishing returns: the function increases but at a decreasing rate. This corresponds to a monotone increasing and concave constraint.
+
+### Simulate data
+
+True function: $f(x) = 3\sqrt{x}$
+
+```{julia}
+df_micv = CSV.read("data_micv.csv", DataFrame)
+x_micv = df_micv.x
+y_micv = df_micv.y
+
+df3 = DataFrame(y=y_micv, x=x_micv)
+f_true3 = 3.0 .* sqrt.(x_micv)
+```
+
+### Fit with monotone increasing + concave constraint
+
+```{julia}
+m_micv = scam(@gam_formula(y ~ s(x, k=15, bs=:micv)), df3)
+
+yhat_micv = predict(m_micv)
+rmse_micv = sqrt(mean((yhat_micv .- f_true3).^2))
+println("RMSE (monotone increasing + concave): ", round(rmse_micv, digits=4))
+```
+
+### Verify constraints
+
+```{julia}
+first_diffs_micv = diff(yhat_micv)
+second_diffs_micv = diff(first_diffs_micv)
+println("Min first difference (monotonicity): ", round(minimum(first_diffs_micv), digits=6))
+println("Max second difference (concavity): ", round(maximum(second_diffs_micv), digits=6))
+println("Monotone increasing: ", all(first_diffs_micv .>= -1e-10))
+println("Concave: ", all(second_diffs_micv .<= 1e-10))
+```
+
+## SCAM fitting details
+
+The `scam` function accepts the same arguments as `gam`, with additional control via `scam_control`:
+
+```{julia}
+ctrl = scam_control(
+    epsilon=1e-7,        # convergence tolerance
+    maxit=200,           # max Newton iterations
+    outer_maxit=200,     # max outer (smoothing parameter) iterations
+    trace=false,         # print iteration progress
+    gamma=1.0,           # GCV inflation factor
+    not_exp=false        # use exp() transform (default); true for softplus
+)
+
+m_ctrl = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), df; control=ctrl)
+```
+
+If no shape-constrained basis types are detected, `scam` automatically falls back to standard `gam` fitting:
+
+```{julia}
+m_fallback = scam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df)
+```
+
+## Comparing all constraint types
+
+Let's fit each basis type to appropriate test data:
+
+```{julia}
+Random.seed!(42)
+x_test = sort(rand(200))
+
+# Monotone increasing: f(x) = x^2 (increasing on [0,1])
+y_mpi = x_test.^2 .+ 0.1 .* randn(200)
+# Monotone decreasing: f(x) = 1 - x^2
+y_mpd = (1.0 .- x_test.^2) .+ 0.1 .* randn(200)
+# Convex: f(x) = x^2
+y_cx = x_test.^2 .+ 0.1 .* randn(200)
+# Concave: f(x) = sqrt(x)
+y_cv = sqrt.(x_test) .+ 0.1 .* randn(200)
+
+basis_types = [:mpi, :mpd, :cx, :cv, :micx, :micv, :mdcx, :mdcv]
+y_data = Dict(
+    :mpi => y_mpi, :mpd => y_mpd, :cx => y_cx, :cv => y_cv,
+    :micx => y_cx, :micv => y_cv, :mdcx => y_mpd, :mdcv => (1.0 .- sqrt.(x_test)) .+ 0.1 .* randn(200)
+)
+
+for bs in basis_types
+    df_test = DataFrame(y=y_data[bs], x=x_test)
+    m_test = scam(GamFormula(:y, Symbol[], true, [s(:x, k=10, bs=bs)]), df_test)
+    yhat = predict(m_test)
+    println("bs=:$bs — EDF: $(round(sum(m_test.edf), digits=2)), range: [$(round(minimum(yhat), digits=2)), $(round(maximum(yhat), digits=2))]")
+end
+```
+
+## Summary
+
+| Feature | GAM.jl (`scam`) | R `scam` |
+|---------|-----------------|----------|
+| Fitting function | `scam(formula, data)` | `scam(formula, data=dat)` |
+| Monotone increasing | `bs=:mpi` | `bs="mpi"` |
+| Monotone decreasing | `bs=:mpd` | `bs="mpd"` |
+| Convex | `bs=:cx` | `bs="cx"` |
+| Concave | `bs=:cv` | `bs="cv"` |
+| Mono. inc. + convex | `bs=:micx` | `bs="micx"` |
+| Mono. inc. + concave | `bs=:micv` | `bs="micv"` |
+| Mono. dec. + convex | `bs=:mdcx` | `bs="mdcx"` |
+| Mono. dec. + concave | `bs=:mdcv` | `bs="mdcv"` |
+| Control parameters | `scam_control()` | `scam.control()` |
+
+Shape constraints are enforced through the SCOP-spline reparameterization using the exponential function, ensuring constraints hold exactly at the spline knots and approximately between them.

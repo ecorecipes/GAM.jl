@@ -1,0 +1,156 @@
+---
+title: "Introduction to GAMs with mgcv"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+---
+
+## Overview
+
+A **Generalized Additive Model (GAM)** extends the linear model by replacing linear predictor terms with smooth functions of covariates. The model takes the form:
+
+$$
+g(\mu_i) = \beta_0 + f_1(x_{1i}) + f_2(x_{2i}) + \cdots + f_p(x_{pi})
+$$
+
+where $g$ is a link function, $\mu_i = \mathbb{E}(y_i | \mathbf{x}_i)$, and each $f_j$ is a smooth function estimated from the data using penalized regression splines.
+
+The smooth functions are represented as linear combinations of basis functions:
+
+$$
+f_j(x) = \sum_{k=1}^{K_j} \beta_{jk} \, b_{jk}(x)
+$$
+
+Smoothness is controlled by a wiggliness penalty, and the smoothing parameter $\lambda$ is estimated automatically (e.g., by REML).
+
+This vignette demonstrates fitting a simple GAM to simulated data using **mgcv** in R.
+
+## Setup
+
+```{r}
+library(mgcv)
+library(gratia)
+library(ggplot2)
+```
+
+## Loading data
+
+We load $n = 200$ observations generated from a sine curve with Gaussian noise:
+
+$$
+y_i = \sin(2\pi x_i) + \varepsilon_i, \quad \varepsilon_i \sim \mathcal{N}(0, 0.3^2)
+$$
+
+```{r}
+dat <- read.csv("../data.csv")
+x <- dat$x
+y <- dat$y
+n <- nrow(dat)
+df <- data.frame(x = x, y = y)
+head(df)
+```
+
+## Fitting a GAM
+
+We fit a GAM with a cubic regression spline (`bs = "cr"`) smooth of `x` using 15 basis functions:
+
+```{r}
+m <- gam(y ~ s(x, k = 15, bs = "cr"), data = df, method = "REML")
+summary(m)
+```
+
+The model summary shows parametric coefficients, smooth term EDF, deviance explained, and scale estimate.
+
+### Coefficients and deviance explained
+
+```{r}
+cat("Number of observations:", nobs(m), "\n")
+cat("EDF per smooth:        ", round(pen.edf(m), 2), "\n")
+cat("Deviance explained:    ", round(summary(m)$dev.expl * 100, 1), "%\n")
+cat("Scale estimate:        ", round(m$scale, 4), "\n")
+```
+
+## Smooth estimates
+
+The `gratia::smooth_estimates()` function evaluates the estimated smooth on a regular grid and returns pointwise standard errors:
+
+```{r}
+se <- smooth_estimates(m, n = 200)
+head(se)
+```
+
+We plot the smooth estimate with ±2 SE confidence bands, overlaying the true function:
+
+```{r}
+ggplot(se, aes(x = x, y = .estimate)) +
+  geom_ribbon(aes(ymin = .estimate - 2 * .se, ymax = .estimate + 2 * .se),
+              alpha = 0.25, fill = "steelblue") +
+  geom_line(linewidth = 1, colour = "steelblue") +
+  geom_line(aes(y = sin(2 * pi * x)), linetype = "dashed",
+            linewidth = 1, colour = "red") +
+  geom_point(data = df, aes(x = x, y = y), alpha = 0.3, size = 1, colour = "grey40") +
+  labs(x = "x", y = "f(x)", title = "Estimated smooth with confidence band") +
+  theme_minimal()
+```
+
+## Prediction at new points
+
+We can predict at new covariate values with standard errors:
+
+```{r}
+x_new <- data.frame(x = seq(0, 1, length.out = 50))
+pred <- predict(m, newdata = x_new, type = "response", se.fit = TRUE)
+
+x_new$fit <- pred$fit
+x_new$se <- pred$se.fit
+
+ggplot(x_new, aes(x = x, y = fit)) +
+  geom_ribbon(aes(ymin = fit - 2 * se, ymax = fit + 2 * se),
+              alpha = 0.2, fill = "steelblue") +
+  geom_line(linewidth = 1, colour = "steelblue") +
+  geom_point(data = df, aes(x = x, y = y), alpha = 0.3, size = 1, colour = "grey40") +
+  labs(x = "x", y = expression(hat(y)), title = "Predictions at new data") +
+  theme_minimal()
+```
+
+## Smoothing parameters and REML
+
+mgcv estimates the smoothing parameter $\lambda$ by minimizing the Restricted Maximum Likelihood (REML) criterion by default. REML is generally preferred over GCV because it:
+
+- Avoids the tendency to undersmooth
+- Provides more stable estimates
+- Has a natural Bayesian interpretation
+
+```{r}
+cat("Estimation method:", m$method, "\n")
+cat("Smoothing parameter (log):", log(m$sp), "\n")
+```
+
+## Model diagnostics
+
+The `gam.check()` function provides diagnostic plots and basis dimension checks:
+
+```{r}
+par(mfrow = c(2, 2))
+gam.check(m)
+par(mfrow = c(1, 1))
+```
+
+## Summary
+
+In this vignette we:
+
+1. Simulated data from a sine curve with Gaussian noise
+2. Fitted a GAM using a cubic regression spline with `k = 15` basis functions
+3. Examined the model summary, EDF, and deviance explained
+4. Visualized the smooth estimate with confidence bands using gratia
+5. Predicted at new data points with standard errors
+6. Discussed REML-based smoothing parameter estimation
+
+The next vignette compares different smooth basis types.

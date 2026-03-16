@@ -1,0 +1,119 @@
+---
+title: "Quantile GAM Regression"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+---
+
+## Introduction
+
+This vignette demonstrates quantile GAM regression using the R **qgam** package, fitting the same heteroscedastic data as the Julia vignette for comparison.
+
+## Setup
+
+```{r}
+library(qgam)
+library(mgcv)
+```
+
+## Load heteroscedastic data
+
+$$y = \sin(2\pi x) + (0.2 + 0.8x)\varepsilon, \quad \varepsilon \sim N(0,1)$$
+
+```{r}
+dat <- read.csv("../data.csv")
+x <- dat$x
+y <- dat$y
+n <- nrow(dat)
+cat("Data: n =", n, "\n")
+cat("y range:", range(y), "\n")
+```
+
+## Fit a single quantile GAM
+
+### Median regression (τ = 0.5)
+
+```{r}
+m_50 <- qgam(y ~ s(x, k = 20, bs = "cr"), data = dat, qu = 0.5)
+summary(m_50)
+```
+
+```{r}
+yhat_50 <- predict(m_50)
+cat("Median regression fitted range:", range(yhat_50), "\n")
+```
+
+### Compare with mean regression
+
+```{r}
+m_mean <- gam(y ~ s(x, k = 20, bs = "cr"), data = dat)
+yhat_mean <- predict(m_mean)
+
+cat("Mean regression fitted range:", range(yhat_mean), "\n")
+cat("Correlation (mean vs median):", cor(yhat_mean, yhat_50), "\n")
+```
+
+## Fit multiple quantiles with `mqgam`
+
+```{r}
+quantiles <- c(0.1, 0.25, 0.5, 0.75, 0.9)
+
+mq <- mqgam(y ~ s(x, k = 20, bs = "cr"), data = dat, qu = quantiles)
+```
+
+Examine fitted ranges for each quantile:
+
+```{r}
+for (qu in quantiles) {
+  yhat <- qdo(mq, qu, predict, newdata = dat)
+  cat(sprintf("τ = %s: fitted range [%.3f, %.3f]\n", qu, min(yhat), max(yhat)))
+}
+```
+
+## Quantile crossing check
+
+```{r}
+ord <- order(x)
+predictions <- sapply(quantiles, function(qu) {
+  qdo(mq, qu, predict, newdata = dat)[ord]
+})
+
+n_crossings <- sum(apply(predictions, 1, is.unsorted))
+cat(sprintf("Quantile crossings: %d out of %d observations (%.1f%%)\n",
+            n_crossings, n, 100 * n_crossings / n))
+```
+
+## Verify quantile coverage
+
+```{r}
+for (qu in quantiles) {
+  yhat <- qdo(mq, qu, predict, newdata = dat)
+  coverage <- mean(y < yhat)
+  cat(sprintf("τ = %s: empirical coverage = %.3f (target = %.2f)\n", qu, coverage, qu))
+}
+```
+
+## Individual quantile model summaries
+
+```{r}
+for (qu in quantiles) {
+  cat(sprintf("\n--- Quantile τ = %s ---\n", qu))
+  print(summary(qdo(mq, qu)))
+}
+```
+
+## Comparison table
+
+| Feature | R qgam | Julia GAM.jl |
+|---------|--------|--------------|
+| Single quantile | `qgam(formula, data=dat, qu=τ)` | `qgam(formula, data; qu=τ)` |
+| Multiple quantiles | `mqgam(formula, data=dat, qu=c(...))` | `mqgam(formula, data; qu=[...])` |
+| Access fits | `mq$fit[["0.5"]]` | `mq.fits[0.5]` |
+| Loss function | ELF | ELF |
+| Smoothing | Automatic | Automatic |
