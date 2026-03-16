@@ -140,7 +140,12 @@ export
     nll_derivs!,
     nll_obs,
 
-    # GAMLSS families
+    # GAMLSS families and interface
+    DistFamily,
+    GammaLocationScale,
+    BetaRegression,
+    NegativeBinomialLocationScale,
+    InverseGaussianLocationScale,
     GaussianLS,
     GammaLS,
     BetaLS,

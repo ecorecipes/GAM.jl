@@ -1,196 +1,327 @@
-# GAMLSS families for GAM.jl
+# GAMLSS — Generalized Additive Models for Location, Scale, and Shape
 #
-# Location-Scale-Shape families following the R gamlss package convention.
-# Built on the MultiParameterFamily framework, using Distributions.jl for
-# density evaluation and ForwardDiff for automatic derivatives.
+# Uses Distributions.jl for density evaluation and GLM.jl Link types
+# for each parameter, following the same conventions as GLM.jl.
 #
-# Each family defines nll_obs(family, y_i, η_vec) using Distributions.logpdf,
-# where η_vec contains the linear predictors for each distribution parameter.
-
-using SpecialFunctions: logbeta, loggamma
+# Design:
+#   - For distributions where GAMLSS params match Distributions.jl params
+#     (e.g., Normal(μ,σ)), pass the distribution directly to gamlss().
+#   - For distributions needing reparameterization (e.g., Gamma as μ,CV
+#     instead of shape,scale), use named types (GammaLocationScale, etc.)
+#   - Links are GLM.Link objects, one per parameter, specified separately.
+#   - nll_obs uses Distributions.logpdf — ForwardDiff handles derivatives.
 
 # ═══════════════════════════════════════════════════════════════════════
-# GaussianLS — Normal(μ, σ) with μ = η₁, log(σ) = η₂
+# Link helpers
+# ═══════════════════════════════════════════════════════════════════════
+
+_link_symbol(::IdentityLink) = :identity
+_link_symbol(::LogLink) = :log
+_link_symbol(::LogitLink) = :logit
+_link_symbol(::InverseLink) = :inverse
+_link_symbol(::GLM.Link) = :unknown
+
+_apply_link_inv(::IdentityLink, η) = η
+_apply_link_inv(::LogLink, η) = exp(η)
+_apply_link_inv(::LogitLink, η) = 1 / (1 + exp(-η))
+_apply_link_inv(::InverseLink, η) = 1 / η
+_apply_link_inv(link::GLM.Link, η) = GLM.linkinv(link, η)
+
+# ═══════════════════════════════════════════════════════════════════════
+# DistFamily{D}: for distributions whose params match Distributions.jl
 # ═══════════════════════════════════════════════════════════════════════
 
 """
-    GaussianLS()
+    DistFamily{D<:UnivariateDistribution} <: MultiParameterFamily
 
-Gaussian location-scale family: Y ~ Normal(μ, σ).
+Wraps a `Distributions.jl` distribution for use with `gamlss()`.
+Only used for distributions whose GAMLSS parameters match the
+Distributions.jl constructor directly (e.g., `Normal(μ, σ)`).
 
-- η₁ = μ (identity link)
-- η₂ = log(σ) (log link for positivity)
-
-This is the simplest GAMLSS family and a useful test case.
+Constructed automatically by `gamlss()` when passed a distribution instance.
 """
-struct GaussianLS <: MultiParameterFamily end
-
-nparams(::GaussianLS) = 2
-param_names(::GaussianLS) = ["mu", "sigma"]
-param_links(::GaussianLS) = [:identity, :log]
-
-function nll_obs(::GaussianLS, y_i, η_vec)
-    μ = η_vec[1]
-    σ = exp(η_vec[2])
-    return -logpdf(Normal(μ, σ), y_i)
+struct DistFamily{D<:UnivariateDistribution} <: MultiParameterFamily
+    dist::D
+    links::Vector{<:GLM.Link}
+    pnames::Vector{String}
 end
 
-function initial_eta(::GaussianLS, y::AbstractVector)
-    μ = mean(y)
-    σ = max(std(y), 0.01)
+nparams(f::DistFamily) = length(f.links)
+param_names(f::DistFamily) = f.pnames
+param_links(f::DistFamily) = [_link_symbol(l) for l in f.links]
+
+# ── Normal: params (μ, σ) match Distributions.jl directly ──
+
+_gamlss_nparams(::Normal) = 2
+_gamlss_default_links(::Normal) = [IdentityLink(), LogLink()]
+_gamlss_param_names(::Normal) = ["mu", "sigma"]
+
+_gamlss_construct(::Normal, params) = Normal(params[1], max(params[2], 1e-10))
+
+function _gamlss_initial_eta(::Normal, links, y)
     n = length(y)
-    return [fill(μ, n), fill(log(σ), n)]
+    [fill(GLM.linkfun(links[1], mean(y)), n),
+     fill(GLM.linkfun(links[2], max(std(y), 0.01)), n)]
+end
+
+function nll_obs(f::DistFamily, y_i, η_vec)
+    params = ntuple(k -> _apply_link_inv(f.links[k], η_vec[k]), length(f.links))
+    d = _gamlss_construct(f.dist, params)
+    return -logpdf(d, y_i)
+end
+
+function initial_eta(f::DistFamily, y::AbstractVector)
+    _gamlss_initial_eta(f.dist, f.links, y)
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# GammaLS — Gamma(shape=1/σ², scale=μσ²) with μ = exp(η₁), log(σ) = η₂
+# GammaLocationScale — Gamma reparameterized as (μ, σ)
+#   μ = mean, σ = coefficient of variation
+#   Maps to Gamma(α=1/σ², θ=μσ²)
 # ═══════════════════════════════════════════════════════════════════════
 
 """
-    GammaLS()
+    GammaLocationScale(; links=[LogLink(), LogLink()])
 
-Gamma location-scale family: Y ~ Gamma(shape, scale) parameterized as:
+Gamma distribution reparameterized for GAMLSS:
+- Parameter 1: μ (mean), default link: `LogLink()`
+- Parameter 2: σ (coefficient of variation), default link: `LogLink()`
 
-- η₁ = log(μ) (log link — mean)
-- η₂ = log(σ) (log link — CV, so Var = μ²σ²)
-
-Shape α = 1/σ², Scale θ = μσ² → E[Y] = μ, Var[Y] = μ²σ².
+Maps to `Gamma(α=1/σ², θ=μσ²)` so E[Y]=μ, Var[Y]=μ²σ².
 """
-struct GammaLS <: MultiParameterFamily end
+struct GammaLocationScale <: MultiParameterFamily
+    links::Vector{GLM.Link}
+end
+GammaLocationScale(; links = [LogLink(), LogLink()]) = GammaLocationScale(links)
 
-nparams(::GammaLS) = 2
-param_names(::GammaLS) = ["mu", "sigma"]
-param_links(::GammaLS) = [:log, :log]
+nparams(::GammaLocationScale) = 2
+param_names(::GammaLocationScale) = ["mu", "sigma"]
+param_links(f::GammaLocationScale) = [_link_symbol(l) for l in f.links]
 
-function nll_obs(::GammaLS, y_i, η_vec)
-    μ = exp(η_vec[1])
-    σ = exp(η_vec[2])
-    α = 1.0 / (σ * σ)           # shape
-    θ = μ * σ * σ                # scale = μ/α = μσ²
+function nll_obs(f::GammaLocationScale, y_i, η_vec)
+    μ = _apply_link_inv(f.links[1], η_vec[1])
+    σ = _apply_link_inv(f.links[2], η_vec[2])
+    α = 1 / max(σ^2, 1e-10)
+    θ = max(μ, 1e-10) * max(σ^2, 1e-10)
     return -logpdf(Gamma(α, θ), y_i)
 end
 
-function initial_eta(::GammaLS, y::AbstractVector)
+function initial_eta(f::GammaLocationScale, y::AbstractVector)
     μ = max(mean(y), 0.01)
-    σ = max(std(y) / μ, 0.01)  # coefficient of variation
+    σ = max(std(y) / μ, 0.01)
     n = length(y)
-    return [fill(log(μ), n), fill(log(σ), n)]
+    [fill(GLM.linkfun(f.links[1], μ), n),
+     fill(GLM.linkfun(f.links[2], σ), n)]
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# BetaLS — Beta(α, β) with logit(μ) = η₁, log(φ) = η₂
+# BetaRegression — Beta reparameterized as (μ, φ)
+#   μ = mean, φ = precision
+#   Maps to Beta(α=μφ, β=(1-μ)φ)
 # ═══════════════════════════════════════════════════════════════════════
 
 """
-    BetaLS()
+    BetaRegression(; links=[LogitLink(), LogLink()])
 
-Beta location-scale family: Y ~ Beta(α, β) where:
+Beta distribution reparameterized for GAMLSS / beta regression:
+- Parameter 1: μ (mean), default link: `LogitLink()`
+- Parameter 2: φ (precision), default link: `LogLink()`
 
-- η₁ = logit(μ) (logit link — mean)
-- η₂ = log(φ) (log link — precision)
-
-α = μφ, β = (1-μ)φ → E[Y] = μ, Var[Y] = μ(1-μ)/(1+φ).
+Maps to `Beta(α=μφ, β=(1-μ)φ)` so E[Y]=μ, Var[Y]=μ(1-μ)/(1+φ).
 """
-struct BetaLS <: MultiParameterFamily end
+struct BetaRegression <: MultiParameterFamily
+    links::Vector{GLM.Link}
+end
+BetaRegression(; links = [LogitLink(), LogLink()]) = BetaRegression(links)
 
-nparams(::BetaLS) = 2
-param_names(::BetaLS) = ["mu", "phi"]
-param_links(::BetaLS) = [:logit, :log]
+nparams(::BetaRegression) = 2
+param_names(::BetaRegression) = ["mu", "phi"]
+param_links(f::BetaRegression) = [_link_symbol(l) for l in f.links]
 
-function nll_obs(::BetaLS, y_i, η_vec)
-    μ = 1.0 / (1.0 + exp(-η_vec[1]))   # logit⁻¹
-    φ = exp(η_vec[2])
-    α = μ * φ
-    β = (1.0 - μ) * φ
-    y_c = clamp(y_i, 1e-10, 1.0 - 1e-10)
-    return -logpdf(Beta(α, β), y_c)
+function nll_obs(f::BetaRegression, y_i, η_vec)
+    μ = _apply_link_inv(f.links[1], η_vec[1])
+    φ = _apply_link_inv(f.links[2], η_vec[2])
+    μc = clamp(μ, 1e-6, 1 - 1e-6)
+    φc = max(φ, 1e-6)
+    y_c = clamp(y_i, 1e-10, 1 - 1e-10)
+    return -logpdf(Beta(μc * φc, (1 - μc) * φc), y_c)
 end
 
-function initial_eta(::BetaLS, y::AbstractVector)
+function initial_eta(f::BetaRegression, y::AbstractVector)
     μ = clamp(mean(y), 0.01, 0.99)
     v = max(var(y), 1e-6)
-    φ = max(μ * (1 - μ) / v - 1.0, 1.0)
+    φ = max(μ * (1 - μ) / v - 1, 1.0)
     n = length(y)
-    return [fill(log(μ / (1 - μ)), n), fill(log(φ), n)]
+    [fill(GLM.linkfun(f.links[1], μ), n),
+     fill(GLM.linkfun(f.links[2], φ), n)]
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# PoissonLS — Negative-binomial as Poisson + overdispersion
-# NegBinLS: Y ~ NB(μ, σ) with log(μ) = η₁, log(σ) = η₂
+# NegativeBinomialLocationScale — NB reparameterized as (μ, σ)
+#   μ = mean, σ = overdispersion parameter
+#   Maps to NegativeBinomial(r=1/σ², p=r/(r+μ))
 # ═══════════════════════════════════════════════════════════════════════
 
 """
-    NegBinLS()
+    NegativeBinomialLocationScale(; links=[LogLink(), LogLink()])
 
-Negative Binomial location-scale family: Y ~ NB(r, p) parameterized as:
+Negative Binomial reparameterized for GAMLSS (NBI parameterization):
+- Parameter 1: μ (mean), default link: `LogLink()`
+- Parameter 2: σ (overdispersion), default link: `LogLink()`
 
-- η₁ = log(μ) (log link — mean)
-- η₂ = log(σ) (log link — overdispersion)
-
-r = 1/σ², p = 1/(1 + μσ²) → E[Y] = μ, Var[Y] = μ + μ²σ².
-This is the NBI parameterization used by R gamlss.
+Maps to `NegativeBinomial(r=1/σ², p=r/(r+μ))` so E[Y]=μ, Var[Y]=μ+μ²σ².
 """
-struct NegBinLS <: MultiParameterFamily end
+struct NegativeBinomialLocationScale <: MultiParameterFamily
+    links::Vector{GLM.Link}
+end
+NegativeBinomialLocationScale(; links = [LogLink(), LogLink()]) =
+    NegativeBinomialLocationScale(links)
 
-nparams(::NegBinLS) = 2
-param_names(::NegBinLS) = ["mu", "sigma"]
-param_links(::NegBinLS) = [:log, :log]
+nparams(::NegativeBinomialLocationScale) = 2
+param_names(::NegativeBinomialLocationScale) = ["mu", "sigma"]
+param_links(f::NegativeBinomialLocationScale) = [_link_symbol(l) for l in f.links]
 
-function nll_obs(::NegBinLS, y_i, η_vec)
-    μ = exp(η_vec[1])
-    σ² = exp(2.0 * η_vec[2])
-    r = 1.0 / σ²                    # size parameter
-    p = r / (r + μ)                  # success probability
+function nll_obs(f::NegativeBinomialLocationScale, y_i, η_vec)
+    μ = _apply_link_inv(f.links[1], η_vec[1])
+    σ = _apply_link_inv(f.links[2], η_vec[2])
+    r = 1 / max(σ^2, 1e-10)
+    p = r / (r + max(μ, 1e-10))
     return -logpdf(NegativeBinomial(r, p), round(Int, max(y_i, 0)))
 end
 
-function initial_eta(::NegBinLS, y::AbstractVector)
+function initial_eta(f::NegativeBinomialLocationScale, y::AbstractVector)
     μ = max(mean(y), 0.1)
     v = max(var(y), μ + 0.01)
-    σ² = max((v - μ) / (μ * μ), 0.01)
+    σ = sqrt(max((v - μ) / (μ^2), 0.01))
     n = length(y)
-    return [fill(log(μ), n), fill(0.5 * log(σ²), n)]
+    [fill(GLM.linkfun(f.links[1], μ), n),
+     fill(GLM.linkfun(f.links[2], σ), n)]
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# gamlss() — unified interface for all multi-parameter families
+# InverseGaussianLocationScale — IG reparameterized as (μ, σ)
+#   μ = mean, σ = CV (coefficient of variation)
+#   Maps to InverseGaussian(μ, λ=μ/σ²)
 # ═══════════════════════════════════════════════════════════════════════
 
 """
-    gamlss(formulas, data, family; control, sp, trace) -> MultiParameterModel
+    InverseGaussianLocationScale(; links=[LogLink(), LogLink()])
+
+Inverse Gaussian reparameterized for GAMLSS:
+- Parameter 1: μ (mean), default link: `LogLink()`
+- Parameter 2: σ (coefficient of variation), default link: `LogLink()`
+
+Maps to `InverseGaussian(μ, λ=μ/σ²)` so E[Y]=μ, Var[Y]=μ³/λ=μ²σ².
+"""
+struct InverseGaussianLocationScale <: MultiParameterFamily
+    links::Vector{GLM.Link}
+end
+InverseGaussianLocationScale(; links = [LogLink(), LogLink()]) =
+    InverseGaussianLocationScale(links)
+
+nparams(::InverseGaussianLocationScale) = 2
+param_names(::InverseGaussianLocationScale) = ["mu", "sigma"]
+param_links(f::InverseGaussianLocationScale) = [_link_symbol(l) for l in f.links]
+
+function nll_obs(f::InverseGaussianLocationScale, y_i, η_vec)
+    μ = _apply_link_inv(f.links[1], η_vec[1])
+    σ = _apply_link_inv(f.links[2], η_vec[2])
+    μc = max(μ, 1e-10)
+    λ = μc / max(σ^2, 1e-10)
+    return -logpdf(InverseGaussian(μc, λ), y_i)
+end
+
+function initial_eta(f::InverseGaussianLocationScale, y::AbstractVector)
+    μ = max(mean(y), 0.01)
+    σ = max(std(y) / μ, 0.01)
+    n = length(y)
+    [fill(GLM.linkfun(f.links[1], μ), n),
+     fill(GLM.linkfun(f.links[2], σ), n)]
+end
+
+# ═══════════════════════════════════════════════════════════════════════
+# Legacy aliases
+# ═══════════════════════════════════════════════════════════════════════
+
+"""Alias: `GaussianLS()` → `DistFamily(Normal(), ...)`"""
+GaussianLS() = DistFamily(Normal(), [IdentityLink(), LogLink()], ["mu", "sigma"])
+"""Alias: `GammaLS()` → `GammaLocationScale()`"""
+GammaLS() = GammaLocationScale()
+"""Alias: `BetaLS()` → `BetaRegression()`"""
+BetaLS() = BetaRegression()
+"""Alias: `NegBinLS()` → `NegativeBinomialLocationScale()`"""
+NegBinLS() = NegativeBinomialLocationScale()
+
+# ═══════════════════════════════════════════════════════════════════════
+# gamlss() — main interface
+# ═══════════════════════════════════════════════════════════════════════
+
+"""
+    gamlss(formulas, data, family; links, control, sp, trace) -> MultiParameterModel
 
 Fit a Generalized Additive Model for Location, Scale, and Shape (GAMLSS).
 
-This is the unified interface for **all** multi-parameter distribution models,
-including GAMLSS location-scale families, extreme value models (GEV, GPD),
-and extended GPD models. The `evgam` function is an alias.
-
 # Arguments
-- `formulas`: a vector of `@gam_formula` or `FormulaTerm`, one per distribution
-  parameter. A single formula is replicated for all parameters.
-- `data`: a table (DataFrame, NamedTuple, etc.)
-- `family`: any `MultiParameterFamily`:
-  - **GAMLSS**: `GaussianLS()`, `GammaLS()`, `BetaLS()`, `NegBinLS()`
-  - **Extreme value**: `GEVFamily()`, `GPDFamily()`
-  - **Extended GPD**: `EGPD1Family()`, `EGPD2Family()`, etc.
-- `control`: fitting control parameters (see [`mp_control`](@ref))
-- `sp`: optional fixed smoothing parameters (log scale)
+- `formulas`: vector of `@gam_formula`, one per distribution parameter.
+  A single formula is replicated for all parameters.
+- `data`: a table (DataFrame, etc.)
+- `family`: a distribution or family:
+  - **Direct**: `Normal()` — params match Distributions.jl
+  - **Reparameterized**: `GammaLocationScale()`, `BetaRegression()`,
+    `NegativeBinomialLocationScale()`, `InverseGaussianLocationScale()`
+  - **Extreme value**: `GEVFamily()`, `GPDFamily()`, `EGPD1Family()`, etc.
+
+# Keyword Arguments
+- `links`: vector of `GLM.Link` objects, one per parameter.
+  Default: canonical links for the family. Only for distributions passed
+  directly (e.g., `Normal()`). Reparameterized families accept links
+  via their constructor: `GammaLocationScale(links=[...])`.
+- `control`: fitting control (see [`mp_control`](@ref))
+- `sp`: fixed log smoothing parameters (default: estimate via REML)
 - `trace`: print iteration progress
 
 # Examples
 ```julia
-using GAM, DataFrames
+using GAM, DataFrames, Distributions, GLM
 
-# Gaussian location-scale
+# Normal — pass Distributions.jl type directly, links specified separately
 m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
-           df, GaussianLS())
+           df, Normal())
 
-# GEV extreme value (same interface)
+# Normal with custom links
+m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+           df, Normal(); links=[IdentityLink(), IdentityLink()])
+
+# Gamma — reparameterized (μ, σ=CV), links in constructor
+m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+           df, GammaLocationScale())
+
+# Beta regression
+m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+           df, BetaRegression())
+
+# GEV extreme value (MultiParameterFamily passed through)
 m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
            df, GEVFamily())
 ```
 """
+function gamlss(formulas, data, family::UnivariateDistribution;
+    links::Union{Nothing, Vector{<:GLM.Link}} = nothing,
+    control::MPFitControl = mp_control(),
+    sp = nothing, trace::Bool = false)
+
+    K = _gamlss_nparams(family)
+    actual_links = links === nothing ? _gamlss_default_links(family) : links
+    length(actual_links) == K || throw(ArgumentError(
+        "Expected $K links for $(typeof(family)), got $(length(actual_links))"))
+    pnames = _gamlss_param_names(family)
+
+    df = DistFamily(family, actual_links, pnames)
+    return gamlss(formulas, data, df; control = control, sp = sp, trace = trace)
+end
+
 function gamlss(formulas, data, family::MultiParameterFamily;
+    links = nothing,  # ignored — links are part of the family
     control::MPFitControl = mp_control(),
     sp = nothing, trace::Bool = false)
 
@@ -198,5 +329,90 @@ function gamlss(formulas, data, family::MultiParameterFamily;
         control.outer_maxit, control.outer_tol,
         control.step_max, trace)
 
-    return evgam(formulas, data, family; control=ctrl, sp=sp, trace=trace)
+    return _gamlss_fit(formulas, data, family, ctrl, sp, trace)
+end
+
+"""Internal fitting function shared by all gamlss paths."""
+function _gamlss_fit(formulas, data, family::MultiParameterFamily,
+    ctrl::MPFitControl, sp, trace::Bool)
+
+    K = nparams(family)
+
+    if formulas isa FormulaTerm || formulas isa GamFormula
+        formulas = fill(formulas, K)
+    end
+    length(formulas) == K || throw(ArgumentError(
+        "Expected $K formulas for $(typeof(family)), got $(length(formulas))"))
+
+    cols = Tables.columntable(data)
+    y = _extract_response(formulas[1], cols)
+    n = length(y)
+
+    X_list = Vector{Matrix{Float64}}(undef, K)
+    smooths_list = Vector{Vector{ConstructedSmooth}}(undef, K)
+    offset = 0
+
+    for k in 1:K
+        Xk, smoothsk = _build_design_matrix(formulas[k], cols, n, offset)
+        X_list[k] = Xk
+        smooths_list[k] = smoothsk
+        offset += size(Xk, 2)
+    end
+
+    p = offset
+    param_offsets = cumsum([0; [size(X, 2) for X in X_list]])
+
+    Sl = build_penalty_matrices(smooths_list, param_offsets)
+    nsp = length(Sl)
+    Mp = sum(1 + sum(sm.null_dim for sm in smooths; init = 0) for smooths in smooths_list)
+
+    η_init = initial_eta(family, y)
+    β_init = zeros(p)
+    for k in 1:K
+        s = param_offsets[k] + 1
+        β_init[s] = mean(η_init[k])
+    end
+
+    if sp !== nothing
+        log_sp = Float64.(sp)
+    else
+        log_sp = _init_log_sp_hessian(family, y, X_list, Sl, β_init, param_offsets, nsp)
+    end
+
+    if sp !== nothing || nsp == 0
+        S = zeros(p, p)
+        for (j, Sj) in enumerate(Sl)
+            S .+= exp(log_sp[j]) .* Sj
+        end
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl)
+        reml_val = nll_pen
+    else
+        log_sp, β_opt, reml_val = mp_bfgs_outer(family, y, X_list, Sl, β_init,
+            log_sp, param_offsets, ctrl; Mp = Mp)
+        conv = true
+    end
+
+    η_fit = _compute_eta(X_list, β_opt, param_offsets, K)
+
+    S = zeros(p, p)
+    for (j, Sj) in enumerate(Sl)
+        if j <= length(log_sp)
+            S .+= exp(log_sp[j]) .* Sj
+        end
+    end
+
+    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets)
+    edf = diag(Vp * H0)
+    nll_val = nll_total(family, y, η_fit)
+
+    idpars = Vector{Int}(undef, p)
+    for k in 1:K
+        s = param_offsets[k] + 1
+        e = param_offsets[k + 1]
+        idpars[s:e] .= k
+    end
+
+    return MultiParameterModel(
+        family, β_opt, η_fit, X_list, smooths_list, log_sp,
+        edf, Vp, Vc, nll_val, reml_val, y, n, conv, idpars, param_offsets)
 end
