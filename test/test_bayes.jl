@@ -170,10 +170,11 @@ end
     @test length(labels) == 1
 end
 
-@testset "BayesGamModel stub" begin
-    @test_throws ErrorException GAM._fit_gam_bayes()
-    @test_throws ErrorException GAM._fit_gamlss_bayes()
-    @test_throws ErrorException GAM._fit_scam_bayes()
+@testset "BayesGamModel type" begin
+    # Stubs are declared as functions (filled by extension)
+    @test isdefined(GAM, :_fit_gam_bayes)
+    @test isdefined(GAM, :_fit_gamlss_bayes)
+    @test isdefined(GAM, :_fit_scam_bayes)
 end
 
 @testset "priors= kwarg dispatch" begin
@@ -183,9 +184,4 @@ end
     # Without priors: works as usual (frequentist)
     m = gam(@gam_formula(y ~ s(x)), df)
     @test m isa GamModel
-
-    # With priors but no Turing: should error informatively
-    @test_throws ErrorException gam(@gam_formula(y ~ s(x)), df; priors = PriorSpec())
-    @test_throws ErrorException gamlss(@gam_formula(y ~ s(x)), df, Normal(); priors = PriorSpec())
-    @test_throws ErrorException scam(@gam_formula(y ~ s(x, bs = :mpi)), df; priors = PriorSpec())
 end

@@ -754,3 +754,6 @@ end
 
 # Bayesian GAM infrastructure tests (smooth2random, PriorSpec, dispatch)
 @eval include("test_bayes.jl")
+
+# Bayesian GAM end-to-end tests (requires Turing.jl extension)
+@eval include("test_bayes_e2e.jl")

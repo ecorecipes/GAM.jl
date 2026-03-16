@@ -114,9 +114,13 @@ function _smooth2random_single(sm::ConstructedSmooth)
 
     # Eigendecompose penalty
     eig = eigen(Symmetric(S))
+    # Reverse to DESCENDING order (largest eigenvalues first, matching R convention)
+    idx = k:-1:1
+    vals = eig.values[idx]
+    vecs = eig.vectors[:, idx]
     # Ensure deterministic sign (same as mgcv's hack)
-    if eig.vectors[1, 1] < 0
-        eig = Eigen(eig.values, -eig.vectors)
+    if vecs[1, 1] < 0
+        vecs = -vecs
     end
 
     null_rank = sm.null_dim
@@ -125,14 +129,14 @@ function _smooth2random_single(sm::ConstructedSmooth)
         p_rank = k
     end
 
-    U = eig.vectors  # k × k orthogonal matrix
+    U = vecs  # k × k orthogonal matrix
 
     # Build rescaling vector D:
-    # - penalized columns: 1/sqrt(eigenvalue) (reduces penalty to identity)
-    # - null space columns: 1 (no change)
+    # - penalized columns (1:p_rank): 1/sqrt(eigenvalue) → identity covariance
+    # - null space columns (p_rank+1:k): 1 (no change)
     D = Vector{Float64}(undef, k)
     for j in 1:p_rank
-        D[j] = 1.0 / sqrt(max(eig.values[j], eps()))
+        D[j] = 1.0 / sqrt(max(vals[j], eps()))
     end
     for j in (p_rank + 1):k
         D[j] = 1.0
@@ -272,8 +276,12 @@ function _smooth2random_tensor(sm::ConstructedSmooth)
 
     # Eigendecompose summed penalty
     eig = eigen(Symmetric(sum_S))
-    if eig.vectors[1, 1] < 0
-        eig = Eigen(eig.values, -eig.vectors)
+    # Reverse to DESCENDING order (largest eigenvalues first, matching R convention)
+    idx = k:-1:1
+    vals = eig.values[idx]
+    vecs = eig.vectors[:, idx]
+    if vecs[1, 1] < 0
+        vecs = -vecs
     end
 
     null_rank = sm.null_dim
@@ -282,7 +290,7 @@ function _smooth2random_tensor(sm::ConstructedSmooth)
         p_rank = k
     end
 
-    U = eig.vectors  # k × k
+    U = vecs  # k × k
 
     # Transform model matrix
     X_new = sm.X * U
@@ -306,11 +314,16 @@ function _smooth2random_tensor(sm::ConstructedSmooth)
 
         # Eigendecompose projected penalty for rescaling
         eig_p = eigen(Symmetric(S_proj))
+        # Reverse to descending order
+        idx_p = size(S_proj, 1):-1:1
+        vals_p = eig_p.values[idx_p]
+        vecs_p = eig_p.vectors[:, idx_p]
+
         # Columns with nonzero eigenvalues belong to this penalty's random effect
-        pos = eig_p.values .> eps() * maximum(abs.(eig_p.values))
+        pos = vals_p .> eps() * maximum(abs.(vals_p))
         if any(pos)
-            D_inv = 1.0 ./ sqrt.(eig_p.values[pos])
-            Z_i = X_new[:, 1:p_rank] * eig_p.vectors[:, pos] * Diagonal(D_inv)
+            D_inv = 1.0 ./ sqrt.(vals_p[pos])
+            Z_i = X_new[:, 1:p_rank] * vecs_p[:, pos] * Diagonal(D_inv)
             push!(Zs, Z_i)
         end
     end

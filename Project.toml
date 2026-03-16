@@ -46,6 +46,7 @@ StatsAPI = "1.7"
 StatsBase = "0.34"
 StatsModels = "0.7.3"
 Tables = "1"
+Turing = "0.34, 0.35, 0.36, 0.37, 0.38, 0.39, 0.40, 0.41, 0.42, 0.43"
 julia = "1.9"
 
 [extras]
@@ -56,6 +57,7 @@ RDatasets = "ce6b1742-4840-55fa-b093-852dadbb1d8b"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [targets]
-test = ["CategoricalArrays", "DataFrames", "RCall", "Random", "RDatasets", "StableRNGs", "Test"]
+test = ["CategoricalArrays", "DataFrames", "RCall", "Random", "RDatasets", "StableRNGs", "Test", "Turing"]

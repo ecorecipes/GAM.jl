@@ -174,10 +174,14 @@ function _build_smooth_call(ex::Expr)
         end
     end
 
+    # Qualify the smooth constructor (s, te, ti) with GAM module
+    # to avoid scoping issues with @eval include and nested testsets
+    qualified_fname = Expr(:., :GAM, QuoteNode(fname))
+
     if isempty(kw_args)
-        return Expr(:call, fname, pos_args...)
+        return Expr(:call, qualified_fname, pos_args...)
     else
-        return Expr(:call, fname,
+        return Expr(:call, qualified_fname,
             Expr(:parameters, kw_args...),
             pos_args...)
     end
