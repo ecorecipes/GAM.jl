@@ -20,65 +20,67 @@ abstract type ExtendedFamily end
 # ============================================================================
 
 """
-    NegBinFamily(; theta=1.0, link=LogLink(), estimate_theta=true)
+    NegBinFamily(; theta=1.0, estimate_theta=true)
 
 Negative Binomial family with estimated shape parameter θ.
 Variance function: V(μ) = μ + μ²/θ.
+Default link: `LogLink()`.
 """
 mutable struct NegBinFamily <: ExtendedFamily
     theta::Float64
-    link::GLM.Link
     estimate_theta::Bool
 end
 
-NegBinFamily(; theta::Real=1.0, link::GLM.Link=LogLink(), estimate_theta::Bool=true) =
-    NegBinFamily(Float64(theta), link, estimate_theta)
+NegBinFamily(; theta::Real=1.0, estimate_theta::Bool=true) =
+    NegBinFamily(Float64(theta), estimate_theta)
 
 # ============================================================================
 # Tweedie family
 # ============================================================================
 
 """
-    TweedieFamily(; p=1.5, link=LogLink(), estimate_p=false)
+    TweedieFamily(; p=1.5, estimate_p=false)
 
 Tweedie family with power parameter p ∈ (1, 2).
 Variance function: V(μ) = μ^p.
+Default link: `LogLink()`.
 Currently supports fixed p only.
 """
 mutable struct TweedieFamily <: ExtendedFamily
     p::Float64
-    link::GLM.Link
     estimate_p::Bool
 end
 
-TweedieFamily(; p::Real=1.5, link::GLM.Link=LogLink(), estimate_p::Bool=false) =
-    TweedieFamily(Float64(p), link, estimate_p)
+TweedieFamily(; p::Real=1.5, estimate_p::Bool=false) =
+    TweedieFamily(Float64(p), estimate_p)
 
 # ============================================================================
 # Beta regression family
 # ============================================================================
 
 """
-    BetaFamily(; phi=1.0, link=LogitLink(), estimate_phi=true)
+    BetaFamily(; phi=1.0, estimate_phi=true)
 
 Beta regression family with precision parameter φ > 0.
 Response must be in (0,1). Variance: μ(1-μ)/(1+φ).
+Default link: `LogitLink()`.
 """
 mutable struct BetaFamily <: ExtendedFamily
     phi::Float64
-    link::GLM.Link
     estimate_phi::Bool
 end
 
-BetaFamily(; phi::Real=1.0, link::GLM.Link=LogitLink(), estimate_phi::Bool=true) =
-    BetaFamily(Float64(phi), link, estimate_phi)
+BetaFamily(; phi::Real=1.0, estimate_phi::Bool=true) =
+    BetaFamily(Float64(phi), estimate_phi)
 
 # ============================================================================
 # Common interface
 # ============================================================================
 
-"""Return the link function for an extended family."""
-_get_link(f::ExtendedFamily) = f.link
+"""Return the default link function for an extended family."""
+_default_link(::NegBinFamily) = LogLink()
+_default_link(::TweedieFamily) = LogLink()
+_default_link(::BetaFamily) = LogitLink()
 
 """Whether the family has an extra parameter to estimate."""
 _has_extra_param(f::NegBinFamily) = f.estimate_theta
@@ -213,7 +215,7 @@ function _deviance_residuals(f::TweedieFamily, y, mu, wt)
     dev_total = _deviance(f, y, mu, wt)
     # Per-observation deviance
     for i in eachindex(y, mu, wt)
-        f_single = TweedieFamily(p=f.p, link=f.link, estimate_p=false)
+        f_single = TweedieFamily(p=f.p, estimate_p=false)
         di = _deviance(f_single, [y[i]], [mu[i]], [wt[i]])
         r[i] = sign(y[i] - mu[i]) * sqrt(max(di, 0.0))
     end

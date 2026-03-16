@@ -60,7 +60,7 @@ function gam(f::FormulaTerm, data;
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
     if family isa ExtendedFamily
-        link_eff = _get_link(family)
+        link_eff = link === nothing ? _default_link(family) : link
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control)
@@ -88,7 +88,7 @@ function gam(gf::GamFormula, data;
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
     if family isa ExtendedFamily
-        link_eff = _get_link(family)
+        link_eff = link === nothing ? _default_link(family) : link
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
         f = term(gf.response) ~ term(1)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
