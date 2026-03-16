@@ -15,7 +15,7 @@ hierarchically: specific parameter name > parameter class > default.
 PriorSpec(;
     b = Normal(0, 10),                    # default for all fixed effects
     sds = truncated(TDist(3); lower=0),  # default for smooth SDs
-    sigma = truncated(Cauchy(0, 2.5); lower=0),      # residual SD
+    sigma = truncated(Normal(0, 2.5); lower=0),      # residual SD
     specific = Dict{String, Distribution}(),          # per-parameter overrides
 )
 ```
@@ -61,8 +61,8 @@ end
 function PriorSpec(;
     b::Distribution = Normal(0, 10),
     sds::Distribution = truncated(TDist(3); lower = 0),
-    sigma::Distribution = truncated(Cauchy(0, 2.5); lower = 0),
-    phi::Distribution = truncated(Cauchy(0, 5); lower = 0),
+    sigma::Distribution = truncated(Normal(0, 2.5); lower = 0),
+    phi::Distribution = truncated(Normal(0, 5); lower = 0),
     specific::Dict{String, <:Distribution} = Dict{String, Distribution}(),
 )
     return PriorSpec(b, sds, sigma, phi, specific)

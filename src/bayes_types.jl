@@ -134,40 +134,34 @@ end
 
 StatsAPI.nobs(m::BayesGamModel) = m.n_obs
 
+const _TURING_HINT = "Turing.jl extension not loaded. Run `using Turing` first."
+
 function StatsAPI.coef(m::BayesGamModel)
-    # Posterior means of all coefficients
-    # Chains are stored as Any; the extension populates coefficient summaries
+    hasmethod(_bayes_coef_means, Tuple{BayesGamModel}) || error(_TURING_HINT)
     return _bayes_coef_means(m)
 end
 
 function StatsAPI.vcov(m::BayesGamModel)
+    hasmethod(_bayes_vcov, Tuple{BayesGamModel}) || error(_TURING_HINT)
     return _bayes_vcov(m)
 end
 
 function StatsAPI.coeftable(m::BayesGamModel)
+    hasmethod(_bayes_coeftable, Tuple{BayesGamModel}) || error(_TURING_HINT)
     return _bayes_coeftable(m)
 end
 
 function StatsAPI.confint(m::BayesGamModel; level::Real = 0.95)
+    hasmethod(_bayes_credint, Tuple{BayesGamModel}) || error(_TURING_HINT)
     return _bayes_credint(m; level = level)
 end
 
-# Placeholder implementations — filled in by the Turing extension
-function _bayes_coef_means(m::BayesGamModel)
-    error("Turing.jl extension not loaded. Use `using Turing` before fitting Bayesian GAMs.")
-end
-
-function _bayes_vcov(m::BayesGamModel)
-    error("Turing.jl extension not loaded. Use `using Turing` before fitting Bayesian GAMs.")
-end
-
-function _bayes_coeftable(m::BayesGamModel)
-    error("Turing.jl extension not loaded. Use `using Turing` before fitting Bayesian GAMs.")
-end
-
-function _bayes_credint(m::BayesGamModel; level::Real = 0.95)
-    error("Turing.jl extension not loaded. Use `using Turing` before fitting Bayesian GAMs.")
-end
+# Declared without methods — implementations provided by GAMTuringExt.
+# If the extension isn't loaded, calling these yields a MethodError.
+function _bayes_coef_means end
+function _bayes_vcov end
+function _bayes_coeftable end
+function _bayes_credint end
 
 # ============================================================================
 # Display
