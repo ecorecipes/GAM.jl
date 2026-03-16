@@ -715,16 +715,26 @@ function scam(gf::GamFormula, data;
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :GCV,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    control::ScamControl = scam_control())
+    control::ScamControl = scam_control(),
+    priors::Union{PriorSpec, Nothing} = nothing,
+    sampler::Any = nothing,
+    nsamples::Int = 2000,
+    nchains::Int = 4)
+
+    _validate_gam_family(family)
+    link_eff = link === nothing ? GLM.canonicallink(family) : link
+    _validate_link(link_eff, family)
+
+    # Bayesian dispatch
+    if priors !== nothing
+        f = term(gf.response) ~ term(1)
+        return _fit_scam_bayes(f, gf, data, family, link_eff, priors;
+            sampler = sampler, nsamples = nsamples, nchains = nchains,
+            weights = weights)
+    end
 
     method in (:GCV, :UBRE, :REML) ||
         throw(ArgumentError("method must be :GCV, :UBRE, or :REML, got :$method"))
-    _validate_gam_family(family)
-
-    if link === nothing
-        link = GLM.canonicallink(family)
-    end
-    _validate_link(link, family)
 
     y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
     f = term(gf.response) ~ term(1)
@@ -735,7 +745,7 @@ function scam(gf::GamFormula, data;
 
     if !any(p_ident)
         # No shape constraints — fall back to standard GAM
-        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
+        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
             method == :GCV ? :GCV : method == :UBRE ? :GCV : :REML,
             :pirls,
             weights === nothing ? nothing : Float64.(weights),
@@ -755,7 +765,7 @@ function scam(gf::GamFormula, data;
     penalty = setup_penalties(smooths, n_parametric)
 
     # Outer iteration
-    log_sp, result = scam_outer_iteration(X, y, smooths, penalty, family, link, p_ident;
+    log_sp, result = scam_outer_iteration(X, y, smooths, penalty, family, link_eff, p_ident;
         method = method, weights = wts, control = control)
 
     # Post-processing
@@ -797,7 +807,7 @@ function scam(gf::GamFormula, data;
         result.fitted_values,
         result.linear_predictor,
         wts,
-        family, link,
+        family, link_eff,
         smooths,
         penalty,
         log_sp,
