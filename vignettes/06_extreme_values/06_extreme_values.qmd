@@ -27,6 +27,12 @@ GAM.jl's `evgam` function fits **multi-parameter GAMs** where each distribution 
 ## Setup
 
 ```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
+
+```{julia}
 using GAM
 using StatsAPI: fitted
 using LinearAlgebra: diag

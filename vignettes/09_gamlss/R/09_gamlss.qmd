@@ -31,9 +31,11 @@ cat(sprintf("n = %d, y range: [%.2f, %.2f]\n", nrow(df), min(df$y), max(df$y)))
 
 ### Fit
 
+Using `pb()` (P-spline basis from gamlss) for smooth terms:
+
 ```{r}
-m <- gamlss(y ~ ga(~s(x, k = 15, bs = "cr")),
-            sigma.formula = ~ ga(~s(x, k = 10, bs = "cr")),
+m <- gamlss(y ~ pb(x, df = 10),
+            sigma.formula = ~ pb(x, df = 6),
             family = NO(), data = df, trace = FALSE,
             control = gamlss.control(n.cyc = 100, trace = FALSE))
 summary(m)
@@ -76,8 +78,8 @@ df_g <- read.csv("../data_gamma_ls.csv")
 The R `gamlss` Gamma family `GA()` uses the same (μ, σ) parameterization as GAM.jl's `GammaLocationScale()`:
 
 ```{r}
-m_g <- gamlss(y ~ ga(~s(x, k = 15, bs = "cr")),
-              sigma.formula = ~ ga(~s(x, k = 10, bs = "cr")),
+m_g <- gamlss(y ~ pb(x, df = 10),
+              sigma.formula = ~ pb(x, df = 6),
               family = GA(), data = df_g, trace = FALSE,
               control = gamlss.control(n.cyc = 100, trace = FALSE))
 ```
@@ -102,7 +104,7 @@ df_b <- read.csv("../data_beta_reg.csv")
 The R `gamlss` Beta family `BE()` uses (μ, σ) where σ = 1/(1+φ). We use `BEINF0` or `BE` depending on boundary handling:
 
 ```{r}
-m_b <- gamlss(y ~ ga(~s(x, k = 15, bs = "cr")),
+m_b <- gamlss(y ~ pb(x, df = 10),
               sigma.formula = ~ 1,
               family = BE(), data = df_b, trace = FALSE,
               control = gamlss.control(n.cyc = 100, trace = FALSE))

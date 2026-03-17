@@ -1,6 +1,20 @@
 # Quantile GAM Regression
 GAM.jl Contributors
 
+- [Introduction](#introduction)
+- [Setup](#setup)
+- [Load heteroscedastic data](#load-heteroscedastic-data)
+- [Fit a single quantile GAM](#fit-a-single-quantile-gam)
+  - [Median regression (τ = 0.5)](#median-regression-τ--05)
+  - [Compare with mean regression](#compare-with-mean-regression)
+- [Fit multiple quantiles with
+  `mqgam`](#fit-multiple-quantiles-with-mqgam)
+- [Quantile crossing check](#quantile-crossing-check)
+- [Verify quantile coverage](#verify-quantile-coverage)
+- [Individual quantile model
+  summaries](#individual-quantile-model-summaries)
+- [Comparison table](#comparison-table)
+
 ## Introduction
 
 This vignette demonstrates quantile GAM regression using the R **qgam**
@@ -25,7 +39,7 @@ library(mgcv)
 
 ## Load heteroscedastic data
 
-*y* = sin (2*π**x*) + (0.2 + 0.8*x*)*ε*,  *ε* ∼ *N*(0, 1)
+$$y = \sin(2\pi x) + (0.2 + 0.8x)\varepsilon, \quad \varepsilon \sim N(0,1)$$
 
 ``` r
 dat <- read.csv("../data.csv")
@@ -288,44 +302,10 @@ for (qu in quantiles) {
 
 ## Comparison table
 
-<table>
-<colgroup>
-<col style="width: 29%" />
-<col style="width: 25%" />
-<col style="width: 45%" />
-</colgroup>
-<thead>
-<tr>
-<th>Feature</th>
-<th>R qgam</th>
-<th>Julia GAM.jl</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Single quantile</td>
-<td><code>qgam(formula, data=dat, qu=τ)</code></td>
-<td><code>qgam(formula, data; qu=τ)</code></td>
-</tr>
-<tr>
-<td>Multiple quantiles</td>
-<td><code>mqgam(formula, data=dat, qu=c(...))</code></td>
-<td><code>mqgam(formula, data; qu=[...])</code></td>
-</tr>
-<tr>
-<td>Access fits</td>
-<td><code>mq$fit[["0.5"]]</code></td>
-<td><code>mq.fits[0.5]</code></td>
-</tr>
-<tr>
-<td>Loss function</td>
-<td>ELF</td>
-<td>ELF</td>
-</tr>
-<tr>
-<td>Smoothing</td>
-<td>Automatic</td>
-<td>Automatic</td>
-</tr>
-</tbody>
-</table>
+| Feature | R qgam | Julia GAM.jl |
+|----|----|----|
+| Single quantile | `qgam(formula, data=dat, qu=τ)` | `qgam(formula, data; qu=τ)` |
+| Multiple quantiles | `mqgam(formula, data=dat, qu=c(...))` | `mqgam(formula, data; qu=[...])` |
+| Access fits | `mq$fit[["0.5"]]` | `mq.fits[0.5]` |
+| Loss function | ELF | ELF |
+| Smoothing | Automatic | Automatic |

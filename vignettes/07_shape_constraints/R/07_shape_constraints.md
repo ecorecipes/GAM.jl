@@ -1,6 +1,27 @@
 # Shape-Constrained Additive Models
 GAM.jl Contributors
 
+- [Introduction](#introduction)
+- [Setup](#setup)
+- [Example 1: Monotone increasing
+  (dose-response)](#example-1-monotone-increasing-dose-response)
+  - [Load data](#load-data)
+  - [Fit unconstrained GAM vs SCAM](#fit-unconstrained-gam-vs-scam)
+  - [Compare fitted values](#compare-fitted-values)
+  - [Verify monotonicity](#verify-monotonicity)
+- [Example 2: Convex function](#example-2-convex-function)
+  - [Simulate data](#simulate-data)
+  - [Fit with convexity constraint](#fit-with-convexity-constraint)
+  - [Verify convexity](#verify-convexity)
+- [Example 3: Monotone increasing and
+  concave](#example-3-monotone-increasing-and-concave)
+  - [Simulate data](#simulate-data-1)
+  - [Fit with monotone increasing + concave
+    constraint](#fit-with-monotone-increasing--concave-constraint)
+  - [Verify constraints](#verify-constraints)
+- [SCAM model summaries](#scam-model-summaries)
+- [Comparison table](#comparison-table)
+
 ## Introduction
 
 This vignette demonstrates shape-constrained additive models using the R
@@ -27,7 +48,7 @@ library(mgcv)
 
 ### Load data
 
-True function: *f*(*x*) = 3(1 − *e*<sup>−5*x*</sup>)
+True function: $f(x) = 3(1 - e^{-5x})$
 
 ``` r
 dat <- read.csv("../data.csv")
@@ -97,7 +118,7 @@ cat("All non-decreasing (GAM):", all(diffs_gam >= -1e-10), "\n")
 
 ### Simulate data
 
-True function: *f*(*x*) = 2*x*<sup>2</sup>
+True function: $f(x) = 2x^2$
 
 ``` r
 dat_cx <- read.csv("../data_cx.csv")
@@ -278,54 +299,13 @@ summary(m_micv)
 
 ## Comparison table
 
-<table>
-<thead>
-<tr>
-<th>Feature</th>
-<th>R <code>scam</code></th>
-<th>Julia GAM.jl <code>scam</code></th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Monotone increasing</td>
-<td><code>bs="mpi"</code></td>
-<td><code>bs=:mpi</code></td>
-</tr>
-<tr>
-<td>Monotone decreasing</td>
-<td><code>bs="mpd"</code></td>
-<td><code>bs=:mpd</code></td>
-</tr>
-<tr>
-<td>Convex</td>
-<td><code>bs="cx"</code></td>
-<td><code>bs=:cx</code></td>
-</tr>
-<tr>
-<td>Concave</td>
-<td><code>bs="cv"</code></td>
-<td><code>bs=:cv</code></td>
-</tr>
-<tr>
-<td>Mono. inc. + convex</td>
-<td><code>bs="micx"</code></td>
-<td><code>bs=:micx</code></td>
-</tr>
-<tr>
-<td>Mono. inc. + concave</td>
-<td><code>bs="micv"</code></td>
-<td><code>bs=:micv</code></td>
-</tr>
-<tr>
-<td>Mono. dec. + convex</td>
-<td><code>bs="mdcx"</code></td>
-<td><code>bs=:mdcx</code></td>
-</tr>
-<tr>
-<td>Mono. dec. + concave</td>
-<td><code>bs="mdcv"</code></td>
-<td><code>bs=:mdcv</code></td>
-</tr>
-</tbody>
-</table>
+| Feature              | R `scam`    | Julia GAM.jl `scam` |
+|----------------------|-------------|---------------------|
+| Monotone increasing  | `bs="mpi"`  | `bs=:mpi`           |
+| Monotone decreasing  | `bs="mpd"`  | `bs=:mpd`           |
+| Convex               | `bs="cx"`   | `bs=:cx`            |
+| Concave              | `bs="cv"`   | `bs=:cv`            |
+| Mono. inc. + convex  | `bs="micx"` | `bs=:micx`          |
+| Mono. inc. + concave | `bs="micv"` | `bs=:micv`          |
+| Mono. dec. + convex  | `bs="mdcx"` | `bs=:mdcx`          |
+| Mono. dec. + concave | `bs="mdcv"` | `bs=:mdcv`          |

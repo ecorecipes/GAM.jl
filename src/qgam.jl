@@ -584,7 +584,7 @@ function _tune_learn_fast(formula, data, qu::Real, co::Real, var_hat::Real, gaus
 
     # Generate K bootstrap weight vectors with reproducible RNG
     # Use a deterministic seed based on data characteristics for reproducibility
-    boot_rng = Random.MersenneTwister(hash((n, qu, round(var_hat, digits=6))))
+    boot_rng = MersenneTwister(hash((n, qu, round(var_hat, digits=6))))
     boot_weights = Vector{Vector{Float64}}(undef, K)
     for b in 1:K
         # Multinomial bootstrap: sample indices with replacement, convert to counts

@@ -99,21 +99,21 @@ m = gam(@gam_formula(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
     ──────────────────────────────────────────────────
                      Coef.  Std. Error     t  Pr(>|t|)
     ──────────────────────────────────────────────────
-    (Intercept)  0.0282443    0.104918  0.27    0.7879
+    (Intercept)  0.0282443    0.105069  0.27    0.7882
     ──────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────
     Smooth                    edf   Ref.df
     ──────────────────────────────────────────────────
-    s(x0,bs=tp)              3.38        9
-    s(x1,bs=tp)              3.24        9
-    s(x2,bs=tp)              7.82        9
+    s(x0,bs=tp)              3.43        9
+    s(x1,bs=tp)              3.20        9
+    s(x2,bs=tp)              7.83        9
     s(x3,bs=tp)              1.89        9
     ──────────────────────────────────────────────────
 
-    R² (adj) = 0.686   Deviance explained = 69.9%
-    Scale est. = 4.4031   n = 400
+    R² (adj) = 0.685   Deviance explained = 69.8%
+    Scale est. = 4.4158   n = 400
 
 ## Model overview
 
@@ -137,9 +137,9 @@ end
 
     Smooth          Type                  Dim    k    EDF   EDF/k
     ─────────────────────────────────────────────────────────────────
-    s(x0,bs=tp)     GAM.ThinPlateSpline      1    9   3.38  0.376
-    s(x1,bs=tp)     GAM.ThinPlateSpline      1    9   3.24   0.36
-    s(x2,bs=tp)     GAM.ThinPlateSpline      1    9   7.82  0.869
+    s(x0,bs=tp)     GAM.ThinPlateSpline      1    9   3.43  0.381
+    s(x1,bs=tp)     GAM.ThinPlateSpline      1    9    3.2  0.355
+    s(x2,bs=tp)     GAM.ThinPlateSpline      1    9   7.83   0.87
     s(x3,bs=tp)     GAM.ThinPlateSpline      1    9   1.89   0.21
 
 Per-smooth EDF:
@@ -153,13 +153,13 @@ println("\nTotal model EDF: ", round(m.edf_total; digits = 2))
 println("Deviance explained: ", round(r2(m) * 100; digits = 1), "%")
 ```
 
-    s(x0,bs=tp)  EDF = 3.38
-    s(x1,bs=tp)  EDF = 3.24
-    s(x2,bs=tp)  EDF = 7.82
+    s(x0,bs=tp)  EDF = 3.43
+    s(x1,bs=tp)  EDF = 3.2
+    s(x2,bs=tp)  EDF = 7.83
     s(x3,bs=tp)  EDF = 1.89
 
-    Total model EDF: 17.33
-    Deviance explained: 69.9%
+    Total model EDF: 17.35
+    Deviance explained: 69.8%
 
 ## Plotting each smooth
 
@@ -219,10 +219,10 @@ end
 ```
 
     Worst-case concurvity per smooth:
-      s(x0,bs=tp) 0.068
-      s(x1,bs=tp) 0.076
-      s(x2,bs=tp) 0.062
-      s(x3,bs=tp) 0.073
+      s(x0,bs=tp) 0.128
+      s(x1,bs=tp) 0.139
+      s(x2,bs=tp) 0.132
+      s(x3,bs=tp) 0.168
 
 Since our covariates are independent (uniform draws), concurvity should
 be low.
@@ -236,7 +236,7 @@ println(round.(conc_pw; digits = 3))
 ```
 
     Pairwise concurvity matrix:
-    [1.0 0.026 0.021 0.019; 0.027 1.0 0.023 0.026; 0.02 0.019 1.0 0.024; 0.02 0.026 0.027 1.0]
+    [1.0 0.066 0.086 0.051; 0.066 1.0 0.062 0.081; 0.086 0.062 1.0 0.083; 0.051 0.081 0.083 1.0]
 
 ## Comparing models with different k
 
@@ -252,10 +252,10 @@ for k_val in [5, 10, 20, 30]
 end
 ```
 
-    k=5  EDF=[3.04, 3.15, 3.97, 1.51]  Dev.Expl=66.8%
-    k=10  EDF=[3.38, 3.24, 7.82, 1.89]  Dev.Expl=69.9%
-    k=20  EDF=[3.38, 3.26, 9.55, 1.89]  Dev.Expl=70.2%
-    k=30  EDF=[3.38, 3.26, 9.92, 1.87]  Dev.Expl=70.3%
+    k=5  EDF=[3.01, 3.09, 3.98, 1.55]  Dev.Expl=67.5%
+    k=10  EDF=[3.43, 3.2, 7.83, 1.89]  Dev.Expl=69.8%
+    k=20  EDF=[3.45, 3.24, 9.72, 1.89]  Dev.Expl=70.1%
+    k=30  EDF=[3.46, 3.25, 10.14, 1.87]  Dev.Expl=70.2%
 
 As long as `k` is large enough to capture the true complexity, results
 are similar — the penalty takes care of the rest.

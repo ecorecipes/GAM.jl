@@ -1,6 +1,29 @@
 # Shape-Constrained Additive Models
 GAM.jl Contributors
 
+- [Introduction](#introduction)
+- [Setup](#setup)
+- [Available basis types](#available-basis-types)
+- [Example 1: Monotone increasing
+  (dose-response)](#example-1-monotone-increasing-dose-response)
+  - [Simulate data](#simulate-data)
+  - [Fit unconstrained GAM vs SCAM](#fit-unconstrained-gam-vs-scam)
+  - [Compare fitted values](#compare-fitted-values)
+  - [Verify monotonicity](#verify-monotonicity)
+- [Example 2: Convex function](#example-2-convex-function)
+  - [Simulate data](#simulate-data-1)
+  - [Fit with convexity constraint](#fit-with-convexity-constraint)
+  - [Verify convexity](#verify-convexity)
+- [Example 3: Monotone increasing and concave (diminishing
+  returns)](#example-3-monotone-increasing-and-concave-diminishing-returns)
+  - [Simulate data](#simulate-data-2)
+  - [Fit with monotone increasing + concave
+    constraint](#fit-with-monotone-increasing--concave-constraint)
+  - [Verify constraints](#verify-constraints)
+- [SCAM fitting details](#scam-fitting-details)
+- [Comparing all constraint types](#comparing-all-constraint-types)
+- [Summary](#summary)
+
 ## Introduction
 
 Standard GAMs estimate smooth functions without restrictions on their
@@ -33,78 +56,16 @@ using Statistics
 GAM.jl supports 8 shape-constrained basis types, specified via the `bs`
 argument in `s()`:
 
-<table>
-<colgroup>
-<col style="width: 35%" />
-<col style="width: 29%" />
-<col style="width: 35%" />
-</colgroup>
-<thead>
-<tr>
-<th><code>bs</code> symbol</th>
-<th>Constraint</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>:mpi</code></td>
-<td>Monotone increasing</td>
-<td><span
-class="math inline"><em>f</em><sup>′</sup>(<em>x</em>) ≥ 0</span></td>
-</tr>
-<tr>
-<td><code>:mpd</code></td>
-<td>Monotone decreasing</td>
-<td><span
-class="math inline"><em>f</em><sup>′</sup>(<em>x</em>) ≤ 0</span></td>
-</tr>
-<tr>
-<td><code>:cx</code></td>
-<td>Convex</td>
-<td><span
-class="math inline"><em>f</em><sup>″</sup>(<em>x</em>) ≥ 0</span></td>
-</tr>
-<tr>
-<td><code>:cv</code></td>
-<td>Concave</td>
-<td><span
-class="math inline"><em>f</em><sup>″</sup>(<em>x</em>) ≤ 0</span></td>
-</tr>
-<tr>
-<td><code>:micx</code></td>
-<td>Monotone increasing &amp; convex</td>
-<td><span
-class="math inline"><em>f</em><sup>′</sup>(<em>x</em>) ≥ 0</span> and
-<span
-class="math inline"><em>f</em><sup>″</sup>(<em>x</em>) ≥ 0</span></td>
-</tr>
-<tr>
-<td><code>:micv</code></td>
-<td>Monotone increasing &amp; concave</td>
-<td><span
-class="math inline"><em>f</em><sup>′</sup>(<em>x</em>) ≥ 0</span> and
-<span
-class="math inline"><em>f</em><sup>″</sup>(<em>x</em>) ≤ 0</span></td>
-</tr>
-<tr>
-<td><code>:mdcx</code></td>
-<td>Monotone decreasing &amp; convex</td>
-<td><span
-class="math inline"><em>f</em><sup>′</sup>(<em>x</em>) ≤ 0</span> and
-<span
-class="math inline"><em>f</em><sup>″</sup>(<em>x</em>) ≥ 0</span></td>
-</tr>
-<tr>
-<td><code>:mdcv</code></td>
-<td>Monotone decreasing &amp; concave</td>
-<td><span
-class="math inline"><em>f</em><sup>′</sup>(<em>x</em>) ≤ 0</span> and
-<span
-class="math inline"><em>f</em><sup>″</sup>(<em>x</em>) ≤ 0</span></td>
-</tr>
-</tbody>
-</table>
+| `bs` symbol | Constraint | Description |
+|----|----|----|
+| `:mpi` | Monotone increasing | $f'(x) \geq 0$ |
+| `:mpd` | Monotone decreasing | $f'(x) \leq 0$ |
+| `:cx` | Convex | $f''(x) \geq 0$ |
+| `:cv` | Concave | $f''(x) \leq 0$ |
+| `:micx` | Monotone increasing & convex | $f'(x) \geq 0$ and $f''(x) \geq 0$ |
+| `:micv` | Monotone increasing & concave | $f'(x) \geq 0$ and $f''(x) \leq 0$ |
+| `:mdcx` | Monotone decreasing & convex | $f'(x) \leq 0$ and $f''(x) \geq 0$ |
+| `:mdcv` | Monotone decreasing & concave | $f'(x) \leq 0$ and $f''(x) \leq 0$ |
 
 ## Example 1: Monotone increasing (dose-response)
 
@@ -113,8 +74,7 @@ doses should not decrease the response.
 
 ### Simulate data
 
-True function: *f*(*x*) = 3(1 − *e*<sup>−5*x*</sup>), a saturating
-exponential.
+True function: $f(x) = 3(1 - e^{-5x})$, a saturating exponential.
 
 ``` julia
 df = CSV.read("data.csv", DataFrame)
@@ -218,7 +178,7 @@ Cost functions and accelerating growth curves are often convex.
 
 ### Simulate data
 
-True function: *f*(*x*) = 2*x*<sup>2</sup>
+True function: $f(x) = 2x^2$
 
 ``` julia
 df_cx = CSV.read("data_cx.csv", DataFrame)
@@ -463,67 +423,18 @@ end
 
 ## Summary
 
-<table>
-<thead>
-<tr>
-<th>Feature</th>
-<th>GAM.jl (<code>scam</code>)</th>
-<th>R <code>scam</code></th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Fitting function</td>
-<td><code>scam(formula, data)</code></td>
-<td><code>scam(formula, data=dat)</code></td>
-</tr>
-<tr>
-<td>Monotone increasing</td>
-<td><code>bs=:mpi</code></td>
-<td><code>bs="mpi"</code></td>
-</tr>
-<tr>
-<td>Monotone decreasing</td>
-<td><code>bs=:mpd</code></td>
-<td><code>bs="mpd"</code></td>
-</tr>
-<tr>
-<td>Convex</td>
-<td><code>bs=:cx</code></td>
-<td><code>bs="cx"</code></td>
-</tr>
-<tr>
-<td>Concave</td>
-<td><code>bs=:cv</code></td>
-<td><code>bs="cv"</code></td>
-</tr>
-<tr>
-<td>Mono. inc. + convex</td>
-<td><code>bs=:micx</code></td>
-<td><code>bs="micx"</code></td>
-</tr>
-<tr>
-<td>Mono. inc. + concave</td>
-<td><code>bs=:micv</code></td>
-<td><code>bs="micv"</code></td>
-</tr>
-<tr>
-<td>Mono. dec. + convex</td>
-<td><code>bs=:mdcx</code></td>
-<td><code>bs="mdcx"</code></td>
-</tr>
-<tr>
-<td>Mono. dec. + concave</td>
-<td><code>bs=:mdcv</code></td>
-<td><code>bs="mdcv"</code></td>
-</tr>
-<tr>
-<td>Control parameters</td>
-<td><code>scam_control()</code></td>
-<td><code>scam.control()</code></td>
-</tr>
-</tbody>
-</table>
+| Feature              | GAM.jl (`scam`)       | R `scam`                  |
+|----------------------|-----------------------|---------------------------|
+| Fitting function     | `scam(formula, data)` | `scam(formula, data=dat)` |
+| Monotone increasing  | `bs=:mpi`             | `bs="mpi"`                |
+| Monotone decreasing  | `bs=:mpd`             | `bs="mpd"`                |
+| Convex               | `bs=:cx`              | `bs="cx"`                 |
+| Concave              | `bs=:cv`              | `bs="cv"`                 |
+| Mono. inc. + convex  | `bs=:micx`            | `bs="micx"`               |
+| Mono. inc. + concave | `bs=:micv`            | `bs="micv"`               |
+| Mono. dec. + convex  | `bs=:mdcx`            | `bs="mdcx"`               |
+| Mono. dec. + concave | `bs=:mdcv`            | `bs="mdcv"`               |
+| Control parameters   | `scam_control()`      | `scam.control()`          |
 
 Shape constraints are enforced through the SCOP-spline
 reparameterization using the exponential function, ensuring constraints
