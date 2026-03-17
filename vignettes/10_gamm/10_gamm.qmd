@@ -10,6 +10,8 @@ format:
   pdf:
     toc: true
 engine: julia
+julia:
+  project: "../../"
 ---
 
 ## Introduction
@@ -33,6 +35,12 @@ $$
 where $g$ is the link function, $f_k$ are smooth functions estimated via penalized regression splines, and $b_j$ are random intercepts.
 
 ## Setup
+
+```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
 
 ```{julia}
 using GAM
@@ -88,7 +96,8 @@ vc = VarCorr(m)
 for v in vc
     @printf("  %s: σ = %.4f  (n_levels = %d)\n", v.label, v.std, v.n_levels)
 end
-@printf("  Residual: σ = %.4f\n", sqrt(m.gam_model.scale))
+residual_scale = m isa GAM.GammModel ? m.gam_model.scale : m.scale
+@printf("  Residual: σ = %.4f\n", sqrt(residual_scale))
 ```
 
 ### Comparison with true values
@@ -153,8 +162,9 @@ GAM.jl supports multiple ways to specify random effects:
 StatsModels.jl parses `(1|group)` as a `FunctionTerm{typeof(|)}`, which `gamm()` detects automatically:
 
 ```{julia}
+_scale(m) = m isa GAM.GammModel ? m.gam_model.scale : m.scale
 m3a = gamm(@formula(y ~ cr(x, 15) + (1|subject)), dat)
-@printf("@formula path: scale = %.6f\n", m3a.gam_model.scale)
+@printf("@formula path: scale = %.6f\n", _scale(m3a))
 ```
 
 ### Using `@formula` with `re(group)`
@@ -163,7 +173,7 @@ The `re()` convenience function provides an alternative syntax:
 
 ```{julia}
 m3b = gamm(@formula(y ~ cr(x, 15) + re(subject)), dat)
-@printf("re() path: scale = %.6f\n", m3b.gam_model.scale)
+@printf("re() path: scale = %.6f\n", _scale(m3b))
 ```
 
 ### Consistency

@@ -10,6 +10,8 @@ format:
   pdf:
     toc: true
 engine: julia
+julia:
+  project: "../../"
 ---
 
 ## Introduction
@@ -25,6 +27,12 @@ The connection between penalized splines and Bayesian models is well established
 GAM.jl implements this via a **Turing.jl package extension**: simply pass `priors = PriorSpec(...)` to `gam()` and the model is automatically reparameterized and sampled using NUTS (No-U-Turn Sampler).
 
 ## Setup
+
+```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
 
 ```{julia}
 using GAM
