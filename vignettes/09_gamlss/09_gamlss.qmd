@@ -33,6 +33,12 @@ GAM.jl's `gamlss()` function provides this capability using Distributions.jl typ
 ## Setup
 
 ```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
+
+```{julia}
 using GAM
 using CSV
 using DataFrames
@@ -275,6 +281,14 @@ The R `gamlss` package (with `gamlss.add` for smooth terms) fits similar models.
 ```{julia}
 using RCall
 
+# Re-fit the Normal location-scale model for comparison
+m_norm = gamlss(
+    [@gam_formula(y ~ s(x, k=15, bs=:cr)),
+     @gam_formula(y ~ s(x, k=10, bs=:cr))],
+    dat, Normal())
+μ_fit_norm = m_norm.fitted_eta[1]
+σ_fit_norm = exp.(m_norm.fitted_eta[2])
+
 R"""
 suppressPackageStartupMessages({
     library(mgcv)
@@ -295,10 +309,20 @@ sigma_r <- fitted(m_r, "sigma")
 """
 @rget mu_r sigma_r
 
-println("μ: Julia–R correlation = $(round(cor(μ_fit, mu_r); digits=6))")
-println("σ: Julia–R correlation = $(round(cor(σ_fit, sigma_r); digits=6))")
-println("μ: max |diff| = $(round(maximum(abs.(μ_fit - mu_r)); digits=4))")
-println("σ: max |diff| = $(round(maximum(abs.(σ_fit - sigma_r)); digits=4))")
+n_julia = length(μ_fit_norm)
+n_r = length(mu_r)
+if n_julia == n_r
+    println("μ: Julia–R correlation = $(round(cor(μ_fit_norm, mu_r); digits=6))")
+    println("σ: Julia–R correlation = $(round(cor(σ_fit_norm, sigma_r); digits=6))")
+    println("μ: max |diff| = $(round(maximum(abs.(μ_fit_norm - mu_r)); digits=4))")
+    println("σ: max |diff| = $(round(maximum(abs.(σ_fit_norm - sigma_r)); digits=4))")
+else
+    println("Length mismatch: Julia=$n_julia, R=$n_r — comparing first $n_r")
+    μ_j = μ_fit_norm[1:n_r]
+    σ_j = σ_fit_norm[1:n_r]
+    println("μ: Julia–R correlation = $(round(cor(μ_j, mu_r); digits=6))")
+    println("σ: Julia–R correlation = $(round(cor(σ_j, sigma_r); digits=6))")
+end
 ```
 
 ## Summary

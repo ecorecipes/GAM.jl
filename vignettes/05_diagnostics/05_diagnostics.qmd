@@ -21,6 +21,12 @@ We fit a GAM to the classic Gu & Wahba (1991) simulated example with four smooth
 ## Setup
 
 ```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
+
+```{julia}
 using GAM
 using StatsAPI: fitted, predict, residuals
 using DataFrames

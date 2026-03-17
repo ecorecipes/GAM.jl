@@ -78,5 +78,23 @@
     "08_quantile_regression.html": "885ad865",
     "08_quantile_regression.md": "424ddcbb",
     "08_quantile_regression.tex": "54270b1f"
+  },
+  "10_gamm/R/10_gamm.qmd": {
+    "10_gamm.md": "997119bf"
+  },
+  "11_bayesian_gam/R/11_bayesian_gam.qmd": {
+    "11_bayesian_gam.md": "f68add11"
+  },
+  "10_gamm/10_gamm.qmd": {
+    "10_gamm.md": "eb18388f"
+  },
+  "11_bayesian_gam/11_bayesian_gam.qmd": {
+    "11_bayesian_gam.md": "5ca26e2e"
+  },
+  "09_gamlss/09_gamlss.qmd": {
+    "09_gamlss.md": "daf32e20"
+  },
+  "09_gamlss/R/09_gamlss.qmd": {
+    "09_gamlss.md": "bc0cfefd"
   }
 }

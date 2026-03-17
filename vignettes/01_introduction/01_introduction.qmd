@@ -35,6 +35,12 @@ This vignette demonstrates fitting a simple GAM to simulated data using **GAM.jl
 ## Setup
 
 ```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
+
+```{julia}
 using GAM
 using CSV
 using StatsAPI: nobs, deviance, predict, coef, residuals, r2

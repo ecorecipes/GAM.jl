@@ -29,6 +29,12 @@ The ELF family provides a smooth, twice-differentiable loss that converges to th
 ## Setup
 
 ```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
+
+```{julia}
 using GAM
 using StatsAPI: predict, fitted, residuals
 using DataFrames

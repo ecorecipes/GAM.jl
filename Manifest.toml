@@ -680,7 +680,7 @@ uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
 version = "1.11.0"
 
 [[deps.GAM]]
-deps = ["BenchmarkTools", "CSV", "DifferentiationInterface", "Distributions", "ForwardDiff", "GLM", "LinearAlgebra", "Printf", "RCall", "Random", "Reexport", "SparseArrays", "SpecialFunctions", "StableRNGs", "Statistics", "StatsAPI", "StatsBase", "StatsModels", "Tables", "Turing"]
+deps = ["BenchmarkTools", "CSV", "DataFrames", "DifferentiationInterface", "Distributions", "ForwardDiff", "GLM", "LinearAlgebra", "Printf", "RCall", "Random", "Reexport", "SparseArrays", "SpecialFunctions", "StableRNGs", "Statistics", "StatsAPI", "StatsBase", "StatsModels", "Tables", "Turing"]
 path = "."
 uuid = "f5b95e24-6450-466f-92b1-fee0c65c0d6b"
 version = "0.1.0-DEV"

@@ -23,6 +23,12 @@ GAM.jl implements SCAM fitting following the approach of the R [scam](https://cr
 ## Setup
 
 ```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
+
+```{julia}
 using GAM
 using StatsAPI: predict
 using DataFrames

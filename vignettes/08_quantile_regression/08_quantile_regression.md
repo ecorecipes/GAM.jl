@@ -48,6 +48,10 @@ using Random
 using Statistics
 ```
 
+    Precompiling packages...
+       3518.7 ms  ✓ GAM
+      1 dependency successfully precompiled in 5 seconds. 105 already precompiled.
+
 ## Simulate heteroscedastic data
 
 We create data where the conditional variance increases with $x$:
@@ -95,17 +99,17 @@ m_50 = qgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df, 0.5)
     ─────────────────────────────────────────────────────
                        Coef.  Std. Error      z  Pr(>|z|)
     ─────────────────────────────────────────────────────
-    (Intercept)  -0.00166205   0.0461801  -0.04    0.9713
+    (Intercept)  -0.00166205    0.135095  -0.01    0.9902
     ─────────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────
     Smooth                    edf   Ref.df
     ──────────────────────────────────────────────────
-    s(x,bs=cr)               5.85       19
+    s(x,bs=cr)               4.11       19
     ──────────────────────────────────────────────────
 
-    R² (adj) = 0.550   Deviance explained = 53.7%
+    R² (adj) = 0.554   Deviance explained = 53.9%
     n = 500
 
 ``` julia
@@ -113,7 +117,7 @@ yhat_50 = predict(m_50)
 println("Median regression fitted range: [$(round(minimum(yhat_50), digits=3)), $(round(maximum(yhat_50), digits=3))]")
 ```
 
-    Median regression fitted range: [-1.052, 0.959]
+    Median regression fitted range: [-1.072, 0.967]
 
 ### Compare with mean regression
 
@@ -126,7 +130,7 @@ println("Correlation (mean vs median): $(round(cor(yhat_mean, yhat_50), digits=4
 ```
 
     Mean regression fitted range: [-1.069, 0.968]
-    Correlation (mean vs median): 0.9998
+    Correlation (mean vs median): 1.0
 
 For symmetric errors, mean and median regression give similar results.
 With heteroscedastic or skewed data, they can diverge.
@@ -154,10 +158,10 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: fitted range [-1.373, -1.372]
-    τ = 0.25: fitted range [-0.84, 0.208]
-    τ = 0.5: fitted range [-1.051, 0.958]
-    τ = 0.75: fitted range [-0.11, 0.77]
+    τ = 0.1: fitted range [-1.362, -1.225]
+    τ = 0.25: fitted range [-0.895, 0.159]
+    τ = 0.5: fitted range [-1.072, 0.967]
+    τ = 0.75: fitted range [-0.191, 0.831]
     τ = 0.9: fitted range [1.103, 1.103]
 
 ### Using `mqgam` for simultaneous fitting
@@ -169,7 +173,7 @@ variance estimate for efficiency:
 mq = mqgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df, quantiles)
 ```
 
-    (fits = Dict{Float64, Any}(0.5 => GamModel(n_smooth=1, edf=6.6, deviance=64.18), 0.9 => GamModel(n_smooth=1, edf=2.0, deviance=479.58), 0.1 => GamModel(n_smooth=1, edf=2.0, deviance=1591.65), 0.25 => GamModel(n_smooth=1, edf=7.2, deviance=912.82), 0.75 => GamModel(n_smooth=1, edf=8.3, deviance=2356.23)), quantiles = [0.1, 0.25, 0.5, 0.75, 0.9])
+    (fits = Dict{Float64, Any}(0.5 => GamModel(n_smooth=1, edf=5.1, deviance=8.75), 0.9 => GamModel(n_smooth=1, edf=2.7, deviance=1694.55), 0.1 => GamModel(n_smooth=1, edf=8.2, deviance=1585.97), 0.25 => GamModel(n_smooth=1, edf=5.2, deviance=31.3), 0.75 => GamModel(n_smooth=1, edf=4.8, deviance=22.31)), quantiles = [0.1, 0.25, 0.5, 0.75, 0.9])
 
 ``` julia
 println("Quantiles fitted: ", mq.quantiles)
@@ -188,10 +192,10 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: fitted range [-1.373, -1.373]
-    τ = 0.25: fitted range [-0.803, 0.246]
-    τ = 0.5: fitted range [-1.048, 0.956]
-    τ = 0.75: fitted range [-0.113, 0.773]
+    τ = 0.1: fitted range [-1.362, -1.225]
+    τ = 0.25: fitted range [-0.895, 0.159]
+    τ = 0.5: fitted range [-1.072, 0.967]
+    τ = 0.75: fitted range [-0.191, 0.831]
     τ = 0.9: fitted range [1.103, 1.103]
 
 ## Quantile crossing check
@@ -213,7 +217,7 @@ end
 println("Quantile crossings: $n_crossings out of $n observations ($(round(100*n_crossings/n, digits=1))%)")
 ```
 
-    Quantile crossings: 262 out of 500 observations (52.4%)
+    Quantile crossings: 245 out of 500 observations (49.0%)
 
 ## Verify quantile coverage
 
@@ -229,10 +233,10 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: empirical coverage = 0.1 (target = 0.1)
-    τ = 0.25: empirical coverage = 0.296 (target = 0.25)
-    τ = 0.5: empirical coverage = 0.5 (target = 0.5)
-    τ = 0.75: empirical coverage = 0.67 (target = 0.75)
+    τ = 0.1: empirical coverage = 0.106 (target = 0.1)
+    τ = 0.25: empirical coverage = 0.262 (target = 0.25)
+    τ = 0.5: empirical coverage = 0.496 (target = 0.5)
+    τ = 0.75: empirical coverage = 0.682 (target = 0.75)
     τ = 0.9: empirical coverage = 0.9 (target = 0.9)
 
 ## The ELF family
@@ -258,12 +262,12 @@ for qu in quantiles
 end
 ```
 
-    Pinball loss (τ=0.5): 115.819
-    Pinball loss (τ=0.1): 93.117
-    Pinball loss (τ=0.25): 120.801
-    Pinball loss (τ=0.5): 115.819
-    Pinball loss (τ=0.75): 108.428
-    Pinball loss (τ=0.9): 69.532
+    Pinball loss (τ=0.5): 115.234
+    Pinball loss (τ=0.1): 90.617
+    Pinball loss (τ=0.25): 122.715
+    Pinball loss (τ=0.5): 115.234
+    Pinball loss (τ=0.75): 103.175
+    Pinball loss (τ=0.9): 69.533
 
 ## Summary
 

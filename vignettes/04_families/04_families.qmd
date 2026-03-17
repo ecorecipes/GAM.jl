@@ -31,6 +31,12 @@ This vignette demonstrates three common non-Gaussian families:
 ## Setup
 
 ```{julia}
+#| output: false
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "..", ".."))
+```
+
+```{julia}
 using GAM
 using CSV
 using StatsAPI: residuals, fitted, r2, deviance
