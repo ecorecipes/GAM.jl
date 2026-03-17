@@ -759,3 +759,5 @@ end
 @eval include("test_bayes_e2e.jl")
 
 @eval include("test_formula_support.jl")
+
+@eval include("test_bayes_gamlss_scam.jl")

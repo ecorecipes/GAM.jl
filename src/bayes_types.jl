@@ -62,6 +62,53 @@ function gam_matrices(formula::GamFormula, data;
 end
 
 """
+    gam_matrices(formula::FormulaTerm, data; knots=nothing)
+
+Build mixed-model matrices from a StatsModels `@formula`. Detects smooth
+terms (FunctionTerm{typeof(s)} etc.) and converts them to SmoothMixedModel.
+"""
+function gam_matrices(formula::FormulaTerm, data;
+    knots::Union{Nothing, Dict} = nothing)
+
+    n = Tables.rowcount(data)
+    cols = Tables.columntable(data)
+
+    X_para = ones(n, 1)
+    para_names = ["(Intercept)"]
+
+    # Flatten RHS and separate smooths from parametric
+    rhs_terms = _flatten_rhs(formula.rhs)
+    smooths = SmoothMixedModel[]
+    labels = String[]
+
+    for term in rhs_terms
+        if term isa AppliedSmoothTerm || term isa SmoothTerm
+            spec = term isa SmoothTerm ? term.spec : term.spec
+            sm = smooth_construct(spec, cols, knots)
+            smm = smooth2random(sm)
+            push!(smooths, smm)
+            push!(labels, spec.label)
+        elseif term isa StatsModels.FunctionTerm && _is_smooth_function(term.f)
+            spec = _functionterm_to_smoothspec(term)
+            sm = smooth_construct(spec, cols, knots)
+            smm = smooth2random(sm)
+            push!(smooths, smm)
+            push!(labels, spec.label)
+        elseif term isa Term
+            col = Float64.(Tables.getcolumn(cols, term.sym))
+            X_para = hcat(X_para, col)
+            push!(para_names, string(term.sym))
+        elseif term isa ContinuousTerm
+            col = Float64.(StatsModels.modelcols(term, cols))
+            X_para = hcat(X_para, col)
+            push!(para_names, string(term.sym))
+        end
+    end
+
+    return X_para, smooths, labels
+end
+
+"""
     gam_smooth(var::Symbol, data; bs=:tp, k=10, m=nothing, by=nothing) -> SmoothMixedModel
 
 Convenience: build a single smooth term in mixed-model form.
