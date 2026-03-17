@@ -10,7 +10,8 @@ GAM.jl Contributors
     approximation](#mgcv-bayesian-posterior-approximation)
   - [Three-way comparison: GAM.jl vs brms vs
     mgcv](#three-way-comparison-gamjl-vs-brms-vs-mgcv)
-  - [Kolmogorov-Smirnov tests](#kolmogorov-smirnov-tests)
+  - [Kolmogorov-Smirnov tests and ECDF
+    correlation](#kolmogorov-smirnov-tests-and-ecdf-correlation)
   - [ECDF comparison plots](#ecdf-comparison-plots)
   - [Q-Q plots: GAM.jl vs brms](#q-q-plots-gamjl-vs-brms)
 - [Example 2: Poisson GAM](#example-2-poisson-gam)
@@ -177,9 +178,20 @@ cat(sprintf("Intercept sd      | %.4f             | %.4f             | %.4f     
 
     Intercept sd      | 0.0223             | 0.0223             | 0.0221             |
 
-### Kolmogorov-Smirnov tests
+### Kolmogorov-Smirnov tests and ECDF correlation
+
+The KS statistic measures the maximum vertical distance between two
+ECDFs, while the **pairwise ECDF correlation** evaluates both ECDFs on a
+common grid and computes their Pearson correlation — a value of 1.0
+indicates identical distributions:
 
 ``` r
+# Helper: pairwise ECDF correlation on a common grid
+ecdf_cor <- function(x, y, n_grid = 500) {
+  grid <- seq(min(c(x, y)), max(c(x, y)), length.out = n_grid)
+  cor(ecdf(x)(grid), ecdf(y)(grid))
+}
+
 # GAM.jl vs brms (full MCMC vs full MCMC — should be very similar)
 ks_sigma_jb <- ks.test(julia_gauss$sigma_obs, brms_gauss$sigma_obs)
 ```
@@ -210,51 +222,86 @@ ks_int_jm <- ks.test(julia_gauss$beta_intercept, beta_post[, 1])
     will be approximate in the presence of ties
 
 ``` r
-cat("Comparison             | Parameter  | KS D   | p-value\n")
+# brms vs mgcv
+ks_sigma_bm <- ks.test(brms_gauss$sigma_obs, sigma_post)
 ```
 
-    Comparison             | Parameter  | KS D   | p-value
+    Warning in ks.test.default(brms_gauss$sigma_obs, sigma_post): p-value will be
+    approximate in the presence of ties
 
 ``` r
-cat("-----------------------|------------|--------|--------\n")
+ks_int_bm <- ks.test(brms_gauss$beta_intercept, beta_post[, 1])
 ```
 
-    -----------------------|------------|--------|--------
+    Warning in ks.test.default(brms_gauss$beta_intercept, beta_post[, 1]): p-value
+    will be approximate in the presence of ties
 
 ``` r
-cat(sprintf("GAM.jl vs brms         | sigma      | %.4f  | %.4f\n",
-            ks_sigma_jb$statistic, ks_sigma_jb$p.value))
+cat("Comparison             | Param     | KS D   | KS p   | ECDF cor\n")
 ```
 
-    GAM.jl vs brms         | sigma      | 0.0255  | 0.3512
+    Comparison             | Param     | KS D   | KS p   | ECDF cor
 
 ``` r
-cat(sprintf("GAM.jl vs brms         | intercept  | %.4f  | %.4f\n",
-            ks_int_jb$statistic, ks_int_jb$p.value))
+cat("-----------------------|-----------|--------|--------|--------\n")
 ```
 
-    GAM.jl vs brms         | intercept  | 0.0205  | 0.6296
+    -----------------------|-----------|--------|--------|--------
 
 ``` r
-cat(sprintf("GAM.jl vs mgcv (approx)| sigma      | %.4f  | %.4f\n",
-            ks_sigma_jm$statistic, ks_sigma_jm$p.value))
+cat(sprintf("GAM.jl vs brms         | sigma     | %.4f  | %.4f  | %.6f\n",
+            ks_sigma_jb$statistic, ks_sigma_jb$p.value,
+            ecdf_cor(julia_gauss$sigma_obs, brms_gauss$sigma_obs)))
 ```
 
-    GAM.jl vs mgcv (approx)| sigma      | 0.0228  | 0.2518
+    GAM.jl vs brms         | sigma     | 0.0255  | 0.3512  | 0.999880
 
 ``` r
-cat(sprintf("GAM.jl vs mgcv (approx)| intercept  | %.4f  | %.4f\n",
-            ks_int_jm$statistic, ks_int_jm$p.value))
+cat(sprintf("GAM.jl vs brms         | intercept | %.4f  | %.4f  | %.6f\n",
+            ks_int_jb$statistic, ks_int_jb$p.value,
+            ecdf_cor(julia_gauss$beta_intercept, brms_gauss$beta_intercept)))
 ```
 
-    GAM.jl vs mgcv (approx)| intercept  | 0.0325  | 0.0293
+    GAM.jl vs brms         | intercept | 0.0205  | 0.6296  | 0.999837
 
 ``` r
-cat("\n(High p-value = posteriors are not significantly different)\n")
+cat(sprintf("GAM.jl vs mgcv (approx)| sigma     | %.4f  | %.4f  | %.6f\n",
+            ks_sigma_jm$statistic, ks_sigma_jm$p.value,
+            ecdf_cor(julia_gauss$sigma_obs, sigma_post)))
+```
+
+    GAM.jl vs mgcv (approx)| sigma     | 0.0228  | 0.2518  | 0.999916
+
+``` r
+cat(sprintf("GAM.jl vs mgcv (approx)| intercept | %.4f  | %.4f  | %.6f\n",
+            ks_int_jm$statistic, ks_int_jm$p.value,
+            ecdf_cor(julia_gauss$beta_intercept, beta_post[, 1])))
+```
+
+    GAM.jl vs mgcv (approx)| intercept | 0.0325  | 0.0293  | 0.999744
+
+``` r
+cat(sprintf("brms vs mgcv (approx)  | sigma     | %.4f  | %.4f  | %.6f\n",
+            ks_sigma_bm$statistic, ks_sigma_bm$p.value,
+            ecdf_cor(brms_gauss$sigma_obs, sigma_post)))
+```
+
+    brms vs mgcv (approx)  | sigma     | 0.0215  | 0.5686  | 0.999921
+
+``` r
+cat(sprintf("brms vs mgcv (approx)  | intercept | %.4f  | %.4f  | %.6f\n",
+            ks_int_bm$statistic, ks_int_bm$p.value,
+            ecdf_cor(brms_gauss$beta_intercept, beta_post[, 1])))
+```
+
+    brms vs mgcv (approx)  | intercept | 0.0220  | 0.5387  | 0.999904
+
+``` r
+cat("\n(ECDF correlation near 1.0 = nearly identical distributions)\n")
 ```
 
 
-    (High p-value = posteriors are not significantly different)
+    (ECDF correlation near 1.0 = nearly identical distributions)
 
 ### ECDF comparison plots
 
@@ -376,16 +423,47 @@ ks_jm2 <- ks.test(julia_poisson$beta_intercept, beta_post2[, 1])
     p-value will be approximate in the presence of ties
 
 ``` r
-cat(sprintf("GAM.jl vs brms:  D = %.4f, p = %.4f\n", ks_jb2$statistic, ks_jb2$p.value))
+ks_bm2 <- ks.test(brms_poisson$beta_intercept, beta_post2[, 1])
 ```
 
-    GAM.jl vs brms:  D = 0.0120, p = 0.9907
+    Warning in ks.test.default(brms_poisson$beta_intercept, beta_post2[, 1]):
+    p-value will be approximate in the presence of ties
 
 ``` r
-cat(sprintf("GAM.jl vs mgcv:  D = %.4f, p = %.4f\n", ks_jm2$statistic, ks_jm2$p.value))
+cat("Comparison             | KS D   | KS p   | ECDF cor\n")
 ```
 
-    GAM.jl vs mgcv:  D = 0.0163, p = 0.6664
+    Comparison             | KS D   | KS p   | ECDF cor
+
+``` r
+cat("-----------------------|--------|--------|--------\n")
+```
+
+    -----------------------|--------|--------|--------
+
+``` r
+cat(sprintf("GAM.jl vs brms         | %.4f  | %.4f  | %.6f\n",
+            ks_jb2$statistic, ks_jb2$p.value,
+            ecdf_cor(julia_poisson$beta_intercept, brms_poisson$beta_intercept)))
+```
+
+    GAM.jl vs brms         | 0.0120  | 0.9907  | 0.999962
+
+``` r
+cat(sprintf("GAM.jl vs mgcv (approx)| %.4f  | %.4f  | %.6f\n",
+            ks_jm2$statistic, ks_jm2$p.value,
+            ecdf_cor(julia_poisson$beta_intercept, beta_post2[, 1])))
+```
+
+    GAM.jl vs mgcv (approx)| 0.0163  | 0.6664  | 0.999963
+
+``` r
+cat(sprintf("brms vs mgcv (approx)  | %.4f  | %.4f  | %.6f\n",
+            ks_bm2$statistic, ks_bm2$p.value,
+            ecdf_cor(brms_poisson$beta_intercept, beta_post2[, 1])))
+```
+
+    brms vs mgcv (approx)  | 0.0172  | 0.8224  | 0.999957
 
 ``` r
 par(mfrow = c(1, 2))
