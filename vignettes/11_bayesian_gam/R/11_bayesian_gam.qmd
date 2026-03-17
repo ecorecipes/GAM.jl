@@ -102,9 +102,17 @@ cat(sprintf("Intercept sd      | %.4f             | %.4f             | %.4f     
             sd(beta_post[, 1])))
 ```
 
-### Kolmogorov-Smirnov tests
+### Kolmogorov-Smirnov tests and ECDF correlation
+
+The KS statistic measures the maximum vertical distance between two ECDFs, while the **pairwise ECDF correlation** evaluates both ECDFs on a common grid and computes their Pearson correlation — a value of 1.0 indicates identical distributions:
 
 ```{r}
+# Helper: pairwise ECDF correlation on a common grid
+ecdf_cor <- function(x, y, n_grid = 500) {
+  grid <- seq(min(c(x, y)), max(c(x, y)), length.out = n_grid)
+  cor(ecdf(x)(grid), ecdf(y)(grid))
+}
+
 # GAM.jl vs brms (full MCMC vs full MCMC — should be very similar)
 ks_sigma_jb <- ks.test(julia_gauss$sigma_obs, brms_gauss$sigma_obs)
 ks_int_jb <- ks.test(julia_gauss$beta_intercept, brms_gauss$beta_intercept)
@@ -113,17 +121,31 @@ ks_int_jb <- ks.test(julia_gauss$beta_intercept, brms_gauss$beta_intercept)
 ks_sigma_jm <- ks.test(julia_gauss$sigma_obs, sigma_post)
 ks_int_jm <- ks.test(julia_gauss$beta_intercept, beta_post[, 1])
 
-cat("Comparison             | Parameter  | KS D   | p-value\n")
-cat("-----------------------|------------|--------|--------\n")
-cat(sprintf("GAM.jl vs brms         | sigma      | %.4f  | %.4f\n",
-            ks_sigma_jb$statistic, ks_sigma_jb$p.value))
-cat(sprintf("GAM.jl vs brms         | intercept  | %.4f  | %.4f\n",
-            ks_int_jb$statistic, ks_int_jb$p.value))
-cat(sprintf("GAM.jl vs mgcv (approx)| sigma      | %.4f  | %.4f\n",
-            ks_sigma_jm$statistic, ks_sigma_jm$p.value))
-cat(sprintf("GAM.jl vs mgcv (approx)| intercept  | %.4f  | %.4f\n",
-            ks_int_jm$statistic, ks_int_jm$p.value))
-cat("\n(High p-value = posteriors are not significantly different)\n")
+# brms vs mgcv
+ks_sigma_bm <- ks.test(brms_gauss$sigma_obs, sigma_post)
+ks_int_bm <- ks.test(brms_gauss$beta_intercept, beta_post[, 1])
+
+cat("Comparison             | Param     | KS D   | KS p   | ECDF cor\n")
+cat("-----------------------|-----------|--------|--------|--------\n")
+cat(sprintf("GAM.jl vs brms         | sigma     | %.4f  | %.4f  | %.6f\n",
+            ks_sigma_jb$statistic, ks_sigma_jb$p.value,
+            ecdf_cor(julia_gauss$sigma_obs, brms_gauss$sigma_obs)))
+cat(sprintf("GAM.jl vs brms         | intercept | %.4f  | %.4f  | %.6f\n",
+            ks_int_jb$statistic, ks_int_jb$p.value,
+            ecdf_cor(julia_gauss$beta_intercept, brms_gauss$beta_intercept)))
+cat(sprintf("GAM.jl vs mgcv (approx)| sigma     | %.4f  | %.4f  | %.6f\n",
+            ks_sigma_jm$statistic, ks_sigma_jm$p.value,
+            ecdf_cor(julia_gauss$sigma_obs, sigma_post)))
+cat(sprintf("GAM.jl vs mgcv (approx)| intercept | %.4f  | %.4f  | %.6f\n",
+            ks_int_jm$statistic, ks_int_jm$p.value,
+            ecdf_cor(julia_gauss$beta_intercept, beta_post[, 1])))
+cat(sprintf("brms vs mgcv (approx)  | sigma     | %.4f  | %.4f  | %.6f\n",
+            ks_sigma_bm$statistic, ks_sigma_bm$p.value,
+            ecdf_cor(brms_gauss$sigma_obs, sigma_post)))
+cat(sprintf("brms vs mgcv (approx)  | intercept | %.4f  | %.4f  | %.6f\n",
+            ks_int_bm$statistic, ks_int_bm$p.value,
+            ecdf_cor(brms_gauss$beta_intercept, beta_post[, 1])))
+cat("\n(ECDF correlation near 1.0 = nearly identical distributions)\n")
 ```
 
 ### ECDF comparison plots
@@ -209,8 +231,19 @@ cat(sprintf("Intercept sd      | %.4f             | %.4f             | %.4f     
 ```{r fig.width=10, fig.height=4}
 ks_jb2 <- ks.test(julia_poisson$beta_intercept, brms_poisson$beta_intercept)
 ks_jm2 <- ks.test(julia_poisson$beta_intercept, beta_post2[, 1])
-cat(sprintf("GAM.jl vs brms:  D = %.4f, p = %.4f\n", ks_jb2$statistic, ks_jb2$p.value))
-cat(sprintf("GAM.jl vs mgcv:  D = %.4f, p = %.4f\n", ks_jm2$statistic, ks_jm2$p.value))
+ks_bm2 <- ks.test(brms_poisson$beta_intercept, beta_post2[, 1])
+
+cat("Comparison             | KS D   | KS p   | ECDF cor\n")
+cat("-----------------------|--------|--------|--------\n")
+cat(sprintf("GAM.jl vs brms         | %.4f  | %.4f  | %.6f\n",
+            ks_jb2$statistic, ks_jb2$p.value,
+            ecdf_cor(julia_poisson$beta_intercept, brms_poisson$beta_intercept)))
+cat(sprintf("GAM.jl vs mgcv (approx)| %.4f  | %.4f  | %.6f\n",
+            ks_jm2$statistic, ks_jm2$p.value,
+            ecdf_cor(julia_poisson$beta_intercept, beta_post2[, 1])))
+cat(sprintf("brms vs mgcv (approx)  | %.4f  | %.4f  | %.6f\n",
+            ks_bm2$statistic, ks_bm2$p.value,
+            ecdf_cor(brms_poisson$beta_intercept, beta_post2[, 1])))
 
 par(mfrow = c(1, 2))
 

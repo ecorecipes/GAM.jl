@@ -233,6 +233,85 @@ freq_rank2 = searchsortedfirst(β1_sorted, freq_int2) / n_s
     100 * searchsortedfirst(β1_sorted, 1.0) / n_s)
 ```
 
+## Cross-language comparison: GAM.jl vs brms vs mgcv
+
+We load posterior samples from R's brms (Stan MCMC) and mgcv (Gaussian approximation) to compare with GAM.jl's Turing posteriors. The key metric is the **pairwise ECDF correlation**: evaluate both ECDFs on a common grid and compute Pearson's $r$. A value of 1.0 means the distributions are identical.
+
+```{julia}
+# Load R posterior samples
+brms_gauss = CSV.read("posteriors_gaussian_brms.csv", DataFrame)
+brms_poisson = CSV.read("posteriors_poisson_brms.csv", DataFrame)
+mgcv_gauss = CSV.read("posteriors_gaussian_mgcv.csv", DataFrame)
+mgcv_poisson = CSV.read("posteriors_poisson_mgcv.csv", DataFrame)
+
+@printf("Loaded: brms Gaussian=%d, brms Poisson=%d, mgcv Gaussian=%d, mgcv Poisson=%d\n",
+    nrow(brms_gauss), nrow(brms_poisson), nrow(mgcv_gauss), nrow(mgcv_poisson))
+```
+
+### ECDF correlation helper
+
+```{julia}
+function ecdf_cor(x::AbstractVector, y::AbstractVector; n_grid::Int = 500)
+    lo = min(minimum(x), minimum(y))
+    hi = max(maximum(x), maximum(y))
+    grid = range(lo, hi; length = n_grid)
+    ecdf_x = [count(≤(g), x) / length(x) for g in grid]
+    ecdf_y = [count(≤(g), y) / length(y) for g in grid]
+    return cor(ecdf_x, ecdf_y)
+end
+```
+
+### Gaussian model
+
+```{julia}
+# Three-way comparison table
+@printf("Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)\n")
+@printf("------------------|-------------------|-------------------|--------------\n")
+@printf("sigma  mean       | %.4f             | %.4f             | %.4f\n",
+    mean(σ_obs), mean(brms_gauss.sigma_obs), mean(mgcv_gauss.sigma_obs))
+@printf("sigma  sd         | %.4f             | %.4f             | %.4f\n",
+    std(σ_obs), std(brms_gauss.sigma_obs), std(mgcv_gauss.sigma_obs))
+@printf("Intercept mean    | %.4f            | %.4f            | %.4f\n",
+    mean(vec(chains[Symbol("β[1]")].data)),
+    mean(brms_gauss.beta_intercept), mean(mgcv_gauss.beta_intercept))
+@printf("Intercept sd      | %.4f             | %.4f             | %.4f\n",
+    std(vec(chains[Symbol("β[1]")].data)),
+    std(brms_gauss.beta_intercept), std(mgcv_gauss.beta_intercept))
+```
+
+```{julia}
+# Pairwise ECDF correlation + KS statistic
+julia_sigma = σ_obs
+julia_int = vec(chains[Symbol("β[1]")].data)
+brms_sigma = brms_gauss.sigma_obs
+brms_int = brms_gauss.beta_intercept
+mgcv_sigma = mgcv_gauss.sigma_obs
+mgcv_int = mgcv_gauss.beta_intercept
+
+@printf("\nPairwise ECDF correlation (Gaussian model):\n")
+@printf("Comparison             | sigma ECDF cor | intercept ECDF cor\n")
+@printf("-----------------------|----------------|-------------------\n")
+@printf("GAM.jl vs brms         | %.6f        | %.6f\n",
+    ecdf_cor(julia_sigma, brms_sigma), ecdf_cor(julia_int, brms_int))
+@printf("GAM.jl vs mgcv (approx)| %.6f        | %.6f\n",
+    ecdf_cor(julia_sigma, mgcv_sigma), ecdf_cor(julia_int, mgcv_int))
+@printf("brms vs mgcv (approx)  | %.6f        | %.6f\n",
+    ecdf_cor(brms_sigma, mgcv_sigma), ecdf_cor(brms_int, mgcv_int))
+```
+
+### Poisson model
+
+```{julia}
+julia_int2 = vec(chains2[Symbol("β[1]")].data)
+brms_int2 = brms_poisson.beta_intercept
+mgcv_int2 = mgcv_poisson.beta_intercept
+
+@printf("Pairwise ECDF correlation (Poisson intercept):\n")
+@printf("GAM.jl vs brms:          %.6f\n", ecdf_cor(julia_int2, brms_int2))
+@printf("GAM.jl vs mgcv (approx): %.6f\n", ecdf_cor(julia_int2, mgcv_int2))
+@printf("brms vs mgcv (approx):   %.6f\n", ecdf_cor(brms_int2, mgcv_int2))
+```
+
 ## Example 3: Custom priors — effect on smoothing
 
 The prior on `sds` directly controls the amount of smoothing. A tighter prior yields smoother fits:

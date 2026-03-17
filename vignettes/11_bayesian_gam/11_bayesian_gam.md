@@ -19,6 +19,11 @@ GAM.jl Contributors
   - [Frequentist vs Bayesian](#frequentist-vs-bayesian)
   - [Posterior summary](#posterior-summary)
   - [ECDF comparison for intercept](#ecdf-comparison-for-intercept)
+- [Cross-language comparison: GAM.jl vs brms vs
+  mgcv](#cross-language-comparison-gamjl-vs-brms-vs-mgcv)
+  - [ECDF correlation helper](#ecdf-correlation-helper)
+  - [Gaussian model](#gaussian-model)
+  - [Poisson model](#poisson-model)
 - [Example 3: Custom priors — effect on
   smoothing](#example-3-custom-priors--effect-on-smoothing)
 - [Example 4: Building custom Turing
@@ -113,22 +118,22 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampling (1 thread)   0%|                               |  ETA: N/A
     ┌ Info: Found initial step size
     └   ϵ = 0.025
-    Sampling (1 thread)   0%|▏                              |  ETA: 0:25:05
-    Sampling (1 thread)   1%|▎                              |  ETA: 0:12:31
-    Sampling (1 thread)   2%|▌                              |  ETA: 0:08:25
-    Sampling (1 thread)   2%|▋                              |  ETA: 0:06:22
-    Sampling (1 thread)   2%|▊                              |  ETA: 0:05:07
-    Sampling (1 thread)   3%|▉                              |  ETA: 0:04:18
-    Sampling (1 thread)   4%|█▏                             |  ETA: 0:03:42
-    Sampling (1 thread)   4%|█▎                             |  ETA: 0:03:15
+    Sampling (1 thread)   0%|▏                              |  ETA: 0:24:54
+    Sampling (1 thread)   1%|▎                              |  ETA: 0:12:25
+    Sampling (1 thread)   2%|▌                              |  ETA: 0:08:22
+    Sampling (1 thread)   2%|▋                              |  ETA: 0:06:20
+    Sampling (1 thread)   2%|▊                              |  ETA: 0:05:06
+    Sampling (1 thread)   3%|▉                              |  ETA: 0:04:17
+    Sampling (1 thread)   4%|█▏                             |  ETA: 0:03:41
+    Sampling (1 thread)   4%|█▎                             |  ETA: 0:03:14
     Sampling (1 thread)   4%|█▍                             |  ETA: 0:02:54
-    Sampling (1 thread)   5%|█▌                             |  ETA: 0:02:37
+    Sampling (1 thread)   5%|█▌                             |  ETA: 0:02:38
     Sampling (1 thread)   6%|█▊                             |  ETA: 0:02:24
     Sampling (1 thread)   6%|█▉                             |  ETA: 0:02:12
     Sampling (1 thread)   6%|██                             |  ETA: 0:02:02
     Sampling (1 thread)   7%|██▏                            |  ETA: 0:01:54
     Sampling (1 thread)   8%|██▍                            |  ETA: 0:01:47
-    Sampling (1 thread)   8%|██▌                            |  ETA: 0:01:40
+    Sampling (1 thread)   8%|██▌                            |  ETA: 0:01:41
     Sampling (1 thread)   8%|██▋                            |  ETA: 0:01:35
     Sampling (1 thread)   9%|██▊                            |  ETA: 0:01:30
     Sampling (1 thread)  10%|███                            |  ETA: 0:01:25
@@ -150,11 +155,11 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampling (1 thread)  18%|█████▍                         |  ETA: 0:00:48
     Sampling (1 thread)  18%|█████▋                         |  ETA: 0:00:47
     Sampling (1 thread)  18%|█████▊                         |  ETA: 0:00:46
-    Sampling (1 thread)  19%|█████▉                         |  ETA: 0:00:44
+    Sampling (1 thread)  19%|█████▉                         |  ETA: 0:00:45
     Sampling (1 thread)  20%|██████                         |  ETA: 0:00:43
     Sampling (1 thread)  20%|██████▎                        |  ETA: 0:00:42
     Sampling (1 thread)  20%|██████▍                        |  ETA: 0:00:41
-    Sampling (1 thread)  21%|██████▌                        |  ETA: 0:00:40
+    Sampling (1 thread)  21%|██████▌                        |  ETA: 0:00:41
     Sampling (1 thread)  22%|██████▋                        |  ETA: 0:00:40
     Sampling (1 thread)  22%|██████▉                        |  ETA: 0:00:39
     Sampling (1 thread)  22%|███████                        |  ETA: 0:00:38
@@ -163,12 +168,12 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampling (1 thread)  24%|███████▌                       |  ETA: 0:00:36
     Sampling (1 thread)  24%|███████▋                       |  ETA: 0:00:35
     Sampling (1 thread)  25%|███████▊                       |  ETA: 0:00:34
-    Sampling (1 thread)  26%|███████▉                       |  ETA: 0:00:33
+    Sampling (1 thread)  26%|███████▉                       |  ETA: 0:00:34
     Sampling (1 thread)  26%|████████                       |  ETA: 0:00:33
     Sampling (1 thread)  26%|████████▎                      |  ETA: 0:00:32
     Sampling (1 thread)  27%|████████▍                      |  ETA: 0:00:32
     Sampling (1 thread)  28%|████████▌                      |  ETA: 0:00:31
-    Sampling (1 thread)  28%|████████▋                      |  ETA: 0:00:30
+    Sampling (1 thread)  28%|████████▋                      |  ETA: 0:00:31
     Sampling (1 thread)  28%|████████▉                      |  ETA: 0:00:30
     Sampling (1 thread)  29%|█████████                      |  ETA: 0:00:29
     Sampling (1 thread)  30%|█████████▏                     |  ETA: 0:00:29
@@ -181,7 +186,7 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampling (1 thread)  33%|██████████▎                    |  ETA: 0:00:26
     Sampling (1 thread)  34%|██████████▍                    |  ETA: 0:00:25
     Sampling (1 thread)  34%|██████████▌                    |  ETA: 0:00:25
-    Sampling (1 thread)  34%|██████████▊                    |  ETA: 0:00:25
+    Sampling (1 thread)  34%|██████████▊                    |  ETA: 0:00:24
     Sampling (1 thread)  35%|██████████▉                    |  ETA: 0:00:24
     Sampling (1 thread)  36%|███████████                    |  ETA: 0:00:24
     Sampling (1 thread)  36%|███████████▏                   |  ETA: 0:00:23
@@ -214,45 +219,45 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampling (1 thread)  50%|███████████████▍               |  ETA: 0:00:16
     Sampling (1 thread)  50%|███████████████▌               |  ETA: 0:00:15
     ┌ Info: Found initial step size
-    └   ϵ = 0.05
+    └   ϵ = 0.0125
     Sampling (1 thread)  50%|███████████████▋               |  ETA: 0:00:18
     Sampling (1 thread)  51%|███████████████▊               |  ETA: 0:00:18
-    Sampling (1 thread)  52%|████████████████               |  ETA: 0:00:17
+    Sampling (1 thread)  52%|████████████████               |  ETA: 0:00:18
     Sampling (1 thread)  52%|████████████████▏              |  ETA: 0:00:17
     Sampling (1 thread)  52%|████████████████▎              |  ETA: 0:00:17
     Sampling (1 thread)  53%|████████████████▍              |  ETA: 0:00:17
-    Sampling (1 thread)  54%|████████████████▋              |  ETA: 0:00:16
+    Sampling (1 thread)  54%|████████████████▋              |  ETA: 0:00:17
     Sampling (1 thread)  54%|████████████████▊              |  ETA: 0:00:16
     Sampling (1 thread)  55%|████████████████▉              |  ETA: 0:00:16
     Sampling (1 thread)  55%|█████████████████              |  ETA: 0:00:16
-    Sampling (1 thread)  56%|█████████████████▎             |  ETA: 0:00:15
+    Sampling (1 thread)  56%|█████████████████▎             |  ETA: 0:00:16
     Sampling (1 thread)  56%|█████████████████▍             |  ETA: 0:00:15
     Sampling (1 thread)  56%|█████████████████▌             |  ETA: 0:00:15
     Sampling (1 thread)  57%|█████████████████▋             |  ETA: 0:00:15
-    Sampling (1 thread)  57%|█████████████████▉             |  ETA: 0:00:14
+    Sampling (1 thread)  57%|█████████████████▉             |  ETA: 0:00:15
     Sampling (1 thread)  58%|██████████████████             |  ETA: 0:00:14
     Sampling (1 thread)  58%|██████████████████▏            |  ETA: 0:00:14
     Sampling (1 thread)  59%|██████████████████▎            |  ETA: 0:00:14
-    Sampling (1 thread)  60%|██████████████████▌            |  ETA: 0:00:13
+    Sampling (1 thread)  60%|██████████████████▌            |  ETA: 0:00:14
     Sampling (1 thread)  60%|██████████████████▋            |  ETA: 0:00:13
     Sampling (1 thread)  60%|██████████████████▊            |  ETA: 0:00:13
     Sampling (1 thread)  61%|██████████████████▉            |  ETA: 0:00:13
-    Sampling (1 thread)  62%|███████████████████▏           |  ETA: 0:00:12
+    Sampling (1 thread)  62%|███████████████████▏           |  ETA: 0:00:13
     Sampling (1 thread)  62%|███████████████████▎           |  ETA: 0:00:12
     Sampling (1 thread)  62%|███████████████████▍           |  ETA: 0:00:12
     Sampling (1 thread)  63%|███████████████████▌           |  ETA: 0:00:12
     Sampling (1 thread)  64%|███████████████████▋           |  ETA: 0:00:12
-    Sampling (1 thread)  64%|███████████████████▉           |  ETA: 0:00:11
+    Sampling (1 thread)  64%|███████████████████▉           |  ETA: 0:00:12
     Sampling (1 thread)  64%|████████████████████           |  ETA: 0:00:11
     Sampling (1 thread)  65%|████████████████████▏          |  ETA: 0:00:11
     Sampling (1 thread)  66%|████████████████████▎          |  ETA: 0:00:11
     Sampling (1 thread)  66%|████████████████████▌          |  ETA: 0:00:11
-    Sampling (1 thread)  66%|████████████████████▋          |  ETA: 0:00:10
+    Sampling (1 thread)  66%|████████████████████▋          |  ETA: 0:00:11
     Sampling (1 thread)  67%|████████████████████▊          |  ETA: 0:00:10
     Sampling (1 thread)  68%|████████████████████▉          |  ETA: 0:00:10
     Sampling (1 thread)  68%|█████████████████████▏         |  ETA: 0:00:10
     Sampling (1 thread)  68%|█████████████████████▎         |  ETA: 0:00:10
-    Sampling (1 thread)  69%|█████████████████████▍         |  ETA: 0:00:09
+    Sampling (1 thread)  69%|█████████████████████▍         |  ETA: 0:00:10
     Sampling (1 thread)  70%|█████████████████████▌         |  ETA: 0:00:09
     Sampling (1 thread)  70%|█████████████████████▊         |  ETA: 0:00:09
     Sampling (1 thread)  70%|█████████████████████▉         |  ETA: 0:00:09
@@ -263,33 +268,33 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampling (1 thread)  73%|██████████████████████▋        |  ETA: 0:00:08
     Sampling (1 thread)  74%|██████████████████████▊        |  ETA: 0:00:08
     Sampling (1 thread)  74%|███████████████████████        |  ETA: 0:00:08
-    Sampling (1 thread)  74%|███████████████████████▏       |  ETA: 0:00:07
+    Sampling (1 thread)  74%|███████████████████████▏       |  ETA: 0:00:08
     Sampling (1 thread)  75%|███████████████████████▎       |  ETA: 0:00:07
     Sampling (1 thread)  76%|███████████████████████▍       |  ETA: 0:00:07
     Sampling (1 thread)  76%|███████████████████████▌       |  ETA: 0:00:07
     Sampling (1 thread)  76%|███████████████████████▊       |  ETA: 0:00:07
     Sampling (1 thread)  77%|███████████████████████▉       |  ETA: 0:00:07
-    Sampling (1 thread)  78%|████████████████████████       |  ETA: 0:00:06
+    Sampling (1 thread)  78%|████████████████████████       |  ETA: 0:00:07
     Sampling (1 thread)  78%|████████████████████████▏      |  ETA: 0:00:06
     Sampling (1 thread)  78%|████████████████████████▍      |  ETA: 0:00:06
     Sampling (1 thread)  79%|████████████████████████▌      |  ETA: 0:00:06
     Sampling (1 thread)  80%|████████████████████████▋      |  ETA: 0:00:06
     Sampling (1 thread)  80%|████████████████████████▊      |  ETA: 0:00:06
-    Sampling (1 thread)  80%|█████████████████████████      |  ETA: 0:00:05
-    Sampling (1 thread)  81%|█████████████████████████▏     |  ETA: 0:00:05
+    Sampling (1 thread)  80%|█████████████████████████      |  ETA: 0:00:06
+    Sampling (1 thread)  81%|█████████████████████████▏     |  ETA: 0:00:06
     Sampling (1 thread)  82%|█████████████████████████▎     |  ETA: 0:00:05
     Sampling (1 thread)  82%|█████████████████████████▍     |  ETA: 0:00:05
     Sampling (1 thread)  82%|█████████████████████████▋     |  ETA: 0:00:05
     Sampling (1 thread)  83%|█████████████████████████▊     |  ETA: 0:00:05
     Sampling (1 thread)  84%|█████████████████████████▉     |  ETA: 0:00:05
-    Sampling (1 thread)  84%|██████████████████████████     |  ETA: 0:00:04
+    Sampling (1 thread)  84%|██████████████████████████     |  ETA: 0:00:05
     Sampling (1 thread)  84%|██████████████████████████▎    |  ETA: 0:00:04
     Sampling (1 thread)  85%|██████████████████████████▍    |  ETA: 0:00:04
     Sampling (1 thread)  86%|██████████████████████████▌    |  ETA: 0:00:04
     Sampling (1 thread)  86%|██████████████████████████▋    |  ETA: 0:00:04
     Sampling (1 thread)  86%|██████████████████████████▉    |  ETA: 0:00:04
     Sampling (1 thread)  87%|███████████████████████████    |  ETA: 0:00:04
-    Sampling (1 thread)  88%|███████████████████████████▏   |  ETA: 0:00:03
+    Sampling (1 thread)  88%|███████████████████████████▏   |  ETA: 0:00:04
     Sampling (1 thread)  88%|███████████████████████████▎   |  ETA: 0:00:03
     Sampling (1 thread)  88%|███████████████████████████▍   |  ETA: 0:00:03
     Sampling (1 thread)  89%|███████████████████████████▋   |  ETA: 0:00:03
@@ -303,7 +308,7 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampling (1 thread)  93%|████████████████████████████▉  |  ETA: 0:00:02
     Sampling (1 thread)  94%|█████████████████████████████  |  ETA: 0:00:02
     Sampling (1 thread)  94%|█████████████████████████████▏ |  ETA: 0:00:02
-    Sampling (1 thread)  94%|█████████████████████████████▎ |  ETA: 0:00:01
+    Sampling (1 thread)  94%|█████████████████████████████▎ |  ETA: 0:00:02
     Sampling (1 thread)  95%|█████████████████████████████▌ |  ETA: 0:00:01
     Sampling (1 thread)  96%|█████████████████████████████▋ |  ETA: 0:00:01
     Sampling (1 thread)  96%|█████████████████████████████▊ |  ETA: 0:00:01
@@ -314,7 +319,7 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampling (1 thread)  98%|██████████████████████████████▌|  ETA: 0:00:00
     Sampling (1 thread)  99%|██████████████████████████████▊|  ETA: 0:00:00
     Sampling (1 thread) 100%|██████████████████████████████▉|  ETA: 0:00:00
-    Sampling (1 thread) 100%|███████████████████████████████| Time: 0:00:25
+    Sampling (1 thread) 100%|███████████████████████████████| Time: 0:00:26
     Sampling (1 thread) 100%|███████████████████████████████| Time: 0:00:26
     Bayesian Generalized Additive Model
 
@@ -324,12 +329,12 @@ show(stdout, MIME("text/plain"), m_bayes)
     Sampler: Turing.Inference.NUTS{ADTypes.AutoForwardDiff{nothing, Nothing}, AdvancedHMC.DiagEuclideanMetric} (2000 samples × 2 chains)
 
     Parametric coefficients:
-    ──────────────────────────────────────────────────────────
-                    Estimate  Est.Error   l-95% CI    u-95% CI
-    ──────────────────────────────────────────────────────────
-    (Intercept)    -0.112893  0.0220463  -0.157117  -0.0687999
-    s(x,bs=tp)_f1  -3.4648    1.00123    -5.42677   -1.49016
-    ──────────────────────────────────────────────────────────
+    ─────────────────────────────────────────────────────────
+                    Estimate  Est.Error   l-95% CI   u-95% CI
+    ─────────────────────────────────────────────────────────
+    (Intercept)    -0.112489  0.0222335  -0.154845  -0.068588
+    s(x,bs=tp)_f1  -3.44988   1.01138    -5.4292    -1.52208
+    ─────────────────────────────────────────────────────────
 
     Smooth terms: s(x,bs=tp)
     n = 200
@@ -367,12 +372,12 @@ show(stdout, MIME("text/plain"), ct)
 println()
 ```
 
-    ──────────────────────────────────────────────────────────
-                    Estimate  Est.Error   l-95% CI    u-95% CI
-    ──────────────────────────────────────────────────────────
-    (Intercept)    -0.112893  0.0220463  -0.157117  -0.0687999
-    s(x,bs=tp)_f1  -3.4648    1.00123    -5.42677   -1.49016
-    ──────────────────────────────────────────────────────────
+    ─────────────────────────────────────────────────────────
+                    Estimate  Est.Error   l-95% CI   u-95% CI
+    ─────────────────────────────────────────────────────────
+    (Intercept)    -0.112489  0.0222335  -0.154845  -0.068588
+    s(x,bs=tp)_f1  -3.44988   1.01138    -5.4292    -1.52208
+    ─────────────────────────────────────────────────────────
 
 Credible intervals at different levels:
 
@@ -386,8 +391,8 @@ ci_90 = confint(m_bayes; level = 0.90)
 
 
     Intercept CIs:
-      90%: [-0.1484, -0.0771]
-      95%: [-0.1571, -0.0688]
+      90%: [-0.1481, -0.0753]
+      95%: [-0.1548, -0.0686]
 
 ### Accessing posterior samples
 
@@ -409,11 +414,11 @@ chains = m_bayes.chains
 @printf("  Larger σ_s → more flexible smooth; smaller → smoother\n")
 ```
 
-    σ_obs posterior: mean = 0.3157, sd = 0.0160, median = 0.3148
-      95% CI: [0.2861, 0.3489]
+    σ_obs posterior: mean = 0.3151, sd = 0.0160, median = 0.3148
+      95% CI: [0.2856, 0.3473]
       Frequentist σ: 0.3134
 
-    σ_s[1] posterior: mean = 1.6165, sd = 0.4330
+    σ_s[1] posterior: mean = 1.6080, sd = 0.4272
       Larger σ_s → more flexible smooth; smaller → smoother
 
 ### Comparing posteriors: frequentist vs Bayesian
@@ -426,8 +431,8 @@ bayes_int = coef(m_bayes)[1]
     freq_σ, mean(σ_obs))
 ```
 
-    Intercept: frequentist = -0.1129, Bayesian posterior mean = -0.1129
-    σ: frequentist = 0.3134, Bayesian posterior mean = 0.3157
+    Intercept: frequentist = -0.1129, Bayesian posterior mean = -0.1125
+    σ: frequentist = 0.3134, Bayesian posterior mean = 0.3151
 
 ### Empirical CDF comparison
 
@@ -453,13 +458,13 @@ for q in [0.025, 0.25, 0.5, 0.75, 0.975]
 end
 ```
 
-    Frequentist σ = 0.3134 sits at 45.5% of the posterior ECDF
+    Frequentist σ = 0.3134 sits at 47.1% of the posterior ECDF
       (values near 50% indicate good agreement)
-      ECDF 2.5%: σ_obs = 0.2861
-      ECDF 25.0%: σ_obs = 0.3048
+      ECDF 2.5%: σ_obs = 0.2856
+      ECDF 25.0%: σ_obs = 0.3041
       ECDF 50.0%: σ_obs = 0.3148
-      ECDF 75.0%: σ_obs = 0.3261
-      ECDF 97.5%: σ_obs = 0.3489
+      ECDF 75.0%: σ_obs = 0.3257
+      ECDF 97.5%: σ_obs = 0.3473
 
 ### Posterior predictive check
 
@@ -505,167 +510,167 @@ m_bayes2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
     └ @ AbstractMCMC ~/.julia/packages/AbstractMCMC/oqm6Y/src/sample.jl:544
     Sampling (1 thread)   0%|                               |  ETA: N/A
     ┌ Info: Found initial step size
-    └   ϵ = 0.025
-    Sampling (1 thread)   0%|▏                              |  ETA: 0:11:52
-    Sampling (1 thread)   1%|▎                              |  ETA: 0:06:19
-    Sampling (1 thread)   2%|▌                              |  ETA: 0:04:26
-    Sampling (1 thread)   2%|▋                              |  ETA: 0:03:29
-    Sampling (1 thread)   2%|▊                              |  ETA: 0:02:53
-    Sampling (1 thread)   3%|▉                              |  ETA: 0:02:29
-    Sampling (1 thread)   4%|█▏                             |  ETA: 0:02:10
-    Sampling (1 thread)   4%|█▎                             |  ETA: 0:01:56
-    Sampling (1 thread)   4%|█▍                             |  ETA: 0:01:45
-    Sampling (1 thread)   5%|█▌                             |  ETA: 0:01:36
-    Sampling (1 thread)   6%|█▊                             |  ETA: 0:01:29
-    Sampling (1 thread)   6%|█▉                             |  ETA: 0:01:23
-    Sampling (1 thread)   6%|██                             |  ETA: 0:01:17
-    Sampling (1 thread)   7%|██▏                            |  ETA: 0:01:13
-    Sampling (1 thread)   8%|██▍                            |  ETA: 0:01:09
-    Sampling (1 thread)   8%|██▌                            |  ETA: 0:01:06
-    Sampling (1 thread)   8%|██▋                            |  ETA: 0:01:04
-    Sampling (1 thread)   9%|██▊                            |  ETA: 0:01:01
-    Sampling (1 thread)  10%|███                            |  ETA: 0:00:58
-    Sampling (1 thread)  10%|███▏                           |  ETA: 0:00:56
-    Sampling (1 thread)  10%|███▎                           |  ETA: 0:00:54
-    Sampling (1 thread)  11%|███▍                           |  ETA: 0:00:53
-    Sampling (1 thread)  12%|███▋                           |  ETA: 0:00:51
-    Sampling (1 thread)  12%|███▊                           |  ETA: 0:00:49
-    Sampling (1 thread)  12%|███▉                           |  ETA: 0:00:48
-    Sampling (1 thread)  13%|████                           |  ETA: 0:00:46
-    Sampling (1 thread)  14%|████▏                          |  ETA: 0:00:45
-    Sampling (1 thread)  14%|████▍                          |  ETA: 0:00:44
-    Sampling (1 thread)  14%|████▌                          |  ETA: 0:00:43
-    Sampling (1 thread)  15%|████▋                          |  ETA: 0:00:42
-    Sampling (1 thread)  16%|████▊                          |  ETA: 0:00:41
-    Sampling (1 thread)  16%|█████                          |  ETA: 0:00:40
-    Sampling (1 thread)  16%|█████▏                         |  ETA: 0:00:39
-    Sampling (1 thread)  17%|█████▎                         |  ETA: 0:00:39
-    Sampling (1 thread)  18%|█████▍                         |  ETA: 0:00:38
-    Sampling (1 thread)  18%|█████▋                         |  ETA: 0:00:38
-    Sampling (1 thread)  18%|█████▊                         |  ETA: 0:00:37
-    Sampling (1 thread)  19%|█████▉                         |  ETA: 0:00:36
-    Sampling (1 thread)  20%|██████                         |  ETA: 0:00:36
-    Sampling (1 thread)  20%|██████▎                        |  ETA: 0:00:35
-    Sampling (1 thread)  20%|██████▍                        |  ETA: 0:00:35
-    Sampling (1 thread)  21%|██████▌                        |  ETA: 0:00:34
-    Sampling (1 thread)  22%|██████▋                        |  ETA: 0:00:33
-    Sampling (1 thread)  22%|██████▉                        |  ETA: 0:00:33
-    Sampling (1 thread)  22%|███████                        |  ETA: 0:00:32
-    Sampling (1 thread)  23%|███████▏                       |  ETA: 0:00:32
-    Sampling (1 thread)  24%|███████▎                       |  ETA: 0:00:32
-    Sampling (1 thread)  24%|███████▌                       |  ETA: 0:00:31
-    Sampling (1 thread)  24%|███████▋                       |  ETA: 0:00:31
-    Sampling (1 thread)  25%|███████▊                       |  ETA: 0:00:30
-    Sampling (1 thread)  26%|███████▉                       |  ETA: 0:00:30
-    Sampling (1 thread)  26%|████████                       |  ETA: 0:00:29
-    Sampling (1 thread)  26%|████████▎                      |  ETA: 0:00:29
-    Sampling (1 thread)  27%|████████▍                      |  ETA: 0:00:29
-    Sampling (1 thread)  28%|████████▌                      |  ETA: 0:00:28
-    Sampling (1 thread)  28%|████████▋                      |  ETA: 0:00:28
-    Sampling (1 thread)  28%|████████▉                      |  ETA: 0:00:28
-    Sampling (1 thread)  29%|█████████                      |  ETA: 0:00:27
-    Sampling (1 thread)  30%|█████████▏                     |  ETA: 0:00:27
-    Sampling (1 thread)  30%|█████████▎                     |  ETA: 0:00:27
-    Sampling (1 thread)  30%|█████████▌                     |  ETA: 0:00:26
-    Sampling (1 thread)  31%|█████████▋                     |  ETA: 0:00:26
-    Sampling (1 thread)  32%|█████████▊                     |  ETA: 0:00:26
-    Sampling (1 thread)  32%|█████████▉                     |  ETA: 0:00:25
-    Sampling (1 thread)  32%|██████████▏                    |  ETA: 0:00:25
-    Sampling (1 thread)  33%|██████████▎                    |  ETA: 0:00:25
-    Sampling (1 thread)  34%|██████████▍                    |  ETA: 0:00:25
-    Sampling (1 thread)  34%|██████████▌                    |  ETA: 0:00:24
-    Sampling (1 thread)  34%|██████████▊                    |  ETA: 0:00:24
-    Sampling (1 thread)  35%|██████████▉                    |  ETA: 0:00:24
-    Sampling (1 thread)  36%|███████████                    |  ETA: 0:00:23
-    Sampling (1 thread)  36%|███████████▏                   |  ETA: 0:00:23
-    Sampling (1 thread)  36%|███████████▍                   |  ETA: 0:00:23
-    Sampling (1 thread)  37%|███████████▌                   |  ETA: 0:00:23
-    Sampling (1 thread)  38%|███████████▋                   |  ETA: 0:00:22
-    Sampling (1 thread)  38%|███████████▊                   |  ETA: 0:00:22
-    Sampling (1 thread)  38%|███████████▉                   |  ETA: 0:00:22
-    Sampling (1 thread)  39%|████████████▏                  |  ETA: 0:00:22
-    Sampling (1 thread)  40%|████████████▎                  |  ETA: 0:00:21
-    Sampling (1 thread)  40%|████████████▍                  |  ETA: 0:00:21
-    Sampling (1 thread)  40%|████████████▌                  |  ETA: 0:00:21
-    Sampling (1 thread)  41%|████████████▊                  |  ETA: 0:00:21
-    Sampling (1 thread)  42%|████████████▉                  |  ETA: 0:00:20
-    Sampling (1 thread)  42%|█████████████                  |  ETA: 0:00:20
-    Sampling (1 thread)  42%|█████████████▏                 |  ETA: 0:00:20
-    Sampling (1 thread)  43%|█████████████▍                 |  ETA: 0:00:20
-    Sampling (1 thread)  44%|█████████████▌                 |  ETA: 0:00:19
-    Sampling (1 thread)  44%|█████████████▋                 |  ETA: 0:00:19
-    Sampling (1 thread)  44%|█████████████▊                 |  ETA: 0:00:19
-    Sampling (1 thread)  45%|██████████████                 |  ETA: 0:00:19
-    Sampling (1 thread)  46%|██████████████▏                |  ETA: 0:00:19
+    └   ϵ = 4.76837158203125e-8
+    Sampling (1 thread)   0%|▏                              |  ETA: 0:11:54
+    Sampling (1 thread)   1%|▎                              |  ETA: 0:06:17
+    Sampling (1 thread)   2%|▌                              |  ETA: 0:04:23
+    Sampling (1 thread)   2%|▋                              |  ETA: 0:03:23
+    Sampling (1 thread)   2%|▊                              |  ETA: 0:02:46
+    Sampling (1 thread)   3%|▉                              |  ETA: 0:02:23
+    Sampling (1 thread)   4%|█▏                             |  ETA: 0:02:06
+    Sampling (1 thread)   4%|█▎                             |  ETA: 0:01:52
+    Sampling (1 thread)   4%|█▍                             |  ETA: 0:01:42
+    Sampling (1 thread)   5%|█▌                             |  ETA: 0:01:34
+    Sampling (1 thread)   6%|█▊                             |  ETA: 0:01:27
+    Sampling (1 thread)   6%|█▉                             |  ETA: 0:01:20
+    Sampling (1 thread)   6%|██                             |  ETA: 0:01:15
+    Sampling (1 thread)   7%|██▏                            |  ETA: 0:01:10
+    Sampling (1 thread)   8%|██▍                            |  ETA: 0:01:07
+    Sampling (1 thread)   8%|██▌                            |  ETA: 0:01:04
+    Sampling (1 thread)   8%|██▋                            |  ETA: 0:01:02
+    Sampling (1 thread)   9%|██▊                            |  ETA: 0:00:59
+    Sampling (1 thread)  10%|███                            |  ETA: 0:00:57
+    Sampling (1 thread)  10%|███▏                           |  ETA: 0:00:54
+    Sampling (1 thread)  10%|███▎                           |  ETA: 0:00:52
+    Sampling (1 thread)  11%|███▍                           |  ETA: 0:00:50
+    Sampling (1 thread)  12%|███▋                           |  ETA: 0:00:49
+    Sampling (1 thread)  12%|███▊                           |  ETA: 0:00:47
+    Sampling (1 thread)  12%|███▉                           |  ETA: 0:00:45
+    Sampling (1 thread)  13%|████                           |  ETA: 0:00:44
+    Sampling (1 thread)  14%|████▏                          |  ETA: 0:00:43
+    Sampling (1 thread)  14%|████▍                          |  ETA: 0:00:41
+    Sampling (1 thread)  14%|████▌                          |  ETA: 0:00:40
+    Sampling (1 thread)  15%|████▋                          |  ETA: 0:00:39
+    Sampling (1 thread)  16%|████▊                          |  ETA: 0:00:38
+    Sampling (1 thread)  16%|█████                          |  ETA: 0:00:37
+    Sampling (1 thread)  16%|█████▏                         |  ETA: 0:00:37
+    Sampling (1 thread)  17%|█████▎                         |  ETA: 0:00:37
+    Sampling (1 thread)  18%|█████▍                         |  ETA: 0:00:36
+    Sampling (1 thread)  18%|█████▋                         |  ETA: 0:00:35
+    Sampling (1 thread)  18%|█████▊                         |  ETA: 0:00:35
+    Sampling (1 thread)  19%|█████▉                         |  ETA: 0:00:34
+    Sampling (1 thread)  20%|██████                         |  ETA: 0:00:34
+    Sampling (1 thread)  20%|██████▎                        |  ETA: 0:00:33
+    Sampling (1 thread)  20%|██████▍                        |  ETA: 0:00:33
+    Sampling (1 thread)  21%|██████▌                        |  ETA: 0:00:32
+    Sampling (1 thread)  22%|██████▋                        |  ETA: 0:00:32
+    Sampling (1 thread)  22%|██████▉                        |  ETA: 0:00:31
+    Sampling (1 thread)  22%|███████                        |  ETA: 0:00:31
+    Sampling (1 thread)  23%|███████▏                       |  ETA: 0:00:30
+    Sampling (1 thread)  24%|███████▎                       |  ETA: 0:00:30
+    Sampling (1 thread)  24%|███████▌                       |  ETA: 0:00:30
+    Sampling (1 thread)  24%|███████▋                       |  ETA: 0:00:29
+    Sampling (1 thread)  25%|███████▊                       |  ETA: 0:00:29
+    Sampling (1 thread)  26%|███████▉                       |  ETA: 0:00:28
+    Sampling (1 thread)  26%|████████                       |  ETA: 0:00:28
+    Sampling (1 thread)  26%|████████▎                      |  ETA: 0:00:28
+    Sampling (1 thread)  27%|████████▍                      |  ETA: 0:00:27
+    Sampling (1 thread)  28%|████████▌                      |  ETA: 0:00:27
+    Sampling (1 thread)  28%|████████▋                      |  ETA: 0:00:26
+    Sampling (1 thread)  28%|████████▉                      |  ETA: 0:00:26
+    Sampling (1 thread)  29%|█████████                      |  ETA: 0:00:26
+    Sampling (1 thread)  30%|█████████▏                     |  ETA: 0:00:25
+    Sampling (1 thread)  30%|█████████▎                     |  ETA: 0:00:25
+    Sampling (1 thread)  30%|█████████▌                     |  ETA: 0:00:25
+    Sampling (1 thread)  31%|█████████▋                     |  ETA: 0:00:25
+    Sampling (1 thread)  32%|█████████▊                     |  ETA: 0:00:24
+    Sampling (1 thread)  32%|█████████▉                     |  ETA: 0:00:24
+    Sampling (1 thread)  32%|██████████▏                    |  ETA: 0:00:24
+    Sampling (1 thread)  33%|██████████▎                    |  ETA: 0:00:23
+    Sampling (1 thread)  34%|██████████▍                    |  ETA: 0:00:23
+    Sampling (1 thread)  34%|██████████▌                    |  ETA: 0:00:23
+    Sampling (1 thread)  34%|██████████▊                    |  ETA: 0:00:23
+    Sampling (1 thread)  35%|██████████▉                    |  ETA: 0:00:22
+    Sampling (1 thread)  36%|███████████                    |  ETA: 0:00:22
+    Sampling (1 thread)  36%|███████████▏                   |  ETA: 0:00:22
+    Sampling (1 thread)  36%|███████████▍                   |  ETA: 0:00:22
+    Sampling (1 thread)  37%|███████████▌                   |  ETA: 0:00:21
+    Sampling (1 thread)  38%|███████████▋                   |  ETA: 0:00:21
+    Sampling (1 thread)  38%|███████████▊                   |  ETA: 0:00:21
+    Sampling (1 thread)  38%|███████████▉                   |  ETA: 0:00:21
+    Sampling (1 thread)  39%|████████████▏                  |  ETA: 0:00:20
+    Sampling (1 thread)  40%|████████████▎                  |  ETA: 0:00:20
+    Sampling (1 thread)  40%|████████████▍                  |  ETA: 0:00:20
+    Sampling (1 thread)  40%|████████████▌                  |  ETA: 0:00:20
+    Sampling (1 thread)  41%|████████████▊                  |  ETA: 0:00:20
+    Sampling (1 thread)  42%|████████████▉                  |  ETA: 0:00:19
+    Sampling (1 thread)  42%|█████████████                  |  ETA: 0:00:19
+    Sampling (1 thread)  42%|█████████████▏                 |  ETA: 0:00:19
+    Sampling (1 thread)  43%|█████████████▍                 |  ETA: 0:00:19
+    Sampling (1 thread)  44%|█████████████▌                 |  ETA: 0:00:18
+    Sampling (1 thread)  44%|█████████████▋                 |  ETA: 0:00:18
+    Sampling (1 thread)  44%|█████████████▊                 |  ETA: 0:00:18
+    Sampling (1 thread)  45%|██████████████                 |  ETA: 0:00:18
+    Sampling (1 thread)  46%|██████████████▏                |  ETA: 0:00:18
     Sampling (1 thread)  46%|██████████████▎                |  ETA: 0:00:18
-    Sampling (1 thread)  46%|██████████████▍                |  ETA: 0:00:18
-    Sampling (1 thread)  47%|██████████████▋                |  ETA: 0:00:18
-    Sampling (1 thread)  48%|██████████████▊                |  ETA: 0:00:18
+    Sampling (1 thread)  46%|██████████████▍                |  ETA: 0:00:17
+    Sampling (1 thread)  47%|██████████████▋                |  ETA: 0:00:17
+    Sampling (1 thread)  48%|██████████████▊                |  ETA: 0:00:17
     Sampling (1 thread)  48%|██████████████▉                |  ETA: 0:00:17
     Sampling (1 thread)  48%|███████████████                |  ETA: 0:00:17
-    Sampling (1 thread)  49%|███████████████▎               |  ETA: 0:00:17
-    Sampling (1 thread)  50%|███████████████▍               |  ETA: 0:00:17
-    Sampling (1 thread)  50%|███████████████▌               |  ETA: 0:00:17
+    Sampling (1 thread)  49%|███████████████▎               |  ETA: 0:00:16
+    Sampling (1 thread)  50%|███████████████▍               |  ETA: 0:00:16
+    Sampling (1 thread)  50%|███████████████▌               |  ETA: 0:00:16
     ┌ Info: Found initial step size
-    └   ϵ = 0.00078125
+    └   ϵ = 0.2
     Sampling (1 thread)  50%|███████████████▋               |  ETA: 0:00:17
     Sampling (1 thread)  51%|███████████████▊               |  ETA: 0:00:17
-    Sampling (1 thread)  52%|████████████████               |  ETA: 0:00:17
-    Sampling (1 thread)  52%|████████████████▏              |  ETA: 0:00:17
-    Sampling (1 thread)  52%|████████████████▎              |  ETA: 0:00:17
+    Sampling (1 thread)  52%|████████████████               |  ETA: 0:00:16
+    Sampling (1 thread)  52%|████████████████▏              |  ETA: 0:00:16
+    Sampling (1 thread)  52%|████████████████▎              |  ETA: 0:00:16
     Sampling (1 thread)  53%|████████████████▍              |  ETA: 0:00:16
     Sampling (1 thread)  54%|████████████████▋              |  ETA: 0:00:16
-    Sampling (1 thread)  54%|████████████████▊              |  ETA: 0:00:16
-    Sampling (1 thread)  55%|████████████████▉              |  ETA: 0:00:16
+    Sampling (1 thread)  54%|████████████████▊              |  ETA: 0:00:15
+    Sampling (1 thread)  55%|████████████████▉              |  ETA: 0:00:15
     Sampling (1 thread)  55%|█████████████████              |  ETA: 0:00:15
     Sampling (1 thread)  56%|█████████████████▎             |  ETA: 0:00:15
     Sampling (1 thread)  56%|█████████████████▍             |  ETA: 0:00:15
-    Sampling (1 thread)  56%|█████████████████▌             |  ETA: 0:00:15
-    Sampling (1 thread)  57%|█████████████████▋             |  ETA: 0:00:15
+    Sampling (1 thread)  56%|█████████████████▌             |  ETA: 0:00:14
+    Sampling (1 thread)  57%|█████████████████▋             |  ETA: 0:00:14
     Sampling (1 thread)  57%|█████████████████▉             |  ETA: 0:00:14
     Sampling (1 thread)  58%|██████████████████             |  ETA: 0:00:14
     Sampling (1 thread)  58%|██████████████████▏            |  ETA: 0:00:14
     Sampling (1 thread)  59%|██████████████████▎            |  ETA: 0:00:14
-    Sampling (1 thread)  60%|██████████████████▌            |  ETA: 0:00:14
+    Sampling (1 thread)  60%|██████████████████▌            |  ETA: 0:00:13
     Sampling (1 thread)  60%|██████████████████▋            |  ETA: 0:00:13
     Sampling (1 thread)  60%|██████████████████▊            |  ETA: 0:00:13
     Sampling (1 thread)  61%|██████████████████▉            |  ETA: 0:00:13
-    Sampling (1 thread)  62%|███████████████████▏           |  ETA: 0:00:13
-    Sampling (1 thread)  62%|███████████████████▎           |  ETA: 0:00:13
+    Sampling (1 thread)  62%|███████████████████▏           |  ETA: 0:00:12
+    Sampling (1 thread)  62%|███████████████████▎           |  ETA: 0:00:12
     Sampling (1 thread)  62%|███████████████████▍           |  ETA: 0:00:12
     Sampling (1 thread)  63%|███████████████████▌           |  ETA: 0:00:12
     Sampling (1 thread)  64%|███████████████████▋           |  ETA: 0:00:12
     Sampling (1 thread)  64%|███████████████████▉           |  ETA: 0:00:12
-    Sampling (1 thread)  64%|████████████████████           |  ETA: 0:00:12
+    Sampling (1 thread)  64%|████████████████████           |  ETA: 0:00:11
     Sampling (1 thread)  65%|████████████████████▏          |  ETA: 0:00:11
     Sampling (1 thread)  66%|████████████████████▎          |  ETA: 0:00:11
     Sampling (1 thread)  66%|████████████████████▌          |  ETA: 0:00:11
     Sampling (1 thread)  66%|████████████████████▋          |  ETA: 0:00:11
-    Sampling (1 thread)  67%|████████████████████▊          |  ETA: 0:00:11
+    Sampling (1 thread)  67%|████████████████████▊          |  ETA: 0:00:10
     Sampling (1 thread)  68%|████████████████████▉          |  ETA: 0:00:10
     Sampling (1 thread)  68%|█████████████████████▏         |  ETA: 0:00:10
     Sampling (1 thread)  68%|█████████████████████▎         |  ETA: 0:00:10
     Sampling (1 thread)  69%|█████████████████████▍         |  ETA: 0:00:10
     Sampling (1 thread)  70%|█████████████████████▌         |  ETA: 0:00:10
-    Sampling (1 thread)  70%|█████████████████████▊         |  ETA: 0:00:10
+    Sampling (1 thread)  70%|█████████████████████▊         |  ETA: 0:00:09
     Sampling (1 thread)  70%|█████████████████████▉         |  ETA: 0:00:09
     Sampling (1 thread)  71%|██████████████████████         |  ETA: 0:00:09
     Sampling (1 thread)  72%|██████████████████████▏        |  ETA: 0:00:09
     Sampling (1 thread)  72%|██████████████████████▍        |  ETA: 0:00:09
     Sampling (1 thread)  72%|██████████████████████▌        |  ETA: 0:00:09
-    Sampling (1 thread)  73%|██████████████████████▋        |  ETA: 0:00:09
+    Sampling (1 thread)  73%|██████████████████████▋        |  ETA: 0:00:08
     Sampling (1 thread)  74%|██████████████████████▊        |  ETA: 0:00:08
     Sampling (1 thread)  74%|███████████████████████        |  ETA: 0:00:08
     Sampling (1 thread)  74%|███████████████████████▏       |  ETA: 0:00:08
     Sampling (1 thread)  75%|███████████████████████▎       |  ETA: 0:00:08
     Sampling (1 thread)  76%|███████████████████████▍       |  ETA: 0:00:08
-    Sampling (1 thread)  76%|███████████████████████▌       |  ETA: 0:00:08
+    Sampling (1 thread)  76%|███████████████████████▌       |  ETA: 0:00:07
     Sampling (1 thread)  76%|███████████████████████▊       |  ETA: 0:00:07
     Sampling (1 thread)  77%|███████████████████████▉       |  ETA: 0:00:07
     Sampling (1 thread)  78%|████████████████████████       |  ETA: 0:00:07
     Sampling (1 thread)  78%|████████████████████████▏      |  ETA: 0:00:07
     Sampling (1 thread)  78%|████████████████████████▍      |  ETA: 0:00:07
-    Sampling (1 thread)  79%|████████████████████████▌      |  ETA: 0:00:07
+    Sampling (1 thread)  79%|████████████████████████▌      |  ETA: 0:00:06
     Sampling (1 thread)  80%|████████████████████████▋      |  ETA: 0:00:06
     Sampling (1 thread)  80%|████████████████████████▊      |  ETA: 0:00:06
     Sampling (1 thread)  80%|█████████████████████████      |  ETA: 0:00:06
@@ -684,7 +689,7 @@ m_bayes2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
     Sampling (1 thread)  87%|███████████████████████████    |  ETA: 0:00:04
     Sampling (1 thread)  88%|███████████████████████████▏   |  ETA: 0:00:04
     Sampling (1 thread)  88%|███████████████████████████▎   |  ETA: 0:00:04
-    Sampling (1 thread)  88%|███████████████████████████▍   |  ETA: 0:00:04
+    Sampling (1 thread)  88%|███████████████████████████▍   |  ETA: 0:00:03
     Sampling (1 thread)  89%|███████████████████████████▋   |  ETA: 0:00:03
     Sampling (1 thread)  90%|███████████████████████████▊   |  ETA: 0:00:03
     Sampling (1 thread)  90%|███████████████████████████▉   |  ETA: 0:00:03
@@ -707,8 +712,8 @@ m_bayes2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
     Sampling (1 thread)  98%|██████████████████████████████▌|  ETA: 0:00:00
     Sampling (1 thread)  99%|██████████████████████████████▊|  ETA: 0:00:00
     Sampling (1 thread) 100%|██████████████████████████████▉|  ETA: 0:00:00
-    Sampling (1 thread) 100%|███████████████████████████████| Time: 0:00:30
-    Sampling (1 thread) 100%|███████████████████████████████| Time: 0:00:30
+    Sampling (1 thread) 100%|███████████████████████████████| Time: 0:00:29
+    Sampling (1 thread) 100%|███████████████████████████████| Time: 0:00:29
 
     Bayesian Generalized Additive Model
 
@@ -718,12 +723,12 @@ m_bayes2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
     Sampler: Turing.Inference.NUTS{ADTypes.AutoForwardDiff{nothing, Nothing}, AdvancedHMC.DiagEuclideanMetric} (2000 samples × 2 chains)
 
     Parametric coefficients:
-    ────────────────────────────────────────────────────────
-                    Estimate  Est.Error   l-95% CI  u-95% CI
-    ────────────────────────────────────────────────────────
-    (Intercept)     0.907294  0.0527069   0.803447   1.00925
-    s(x,bs=tp)_f1  -3.63885   1.6974     -6.88097   -0.32279
-    ────────────────────────────────────────────────────────
+    ─────────────────────────────────────────────────────────
+                    Estimate  Est.Error   l-95% CI   u-95% CI
+    ─────────────────────────────────────────────────────────
+    (Intercept)     0.907972  0.0528395   0.805435   1.01443
+    s(x,bs=tp)_f1  -3.63389   1.66853    -6.82224   -0.282959
+    ─────────────────────────────────────────────────────────
 
     Smooth terms: s(x,bs=tp)
     n = 200
@@ -747,15 +752,15 @@ chains2 = m_bayes2.chains
 @printf("σ_s[1]: mean = %.4f, sd = %.4f\n", mean(σ_s2), std(σ_s2))
 ```
 
-    ────────────────────────────────────────────────────────
-                    Estimate  Est.Error   l-95% CI  u-95% CI
-    ────────────────────────────────────────────────────────
-    (Intercept)     0.907294  0.0527069   0.803447   1.00925
-    s(x,bs=tp)_f1  -3.63885   1.6974     -6.88097   -0.32279
-    ────────────────────────────────────────────────────────
+    ─────────────────────────────────────────────────────────
+                    Estimate  Est.Error   l-95% CI   u-95% CI
+    ─────────────────────────────────────────────────────────
+    (Intercept)     0.907972  0.0528395   0.805435   1.01443
+    s(x,bs=tp)_f1  -3.63389   1.66853    -6.82224   -0.282959
+    ─────────────────────────────────────────────────────────
 
-    Intercept (log-scale): frequentist = 0.9094, Bayesian = 0.9073 (true = 1.0)
-    σ_s[1]: mean = 2.2655, sd = 0.6382
+    Intercept (log-scale): frequentist = 0.9094, Bayesian = 0.9080 (true = 1.0)
+    σ_s[1]: mean = 2.2668, sd = 0.6311
 
 ### ECDF comparison for intercept
 
@@ -771,8 +776,115 @@ freq_rank2 = searchsortedfirst(β1_sorted, freq_int2) / n_s
     100 * searchsortedfirst(β1_sorted, 1.0) / n_s)
 ```
 
-    Frequentist intercept = 0.9094 sits at 51.0% of Bayesian posterior
-    True intercept = 1.0 sits at 96.1% of posterior
+    Frequentist intercept = 0.9094 sits at 50.6% of Bayesian posterior
+    True intercept = 1.0 sits at 95.7% of posterior
+
+## Cross-language comparison: GAM.jl vs brms vs mgcv
+
+We load posterior samples from R’s brms (Stan MCMC) and mgcv (Gaussian
+approximation) to compare with GAM.jl’s Turing posteriors. The key
+metric is the **pairwise ECDF correlation**: evaluate both ECDFs on a
+common grid and compute Pearson’s $r$. A value of 1.0 means the
+distributions are identical.
+
+``` julia
+# Load R posterior samples
+brms_gauss = CSV.read("posteriors_gaussian_brms.csv", DataFrame)
+brms_poisson = CSV.read("posteriors_poisson_brms.csv", DataFrame)
+mgcv_gauss = CSV.read("posteriors_gaussian_mgcv.csv", DataFrame)
+mgcv_poisson = CSV.read("posteriors_poisson_mgcv.csv", DataFrame)
+
+@printf("Loaded: brms Gaussian=%d, brms Poisson=%d, mgcv Gaussian=%d, mgcv Poisson=%d\n",
+    nrow(brms_gauss), nrow(brms_poisson), nrow(mgcv_gauss), nrow(mgcv_poisson))
+```
+
+    Loaded: brms Gaussian=2000, brms Poisson=2000, mgcv Gaussian=4000, mgcv Poisson=4000
+
+### ECDF correlation helper
+
+``` julia
+function ecdf_cor(x::AbstractVector, y::AbstractVector; n_grid::Int = 500)
+    lo = min(minimum(x), minimum(y))
+    hi = max(maximum(x), maximum(y))
+    grid = range(lo, hi; length = n_grid)
+    ecdf_x = [count(≤(g), x) / length(x) for g in grid]
+    ecdf_y = [count(≤(g), y) / length(y) for g in grid]
+    return cor(ecdf_x, ecdf_y)
+end
+```
+
+    ecdf_cor (generic function with 1 method)
+
+### Gaussian model
+
+``` julia
+# Three-way comparison table
+@printf("Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)\n")
+@printf("------------------|-------------------|-------------------|--------------\n")
+@printf("sigma  mean       | %.4f             | %.4f             | %.4f\n",
+    mean(σ_obs), mean(brms_gauss.sigma_obs), mean(mgcv_gauss.sigma_obs))
+@printf("sigma  sd         | %.4f             | %.4f             | %.4f\n",
+    std(σ_obs), std(brms_gauss.sigma_obs), std(mgcv_gauss.sigma_obs))
+@printf("Intercept mean    | %.4f            | %.4f            | %.4f\n",
+    mean(vec(chains[Symbol("β[1]")].data)),
+    mean(brms_gauss.beta_intercept), mean(mgcv_gauss.beta_intercept))
+@printf("Intercept sd      | %.4f             | %.4f             | %.4f\n",
+    std(vec(chains[Symbol("β[1]")].data)),
+    std(brms_gauss.beta_intercept), std(mgcv_gauss.beta_intercept))
+```
+
+    Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)
+    ------------------|-------------------|-------------------|--------------
+    sigma  mean       | 0.3151             | 0.3151             | 0.3145
+    sigma  sd         | 0.0160             | 0.0161             | 0.0160
+    Intercept mean    | -0.1125            | -0.1131            | -0.1123
+    Intercept sd      | 0.0222             | 0.0223             | 0.0221
+
+``` julia
+# Pairwise ECDF correlation + KS statistic
+julia_sigma = σ_obs
+julia_int = vec(chains[Symbol("β[1]")].data)
+brms_sigma = brms_gauss.sigma_obs
+brms_int = brms_gauss.beta_intercept
+mgcv_sigma = mgcv_gauss.sigma_obs
+mgcv_int = mgcv_gauss.beta_intercept
+
+@printf("\nPairwise ECDF correlation (Gaussian model):\n")
+@printf("Comparison             | sigma ECDF cor | intercept ECDF cor\n")
+@printf("-----------------------|----------------|-------------------\n")
+@printf("GAM.jl vs brms         | %.6f        | %.6f\n",
+    ecdf_cor(julia_sigma, brms_sigma), ecdf_cor(julia_int, brms_int))
+@printf("GAM.jl vs mgcv (approx)| %.6f        | %.6f\n",
+    ecdf_cor(julia_sigma, mgcv_sigma), ecdf_cor(julia_int, mgcv_int))
+@printf("brms vs mgcv (approx)  | %.6f        | %.6f\n",
+    ecdf_cor(brms_sigma, mgcv_sigma), ecdf_cor(brms_int, mgcv_int))
+```
+
+
+    Pairwise ECDF correlation (Gaussian model):
+    Comparison             | sigma ECDF cor | intercept ECDF cor
+    -----------------------|----------------|-------------------
+    GAM.jl vs brms         | 0.999880        | 0.999943
+    GAM.jl vs mgcv (approx)| 0.999782        | 0.999969
+    brms vs mgcv (approx)  | 0.999921        | 0.999904
+
+### Poisson model
+
+``` julia
+julia_int2 = vec(chains2[Symbol("β[1]")].data)
+brms_int2 = brms_poisson.beta_intercept
+mgcv_int2 = mgcv_poisson.beta_intercept
+
+@printf("Pairwise ECDF correlation (Poisson intercept):\n")
+@printf("GAM.jl vs brms:          %.6f\n", ecdf_cor(julia_int2, brms_int2))
+@printf("GAM.jl vs mgcv (approx): %.6f\n", ecdf_cor(julia_int2, mgcv_int2))
+@printf("brms vs mgcv (approx):   %.6f\n", ecdf_cor(brms_int2, mgcv_int2))
+```
+
+    Pairwise ECDF correlation (Poisson intercept):
+    GAM.jl vs brms:          0.999906
+    GAM.jl vs mgcv (approx): 0.999901
+    brms vs mgcv (approx):   0.999957
 
 ## Example 3: Custom priors — effect on smoothing
 
@@ -799,13 +911,13 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
 
     Sampling   0%|                                          |  ETA: N/A
     ┌ Info: Found initial step size
-    └   ϵ = 0.003125
-    Sampling   1%|▎                                         |  ETA: 0:05:52
-    Sampling   1%|▍                                         |  ETA: 0:03:10
-    Sampling   2%|▋                                         |  ETA: 0:02:05
-    Sampling   2%|▉                                         |  ETA: 0:01:36
-    Sampling   3%|█▏                                        |  ETA: 0:01:17
-    Sampling   3%|█▎                                        |  ETA: 0:01:07
+    └   ϵ = 0.0125
+    Sampling   1%|▎                                         |  ETA: 0:05:53
+    Sampling   1%|▍                                         |  ETA: 0:03:08
+    Sampling   2%|▋                                         |  ETA: 0:02:03
+    Sampling   2%|▉                                         |  ETA: 0:01:37
+    Sampling   3%|█▏                                        |  ETA: 0:01:18
+    Sampling   3%|█▎                                        |  ETA: 0:01:06
     Sampling   4%|█▌                                        |  ETA: 0:00:57
     Sampling   4%|█▋                                        |  ETA: 0:00:51
     Sampling   5%|█▉                                        |  ETA: 0:00:45
@@ -820,7 +932,7 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling   9%|███▊                                      |  ETA: 0:00:24
     Sampling  10%|████                                      |  ETA: 0:00:23
     Sampling  10%|████▎                                     |  ETA: 0:00:22
-    Sampling  11%|████▍                                     |  ETA: 0:00:20
+    Sampling  11%|████▍                                     |  ETA: 0:00:21
     Sampling  11%|████▋                                     |  ETA: 0:00:20
     Sampling  12%|████▉                                     |  ETA: 0:00:19
     Sampling  12%|█████                                     |  ETA: 0:00:18
@@ -840,7 +952,7 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling  19%|████████                                  |  ETA: 0:00:11
     Sampling  20%|████████▎                                 |  ETA: 0:00:11
     Sampling  20%|████████▍                                 |  ETA: 0:00:11
-    Sampling  21%|████████▋                                 |  ETA: 0:00:11
+    Sampling  21%|████████▋                                 |  ETA: 0:00:10
     Sampling  21%|████████▉                                 |  ETA: 0:00:10
     Sampling  22%|█████████                                 |  ETA: 0:00:10
     Sampling  22%|█████████▎                                |  ETA: 0:00:10
@@ -866,14 +978,14 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling  32%|█████████████▌                            |  ETA: 0:00:06
     Sampling  33%|█████████████▋                            |  ETA: 0:00:06
     Sampling  33%|█████████████▉                            |  ETA: 0:00:06
-    Sampling  34%|██████████████▏                           |  ETA: 0:00:06
-    Sampling  34%|██████████████▎                           |  ETA: 0:00:06
+    Sampling  34%|██████████████▏                           |  ETA: 0:00:07
+    Sampling  34%|██████████████▎                           |  ETA: 0:00:07
     Sampling  35%|██████████████▌                           |  ETA: 0:00:06
     Sampling  35%|██████████████▊                           |  ETA: 0:00:06
     Sampling  36%|██████████████▉                           |  ETA: 0:00:06
     Sampling  36%|███████████████▏                          |  ETA: 0:00:06
     Sampling  37%|███████████████▍                          |  ETA: 0:00:06
-    Sampling  37%|███████████████▌                          |  ETA: 0:00:05
+    Sampling  37%|███████████████▌                          |  ETA: 0:00:06
     Sampling  38%|███████████████▊                          |  ETA: 0:00:06
     Sampling  38%|████████████████                          |  ETA: 0:00:06
     Sampling  39%|████████████████▏                         |  ETA: 0:00:06
@@ -889,7 +1001,7 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling  44%|██████████████████▎                       |  ETA: 0:00:05
     Sampling  44%|██████████████████▌                       |  ETA: 0:00:05
     Sampling  45%|██████████████████▊                       |  ETA: 0:00:05
-    Sampling  45%|██████████████████▉                       |  ETA: 0:00:05
+    Sampling  45%|██████████████████▉                       |  ETA: 0:00:04
     Sampling  46%|███████████████████▏                      |  ETA: 0:00:04
     Sampling  46%|███████████████████▍                      |  ETA: 0:00:04
     Sampling  47%|███████████████████▌                      |  ETA: 0:00:04
@@ -1003,18 +1115,18 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling 100%|██████████████████████████████████████████| Time: 0:00:05
     Sampling   0%|                                          |  ETA: N/A
     ┌ Info: Found initial step size
-    └   ϵ = 0.025
+    └   ϵ = 0.00625
     Sampling   1%|▎                                         |  ETA: 0:00:01
     Sampling   1%|▍                                         |  ETA: 0:00:02
     Sampling   2%|▋                                         |  ETA: 0:00:05
-    Sampling   2%|▉                                         |  ETA: 0:00:05
+    Sampling   2%|▉                                         |  ETA: 0:00:04
     Sampling   3%|█▏                                        |  ETA: 0:00:05
     Sampling   3%|█▎                                        |  ETA: 0:00:05
     Sampling   4%|█▌                                        |  ETA: 0:00:05
     Sampling   4%|█▋                                        |  ETA: 0:00:05
-    Sampling   5%|█▉                                        |  ETA: 0:00:05
-    Sampling   5%|██▏                                       |  ETA: 0:00:06
-    Sampling   6%|██▍                                       |  ETA: 0:00:06
+    Sampling   5%|█▉                                        |  ETA: 0:00:06
+    Sampling   5%|██▏                                       |  ETA: 0:00:05
+    Sampling   6%|██▍                                       |  ETA: 0:00:05
     Sampling   6%|██▌                                       |  ETA: 0:00:05
     Sampling   7%|██▊                                       |  ETA: 0:00:05
     Sampling   7%|███                                       |  ETA: 0:00:05
@@ -1053,8 +1165,8 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling  24%|█████████▉                                |  ETA: 0:00:04
     Sampling  24%|██████████▏                               |  ETA: 0:00:04
     Sampling  25%|██████████▎                               |  ETA: 0:00:04
-    Sampling  25%|██████████▌                               |  ETA: 0:00:03
-    Sampling  26%|██████████▊                               |  ETA: 0:00:03
+    Sampling  25%|██████████▌                               |  ETA: 0:00:04
+    Sampling  26%|██████████▊                               |  ETA: 0:00:04
     Sampling  26%|██████████▉                               |  ETA: 0:00:03
     Sampling  27%|███████████▏                              |  ETA: 0:00:03
     Sampling  27%|███████████▍                              |  ETA: 0:00:03
@@ -1088,8 +1200,8 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling  41%|█████████████████▎                        |  ETA: 0:00:03
     Sampling  42%|█████████████████▌                        |  ETA: 0:00:03
     Sampling  42%|█████████████████▋                        |  ETA: 0:00:03
-    Sampling  43%|█████████████████▉                        |  ETA: 0:00:02
-    Sampling  43%|██████████████████                        |  ETA: 0:00:02
+    Sampling  43%|█████████████████▉                        |  ETA: 0:00:03
+    Sampling  43%|██████████████████                        |  ETA: 0:00:03
     Sampling  44%|██████████████████▎                       |  ETA: 0:00:02
     Sampling  44%|██████████████████▌                       |  ETA: 0:00:02
     Sampling  45%|██████████████████▊                       |  ETA: 0:00:02
@@ -1133,8 +1245,8 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling  64%|██████████████████████████▋               |  ETA: 0:00:02
     Sampling  64%|██████████████████████████▉               |  ETA: 0:00:02
     Sampling  65%|███████████████████████████▏              |  ETA: 0:00:02
-    Sampling  65%|███████████████████████████▎              |  ETA: 0:00:01
-    Sampling  66%|███████████████████████████▌              |  ETA: 0:00:01
+    Sampling  65%|███████████████████████████▎              |  ETA: 0:00:02
+    Sampling  66%|███████████████████████████▌              |  ETA: 0:00:02
     Sampling  66%|███████████████████████████▊              |  ETA: 0:00:01
     Sampling  67%|████████████████████████████              |  ETA: 0:00:01
     Sampling  67%|████████████████████████████▏             |  ETA: 0:00:01
@@ -1205,9 +1317,9 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     Sampling 100%|█████████████████████████████████████████▊|  ETA: 0:00:00
     Sampling 100%|██████████████████████████████████████████| Time: 0:00:04
     Sampling 100%|██████████████████████████████████████████| Time: 0:00:04
-    Tight prior (Exp(0.1)): posterior mean σ_s = 1.0070
-    Wide prior  (Exp(5.0)): posterior mean σ_s = 1.7921
-    Ratio: 1.8x
+    Tight prior (Exp(0.1)): posterior mean σ_s = 0.9981
+    Wide prior  (Exp(5.0)): posterior mean σ_s = 1.8781
+    Ratio: 1.9x
 
 ## Example 4: Building custom Turing models
 
@@ -1257,7 +1369,7 @@ custom_chains = sample(my_gam(dat.y, X_fixed, Zs), NUTS(), 1000; progress = fals
       Zs (penalized):  [(200, 8)]
     ┌ Info: Found initial step size
     └   ϵ = 0.2
-    Custom model σ posterior mean: 0.3148 (compare to 0.3157 from gam())
+    Custom model σ posterior mean: 0.3145 (compare to 0.3151 from gam())
 
 ## Summary
 
