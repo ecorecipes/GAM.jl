@@ -680,7 +680,28 @@ function _build_gam_design(gf::GamFormula, cols, n, global_offset)
 end
 
 function _build_parametric_design(formula::FormulaTerm, cols, n, global_offset)
-    # Pure parametric formula (intercept only for now)
-    X = ones(n, 1)
-    return X, ConstructedSmooth[]
+    # Use setup_gam to detect smooth function terms (cr(), tp(), etc.) in @formula
+    rhs_terms = _flatten_rhs(formula.rhs)
+    has_smooth = any(t -> (t isa AppliedSmoothTerm || t isa SmoothTerm ||
+        (t isa StatsModels.FunctionTerm && _is_smooth_function(t.f))),
+        rhs_terms)
+
+    if has_smooth
+        # Delegate to setup_gam for proper smooth detection, then reindex
+        # cols is already a column table from Tables.columntable
+        y, X_full, X_para, smooths, n_parametric = setup_gam(formula, cols)
+        # Reindex smooths to global offset
+        col_offset = global_offset + n_parametric
+        for sm in smooths
+            k = size(sm.X, 2)
+            sm.first_para = col_offset + 1
+            sm.last_para = col_offset + k
+            col_offset += k
+        end
+        return X_full, smooths
+    else
+        # Pure parametric formula (intercept only or simple terms)
+        X = ones(n, 1)
+        return X, ConstructedSmooth[]
+    end
 end

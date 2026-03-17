@@ -1,4 +1,4 @@
-using Test, GAM, Random, Statistics
+using Test, GAM, Random, Statistics, StatsBase
 
 @testset "Quantile GAM (qgam)" begin
 
@@ -187,5 +187,115 @@ using Test, GAM, Random, Statistics
         @test length(fits.fits) == 3
         @test haskey(fits.fits, 0.25)
         @test haskey(fits.fits, 0.75)
+    end
+
+    @testset "qdo" begin
+        Random.seed!(42)
+        n = 100
+        x = range(0, 3, length=n) |> collect
+        y = 2.0 .* x .+ randn(n)
+        df = (y=y, x=x)
+
+        fits = mqgam(@gam_formula(y ~ s(x, k=8)), df, [0.25, 0.5, 0.75];
+                     lsig=-0.5, co=0.15)
+
+        # Extract model
+        m50 = qdo(fits, 0.5)
+        @test m50 isa GAM.GamModel
+        @test m50.family.qu == 0.5
+
+        # Apply function
+        pred = qdo(fits, 0.25, predict)
+        @test length(pred) == n
+
+        # Error for missing quantile
+        @test_throws ArgumentError qdo(fits, 0.42)
+    end
+
+    @testset "cqcheck" begin
+        Random.seed!(123)
+        n = 200
+        x = range(0, 2π, length=n) |> collect
+        y = sin.(x) .+ 0.3 .* randn(n)
+        df = (y=y, x=x)
+
+        elf = ELFFamily(qu=0.5, co=fill(0.2, n), theta=-0.5)
+        fit = gam(@gam_formula(y ~ s(x, k=15)), df; family=elf)
+
+        res = cqcheck(fit, x; nbin=8)
+        @test res isa GAM.CQCheckResult
+        @test length(res.bin_mid) == 8
+        @test length(res.proportions) == 8
+        @test length(res.ci_lower) == 8
+        @test length(res.ci_upper) == 8
+        @test all(res.ci_lower .<= res.ci_upper)
+        @test res.target_qu == 0.5
+        @test res.lev == 0.05
+
+        # Proportions should be in [0, 1]
+        @test all(0.0 .<= res.proportions .<= 1.0)
+    end
+
+    @testset "check_qgam" begin
+        Random.seed!(456)
+        n = 200
+        x = range(0, 2π, length=n) |> collect
+        y = sin.(x) .+ 0.3 .* randn(n)
+        df = (y=y, x=x)
+
+        elf = ELFFamily(qu=0.5, co=fill(0.2, n), theta=-0.5)
+        fit = gam(@gam_formula(y ~ s(x, k=15)), df; family=elf)
+
+        chk = check_qgam(fit; nbin=8)
+        @test chk isa GAM.QGamCheck
+        @test chk.target_qu == 0.5
+        @test 0.0 < chk.actual_proportion < 1.0
+        @test chk.integrated_abs_bias >= 0.0
+        @test length(chk.bias_values) == n
+        @test chk.calibration isa GAM.CQCheckResult
+    end
+
+    @testset "quantile_residuals" begin
+        Random.seed!(789)
+        n = 200
+        x = range(0, 2π, length=n) |> collect
+        y = sin.(x) .+ 0.3 .* randn(n)
+        df = (y=y, x=x)
+
+        elf = ELFFamily(qu=0.5, co=fill(0.2, n), theta=-0.5)
+        fit = gam(@gam_formula(y ~ s(x, k=15)), df; family=elf)
+
+        qr = quantile_residuals(fit)
+        @test length(qr) == n
+        @test all(isfinite.(qr))
+        # Quantile residuals should be roughly standard normal
+        @test abs(mean(qr)) < 1.0
+        @test 0.2 < std(qr) < 2.0
+    end
+
+    @testset "ELFLSS family" begin
+        Random.seed!(101)
+        n = 200
+        x = range(0, 2π, length=n) |> collect
+        # Heteroscedastic data: variance increases with x
+        y = sin.(x) .+ (0.1 .+ 0.3 .* x ./ (2π)) .* randn(n)
+        df = (y=y, x=x)
+
+        co = 0.3 * sqrt(2π * var(y)) / (2 * log(2))
+        fam = ELFLSSFamily(qu=0.5, co=co)
+
+        @test nparams(fam) == 2
+        @test param_names(fam) == ["mu", "sigma"]
+
+        # Test NLL computation
+        nll = GAM.nll_obs(fam, 1.0, [0.5, log(0.3)])
+        @test isfinite(nll)
+        @test nll > 0  # NLL should be positive for reasonable inputs
+
+        # Test initial_eta
+        η0 = GAM.initial_eta(fam, y)
+        @test length(η0) == 2
+        @test length(η0[1]) == n
+        @test length(η0[2]) == n
     end
 end
