@@ -205,6 +205,19 @@ export
     overview,
     OverviewTable,
 
+    # GAMM (Generalized Additive Mixed Models)
+    gamm,
+    GammModel,
+    GammFormula,
+    @gamm_formula,
+    RandomEffectSpec,
+    ConstructedRandomEffect,
+    construct_random_effect,
+    predict_re_matrix,
+    ranef,
+    VarCorr,
+    re,
+
     # Bayesian GAM support (Turing.jl extension)
     PriorSpec,
     get_prior,
@@ -249,6 +262,7 @@ include("priors.jl")
 include("bayes_types.jl")
 include("gamlss.jl")
 include("gamfit.jl")
+include("gamm.jl")
 include("bam.jl")
 include("ginla.jl")
 include("qgam.jl")
