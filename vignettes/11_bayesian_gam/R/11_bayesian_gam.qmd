@@ -1,0 +1,331 @@
+---
+title: "Bayesian GAMs: R Comparison with brms"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+engine: knitr
+---
+
+## Overview
+
+This vignette fits the same Bayesian GAMs as `11_bayesian_gam.qmd` using R's **brms** package, which translates GAM formulas into Stan code and fits them via Hamiltonian Monte Carlo. We compare posterior distributions between GAM.jl (Turing.jl backend) and brms (Stan backend) using point estimates, posterior SDs, credible intervals, and empirical CDF comparisons.
+
+Both approaches use the same underlying idea: the **smooth2random** decomposition converts smooth terms into random effects, and MCMC estimates the smoothing variance $\sigma_s^2$ alongside all other parameters.
+
+## Setup
+
+```{r message=FALSE}
+library(brms)
+library(mgcv)
+library(ggplot2)
+library(posterior)
+
+# Read Julia posterior samples for comparison
+julia_gauss <- read.csv("../posteriors_gaussian_julia.csv")
+julia_poisson <- read.csv("../posteriors_poisson_julia.csv")
+```
+
+## Example 1: Gaussian GAM
+
+### Data
+
+```{r}
+dat <- read.csv("../data_bayes_gaussian.csv")
+cat(sprintf("n = %d, y range: [%.2f, %.2f]\n", nrow(dat), min(dat$y), max(dat$y)))
+```
+
+### Frequentist reference (mgcv)
+
+```{r}
+m_freq <- gam(y ~ s(x, k = 10), data = dat, method = "REML")
+summary(m_freq)
+```
+
+### Bayesian fit (brms)
+
+In brms, `s()` uses mgcv's basis construction internally. We set priors to match GAM.jl's `PriorSpec(sds = Exponential(1.0))`:
+
+```{r cache=TRUE, results='hide', message=FALSE}
+m_brms <- brm(
+  y ~ s(x, k = 10),
+  data = dat,
+  family = gaussian(),
+  prior = c(
+    prior(normal(0, 10), class = "b"),
+    prior(exponential(1), class = "sds"),
+    prior(normal(0, 2.5), class = "sigma", lb = 0)
+  ),
+  chains = 2,
+  iter = 2000,
+  warmup = 1000,
+  seed = 2024,
+  backend = "rstan"
+)
+```
+
+### Posterior summary
+
+```{r}
+summary(m_brms)
+```
+
+### Extract posterior samples
+
+```{r}
+draws <- as_draws_df(m_brms)
+
+# Residual SD
+sigma_brms <- draws$sigma
+cat(sprintf("brms σ: mean = %.4f, sd = %.4f, median = %.4f\n",
+            mean(sigma_brms), sd(sigma_brms), median(sigma_brms)))
+cat(sprintf("  95%% CI: [%.4f, %.4f]\n",
+            quantile(sigma_brms, 0.025), quantile(sigma_brms, 0.975)))
+cat(sprintf("Frequentist σ: %.4f\n", sqrt(m_freq$scale)))
+
+# Smooth SD
+sds_cols <- grep("^sds_", names(draws), value = TRUE)
+if (length(sds_cols) > 0) {
+  sds_brms <- draws[[sds_cols[1]]]
+  cat(sprintf("\nbrms sds: mean = %.4f, sd = %.4f\n",
+              mean(sds_brms), sd(sds_brms)))
+}
+
+# Intercept
+b_int <- draws$b_Intercept
+cat(sprintf("\nbrms intercept: mean = %.4f, sd = %.4f\n",
+            mean(b_int), sd(b_int)))
+cat(sprintf("Frequentist intercept: %.4f\n", coef(m_freq)[1]))
+```
+
+### Comparing brms and GAM.jl posteriors
+
+#### Point estimates and SDs
+
+```{r}
+cat("Parameter         | brms (Stan)       | GAM.jl (Turing)   | Frequentist\n")
+cat("------------------|-------------------|--------------------|------------\n")
+cat(sprintf("σ_obs  mean       | %.4f             | %.4f              | %.4f\n",
+            mean(sigma_brms), mean(julia_gauss$sigma_obs), sqrt(m_freq$scale)))
+cat(sprintf("σ_obs  sd         | %.4f             | %.4f              |\n",
+            sd(sigma_brms), sd(julia_gauss$sigma_obs)))
+cat(sprintf("Intercept mean    | %.4f            | %.4f             | %.4f\n",
+            mean(b_int), mean(julia_gauss$beta_intercept), coef(m_freq)[1]))
+cat(sprintf("Intercept sd      | %.4f             | %.4f              |\n",
+            sd(b_int), sd(julia_gauss$beta_intercept)))
+if (length(sds_cols) > 0) {
+  cat(sprintf("σ_s mean          | %.4f             | %.4f              |\n",
+              mean(sds_brms), mean(julia_gauss$sigma_s1)))
+  cat(sprintf("σ_s sd            | %.4f             | %.4f              |\n",
+              sd(sds_brms), sd(julia_gauss$sigma_s1)))
+}
+```
+
+#### Empirical CDF comparison
+
+The **Kolmogorov-Smirnov test** provides a formal comparison of the posterior distributions from brms and GAM.jl:
+
+```{r}
+# σ_obs ECDF comparison
+ks_sigma <- ks.test(sigma_brms, julia_gauss$sigma_obs)
+cat(sprintf("KS test for σ_obs: D = %.4f, p = %.4f\n",
+            ks_sigma$statistic, ks_sigma$p.value))
+
+# Intercept ECDF comparison
+ks_int <- ks.test(b_int, julia_gauss$beta_intercept)
+cat(sprintf("KS test for intercept: D = %.4f, p = %.4f\n",
+            ks_int$statistic, ks_int$p.value))
+
+# σ_s ECDF comparison
+if (length(sds_cols) > 0) {
+  ks_sds <- ks.test(sds_brms, julia_gauss$sigma_s1)
+  cat(sprintf("KS test for σ_s: D = %.4f, p = %.4f\n",
+              ks_sds$statistic, ks_sds$p.value))
+}
+```
+
+Note: A high p-value (> 0.05) indicates the posteriors are not significantly different.
+
+#### ECDF plots
+
+```{r fig.width=10, fig.height=4}
+par(mfrow = c(1, 3))
+
+# σ_obs ECDF
+plot(ecdf(sigma_brms), col = "blue", main = expression(sigma[obs]),
+     xlab = expression(sigma), ylab = "ECDF", lwd = 2)
+lines(ecdf(julia_gauss$sigma_obs), col = "red", lwd = 2)
+abline(v = sqrt(m_freq$scale), lty = 2, col = "black")
+legend("bottomright", c("brms", "GAM.jl", "Frequentist"),
+       col = c("blue", "red", "black"), lty = c(1, 1, 2), lwd = 2, cex = 0.8)
+
+# Intercept ECDF
+plot(ecdf(b_int), col = "blue", main = "Intercept",
+     xlab = expression(beta[0]), ylab = "ECDF", lwd = 2)
+lines(ecdf(julia_gauss$beta_intercept), col = "red", lwd = 2)
+abline(v = coef(m_freq)[1], lty = 2, col = "black")
+legend("bottomright", c("brms", "GAM.jl", "Frequentist"),
+       col = c("blue", "red", "black"), lty = c(1, 1, 2), lwd = 2, cex = 0.8)
+
+# σ_s ECDF
+if (length(sds_cols) > 0) {
+  plot(ecdf(sds_brms), col = "blue", main = expression(sigma[s]),
+       xlab = expression(sigma[s]), ylab = "ECDF", lwd = 2)
+  lines(ecdf(julia_gauss$sigma_s1), col = "red", lwd = 2)
+  legend("bottomright", c("brms", "GAM.jl"),
+         col = c("blue", "red"), lty = 1, lwd = 2, cex = 0.8)
+}
+```
+
+#### Quantile-quantile comparison
+
+```{r fig.width=10, fig.height=4}
+par(mfrow = c(1, 3))
+probs <- seq(0.01, 0.99, by = 0.01)
+
+# σ_obs Q-Q
+q_brms <- quantile(sigma_brms, probs)
+q_julia <- quantile(julia_gauss$sigma_obs, probs)
+plot(q_brms, q_julia, pch = 16, cex = 0.5,
+     main = expression(sigma[obs] ~ "Q-Q"),
+     xlab = "brms quantiles", ylab = "GAM.jl quantiles")
+abline(0, 1, col = "red", lwd = 2)
+
+# Intercept Q-Q
+q_brms_int <- quantile(b_int, probs)
+q_julia_int <- quantile(julia_gauss$beta_intercept, probs)
+plot(q_brms_int, q_julia_int, pch = 16, cex = 0.5,
+     main = "Intercept Q-Q",
+     xlab = "brms quantiles", ylab = "GAM.jl quantiles")
+abline(0, 1, col = "red", lwd = 2)
+
+# σ_s Q-Q
+if (length(sds_cols) > 0) {
+  q_brms_sds <- quantile(sds_brms, probs)
+  q_julia_sds <- quantile(julia_gauss$sigma_s1, probs)
+  plot(q_brms_sds, q_julia_sds, pch = 16, cex = 0.5,
+       main = expression(sigma[s] ~ "Q-Q"),
+       xlab = "brms quantiles", ylab = "GAM.jl quantiles")
+  abline(0, 1, col = "red", lwd = 2)
+}
+```
+
+## Example 2: Poisson GAM
+
+### Frequentist reference
+
+```{r}
+dat2 <- read.csv("../data_bayes_poisson.csv")
+m_freq2 <- gam(y ~ s(x, k = 10), data = dat2, family = poisson(), method = "REML")
+cat(sprintf("Frequentist intercept (log-scale): %.4f (true: 1.0)\n", coef(m_freq2)[1]))
+```
+
+### brms fit
+
+```{r cache=TRUE, results='hide', message=FALSE}
+m_brms2 <- brm(
+  y ~ s(x, k = 10),
+  data = dat2,
+  family = poisson(),
+  prior = c(
+    prior(normal(0, 10), class = "b"),
+    prior(exponential(1), class = "sds")
+  ),
+  chains = 2,
+  iter = 2000,
+  warmup = 1000,
+  seed = 2024,
+  backend = "rstan"
+)
+```
+
+### Posterior summary
+
+```{r}
+summary(m_brms2)
+```
+
+### Comparing posteriors
+
+```{r}
+draws2 <- as_draws_df(m_brms2)
+b_int2 <- draws2$b_Intercept
+sds_cols2 <- grep("^sds_", names(draws2), value = TRUE)
+
+cat("Parameter         | brms              | GAM.jl            | Freq     | True\n")
+cat("------------------|-------------------|-------------------|----------|------\n")
+cat(sprintf("Intercept mean    | %.4f            | %.4f            | %.4f   | 1.0\n",
+            mean(b_int2), mean(julia_poisson$beta_intercept), coef(m_freq2)[1]))
+cat(sprintf("Intercept sd      | %.4f             | %.4f             |          |\n",
+            sd(b_int2), sd(julia_poisson$beta_intercept)))
+if (length(sds_cols2) > 0) {
+  sds2 <- draws2[[sds_cols2[1]]]
+  cat(sprintf("σ_s mean          | %.4f             | %.4f             |          |\n",
+              mean(sds2), mean(julia_poisson$sigma_s1)))
+}
+```
+
+### KS tests
+
+```{r}
+ks_int2 <- ks.test(b_int2, julia_poisson$beta_intercept)
+cat(sprintf("KS test for intercept: D = %.4f, p = %.4f\n",
+            ks_int2$statistic, ks_int2$p.value))
+
+if (length(sds_cols2) > 0) {
+  ks_sds2 <- ks.test(sds2, julia_poisson$sigma_s1)
+  cat(sprintf("KS test for σ_s: D = %.4f, p = %.4f\n",
+              ks_sds2$statistic, ks_sds2$p.value))
+}
+```
+
+### ECDF and Q-Q plots
+
+```{r fig.width=8, fig.height=4}
+par(mfrow = c(1, 2))
+
+# Intercept ECDF
+plot(ecdf(b_int2), col = "blue", main = "Poisson intercept ECDF",
+     xlab = expression(beta[0]), ylab = "ECDF", lwd = 2)
+lines(ecdf(julia_poisson$beta_intercept), col = "red", lwd = 2)
+abline(v = 1.0, lty = 2, col = "black")
+legend("bottomright", c("brms", "GAM.jl", "True"),
+       col = c("blue", "red", "black"), lty = c(1, 1, 2), lwd = 2, cex = 0.8)
+
+# Intercept Q-Q
+q_brms2 <- quantile(b_int2, probs)
+q_julia2 <- quantile(julia_poisson$beta_intercept, probs)
+plot(q_brms2, q_julia2, pch = 16, cex = 0.5,
+     main = "Poisson intercept Q-Q",
+     xlab = "brms quantiles", ylab = "GAM.jl quantiles")
+abline(0, 1, col = "red", lwd = 2)
+```
+
+## Syntax Comparison
+
+| Feature | Julia (GAM.jl + Turing) | R (brms + Stan) |
+|---------|------------------------|-----------------|
+| Bayesian GAM | `gam(f, data; priors = PriorSpec(...))` | `brm(f, data, family, prior = ...)` |
+| Smooth SD prior | `PriorSpec(sds = Exponential(1.0))` | `prior(exponential(1), class = "sds")` |
+| Residual SD prior | `PriorSpec(sigma = ...)` | `prior(..., class = "sigma")` |
+| Per-smooth prior | `PriorSpec(specific = Dict("sds_s(x2)" => ...))` | `prior(..., class = "sds", coef = "sx2_1")` |
+| Posterior samples | `m.chains[Symbol("σ_obs")]` | `as_draws_df(m)$sigma` |
+| Coefficient table | `coeftable(m)` | `summary(m)` |
+| Credible intervals | `confint(m; level = 0.95)` | `posterior_summary(m)` |
+| Custom model | `@model function ... end` (Turing.jl) | Stan code (auto-generated) |
+| MCMC backend | Turing.jl (NUTS via AdvancedHMC) | Stan (NUTS via rstan/cmdstanr) |
+
+### Key differences
+
+1. **API design**: GAM.jl uses the same `gam()` function for both frequentist and Bayesian — priors trigger Bayesian dispatch. brms uses a separate `brm()` function.
+
+2. **Prior specification**: GAM.jl uses a structured `PriorSpec` with class-level defaults + per-parameter overrides. brms uses a vector of `prior()` statements.
+
+3. **Basis construction**: Both use the same mgcv-style smooth2random decomposition. brms delegates directly to `mgcv::smoothCon()` + `mgcv::smooth2random()`. GAM.jl implements these natively in Julia.
+
+4. **Inference**: brms generates Stan code (compiled C++) for HMC. GAM.jl builds a Turing.jl `@model` (Julia-native AD + NUTS). Both use the No-U-Turn Sampler.
+
+5. **Non-centered parameterization**: Both use $\mathbf{b} = \sigma_s \cdot \mathbf{z}$, $\mathbf{z} \sim N(0, I)$ for improved sampling geometry.

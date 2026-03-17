@@ -1,0 +1,312 @@
+---
+title: "Bayesian GAMs with Turing.jl"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+  pdf:
+    toc: true
+engine: julia
+---
+
+## Introduction
+
+A **Bayesian GAM** replaces the penalized likelihood framework of a standard GAM with a fully probabilistic model. Instead of choosing smoothing parameters by REML or GCV, the Bayesian approach places **priors** on the smooth function variability and uses **MCMC** (Markov chain Monte Carlo) to obtain posterior distributions for all parameters.
+
+The connection between penalized splines and Bayesian models is well established:
+
+- A penalized spline $f(x) = \mathbf{Z}\mathbf{b}$ with penalty $\lambda \|\mathbf{b}\|^2$ is equivalent to a random effect $\mathbf{b} \sim N(0, \sigma^2_s \mathbf{I})$ where $\sigma^2_s = \sigma^2 / \lambda$
+- The **smooth2random** decomposition splits each smooth into a fixed null-space part (unpenalized) and a random-effects part (penalized)
+- Priors on $\sigma_s$ control the amount of smoothing — this is the Bayesian analog of REML estimation of $\lambda$
+
+GAM.jl implements this via a **Turing.jl package extension**: simply pass `priors = PriorSpec(...)` to `gam()` and the model is automatically reparameterized and sampled using NUTS (No-U-Turn Sampler).
+
+## Setup
+
+```{julia}
+using GAM
+using Turing
+using CSV
+using DataFrames
+using Distributions
+using Statistics: mean, std, var, cor, median, quantile
+using StatsAPI: coef, coeftable, confint, fitted, nobs
+using Printf
+using LinearAlgebra: I
+```
+
+## Example 1: Gaussian GAM
+
+### Data
+
+Simulated data with $y = \sin(2\pi x) + \varepsilon$, $\varepsilon \sim N(0, 0.3^2)$.
+
+```{julia}
+dat = CSV.read("data_bayes_gaussian.csv", DataFrame)
+@printf("n = %d, y range: [%.2f, %.2f]\n", nrow(dat), minimum(dat.y), maximum(dat.y))
+```
+
+### Frequentist reference
+
+```{julia}
+m_freq = gam(@gam_formula(y ~ s(x, k = 10)), dat)
+freq_int = coef(m_freq)[1]
+freq_σ = sqrt(m_freq.scale)
+@printf("Frequentist: intercept = %.4f, σ = %.4f, edf = %.1f\n",
+    freq_int, freq_σ, m_freq.edf_total)
+```
+
+### Bayesian fit
+
+To trigger Bayesian fitting, pass a `PriorSpec` to `gam()`. The same formula syntax is used — the dispatch is automatic:
+
+```{julia}
+m_bayes = gam(@gam_formula(y ~ s(x, k = 10)), dat;
+    priors = PriorSpec(sds = Exponential(1.0)),
+    nsamples = 2000, nchains = 2)
+
+show(stdout, MIME("text/plain"), m_bayes)
+```
+
+### Understanding the priors
+
+`PriorSpec` controls the prior distributions:
+
+- **`sds`**: Prior on $\sigma_s$, the SD of smooth random effects. An `Exponential(1.0)` prior is weakly informative, allowing the data to determine smoothness.
+- **`sigma`**: Prior on $\sigma_{obs}$, the residual SD (Gaussian family only). Default: `truncated(Normal(0, 2.5); lower=0)`.
+- **`b`**: Prior on fixed-effect coefficients. Default: `Normal(0, 10)`.
+
+```{julia}
+ps = PriorSpec(sds = Exponential(1.0))
+show(stdout, MIME("text/plain"), ps)
+```
+
+### Posterior summaries
+
+The `coeftable()` method returns posterior mean, SD, and 95% credible intervals:
+
+```{julia}
+ct = coeftable(m_bayes)
+show(stdout, MIME("text/plain"), ct)
+println()
+```
+
+Credible intervals at different levels:
+
+```{julia}
+ci_95 = confint(m_bayes; level = 0.95)
+ci_90 = confint(m_bayes; level = 0.90)
+@printf("\nIntercept CIs:\n")
+@printf("  90%%: [%.4f, %.4f]\n", ci_90[1, 1], ci_90[1, 2])
+@printf("  95%%: [%.4f, %.4f]\n", ci_95[1, 1], ci_95[1, 2])
+```
+
+### Accessing posterior samples
+
+The full MCMC chains are accessible via `m_bayes.chains`:
+
+```{julia}
+chains = m_bayes.chains
+
+# Residual SD posterior
+σ_obs = vec(chains[Symbol("σ_obs")].data)
+@printf("σ_obs posterior: mean = %.4f, sd = %.4f, median = %.4f\n",
+    mean(σ_obs), std(σ_obs), median(σ_obs))
+@printf("  95%% CI: [%.4f, %.4f]\n", quantile(σ_obs, 0.025), quantile(σ_obs, 0.975))
+@printf("  Frequentist σ: %.4f\n", freq_σ)
+
+# Smooth SD posterior (controls wiggliness)
+σ_s = vec(chains[Symbol("σ_s[1]")].data)
+@printf("\nσ_s[1] posterior: mean = %.4f, sd = %.4f\n", mean(σ_s), std(σ_s))
+@printf("  Larger σ_s → more flexible smooth; smaller → smoother\n")
+```
+
+### Comparing posteriors: frequentist vs Bayesian
+
+```{julia}
+bayes_int = coef(m_bayes)[1]
+@printf("Intercept: frequentist = %.4f, Bayesian posterior mean = %.4f\n",
+    freq_int, bayes_int)
+@printf("σ: frequentist = %.4f, Bayesian posterior mean = %.4f\n",
+    freq_σ, mean(σ_obs))
+```
+
+### Empirical CDF comparison
+
+We compare the posterior distribution of $\sigma_{obs}$ against the frequentist point estimate using the empirical CDF:
+
+```{julia}
+# ECDF of σ_obs posterior
+σ_sorted = sort(σ_obs)
+n_samples = length(σ_sorted)
+ecdf_vals = (1:n_samples) ./ n_samples
+
+# Where does the frequentist estimate sit in the posterior?
+freq_rank = searchsortedfirst(σ_sorted, freq_σ) / n_samples
+@printf("Frequentist σ = %.4f sits at %.1f%% of the posterior ECDF\n",
+    freq_σ, 100 * freq_rank)
+@printf("  (values near 50%% indicate good agreement)\n")
+
+# Summary statistics of ECDF at key quantiles
+for q in [0.025, 0.25, 0.5, 0.75, 0.975]
+    idx = clamp(round(Int, q * n_samples), 1, n_samples)
+    @printf("  ECDF %.1f%%: σ_obs = %.4f\n", 100q, σ_sorted[idx])
+end
+```
+
+### Posterior predictive check
+
+Compare the posterior mean fitted values to the frequentist fitted values:
+
+```{julia}
+# The Bayesian fitted values come from the posterior mean coefficients
+bayes_coefs = coef(m_bayes)
+freq_coefs = coef(m_freq)
+@printf("Number of coefficients: frequentist = %d, Bayesian = %d\n",
+    length(freq_coefs), length(bayes_coefs))
+```
+
+## Example 2: Poisson GAM
+
+### Data
+
+Count data with $\log(\lambda) = 1 + 1.5\sin(2\pi x)$.
+
+```{julia}
+dat2 = CSV.read("data_bayes_poisson.csv", DataFrame)
+@printf("n = %d, y range: [%.0f, %.0f]\n", nrow(dat2), minimum(dat2.y), maximum(dat2.y))
+```
+
+### Frequentist vs Bayesian
+
+```{julia}
+m_freq2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
+    family = Poisson(), link = LogLink())
+
+m_bayes2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
+    family = Poisson(), link = LogLink(),
+    priors = PriorSpec(sds = Exponential(1.0)),
+    nsamples = 2000, nchains = 2)
+```
+
+### Posterior summary
+
+```{julia}
+ct2 = coeftable(m_bayes2)
+show(stdout, MIME("text/plain"), ct2)
+println()
+
+# Intercept comparison (on log scale)
+freq_int2 = coef(m_freq2)[1]
+bayes_int2 = coef(m_bayes2)[1]
+@printf("\nIntercept (log-scale): frequentist = %.4f, Bayesian = %.4f (true = 1.0)\n",
+    freq_int2, bayes_int2)
+
+# Smooth SD posterior
+chains2 = m_bayes2.chains
+σ_s2 = vec(chains2[Symbol("σ_s[1]")].data)
+@printf("σ_s[1]: mean = %.4f, sd = %.4f\n", mean(σ_s2), std(σ_s2))
+```
+
+### ECDF comparison for intercept
+
+```{julia}
+β1_post = vec(chains2[Symbol("β[1]")].data)
+β1_sorted = sort(β1_post)
+n_s = length(β1_sorted)
+
+freq_rank2 = searchsortedfirst(β1_sorted, freq_int2) / n_s
+@printf("Frequentist intercept = %.4f sits at %.1f%% of Bayesian posterior\n",
+    freq_int2, 100 * freq_rank2)
+@printf("True intercept = 1.0 sits at %.1f%% of posterior\n",
+    100 * searchsortedfirst(β1_sorted, 1.0) / n_s)
+```
+
+## Example 3: Custom priors — effect on smoothing
+
+The prior on `sds` directly controls the amount of smoothing. A tighter prior yields smoother fits:
+
+```{julia}
+# Tight prior: Exponential(0.1) → small σ_s → smoother
+m_tight = gam(@gam_formula(y ~ s(x, k = 10)), dat;
+    priors = PriorSpec(sds = Exponential(0.1)),
+    nsamples = 1000, nchains = 1)
+
+# Wide prior: Exponential(5.0) → large σ_s → wigglier
+m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
+    priors = PriorSpec(sds = Exponential(5.0)),
+    nsamples = 1000, nchains = 1)
+
+σ_tight = mean(vec(m_tight.chains[Symbol("σ_s[1]")].data))
+σ_wide = mean(vec(m_wide.chains[Symbol("σ_s[1]")].data))
+@printf("Tight prior (Exp(0.1)): posterior mean σ_s = %.4f\n", σ_tight)
+@printf("Wide prior  (Exp(5.0)): posterior mean σ_s = %.4f\n", σ_wide)
+@printf("Ratio: %.1fx\n", σ_wide / σ_tight)
+```
+
+## Example 4: Building custom Turing models
+
+For full control, use `gam_matrices()` and `gam_smooth()` to extract the basis matrices, then write your own `@model`:
+
+```{julia}
+# Extract matrices from a formula
+gf = @gam_formula(y ~ s(x, k = 10))
+X, sms, labels = gam_matrices(gf, dat)
+println("Fixed matrix X: ", size(X), " (intercept)")
+println("Smooth '$(labels[1])':")
+println("  Xf (null space): ", size(sms[1].Xf))
+println("  Zs (penalized):  ", [size(Z) for Z in sms[1].Zs])
+
+# Build custom model
+Xf = sms[1].Xf
+Zs = sms[1].Zs[1]
+X_fixed = hcat(X, Xf)
+
+@model function my_gam(y_obs, X_f, Z)
+    n_f = size(X_f, 2)
+    n_z = size(Z, 2)
+
+    # Priors
+    β ~ MvNormal(zeros(n_f), 10.0 * I)
+    σ ~ truncated(Normal(0, 2.5); lower = 0.0)
+    σ_s ~ Exponential(1.0)
+
+    # Random effects (non-centered parameterization)
+    z ~ MvNormal(zeros(n_z), I)
+    η = X_f * β .+ σ_s .* (Z * z)
+
+    # Likelihood
+    y_obs ~ MvNormal(η, σ^2 * I)
+end
+
+custom_chains = sample(my_gam(dat.y, X_fixed, Zs), NUTS(), 1000; progress = false)
+σ_custom = mean(vec(custom_chains[:σ].data))
+@printf("Custom model σ posterior mean: %.4f (compare to %.4f from gam())\n",
+    σ_custom, mean(vec(m_bayes.chains[Symbol("σ_obs")].data)))
+```
+
+## Summary
+
+| Feature | Syntax |
+|---------|--------|
+| Default Bayesian GAM | `gam(formula, data; priors = PriorSpec())` |
+| Custom priors | `PriorSpec(sds = Exponential(1.0), sigma = InverseGamma(2, 3))` |
+| Per-smooth priors | `PriorSpec(specific = Dict("sds_s(x2)" => Exponential(0.5)))` |
+| Poisson | `gam(formula, data; family = Poisson(), priors = PriorSpec())` |
+| Coefficient table | `coeftable(m)` — posterior mean, SD, 95% CI |
+| Credible intervals | `confint(m; level = 0.95)` |
+| Full posterior | `m.chains[Symbol("σ_obs")]` |
+| Custom model | `gam_matrices()` + `@model` + `sample()` |
+
+### Key design choices
+
+1. **Dispatch-based API**: The same `gam()` function handles both frequentist and Bayesian fitting — the presence of `priors=` triggers Bayesian mode via multiple dispatch.
+
+2. **smooth2random decomposition**: Smooth terms are split into a fixed null-space (unpenalized, estimated via `β`) and random-effects blocks (penalized, estimated via `σ_s × z`).
+
+3. **Non-centered parameterization**: Random effects use $\mathbf{b} = \sigma_s \cdot \mathbf{z}$ where $\mathbf{z} \sim N(0, I)$, which improves NUTS sampling geometry.
+
+4. **Package extension**: Turing.jl is only loaded when needed (`using Turing`), keeping the base GAM.jl lightweight.
