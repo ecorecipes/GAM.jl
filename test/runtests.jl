@@ -761,3 +761,14 @@ end
 @eval include("test_formula_support.jl")
 
 @eval include("test_bayes_gamlss_scam.jl")
+
+@eval include("test_gamm.jl")
+
+if !skip_rcall
+    try
+        reval("library(nlme)")
+        @eval include("test_gamm_rcall.jl")
+    catch e
+        @warn "Skipping GAMM R comparison tests (nlme not available)" exception = e
+    end
+end

@@ -1,0 +1,168 @@
+---
+title: "GAMM: R Comparison"
+author: "GAM.jl Contributors"
+format:
+  html:
+    code-fold: false
+    toc: true
+  gfm:
+    toc: true
+engine: knitr
+---
+
+## Overview
+
+This vignette shows the R equivalent of the GAMM models fit in `10_gamm.qmd`, using `mgcv::gamm()` which internally delegates to `nlme::lme()` for Gaussian models and penalized quasi-likelihood (PQL) for non-Gaussian models.
+
+## Setup
+
+```{r}
+library(mgcv)
+library(nlme)
+```
+
+## Example 1: Gaussian GAMM with Random Intercepts
+
+```{r}
+dat <- read.csv("../data_gaussian_gamm.csv")
+cat(sprintf("n = %d, subjects = %d\n", nrow(dat), length(unique(dat$subject))))
+cat(sprintf("y range: [%.2f, %.2f]\n", min(dat$y), max(dat$y)))
+```
+
+### Fitting with `gamm()`
+
+In mgcv, random effects are specified via the `random=` argument, not in the formula:
+
+```{r}
+dat$subject <- factor(dat$subject)
+m <- gamm(y ~ s(x, k = 15), random = list(subject = ~1), data = dat)
+summary(m$gam)
+```
+
+### Random effects
+
+```{r}
+re <- ranef(m$lme)$subject
+cat("Random intercept estimates:\n")
+for (lev in rownames(re)) {
+  cat(sprintf("  Subject %2s: b = %+.3f\n", lev, re[lev, 1]))
+}
+```
+
+### Variance components
+
+```{r}
+vc <- VarCorr(m$lme)
+print(vc)
+```
+
+```{r}
+sigma_re <- as.numeric(vc[rownames(vc) == "(Intercept)", "StdDev"])
+sigma_res <- as.numeric(vc[rownames(vc) == "Residual", "StdDev"])
+cat(sprintf("RE σ: %.4f (true: 0.6)\n", sigma_re))
+cat(sprintf("Residual σ: %.4f (true: 0.4)\n", sigma_res))
+```
+
+### Comparison with true values
+
+```{r}
+true_re <- tapply(dat$re_true, dat$subject, function(x) x[1])
+cat(sprintf("Correlation of estimated vs true RE: %.4f\n",
+            cor(re[, 1], true_re)))
+```
+
+### Equivalence with `s(subject, bs="re")`
+
+In mgcv, `s(subject, bs="re")` is the smooth-term equivalent of a random intercept:
+
+```{r}
+m_gam <- gam(y ~ s(x, k = 15) + s(subject, bs = "re"),
+             data = dat, method = "REML")
+cat(sprintf("Fitted values correlation (gamm vs gam+re): %.6f\n",
+            cor(fitted(m$lme), fitted(m_gam))))
+cat(sprintf("Scale (gamm): %.6f\n", m$gam$scale))
+cat(sprintf("Scale (gam):  %.6f\n", m_gam$scale))
+```
+
+### Plot: Smooth Effect
+
+```{r}
+par(mfrow = c(1, 2))
+
+# Smooth effect
+plot(m$gam, shade = TRUE, main = "Population smooth f(x)",
+     xlab = "x", ylab = "f(x)")
+
+# Random effects
+re_est <- re[, 1]
+names(re_est) <- rownames(re)
+barplot(sort(re_est), horiz = TRUE, las = 1,
+        main = "Random intercepts", xlab = "Estimated b_j",
+        col = "steelblue")
+abline(v = 0, lty = 2)
+```
+
+## Example 2: Poisson GAMM for Count Data
+
+```{r}
+dat2 <- read.csv("../data_poisson_gamm.csv")
+dat2$site <- factor(dat2$site)
+cat(sprintf("n = %d, sites = %d\n", nrow(dat2), length(unique(dat2$site))))
+```
+
+### Fitting
+
+For non-Gaussian families, `gamm()` uses PQL (penalized quasi-likelihood):
+
+```{r}
+m2 <- gamm(y ~ s(x, k = 15), random = list(site = ~1),
+           family = poisson(), data = dat2)
+summary(m2$gam)
+```
+
+### Random effects
+
+```{r}
+re2 <- ranef(m2$lme)$site
+true_re2 <- tapply(dat2$re_true, dat2$site, function(x) x[1])
+cat(sprintf("RE correlation with truth: %.4f\n",
+            cor(re2[, 1], true_re2)))
+```
+
+### Plot
+
+```{r}
+par(mfrow = c(1, 2))
+plot(m2$gam, shade = TRUE, main = "Poisson GAMM: f(x)",
+     xlab = "x", ylab = "f(x)")
+
+re2_est <- re2[, 1]
+names(re2_est) <- rownames(re2)
+barplot(sort(re2_est), horiz = TRUE, las = 1,
+        main = "Site random intercepts", xlab = "Estimated b_j",
+        col = "darkorange")
+abline(v = 0, lty = 2)
+```
+
+## Syntax Comparison
+
+| Feature | Julia (GAM.jl) | R (mgcv) |
+|---------|----------------|----------|
+| Random intercept | `gamm(@gamm_formula(y ~ s(x) + (1\|g)), df)` | `gamm(y ~ s(x), random=list(g=~1), data=df)` |
+| `@formula` path | `gamm(@formula(y ~ cr(x, 10) + (1\|g)), df)` | — |
+| `re()` shorthand | `gamm(@formula(y ~ cr(x, 10) + re(g)), df)` | — |
+| Equivalent GAM | `gam(@gam_formula(y ~ s(x) + s(g, bs=:re)), df)` | `gam(y ~ s(x) + s(g, bs="re"), data=df)` |
+| Non-Gaussian | `gamm(..., Poisson())` | `gamm(..., family=poisson())` |
+| Extract RE | `ranef(m)` | `ranef(m$lme)` |
+| Variance components | `VarCorr(m)` | `VarCorr(m$lme)` |
+| Prediction | `predict(m, newdata)` | `predict(m$gam, newdata)` |
+
+### Key differences
+
+1. **Formula syntax**: Julia puts random effects *in the formula* with `(1|group)`, matching lme4/MixedModels.jl conventions. R mgcv uses a separate `random=` argument.
+
+2. **Fitting algorithm**: GAM.jl treats random effects as smooth terms with identity penalty (via PIRLS+REML). R's `gamm()` converts smooths to mixed-model form and delegates to `nlme::lme()` (Gaussian) or uses PQL (non-Gaussian).
+
+3. **Result structure**: Julia returns a `GammModel` with direct access. R returns a list with `$gam` (the GAM component) and `$lme` (the mixed model component).
+
+4. **Interface**: Julia `gamm()` returns a single model object. R requires navigating `m$gam` vs `m$lme` for different aspects of the fit.
