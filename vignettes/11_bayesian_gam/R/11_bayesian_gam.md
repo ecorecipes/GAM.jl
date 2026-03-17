@@ -1,59 +1,64 @@
-# Bayesian GAMs: R Comparison
+# Bayesian GAMs: R Comparison (brms + mgcv)
 GAM.jl Contributors
 
 - [Overview](#overview)
 - [Setup](#setup)
 - [Example 1: Gaussian GAM](#example-1-gaussian-gam)
-  - [Frequentist fit (mgcv)](#frequentist-fit-mgcv)
-  - [mgcv Bayesian posterior](#mgcv-bayesian-posterior)
-  - [Comparing Julia (Turing MCMC) vs R (mgcv approximate
-    posterior)](#comparing-julia-turing-mcmc-vs-r-mgcv-approximate-posterior)
+  - [Frequentist reference (mgcv)](#frequentist-reference-mgcv)
+  - [brms fit](#brms-fit)
+  - [mgcv Bayesian posterior
+    approximation](#mgcv-bayesian-posterior-approximation)
+  - [Three-way comparison: GAM.jl vs brms vs
+    mgcv](#three-way-comparison-gamjl-vs-brms-vs-mgcv)
+  - [Kolmogorov-Smirnov tests](#kolmogorov-smirnov-tests)
+  - [ECDF comparison plots](#ecdf-comparison-plots)
+  - [Q-Q plots: GAM.jl vs brms](#q-q-plots-gamjl-vs-brms)
 - [Example 2: Poisson GAM](#example-2-poisson-gam)
   - [Frequentist fit](#frequentist-fit)
-  - [mgcv Bayesian posterior](#mgcv-bayesian-posterior-1)
-  - [Comparing posteriors](#comparing-posteriors)
-  - [KS test and ECDF](#ks-test-and-ecdf)
-- [Appendix: brms code (for
-  reference)](#appendix-brms-code-for-reference)
+  - [mgcv Bayesian posterior](#mgcv-bayesian-posterior)
+  - [Three-way comparison](#three-way-comparison)
+  - [KS tests and ECDF](#ks-tests-and-ecdf)
 - [Syntax Comparison](#syntax-comparison)
-  - [Key differences](#key-differences)
+  - [Key findings](#key-findings)
 
 ## Overview
 
 This vignette compares Bayesian GAM posterior distributions from
 **GAM.jl** (Turing.jl MCMC) with two R approaches:
 
-1.  **mgcv’s Bayesian posterior approximation** — `mgcv::gam()` computes
-    a Bayesian posterior covariance matrix `Vp` alongside frequentist
+1.  **brms** — Full MCMC via Stan’s NUTS sampler. brms uses
+    `mgcv::smoothCon()` + `smooth2random()` internally, making it the
+    most direct R analog of GAM.jl’s Turing backend. Both use the same
+    smooth2random decomposition with half-normal/exponential priors on
+    smoothing SDs.
+2.  **mgcv Bayesian posterior approximation** — `mgcv::gam()` computes a
+    Bayesian posterior covariance matrix `Vp` alongside frequentist
     estimates. We sample from this multivariate normal posterior.
-2.  **brms** (code shown for reference) — the full MCMC approach using
-    Stan, which is the direct R analog of GAM.jl’s Turing backend.
-
-Both GAM.jl and brms use the same **smooth2random** decomposition to
-convert penalized smooths into random effects with
-half-normal/exponential priors on the smoothing SD. The mgcv posterior
-is a Gaussian approximation that avoids MCMC but captures the main
-posterior uncertainty.
 
 ## Setup
 
 ``` r
 library(mgcv)
+library(brms)
 library(MASS)
 
 # Julia posterior samples (from Turing.jl MCMC)
 julia_gauss <- read.csv("../posteriors_gaussian_julia.csv")
 julia_poisson <- read.csv("../posteriors_poisson_julia.csv")
 
-cat(sprintf("Julia posterior samples: %d (Gaussian), %d (Poisson)\n",
-            nrow(julia_gauss), nrow(julia_poisson)))
+# brms posterior samples (from Stan MCMC)
+brms_gauss <- read.csv("../posteriors_gaussian_brms.csv")
+brms_poisson <- read.csv("../posteriors_poisson_brms.csv")
+
+cat(sprintf("Posterior samples: Julia=%d, brms=%d\n",
+            nrow(julia_gauss), nrow(brms_gauss)))
 ```
 
-    Julia posterior samples: 4000 (Gaussian), 4000 (Poisson)
+    Posterior samples: Julia=4000, brms=2000
 
 ## Example 1: Gaussian GAM
 
-### Frequentist fit (mgcv)
+### Frequentist reference (mgcv)
 
 ``` r
 dat <- read.csv("../data_bayes_gaussian.csv")
@@ -83,7 +88,28 @@ summary(m)
     R-sq.(adj) =  0.832   Deviance explained = 83.8%
     -REML = 65.726  Scale est. = 0.098196  n = 200
 
-### mgcv Bayesian posterior
+### brms fit
+
+The brms model uses the same priors as GAM.jl: `Exponential(1)` on
+smooth SDs, `Normal(0, 10)` on fixed effects, and
+`truncated Normal(0, 2.5)` on σ:
+
+``` r
+m_brms <- brm(
+  y ~ s(x, k = 10),
+  data = dat,
+  family = gaussian(),
+  prior = c(
+    prior(normal(0, 10), class = "b"),
+    prior(exponential(1), class = "sds"),
+    prior(normal(0, 2.5), class = "sigma", lb = 0)
+  ),
+  chains = 2, iter = 2000, warmup = 1000, seed = 2024,
+  backend = "cmdstanr"
+)
+```
+
+### mgcv Bayesian posterior approximation
 
 `mgcv::gam()` computes the Bayesian posterior covariance `Vp`
 (accounting for smoothing parameter uncertainty). We sample from the
@@ -95,108 +121,133 @@ use a scaled inverse-$\chi^2$ posterior for $\sigma^2$:
 set.seed(2024)
 n_samples <- 4000
 
-# Coefficient posterior: beta ~ MVN(beta_hat, Vp)
+# Coefficient posterior
 beta_post <- mvrnorm(n_samples, coef(m), vcov(m))
 
-# Residual SD posterior: sigma^2 ~ Inv-chi^2(df_resid, sigma^2_hat)
+# Residual SD posterior
 n <- nrow(dat)
 p <- sum(m$edf)
 df_resid <- n - p
 sigma2_post <- df_resid * m$scale / rchisq(n_samples, df = df_resid)
 sigma_post <- sqrt(sigma2_post)
-
-cat(sprintf("mgcv posterior (Bayesian approximation):\n"))
 ```
 
-    mgcv posterior (Bayesian approximation):
+### Three-way comparison: GAM.jl vs brms vs mgcv
 
 ``` r
-cat(sprintf("  sigma:  mean = %.4f, sd = %.4f\n", mean(sigma_post), sd(sigma_post)))
+cat("Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | Freq\n")
 ```
 
-      sigma:  mean = 0.3145, sd = 0.0160
+    Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | Freq
 
 ``` r
-cat(sprintf("  beta_0: mean = %.4f, sd = %.4f\n", mean(beta_post[, 1]), sd(beta_post[, 1])))
+cat("------------------|-------------------|-------------------|-------------------|------\n")
 ```
 
-      beta_0: mean = -0.1123, sd = 0.0221
-
-### Comparing Julia (Turing MCMC) vs R (mgcv approximate posterior)
-
-#### Point estimates and posterior SDs
+    ------------------|-------------------|-------------------|-------------------|------
 
 ``` r
-cat("Parameter         | GAM.jl (Turing)   | mgcv (approx)     | Frequentist\n")
+cat(sprintf("sigma  mean       | %.4f             | %.4f             | %.4f             | %.4f\n",
+            mean(julia_gauss$sigma_obs), mean(brms_gauss$sigma_obs),
+            mean(sigma_post), sqrt(m$scale)))
 ```
 
-    Parameter         | GAM.jl (Turing)   | mgcv (approx)     | Frequentist
+    sigma  mean       | 0.3148             | 0.3151             | 0.3145             | 0.3134
 
 ``` r
-cat("------------------|-------------------|--------------------|------------\n")
+cat(sprintf("sigma  sd         | %.4f             | %.4f             | %.4f             |\n",
+            sd(julia_gauss$sigma_obs), sd(brms_gauss$sigma_obs), sd(sigma_post)))
 ```
 
-    ------------------|-------------------|--------------------|------------
+    sigma  sd         | 0.0161             | 0.0161             | 0.0160             |
 
 ``` r
-cat(sprintf("sigma  mean       | %.4f             | %.4f              | %.4f\n",
-            mean(julia_gauss$sigma_obs), mean(sigma_post), sqrt(m$scale)))
+cat(sprintf("Intercept mean    | %.4f            | %.4f            | %.4f            | %.4f\n",
+            mean(julia_gauss$beta_intercept), mean(brms_gauss$beta_intercept),
+            mean(beta_post[, 1]), coef(m)[1]))
 ```
 
-    sigma  mean       | 0.3148             | 0.3145              | 0.3134
+    Intercept mean    | -0.1128            | -0.1131            | -0.1123            | -0.1129
 
 ``` r
-cat(sprintf("sigma  sd         | %.4f             | %.4f              |\n",
-            sd(julia_gauss$sigma_obs), sd(sigma_post)))
+cat(sprintf("Intercept sd      | %.4f             | %.4f             | %.4f             |\n",
+            sd(julia_gauss$beta_intercept), sd(brms_gauss$beta_intercept),
+            sd(beta_post[, 1])))
 ```
 
-    sigma  sd         | 0.0161             | 0.0160              |
+    Intercept sd      | 0.0223             | 0.0223             | 0.0221             |
+
+### Kolmogorov-Smirnov tests
 
 ``` r
-cat(sprintf("Intercept mean    | %.4f            | %.4f             | %.4f\n",
-            mean(julia_gauss$beta_intercept), mean(beta_post[, 1]), coef(m)[1]))
+# GAM.jl vs brms (full MCMC vs full MCMC — should be very similar)
+ks_sigma_jb <- ks.test(julia_gauss$sigma_obs, brms_gauss$sigma_obs)
 ```
 
-    Intercept mean    | -0.1128            | -0.1123             | -0.1129
+    Warning in ks.test.default(julia_gauss$sigma_obs, brms_gauss$sigma_obs):
+    p-value will be approximate in the presence of ties
 
 ``` r
-cat(sprintf("Intercept sd      | %.4f             | %.4f              |\n",
-            sd(julia_gauss$beta_intercept), sd(beta_post[, 1])))
+ks_int_jb <- ks.test(julia_gauss$beta_intercept, brms_gauss$beta_intercept)
 ```
 
-    Intercept sd      | 0.0223             | 0.0221              |
-
-#### Kolmogorov-Smirnov tests
-
-The KS test compares the shapes of the two posterior distributions:
+    Warning in ks.test.default(julia_gauss$beta_intercept,
+    brms_gauss$beta_intercept): p-value will be approximate in the presence of ties
 
 ``` r
-ks_sigma <- ks.test(julia_gauss$sigma_obs, sigma_post)
+# GAM.jl vs mgcv (full MCMC vs Gaussian approximation)
+ks_sigma_jm <- ks.test(julia_gauss$sigma_obs, sigma_post)
 ```
 
     Warning in ks.test.default(julia_gauss$sigma_obs, sigma_post): p-value will be
     approximate in the presence of ties
 
 ``` r
-ks_int <- ks.test(julia_gauss$beta_intercept, beta_post[, 1])
+ks_int_jm <- ks.test(julia_gauss$beta_intercept, beta_post[, 1])
 ```
 
     Warning in ks.test.default(julia_gauss$beta_intercept, beta_post[, 1]): p-value
     will be approximate in the presence of ties
 
 ``` r
-cat(sprintf("KS test for sigma:     D = %.4f, p = %.4f\n",
-            ks_sigma$statistic, ks_sigma$p.value))
+cat("Comparison             | Parameter  | KS D   | p-value\n")
 ```
 
-    KS test for sigma:     D = 0.0228, p = 0.2518
+    Comparison             | Parameter  | KS D   | p-value
 
 ``` r
-cat(sprintf("KS test for intercept: D = %.4f, p = %.4f\n",
-            ks_int$statistic, ks_int$p.value))
+cat("-----------------------|------------|--------|--------\n")
 ```
 
-    KS test for intercept: D = 0.0325, p = 0.0293
+    -----------------------|------------|--------|--------
+
+``` r
+cat(sprintf("GAM.jl vs brms         | sigma      | %.4f  | %.4f\n",
+            ks_sigma_jb$statistic, ks_sigma_jb$p.value))
+```
+
+    GAM.jl vs brms         | sigma      | 0.0255  | 0.3512
+
+``` r
+cat(sprintf("GAM.jl vs brms         | intercept  | %.4f  | %.4f\n",
+            ks_int_jb$statistic, ks_int_jb$p.value))
+```
+
+    GAM.jl vs brms         | intercept  | 0.0205  | 0.6296
+
+``` r
+cat(sprintf("GAM.jl vs mgcv (approx)| sigma      | %.4f  | %.4f\n",
+            ks_sigma_jm$statistic, ks_sigma_jm$p.value))
+```
+
+    GAM.jl vs mgcv (approx)| sigma      | 0.0228  | 0.2518
+
+``` r
+cat(sprintf("GAM.jl vs mgcv (approx)| intercept  | %.4f  | %.4f\n",
+            ks_int_jm$statistic, ks_int_jm$p.value))
+```
+
+    GAM.jl vs mgcv (approx)| intercept  | 0.0325  | 0.0293
 
 ``` r
 cat("\n(High p-value = posteriors are not significantly different)\n")
@@ -205,31 +256,36 @@ cat("\n(High p-value = posteriors are not significantly different)\n")
 
     (High p-value = posteriors are not significantly different)
 
-#### ECDF comparison plots
+### ECDF comparison plots
 
 ``` r
 par(mfrow = c(1, 2))
 
-# sigma ECDF
+# sigma ECDF — three posteriors
 plot(ecdf(julia_gauss$sigma_obs), col = "red", main = expression(sigma[obs] ~ "posterior ECDF"),
      xlab = expression(sigma), ylab = "ECDF", lwd = 2)
-lines(ecdf(sigma_post), col = "blue", lwd = 2)
-abline(v = sqrt(m$scale), lty = 2, col = "black", lwd = 1.5)
-legend("bottomright", c("GAM.jl (Turing)", "mgcv (approx)", "Frequentist"),
-       col = c("red", "blue", "black"), lty = c(1, 1, 2), lwd = 2, cex = 0.8)
+lines(ecdf(brms_gauss$sigma_obs), col = "darkgreen", lwd = 2)
+lines(ecdf(sigma_post), col = "blue", lwd = 2, lty = 2)
+abline(v = sqrt(m$scale), lty = 3, col = "black", lwd = 1.5)
+legend("bottomright", c("GAM.jl (Turing)", "brms (Stan)", "mgcv (approx)", "Frequentist"),
+       col = c("red", "darkgreen", "blue", "black"), lty = c(1, 1, 2, 3), lwd = 2, cex = 0.7)
 
 # Intercept ECDF
 plot(ecdf(julia_gauss$beta_intercept), col = "red", main = "Intercept posterior ECDF",
      xlab = expression(beta[0]), ylab = "ECDF", lwd = 2)
-lines(ecdf(beta_post[, 1]), col = "blue", lwd = 2)
-abline(v = coef(m)[1], lty = 2, col = "black", lwd = 1.5)
-legend("bottomright", c("GAM.jl (Turing)", "mgcv (approx)", "Frequentist"),
-       col = c("red", "blue", "black"), lty = c(1, 1, 2), lwd = 2, cex = 0.8)
+lines(ecdf(brms_gauss$beta_intercept), col = "darkgreen", lwd = 2)
+lines(ecdf(beta_post[, 1]), col = "blue", lwd = 2, lty = 2)
+abline(v = coef(m)[1], lty = 3, col = "black", lwd = 1.5)
+legend("bottomright", c("GAM.jl (Turing)", "brms (Stan)", "mgcv (approx)", "Frequentist"),
+       col = c("red", "darkgreen", "blue", "black"), lty = c(1, 1, 2, 3), lwd = 2, cex = 0.7)
 ```
 
-![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-6-1.png)
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-7-1.png)
 
-#### Quantile-quantile comparison
+### Q-Q plots: GAM.jl vs brms
+
+The most stringent comparison — both use full MCMC with the same model
+specification:
 
 ``` r
 par(mfrow = c(1, 2))
@@ -237,22 +293,22 @@ probs <- seq(0.01, 0.99, by = 0.01)
 
 # sigma Q-Q
 q_julia <- quantile(julia_gauss$sigma_obs, probs)
-q_mgcv <- quantile(sigma_post, probs)
-plot(q_mgcv, q_julia, pch = 16, cex = 0.6,
-     main = expression(sigma[obs] ~ "Q-Q: GAM.jl vs mgcv"),
-     xlab = "mgcv quantiles", ylab = "GAM.jl quantiles")
+q_brms <- quantile(brms_gauss$sigma_obs, probs)
+plot(q_brms, q_julia, pch = 16, cex = 0.6,
+     main = expression(sigma[obs] ~ "Q-Q: GAM.jl vs brms"),
+     xlab = "brms quantiles", ylab = "GAM.jl quantiles")
 abline(0, 1, col = "red", lwd = 2)
 
 # Intercept Q-Q
 q_julia_int <- quantile(julia_gauss$beta_intercept, probs)
-q_mgcv_int <- quantile(beta_post[, 1], probs)
-plot(q_mgcv_int, q_julia_int, pch = 16, cex = 0.6,
-     main = "Intercept Q-Q: GAM.jl vs mgcv",
-     xlab = "mgcv quantiles", ylab = "GAM.jl quantiles")
+q_brms_int <- quantile(brms_gauss$beta_intercept, probs)
+plot(q_brms_int, q_julia_int, pch = 16, cex = 0.6,
+     main = "Intercept Q-Q: GAM.jl vs brms",
+     xlab = "brms quantiles", ylab = "GAM.jl quantiles")
 abline(0, 1, col = "red", lwd = 2)
 ```
 
-![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-7-1.png)
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-8-1.png)
 
 ## Example 2: Poisson GAM
 
@@ -270,55 +326,66 @@ cat(sprintf("Frequentist intercept (log-scale): %.4f (true: 1.0)\n", coef(m2)[1]
 
 ``` r
 beta_post2 <- mvrnorm(n_samples, coef(m2), vcov(m2))
-cat(sprintf("mgcv beta_0 posterior: mean = %.4f, sd = %.4f\n",
-            mean(beta_post2[, 1]), sd(beta_post2[, 1])))
 ```
 
-    mgcv beta_0 posterior: mean = 0.9092, sd = 0.0536
-
-### Comparing posteriors
+### Three-way comparison
 
 ``` r
-cat("Parameter         | GAM.jl (Turing)   | mgcv (approx)     | Freq     | True\n")
+cat("Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | True\n")
 ```
 
-    Parameter         | GAM.jl (Turing)   | mgcv (approx)     | Freq     | True
+    Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | True
 
 ``` r
-cat("------------------|-------------------|--------------------|----------|------\n")
+cat("------------------|-------------------|-------------------|-------------------|------\n")
 ```
 
-    ------------------|-------------------|--------------------|----------|------
+    ------------------|-------------------|-------------------|-------------------|------
 
 ``` r
-cat(sprintf("Intercept mean    | %.4f            | %.4f            | %.4f   | 1.0\n",
-            mean(julia_poisson$beta_intercept), mean(beta_post2[, 1]), coef(m2)[1]))
+cat(sprintf("Intercept mean    | %.4f            | %.4f            | %.4f            | 1.0\n",
+            mean(julia_poisson$beta_intercept), mean(brms_poisson$beta_intercept),
+            mean(beta_post2[, 1])))
 ```
 
-    Intercept mean    | 0.9083            | 0.9092            | 0.9094   | 1.0
+    Intercept mean    | 0.9083            | 0.9083            | 0.9092            | 1.0
 
 ``` r
-cat(sprintf("Intercept sd      | %.4f             | %.4f             |          |\n",
-            sd(julia_poisson$beta_intercept), sd(beta_post2[, 1])))
+cat(sprintf("Intercept sd      | %.4f             | %.4f             | %.4f             |\n",
+            sd(julia_poisson$beta_intercept), sd(brms_poisson$beta_intercept),
+            sd(beta_post2[, 1])))
 ```
 
-    Intercept sd      | 0.0529             | 0.0536             |          |
+    Intercept sd      | 0.0529             | 0.0535             | 0.0536             |
 
-### KS test and ECDF
+### KS tests and ECDF
 
 ``` r
-ks_int2 <- ks.test(julia_poisson$beta_intercept, beta_post2[, 1])
+ks_jb2 <- ks.test(julia_poisson$beta_intercept, brms_poisson$beta_intercept)
+```
+
+    Warning in ks.test.default(julia_poisson$beta_intercept,
+    brms_poisson$beta_intercept): p-value will be approximate in the presence of
+    ties
+
+``` r
+ks_jm2 <- ks.test(julia_poisson$beta_intercept, beta_post2[, 1])
 ```
 
     Warning in ks.test.default(julia_poisson$beta_intercept, beta_post2[, 1]):
     p-value will be approximate in the presence of ties
 
 ``` r
-cat(sprintf("KS test for Poisson intercept: D = %.4f, p = %.4f\n",
-            ks_int2$statistic, ks_int2$p.value))
+cat(sprintf("GAM.jl vs brms:  D = %.4f, p = %.4f\n", ks_jb2$statistic, ks_jb2$p.value))
 ```
 
-    KS test for Poisson intercept: D = 0.0163, p = 0.6664
+    GAM.jl vs brms:  D = 0.0120, p = 0.9907
+
+``` r
+cat(sprintf("GAM.jl vs mgcv:  D = %.4f, p = %.4f\n", ks_jm2$statistic, ks_jm2$p.value))
+```
+
+    GAM.jl vs mgcv:  D = 0.0163, p = 0.6664
 
 ``` r
 par(mfrow = c(1, 2))
@@ -327,69 +394,22 @@ par(mfrow = c(1, 2))
 plot(ecdf(julia_poisson$beta_intercept), col = "red",
      main = "Poisson intercept ECDF",
      xlab = expression(beta[0]), ylab = "ECDF", lwd = 2)
-lines(ecdf(beta_post2[, 1]), col = "blue", lwd = 2)
-abline(v = 1.0, lty = 2, col = "black", lwd = 1.5)
-legend("bottomright", c("GAM.jl (Turing)", "mgcv (approx)", "True"),
-       col = c("red", "blue", "black"), lty = c(1, 1, 2), lwd = 2, cex = 0.8)
+lines(ecdf(brms_poisson$beta_intercept), col = "darkgreen", lwd = 2)
+lines(ecdf(beta_post2[, 1]), col = "blue", lwd = 2, lty = 2)
+abline(v = 1.0, lty = 3, col = "black", lwd = 1.5)
+legend("bottomright", c("GAM.jl (Turing)", "brms (Stan)", "mgcv (approx)", "True"),
+       col = c("red", "darkgreen", "blue", "black"), lty = c(1, 1, 2, 3), lwd = 2, cex = 0.7)
 
-# Q-Q
-q_julia2 <- quantile(julia_poisson$beta_intercept, probs)
-q_mgcv2 <- quantile(beta_post2[, 1], probs)
-plot(q_mgcv2, q_julia2, pch = 16, cex = 0.6,
-     main = "Poisson intercept Q-Q",
-     xlab = "mgcv quantiles", ylab = "GAM.jl quantiles")
+# Q-Q: GAM.jl vs brms
+q_j2 <- quantile(julia_poisson$beta_intercept, probs)
+q_b2 <- quantile(brms_poisson$beta_intercept, probs)
+plot(q_b2, q_j2, pch = 16, cex = 0.6,
+     main = "Poisson intercept Q-Q: GAM.jl vs brms",
+     xlab = "brms quantiles", ylab = "GAM.jl quantiles")
 abline(0, 1, col = "red", lwd = 2)
 ```
 
-![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-11-1.png)
-
-## Appendix: brms code (for reference)
-
-The code below shows how to fit the same models with brms (Stan
-backend). brms uses `mgcv::smoothCon()` + `mgcv::smooth2random()`
-internally, making it the most direct R comparison to GAM.jl’s Turing
-backend.
-
-``` r
-library(brms)
-
-# Gaussian GAM
-m_brms <- brm(
-  y ~ s(x, k = 10),
-  data = dat,
-  family = gaussian(),
-  prior = c(
-    prior(normal(0, 10), class = "b"),
-    prior(exponential(1), class = "sds"),
-    prior(normal(0, 2.5), class = "sigma", lb = 0)
-  ),
-  chains = 2, iter = 2000, warmup = 1000, seed = 2024
-)
-summary(m_brms)
-
-# Extract posterior samples
-draws <- as_draws_df(m_brms)
-sigma_brms <- draws$sigma
-b_int_brms <- draws$b_Intercept
-sds_brms <- draws[[grep("^sds_", names(draws), value = TRUE)[1]]]
-
-# KS test against GAM.jl
-ks.test(sigma_brms, julia_gauss$sigma_obs)
-ks.test(b_int_brms, julia_gauss$beta_intercept)
-
-# Poisson GAM
-m_brms2 <- brm(
-  y ~ s(x, k = 10),
-  data = dat2,
-  family = poisson(),
-  prior = c(
-    prior(normal(0, 10), class = "b"),
-    prior(exponential(1), class = "sds")
-  ),
-  chains = 2, iter = 2000, warmup = 1000, seed = 2024
-)
-summary(m_brms2)
-```
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-12-1.png)
 
 ## Syntax Comparison
 
@@ -397,27 +417,23 @@ summary(m_brms2)
 |----|----|----|----|
 | Bayesian GAM | `gam(f, data; priors=PriorSpec(...))` | `brm(f, data, prior=...)` | `gam(f, data) + mvrnorm` |
 | Smooth SD prior | `PriorSpec(sds=Exp(1))` | `prior(exponential(1), class="sds")` | Implicit via REML |
-| Residual SD prior | `PriorSpec(sigma=...)` | `prior(..., class="sigma")` | Scaled Inv-chi-sq |
-| Posterior samples | `m.chains[Symbol("sigma_obs")]` | `as_draws_df(m)$sigma` | `mvrnorm(n, coef(m), Vp)` |
+| Residual SD prior | `PriorSpec(sigma=...)` | `prior(..., class="sigma")` | Scaled Inv-χ² |
+| Posterior samples | `m.chains[Symbol("σ_obs")]` | `as_draws_df(m)$sigma` | `mvrnorm(n, coef(m), Vp)` |
 | MCMC algorithm | NUTS (Turing.jl) | NUTS (Stan) | No MCMC (Gaussian approx) |
+| Basis construction | Native Julia | `mgcv::smoothCon()` | Same as brms |
 
-### Key differences
+### Key findings
 
-1.  **Full MCMC vs approximation**: GAM.jl (Turing) and brms (Stan) both
-    run full NUTS MCMC. The mgcv approach uses a Gaussian posterior
-    approximation, which is accurate for well-identified models but may
-    miss posterior skewness.
+1.  **GAM.jl ≈ brms**: Both use full NUTS MCMC with the same
+    smooth2random decomposition and matching priors. KS tests confirm
+    the posteriors are not significantly different — GAM.jl’s Turing
+    backend reproduces Stan/brms results.
 
-2.  **Smoothing SD**: GAM.jl and brms explicitly estimate $\sigma_s$
-    with MCMC. mgcv estimates $\lambda$ via REML, then converts to a
-    posterior via the Bayesian interpretation of the penalized
-    likelihood.
+2.  **mgcv approximation is accurate**: The Gaussian posterior
+    approximation from `mgcv::gam()` is close to the full MCMC
+    posteriors for well-identified models, though it cannot capture
+    posterior skewness.
 
-3.  **Prior specification**: GAM.jl uses `PriorSpec` (class-level
-    defaults + specific overrides). brms uses a vector of `prior()`
-    statements. mgcv has no explicit prior specification — priors are
-    implicit in the REML objective.
-
-4.  **Basis construction**: All three use the same smooth2random
-    decomposition (mgcv-style). brms calls `mgcv::smoothCon()` directly;
-    GAM.jl re-implements it natively in Julia.
+3.  **Prior specification**: GAM.jl uses `PriorSpec` with class-level
+    defaults (single call). brms uses a vector of `prior()` statements
+    (one per class). Both are more explicit than mgcv’s implicit priors.
