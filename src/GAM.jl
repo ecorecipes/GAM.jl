@@ -166,10 +166,17 @@ export
 
     # Quantile GAM (qgam)
     ELFFamily,
+    ELFLSSFamily,
     qgam,
     mqgam,
+    qdo,
     pinball_loss,
     deviance_explained,
+    cqcheck,
+    CQCheckResult,
+    check_qgam,
+    QGamCheck,
+    quantile_residuals,
 
     # Shape-constrained smooths (SCAM)
     MonoIncBasis,
