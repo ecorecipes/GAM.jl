@@ -134,6 +134,40 @@ function gam_smooth(vars::NTuple{N, Symbol}, data; bs::Symbol = :tp, k::Int = 10
     return smooth2random(sm)
 end
 
+# Stubs for Turing extension @model functions — implemented in GAMTuringExt
+"""
+    smooth_prior(sm::SmoothMixedModel; sds_prior, fixed_prior)
+
+A Turing `@model` for sampling the parameters of a single smooth term.
+Returns the evaluated smooth function values (vector of length n).
+
+Use with `to_submodel` and `prefix` to compose smooth terms into custom Bayesian models:
+
+```julia
+import GAM
+using Turing
+
+sm = GAM.gam_smooth(:x, data; k=10)
+@model function my_gam(y, sm)
+    β0 ~ Normal(0, 10)
+    σ ~ Exponential(1.0)
+    f ~ to_submodel(prefix(GAM.smooth_prior(sm), :s_x))
+    y ~ MvNormal(β0 .+ f, σ^2 * I)
+end
+```
+
+Requires `using Turing` to load the implementation.
+"""
+function smooth_prior end
+
+"""
+    smooth_predictive(sm, Xf_new, Zs_new; sds_prior, fixed_prior)
+
+Like `smooth_prior` but evaluates the smooth at new covariate values.
+Requires `using Turing`.
+"""
+function smooth_predictive end
+
 """
     BayesGamModel
 

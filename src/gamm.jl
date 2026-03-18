@@ -752,6 +752,7 @@ function gamm(gf::GammFormula, data;
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
+    backend::Symbol = :LAMS,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
@@ -777,6 +778,13 @@ function gamm(gf::GammFormula, data;
     random_effects = [construct_random_effect(re, data) for re in gf.random_effects]
 
     f = term(gf.gam_formula.response) ~ term(1)
+
+    # Backend dispatch
+    if backend == :MixedModels
+        return _fit_gamm_mm(y, X, smooths, n_parametric, random_effects,
+            f, data, family, link_eff, method, weights, control)
+    end
+
     return _fit_gamm_lams(y, X, smooths, n_parametric, random_effects,
         f, data, family, link_eff, method, weights, control)
 end
@@ -786,6 +794,7 @@ function gamm(f::FormulaTerm, data;
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
+    backend::Symbol = :LAMS,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
@@ -878,6 +887,12 @@ function gamm(f::FormulaTerm, data;
             sampler = sampler, nsamples = nsamples, nchains = nchains, weights = weights)
     end
 
+    # MixedModels.jl backend dispatch
+    if backend == :MixedModels
+        return _fit_gamm_mm(y, X, smooths, n_parametric, random_effects,
+            f, data, family, link_eff, method, weights, control)
+    end
+
     return _fit_gamm_lams(y, X, smooths, n_parametric, random_effects,
         f, data, family, link_eff, method, weights, control)
 end
@@ -915,6 +930,9 @@ end
 # Bayesian stubs (implemented in GAMTuringExt)
 function _fit_gamm_bayes end
 function _fit_gamm_bayes_from_parts end
+
+# MixedModels.jl stubs (implemented in GAMMixedModelsExt)
+function _fit_gamm_mm end
 
 # ============================================================================
 # Show methods

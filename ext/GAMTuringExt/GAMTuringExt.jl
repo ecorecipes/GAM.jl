@@ -20,6 +20,7 @@ using GLM: Link, IdentityLink, LogLink, LogitLink, InverseLink, ProbitLink,
     CloglogLink, SqrtLink, linkinv, linkfun
 
 import GAM: _fit_gam_bayes, _fit_gamlss_bayes, _fit_scam_bayes,
+    _fit_gamm_bayes, _fit_gamm_bayes_from_parts,
     _bayes_coef_means, _bayes_vcov, _bayes_coeftable, _bayes_credint
 
 # ============================================================================
@@ -991,6 +992,429 @@ function GAM.posterior_samples(m::GAM.BayesGamModel;
     end
 
     return beta_draws
+end
+
+# ============================================================================
+# Bayesian GAMM — Turing model with grouped random effects
+# ============================================================================
+
+"""
+Build a Turing model for GAMM: smooth terms (via smooth2random) + explicit
+grouped random effects (random intercepts/slopes).
+"""
+function _build_gamm_turing_model(
+    X_para, smooths, random_effects, y, family, link, priors;
+    weights = nothing
+)
+    n = length(y)
+
+    # --- Fixed effects: parametric + smooth null spaces ---
+    Xf_blocks = Matrix{Float64}[X_para]
+    for sm in smooths
+        if size(sm.Xf, 2) > 0
+            push!(Xf_blocks, sm.Xf)
+        end
+    end
+    X_fixed = hcat(Xf_blocks...)
+    n_fixed = size(X_fixed, 2)
+
+    # --- Smooth random-effect blocks ---
+    Zs_smooth = Matrix{Float64}[]
+    smooth_block_labels = String[]
+    smooth_block_dims = Int[]
+    for sm in smooths
+        for Z in sm.Zs
+            push!(Zs_smooth, Z)
+            push!(smooth_block_labels, sm.label)
+            push!(smooth_block_dims, size(Z, 2))
+        end
+    end
+    n_smooth_blocks = length(Zs_smooth)
+    total_smooth_random = sum(smooth_block_dims; init = 0)
+    Z_smooth = total_smooth_random > 0 ? hcat(Zs_smooth...) : zeros(n, 0)
+
+    # --- Grouped random-effect blocks ---
+    Z_re_list = Matrix{Float64}[]
+    re_labels = String[]
+    re_block_dims = Int[]
+    for cre in random_effects
+        push!(Z_re_list, cre.Z)
+        push!(re_labels, cre.spec.label)
+        push!(re_block_dims, size(cre.Z, 2))
+    end
+    n_re_blocks = length(Z_re_list)
+    total_re_random = sum(re_block_dims; init = 0)
+    Z_re = total_re_random > 0 ? hcat(Z_re_list...) : zeros(n, 0)
+
+    # Block offset maps
+    sm_block_ends = cumsum(smooth_block_dims)
+    sm_block_starts = isempty(sm_block_ends) ? Int[] :
+        [1; sm_block_ends[1:end-1] .+ 1]
+
+    re_block_ends = cumsum(re_block_dims)
+    re_block_starts = isempty(re_block_ends) ? Int[] :
+        [1; re_block_ends[1:end-1] .+ 1]
+
+    wts = weights === nothing ? ones(n) : Float64.(weights)
+    all_wts_one = all(w -> w ≈ 1.0, wts)
+
+    family_tag = _family_tag(family)
+    needs_scale = family_tag in (:gaussian, :gamma, :invgaussian)
+    is_identity = link isa IdentityLink
+
+    # Resolve priors
+    sds_priors = [GAM.get_prior(priors, :sds, l) for l in smooth_block_labels]
+    re_sd_priors = [GAM.get_prior(priors, :sds, l) for l in re_labels]
+    scale_prior = needs_scale ?
+        GAM.get_prior(priors, family_tag == :gaussian ? :sigma : :phi) : nothing
+
+    DynamicPPL.@model function gamm_model(
+        y_obs, X_f, Z_sm, Z_re,
+        n_f, n_sm_blocks, total_sm, sm_block_starts, sm_block_ends, smooth_block_dims,
+        n_re_blocks, total_re, re_block_starts, re_block_ends, re_block_dims,
+        family_tag, is_identity, link,
+        sds_priors, re_sd_priors, scale_prior, all_wts_one
+    )
+        n_obs = length(y_obs)
+
+        # --- Fixed effects ---
+        β ~ MvNormal(zeros(n_f), 10.0 * I)
+
+        # --- Scale parameter ---
+        local σ_obs
+        if scale_prior !== nothing
+            σ_obs ~ scale_prior
+        end
+
+        # --- Smooth SDs ---
+        local σ_s
+        if n_sm_blocks > 0
+            σ_s = Vector{Real}(undef, n_sm_blocks)
+            for i in 1:n_sm_blocks
+                σ_s[i] ~ sds_priors[i]
+            end
+        end
+
+        # --- Random effect SDs ---
+        local σ_re
+        if n_re_blocks > 0
+            σ_re = Vector{Real}(undef, n_re_blocks)
+            for i in 1:n_re_blocks
+                σ_re[i] ~ re_sd_priors[i]
+            end
+        end
+
+        # --- Smooth random effects (non-centered) ---
+        local z_sm
+        if total_sm > 0
+            z_sm ~ MvNormal(zeros(total_sm), I)
+        end
+
+        # --- Grouped random effects (non-centered) ---
+        local z_re
+        if total_re > 0
+            z_re ~ MvNormal(zeros(total_re), I)
+        end
+
+        # --- Linear predictor ---
+        η = X_f * β
+
+        # Add smooth random contributions
+        if total_sm > 0
+            scale_sm = vcat([fill(σ_s[i], smooth_block_dims[i]) for i in 1:n_sm_blocks]...)
+            η = η .+ Z_sm * (scale_sm .* z_sm)
+        end
+
+        # Add grouped random effect contributions
+        if total_re > 0
+            scale_re = vcat([fill(σ_re[i], re_block_dims[i]) for i in 1:n_re_blocks]...)
+            η = η .+ Z_re * (scale_re .* z_re)
+        end
+
+        # --- Likelihood ---
+        if family_tag == :gaussian
+            if is_identity
+                if all_wts_one
+                    y_obs ~ MvNormal(η, σ_obs^2 * I)
+                else
+                    y_obs ~ MvNormal(η, Diagonal((σ_obs ./ sqrt.(wts)) .^ 2))
+                end
+            else
+                μ = _linkinv_vec(link, η)
+                if all_wts_one
+                    y_obs ~ MvNormal(μ, σ_obs^2 * I)
+                else
+                    y_obs ~ MvNormal(μ, Diagonal((σ_obs ./ sqrt.(wts)) .^ 2))
+                end
+            end
+        elseif family_tag == :poisson
+            μ = _linkinv_vec(link, η)
+            y_obs ~ arraydist(Poisson.(max.(μ, 1e-10)))
+        elseif family_tag == :bernoulli
+            μ = _linkinv_vec(link, η)
+            y_obs ~ arraydist(Bernoulli.(clamp.(μ, 1e-10, 1 - 1e-10)))
+        elseif family_tag == :binomial
+            μ = _linkinv_vec(link, η)
+            y_obs ~ arraydist(Binomial.(1, clamp.(μ, 1e-10, 1 - 1e-10)))
+        elseif family_tag == :gamma
+            μ = _linkinv_vec(link, η)
+            α_shape = max(σ_obs, 1e-10)
+            y_obs ~ arraydist(Distributions.Gamma.(α_shape, max.(μ ./ α_shape, 1e-10)))
+        elseif family_tag == :invgaussian
+            μ = _linkinv_vec(link, η)
+            y_obs ~ arraydist(Distributions.InverseGaussian.(max.(μ, 1e-10), max(σ_obs, 1e-10)))
+        end
+
+        return nothing
+    end
+
+    model = gamm_model(
+        y, X_fixed, Z_smooth, Z_re,
+        n_fixed, n_smooth_blocks, total_smooth_random,
+        sm_block_starts, sm_block_ends, smooth_block_dims,
+        n_re_blocks, total_re_random,
+        re_block_starts, re_block_ends, re_block_dims,
+        family_tag, is_identity, link,
+        sds_priors, re_sd_priors, scale_prior, all_wts_one
+    )
+    return model, X_fixed, Zs_smooth, smooth_block_labels, re_labels
+end
+
+"""
+Bayesian GAMM from GammFormula: parse formula, build matrices, fit with Turing.
+"""
+function GAM._fit_gamm_bayes(gf::GAM.GammFormula, data, family, link, priors::GAM.PriorSpec;
+    sampler = nothing, nsamples::Int = 2000, nchains::Int = 4, weights = nothing)
+
+    # Build GAM part
+    X_para, smooths, labels = GAM.gam_matrices(gf.gam_formula, data)
+    y = Float64.(Tables.getcolumn(Tables.columntable(data), gf.gam_formula.response))
+
+    # Build random effects
+    random_effects = [GAM.construct_random_effect(re, data) for re in gf.random_effects]
+
+    return _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
+        gf, data, family, link, priors;
+        sampler = sampler, nsamples = nsamples, nchains = nchains, weights = weights)
+end
+
+"""
+Bayesian GAMM from pre-built matrices: used by the FormulaTerm dispatch path.
+"""
+function GAM._fit_gamm_bayes_from_parts(y, X, smooths, n_parametric, random_effects,
+    formula, data, family, link, priors::GAM.PriorSpec;
+    sampler = nothing, nsamples::Int = 2000, nchains::Int = 4, weights = nothing)
+
+    # Build smooth2random representations
+    sm_mixed = [GAM.smooth2random(sm) for sm in smooths]
+
+    # Parametric part of X (first n_parametric columns)
+    X_para = X[:, 1:n_parametric]
+    labels = [sm.label for sm in sm_mixed]
+
+    return _fit_gamm_bayes_impl(y, X_para, sm_mixed, random_effects, labels,
+        formula, data, family, link, priors;
+        sampler = sampler, nsamples = nsamples, nchains = nchains, weights = weights)
+end
+
+"""
+Common implementation for Bayesian GAMM fitting.
+"""
+function _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
+    formula, data, family, link, priors;
+    sampler = nothing, nsamples = 2000, nchains = 4, weights = nothing)
+
+    # Build and sample Turing model
+    model, X_fixed, Zs_smooth, smooth_labels, re_labels = _build_gamm_turing_model(
+        X_para, smooths, random_effects, y, family, link, priors; weights = weights
+    )
+
+    # Select sampler
+    turing_sampler = sampler === nothing ? NUTS() : sampler
+
+    # Run MCMC
+    chains = if nchains > 1
+        sample(model, turing_sampler, MCMCThreads(), nsamples, nchains)
+    else
+        sample(model, turing_sampler, nsamples)
+    end
+
+    # Build coefficient names
+    coef_names = String[]
+    # Parametric fixed effects
+    para_names = ["(Intercept)"]
+    for sm in smooths
+        if size(sm.Xf, 2) > 0
+            for j in 1:size(sm.Xf, 2)
+                push!(para_names, "$(sm.label)_f$j")
+            end
+        end
+    end
+    append!(coef_names, para_names)
+
+    # Smooth SD names
+    smooth_sd_names = ["sds($(l))" for l in smooth_labels]
+    # RE SD names
+    re_sd_names = ["σ_re($(l))" for l in re_labels]
+
+    all_labels = vcat(labels, re_labels)
+
+    sampler_desc = "$(typeof(turing_sampler)) ($nsamples samples × $nchains chains)"
+
+    return GAM.BayesGamModel(
+        formula, family, link,
+        smooths, chains,
+        coef_names, all_labels,
+        size(X_para, 2), length(smooths),
+        length(y), priors, sampler_desc, data
+    )
+end
+
+# ============================================================================
+# smooth_prior — Composable Turing @model for smooth terms
+# ============================================================================
+#
+# Usage with to_submodel + prefix (DynamicPPL 0.40+):
+#
+#   sm = gam_smooth(:x, data; k=10)
+#   @model function my_gam(y, sm)
+#       β0 ~ Normal(0, 10)
+#       σ ~ Exponential(1.0)
+#       f ~ to_submodel(prefix(smooth_prior(sm), :s_x))
+#       y ~ MvNormal(β0 .+ f, σ^2 * I)
+#   end
+#
+# Multiple smooths:
+#
+#   sm1 = gam_smooth(:x1, data; k=10)
+#   sm2 = gam_smooth(:x2, data; k=8, bs=:cr)
+#   @model function my_gam(y, sm1, sm2)
+#       β0 ~ Normal(0, 10)
+#       σ ~ Exponential(1.0)
+#       f1 ~ to_submodel(prefix(smooth_prior(sm1), :s_x1))
+#       f2 ~ to_submodel(prefix(smooth_prior(sm2), :s_x2))
+#       y ~ MvNormal(β0 .+ f1 .+ f2, σ^2 * I)
+#   end
+
+"""
+    smooth_prior(sm::SmoothMixedModel; sds_prior, fixed_prior)
+
+A Turing `@model` that samples the parameters of a smooth term and returns
+the evaluated smooth function values (a vector of length n).
+
+Use with `to_submodel` and `prefix` inside a Turing `@model` to compose smooth
+terms into custom Bayesian models. Each smooth gets its own fixed-effect
+coefficients, smooth SD, and random effects — all sampled automatically.
+
+# Arguments
+- `sm::SmoothMixedModel`: smooth term from `gam_smooth()` or `smooth2random(smooth_construct(...))`
+- `sds_prior`: prior on the smooth SD σ_s (default: `Exponential(1.0)`)
+- `fixed_prior`: prior on each fixed-effect coefficient (default: `Normal(0, 10)`)
+
+# Returns
+- `f::Vector{Float64}`: evaluated smooth at each observation, `Xf * β_f + σ_s * Zs * z`
+
+# Example
+```julia
+import GAM
+using Turing
+
+sm = GAM.gam_smooth(:x, data; k=10, bs=:cr)
+
+@model function my_model(y, sm)
+    β0 ~ Normal(0, 10)
+    σ ~ Exponential(1.0)
+    f ~ to_submodel(prefix(GAM.smooth_prior(sm), :s_x))
+    y ~ MvNormal(β0 .+ f, σ^2 * I)
+end
+
+chain = sample(my_model(y, sm), NUTS(), 1000)
+```
+"""
+Turing.@model function GAM.smooth_prior(
+    sm::GAM.SmoothMixedModel;
+    sds_prior = Exponential(1.0),
+    fixed_prior = Normal(0.0, 10.0),
+)
+    n_fixed = size(sm.Xf, 2)
+    n_random = sum(size(Z, 2) for Z in sm.Zs; init = 0)
+
+    # Sample fixed-effect coefficients (null space)
+    if n_fixed > 0
+        β_f ~ filldist(fixed_prior, n_fixed)
+    end
+
+    # Sample smooth SD and random effects (non-centered parameterization)
+    if n_random > 0
+        σ_s ~ sds_prior
+        z ~ MvNormal(zeros(n_random), I)
+    end
+
+    # Evaluate: f = Xf * β_f + σ_s * Z * z
+    n_obs = size(sm.Xf, 1)
+    f = zeros(eltype(n_fixed > 0 ? β_f : [0.0]), n_obs)
+
+    if n_fixed > 0
+        f = f .+ sm.Xf * β_f
+    end
+
+    if n_random > 0
+        offset = 0
+        for Z in sm.Zs
+            nz = size(Z, 2)
+            z_block = z[(offset + 1):(offset + nz)]
+            f = f .+ σ_s .* (Z * z_block)
+            offset += nz
+        end
+    end
+
+    return f
+end
+
+"""
+    smooth_predictive(sm::SmoothMixedModel, Xf_new, Zs_new; sds_prior, fixed_prior)
+
+Like `smooth_prior` but evaluates the smooth at new covariate values (for prediction).
+Pass the new-data basis matrices `Xf_new` and `Zs_new` (obtained by constructing
+the smooth on new data and applying smooth2random).
+"""
+Turing.@model function GAM.smooth_predictive(
+    sm::GAM.SmoothMixedModel,
+    Xf_new::AbstractMatrix,
+    Zs_new::Vector{<:AbstractMatrix};
+    sds_prior = Exponential(1.0),
+    fixed_prior = Normal(0.0, 10.0),
+)
+    n_fixed = size(sm.Xf, 2)
+    n_random = sum(size(Z, 2) for Z in sm.Zs; init = 0)
+
+    if n_fixed > 0
+        β_f ~ filldist(fixed_prior, n_fixed)
+    end
+
+    if n_random > 0
+        σ_s ~ sds_prior
+        z ~ MvNormal(zeros(n_random), I)
+    end
+
+    n_new = size(Xf_new, 1)
+    f = zeros(eltype(n_fixed > 0 ? β_f : [0.0]), n_new)
+
+    if n_fixed > 0
+        f = f .+ Xf_new * β_f
+    end
+
+    if n_random > 0
+        offset = 0
+        for Z in Zs_new
+            nz = size(Z, 2)
+            z_block = z[(offset + 1):(offset + nz)]
+            f = f .+ σ_s .* (Z * z_block)
+            offset += nz
+        end
+    end
+
+    return f
 end
 
 end # module GAMTuringExt

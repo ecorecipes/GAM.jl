@@ -234,6 +234,8 @@ export
     SmoothMixedModel,
     gam_matrices,
     gam_smooth,
+    smooth_prior,
+    smooth_predictive,
     s2r_predict
 
 # Type aliases matching GLM.jl convention
