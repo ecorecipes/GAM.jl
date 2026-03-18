@@ -84,6 +84,32 @@ cat(sprintf("Scale (gamm): %.6f\n", m$gam$scale))
 cat(sprintf("Scale (gam):  %.6f\n", m_gam$scale))
 ```
 
+### Plot: Data by Subject with Population Smooth
+
+```{r fig.width=8, fig.height=5}
+par(mfrow = c(1, 2))
+
+# Scatter colored by subject with population smooth
+subject_ids <- sort(unique(dat$subject))
+n_subj <- length(subject_ids)
+cols <- rainbow(n_subj, alpha = 0.5)
+plot(dat$x, dat$y, col = cols[match(dat$subject, subject_ids)],
+     pch = 16, cex = 0.6, xlab = "x", ylab = "y",
+     main = "Gaussian GAMM: data by subject")
+x_grid <- seq(min(dat$x), max(dat$x), length.out = 200)
+pop_pred <- predict(m$gam, newdata = data.frame(x = x_grid))
+lines(x_grid, pop_pred, col = "black", lwd = 3)
+
+# Grouped bar: estimated vs true random intercepts
+re_mat <- rbind(Estimated = re[, 1], True = true_re[rownames(re)])
+barplot(re_mat, beside = TRUE, names.arg = rownames(re),
+        col = c("steelblue", "darkorange"), las = 1,
+        main = "Random intercepts: estimated vs true",
+        xlab = "Subject", ylab = "Random intercept")
+legend("topright", c("Estimated", "True"),
+       fill = c("steelblue", "darkorange"), cex = 0.8)
+```
+
 ### Plot: Smooth Effect
 
 ```{r}
@@ -129,7 +155,33 @@ cat(sprintf("RE correlation with truth: %.4f\n",
             cor(re2[, 1], true_re2)))
 ```
 
-### Plot
+### Plot: Data by Site with Population Smooth
+
+```{r fig.width=8, fig.height=5}
+par(mfrow = c(1, 2))
+
+# Scatter colored by site with population smooth
+site_ids <- sort(unique(dat2$site))
+n_sites <- length(site_ids)
+cols2 <- rainbow(n_sites, alpha = 0.5)
+plot(dat2$x, dat2$y, col = cols2[match(dat2$site, site_ids)],
+     pch = 16, cex = 0.6, xlab = "x", ylab = "y (count)",
+     main = "Poisson GAMM: data by site")
+x_grid2 <- seq(min(dat2$x), max(dat2$x), length.out = 200)
+pop_pred2 <- predict(m2$gam, newdata = data.frame(x = x_grid2), type = "response")
+lines(x_grid2, pop_pred2, col = "black", lwd = 3)
+
+# Grouped bar: estimated vs true random effects
+re2_mat <- rbind(Estimated = re2[, 1], True = true_re2[rownames(re2)])
+barplot(re2_mat, beside = TRUE, names.arg = rownames(re2),
+        col = c("steelblue", "darkorange"), las = 1,
+        main = "Site random effects: estimated vs true",
+        xlab = "Site", ylab = "Random intercept (log-scale)")
+legend("topright", c("Estimated", "True"),
+       fill = c("steelblue", "darkorange"), cex = 0.8)
+```
+
+### Plot: Smooth Effect
 
 ```{r}
 par(mfrow = c(1, 2))

@@ -35,6 +35,17 @@ cat("Data: n =", n, "\n")
 cat("y range:", range(y), "\n")
 ```
 
+```{r}
+#| fig-width: 8
+#| fig-height: 5
+plot(x, y, col = adjustcolor("grey40", alpha.f = 0.3), pch = 16, cex = 0.5,
+     xlab = "x", ylab = "y", main = "Heteroscedastic Data: Variance Increases with x")
+x_grid <- seq(0, 1, length.out = 200)
+lines(x_grid, sin(2 * pi * x_grid), col = "red", lwd = 2)
+legend("topleft", legend = c("Data", "True mean: sin(2πx)"),
+       col = c("grey40", "red"), pch = c(16, NA), lty = c(NA, 1), lwd = c(NA, 2))
+```
+
 ## Fit a single quantile GAM
 
 ### Median regression (τ = 0.5)
@@ -76,6 +87,21 @@ for (qu in quantiles) {
 }
 ```
 
+```{r}
+#| fig-width: 8
+#| fig-height: 5
+qcolors <- c("0.1" = "red", "0.25" = "orange", "0.5" = "black",
+             "0.75" = "dodgerblue", "0.9" = "blue")
+plot(x, y, col = adjustcolor("grey40", alpha.f = 0.3), pch = 16, cex = 0.5,
+     xlab = "x", ylab = "y", main = "mqgam: Simultaneous Quantile Fits")
+for (qu in quantiles) {
+  yhat <- qdo(mq, qu, predict, newdata = dat)
+  ord_tmp <- order(x)
+  lines(x[ord_tmp], yhat[ord_tmp], col = qcolors[as.character(qu)], lwd = 2)
+}
+legend("topleft", legend = paste("τ =", quantiles), col = qcolors, lwd = 2)
+```
+
 ## Quantile crossing check
 
 ```{r}
@@ -89,6 +115,20 @@ cat(sprintf("Quantile crossings: %d out of %d observations (%.1f%%)\n",
             n_crossings, n, 100 * n_crossings / n))
 ```
 
+```{r}
+#| fig-width: 8
+#| fig-height: 5
+qcolors <- c("red", "orange", "black", "dodgerblue", "blue")
+matplot(x[ord], predictions, type = "l", lty = 1, lwd = 2, col = qcolors,
+        xlab = "x", ylab = "Predicted quantile", main = "Quantile Crossing Check")
+crossing_flags <- apply(predictions, 1, is.unsorted)
+if (any(crossing_flags)) {
+  rug(x[ord][crossing_flags], col = "red", lwd = 2)
+}
+legend("topleft", legend = paste("τ =", quantiles), col = qcolors, lwd = 2)
+mtext(paste0(sum(crossing_flags), " crossings out of ", n, " observations"), side = 3, line = 0.2, cex = 0.8)
+```
+
 ## Verify quantile coverage
 
 ```{r}
@@ -99,6 +139,21 @@ for (qu in quantiles) {
 }
 ```
 
+```{r}
+#| fig-width: 8
+#| fig-height: 5
+coverages <- sapply(quantiles, function(qu) {
+  yhat <- qdo(mq, qu, predict, newdata = dat)
+  mean(y < yhat)
+})
+bp <- barplot(coverages, names.arg = paste("τ =", quantiles), col = "steelblue",
+              ylim = c(0, 1), ylab = "Coverage",
+              main = "Coverage Validation: Empirical vs Target")
+points(bp, quantiles, col = "red", pch = 18, cex = 2)
+legend("topleft", legend = c("Empirical", "Target"),
+       col = c("steelblue", "red"), pch = c(15, 18))
+```
+
 ## Individual quantile model summaries
 
 ```{r}
@@ -106,6 +161,21 @@ for (qu in quantiles) {
   cat(sprintf("\n--- Quantile τ = %s ---\n", qu))
   print(summary(qdo(mq, qu)))
 }
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 5
+pinball <- function(y, yhat, qu) {
+  r <- y - yhat
+  mean(ifelse(r > 0, qu * r, (qu - 1) * r))
+}
+losses <- sapply(quantiles, function(qu) {
+  yhat <- qdo(mq, qu, predict, newdata = dat)
+  pinball(y, yhat, qu)
+})
+barplot(losses, names.arg = paste("τ =", quantiles), col = "steelblue",
+        ylab = "Pinball Loss", main = "Pinball Loss by Quantile")
 ```
 
 ## Comparison table

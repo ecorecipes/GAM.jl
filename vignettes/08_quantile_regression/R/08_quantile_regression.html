@@ -194,18 +194,33 @@ window.Quarto = {
 <pre><code>y range: -3.150623 2.272297 </code></pre>
 </div>
 </div>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x, y, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="at">alpha.f =</span> <span class="fl">0.3</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.5</span>,</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"y"</span>, <span class="at">main =</span> <span class="st">"Heteroscedastic Data: Variance Increases with x"</span>)</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>x_grid <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="dv">0</span>, <span class="dv">1</span>, <span class="at">length.out =</span> <span class="dv">200</span>)</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_grid, <span class="fu">sin</span>(<span class="dv">2</span> <span class="sc">*</span> pi <span class="sc">*</span> x_grid), <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topleft"</span>, <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"Data"</span>, <span class="st">"True mean: sin(2πx)"</span>),</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"grey40"</span>, <span class="st">"red"</span>), <span class="at">pch =</span> <span class="fu">c</span>(<span class="dv">16</span>, <span class="cn">NA</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="dv">1</span>), <span class="at">lwd =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="dv">2</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="08_quantile_regression_files/figure-html/unnamed-chunk-3-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+</div>
 </section>
 <section id="fit-a-single-quantile-gam" class="level2">
 <h2 class="anchored" data-anchor-id="fit-a-single-quantile-gam">Fit a single quantile GAM</h2>
 <section id="median-regression-τ-0.5" class="level3">
 <h3 class="anchored" data-anchor-id="median-regression-τ-0.5">Median regression (τ = 0.5)</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>m_50 <span class="ot">&lt;-</span> <span class="fu">qgam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">20</span>, <span class="at">bs =</span> <span class="st">"cr"</span>), <span class="at">data =</span> dat, <span class="at">qu =</span> <span class="fl">0.5</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>m_50 <span class="ot">&lt;-</span> <span class="fu">qgam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">20</span>, <span class="at">bs =</span> <span class="st">"cr"</span>), <span class="at">data =</span> dat, <span class="at">qu =</span> <span class="fl">0.5</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Estimating learning rate. Each dot corresponds to a loss evaluation. 
 qu = 0.5........done </code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_50)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_50)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>
 Family: elf 
@@ -229,8 +244,8 @@ R-sq.(adj) =   0.55   Deviance explained =   48%
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>yhat_50 <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_50)</span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Median regression fitted range:"</span>, <span class="fu">range</span>(yhat_50), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>yhat_50 <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_50)</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Median regression fitted range:"</span>, <span class="fu">range</span>(yhat_50), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Median regression fitted range: -1.081852 0.946946 </code></pre>
 </div>
@@ -239,14 +254,14 @@ R-sq.(adj) =   0.55   Deviance explained =   48%
 <section id="compare-with-mean-regression" class="level3">
 <h3 class="anchored" data-anchor-id="compare-with-mean-regression">Compare with mean regression</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>m_mean <span class="ot">&lt;-</span> <span class="fu">gam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">20</span>, <span class="at">bs =</span> <span class="st">"cr"</span>), <span class="at">data =</span> dat)</span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>yhat_mean <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_mean)</span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Mean regression fitted range:"</span>, <span class="fu">range</span>(yhat_mean), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>m_mean <span class="ot">&lt;-</span> <span class="fu">gam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">20</span>, <span class="at">bs =</span> <span class="st">"cr"</span>), <span class="at">data =</span> dat)</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>yhat_mean <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_mean)</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Mean regression fitted range:"</span>, <span class="fu">range</span>(yhat_mean), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Mean regression fitted range: -1.048656 0.9559633 </code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Correlation (mean vs median):"</span>, <span class="fu">cor</span>(yhat_mean, yhat_50), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Correlation (mean vs median):"</span>, <span class="fu">cor</span>(yhat_mean, yhat_50), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Correlation (mean vs median): 0.9988322 </code></pre>
 </div>
@@ -256,9 +271,9 @@ R-sq.(adj) =   0.55   Deviance explained =   48%
 <section id="fit-multiple-quantiles-with-mqgam" class="level2">
 <h2 class="anchored" data-anchor-id="fit-multiple-quantiles-with-mqgam">Fit multiple quantiles with <code>mqgam</code></h2>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>quantiles <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="fl">0.1</span>, <span class="fl">0.25</span>, <span class="fl">0.5</span>, <span class="fl">0.75</span>, <span class="fl">0.9</span>)</span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>mq <span class="ot">&lt;-</span> <span class="fu">mqgam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">20</span>, <span class="at">bs =</span> <span class="st">"cr"</span>), <span class="at">data =</span> dat, <span class="at">qu =</span> quantiles)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>quantiles <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="fl">0.1</span>, <span class="fl">0.25</span>, <span class="fl">0.5</span>, <span class="fl">0.75</span>, <span class="fl">0.9</span>)</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>mq <span class="ot">&lt;-</span> <span class="fu">mqgam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">20</span>, <span class="at">bs =</span> <span class="st">"cr"</span>), <span class="at">data =</span> dat, <span class="at">qu =</span> quantiles)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Estimating learning rate. Each dot corresponds to a loss evaluation. 
 qu = 0.5........done 
@@ -270,10 +285,10 @@ qu = 0.9...............done </code></pre>
 </div>
 <p>Examine fitted ranges for each quantile:</p>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (qu <span class="cf">in</span> quantiles) {</span>
-<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>  yhat <span class="ot">&lt;-</span> <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)</span>
-<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"τ = %s: fitted range [%.3f, %.3f]</span><span class="sc">\n</span><span class="st">"</span>, qu, <span class="fu">min</span>(yhat), <span class="fu">max</span>(yhat)))</span>
-<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (qu <span class="cf">in</span> quantiles) {</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>  yhat <span class="ot">&lt;-</span> <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)</span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"τ = %s: fitted range [%.3f, %.3f]</span><span class="sc">\n</span><span class="st">"</span>, qu, <span class="fu">min</span>(yhat), <span class="fu">max</span>(yhat)))</span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>τ = 0.1: fitted range [-2.004, 0.412]
 τ = 0.25: fitted range [-1.522, 0.654]
@@ -282,31 +297,68 @@ qu = 0.9...............done </code></pre>
 τ = 0.9: fitted range [-0.134, 1.575]</code></pre>
 </div>
 </div>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>qcolors <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">"0.1"</span> <span class="ot">=</span> <span class="st">"red"</span>, <span class="st">"0.25"</span> <span class="ot">=</span> <span class="st">"orange"</span>, <span class="st">"0.5"</span> <span class="ot">=</span> <span class="st">"black"</span>,</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>             <span class="st">"0.75"</span> <span class="ot">=</span> <span class="st">"dodgerblue"</span>, <span class="st">"0.9"</span> <span class="ot">=</span> <span class="st">"blue"</span>)</span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x, y, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="at">alpha.f =</span> <span class="fl">0.3</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.5</span>,</span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"y"</span>, <span class="at">main =</span> <span class="st">"mqgam: Simultaneous Quantile Fits"</span>)</span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (qu <span class="cf">in</span> quantiles) {</span>
+<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>  yhat <span class="ot">&lt;-</span> <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)</span>
+<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>  ord_tmp <span class="ot">&lt;-</span> <span class="fu">order</span>(x)</span>
+<span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">lines</span>(x[ord_tmp], yhat[ord_tmp], <span class="at">col =</span> qcolors[<span class="fu">as.character</span>(qu)], <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topleft"</span>, <span class="at">legend =</span> <span class="fu">paste</span>(<span class="st">"τ ="</span>, quantiles), <span class="at">col =</span> qcolors, <span class="at">lwd =</span> <span class="dv">2</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="08_quantile_regression_files/figure-html/unnamed-chunk-9-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+</div>
 </section>
 <section id="quantile-crossing-check" class="level2">
 <h2 class="anchored" data-anchor-id="quantile-crossing-check">Quantile crossing check</h2>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>ord <span class="ot">&lt;-</span> <span class="fu">order</span>(x)</span>
-<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>predictions <span class="ot">&lt;-</span> <span class="fu">sapply</span>(quantiles, <span class="cf">function</span>(qu) {</span>
-<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)[ord]</span>
-<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>})</span>
-<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a>n_crossings <span class="ot">&lt;-</span> <span class="fu">sum</span>(<span class="fu">apply</span>(predictions, <span class="dv">1</span>, is.unsorted))</span>
-<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Quantile crossings: %d out of %d observations (%.1f%%)</span><span class="sc">\n</span><span class="st">"</span>,</span>
-<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a>            n_crossings, n, <span class="dv">100</span> <span class="sc">*</span> n_crossings <span class="sc">/</span> n))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>ord <span class="ot">&lt;-</span> <span class="fu">order</span>(x)</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>predictions <span class="ot">&lt;-</span> <span class="fu">sapply</span>(quantiles, <span class="cf">function</span>(qu) {</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)[ord]</span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a>n_crossings <span class="ot">&lt;-</span> <span class="fu">sum</span>(<span class="fu">apply</span>(predictions, <span class="dv">1</span>, is.unsorted))</span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Quantile crossings: %d out of %d observations (%.1f%%)</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a>            n_crossings, n, <span class="dv">100</span> <span class="sc">*</span> n_crossings <span class="sc">/</span> n))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Quantile crossings: 0 out of 500 observations (0.0%)</code></pre>
+</div>
+</div>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>qcolors <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">"red"</span>, <span class="st">"orange"</span>, <span class="st">"black"</span>, <span class="st">"dodgerblue"</span>, <span class="st">"blue"</span>)</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="fu">matplot</span>(x[ord], predictions, <span class="at">type =</span> <span class="st">"l"</span>, <span class="at">lty =</span> <span class="dv">1</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">col =</span> qcolors,</span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>        <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"Predicted quantile"</span>, <span class="at">main =</span> <span class="st">"Quantile Crossing Check"</span>)</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>crossing_flags <span class="ot">&lt;-</span> <span class="fu">apply</span>(predictions, <span class="dv">1</span>, is.unsorted)</span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">any</span>(crossing_flags)) {</span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">rug</span>(x[ord][crossing_flags], <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topleft"</span>, <span class="at">legend =</span> <span class="fu">paste</span>(<span class="st">"τ ="</span>, quantiles), <span class="at">col =</span> qcolors, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a><span class="fu">mtext</span>(<span class="fu">paste0</span>(<span class="fu">sum</span>(crossing_flags), <span class="st">" crossings out of "</span>, n, <span class="st">" observations"</span>), <span class="at">side =</span> <span class="dv">3</span>, <span class="at">line =</span> <span class="fl">0.2</span>, <span class="at">cex =</span> <span class="fl">0.8</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="08_quantile_regression_files/figure-html/unnamed-chunk-11-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
 </div>
 </div>
 </section>
 <section id="verify-quantile-coverage" class="level2">
 <h2 class="anchored" data-anchor-id="verify-quantile-coverage">Verify quantile coverage</h2>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (qu <span class="cf">in</span> quantiles) {</span>
-<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>  yhat <span class="ot">&lt;-</span> <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)</span>
-<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>  coverage <span class="ot">&lt;-</span> <span class="fu">mean</span>(y <span class="sc">&lt;</span> yhat)</span>
-<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"τ = %s: empirical coverage = %.3f (target = %.2f)</span><span class="sc">\n</span><span class="st">"</span>, qu, coverage, qu))</span>
-<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (qu <span class="cf">in</span> quantiles) {</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>  yhat <span class="ot">&lt;-</span> <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)</span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>  coverage <span class="ot">&lt;-</span> <span class="fu">mean</span>(y <span class="sc">&lt;</span> yhat)</span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"τ = %s: empirical coverage = %.3f (target = %.2f)</span><span class="sc">\n</span><span class="st">"</span>, qu, coverage, qu))</span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>τ = 0.1: empirical coverage = 0.076 (target = 0.10)
 τ = 0.25: empirical coverage = 0.234 (target = 0.25)
@@ -315,14 +367,33 @@ qu = 0.9...............done </code></pre>
 τ = 0.9: empirical coverage = 0.912 (target = 0.90)</code></pre>
 </div>
 </div>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>coverages <span class="ot">&lt;-</span> <span class="fu">sapply</span>(quantiles, <span class="cf">function</span>(qu) {</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>  yhat <span class="ot">&lt;-</span> <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mean</span>(y <span class="sc">&lt;</span> yhat)</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>bp <span class="ot">&lt;-</span> <span class="fu">barplot</span>(coverages, <span class="at">names.arg =</span> <span class="fu">paste</span>(<span class="st">"τ ="</span>, quantiles), <span class="at">col =</span> <span class="st">"steelblue"</span>,</span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a>              <span class="at">ylim =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>), <span class="at">ylab =</span> <span class="st">"Coverage"</span>,</span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>              <span class="at">main =</span> <span class="st">"Coverage Validation: Empirical vs Target"</span>)</span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a><span class="fu">points</span>(bp, quantiles, <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">pch =</span> <span class="dv">18</span>, <span class="at">cex =</span> <span class="dv">2</span>)</span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topleft"</span>, <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"Empirical"</span>, <span class="st">"Target"</span>),</span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>), <span class="at">pch =</span> <span class="fu">c</span>(<span class="dv">15</span>, <span class="dv">18</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="08_quantile_regression_files/figure-html/unnamed-chunk-13-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+</div>
 </section>
 <section id="individual-quantile-model-summaries" class="level2">
 <h2 class="anchored" data-anchor-id="individual-quantile-model-summaries">Individual quantile model summaries</h2>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (qu <span class="cf">in</span> quantiles) {</span>
-<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">--- Quantile τ = %s ---</span><span class="sc">\n</span><span class="st">"</span>, qu))</span>
-<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">print</span>(<span class="fu">summary</span>(<span class="fu">qdo</span>(mq, qu)))</span>
-<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (qu <span class="cf">in</span> quantiles) {</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">--- Quantile τ = %s ---</span><span class="sc">\n</span><span class="st">"</span>, qu))</span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">print</span>(<span class="fu">summary</span>(<span class="fu">qdo</span>(mq, qu)))</span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>
 --- Quantile τ = 0.1 ---
@@ -437,6 +508,25 @@ Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
 R-sq.(adj) =  0.474   Deviance explained = 79.9%
 -REML = 617.69  Scale est. = 1         n = 500</code></pre>
+</div>
+</div>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>pinball <span class="ot">&lt;-</span> <span class="cf">function</span>(y, yhat, qu) {</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>  r <span class="ot">&lt;-</span> y <span class="sc">-</span> yhat</span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mean</span>(<span class="fu">ifelse</span>(r <span class="sc">&gt;</span> <span class="dv">0</span>, qu <span class="sc">*</span> r, (qu <span class="sc">-</span> <span class="dv">1</span>) <span class="sc">*</span> r))</span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a>losses <span class="ot">&lt;-</span> <span class="fu">sapply</span>(quantiles, <span class="cf">function</span>(qu) {</span>
+<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a>  yhat <span class="ot">&lt;-</span> <span class="fu">qdo</span>(mq, qu, predict, <span class="at">newdata =</span> dat)</span>
+<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">pinball</span>(y, yhat, qu)</span>
+<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb34-9"><a href="#cb34-9" aria-hidden="true" tabindex="-1"></a><span class="fu">barplot</span>(losses, <span class="at">names.arg =</span> <span class="fu">paste</span>(<span class="st">"τ ="</span>, quantiles), <span class="at">col =</span> <span class="st">"steelblue"</span>,</span>
+<span id="cb34-10"><a href="#cb34-10" aria-hidden="true" tabindex="-1"></a>        <span class="at">ylab =</span> <span class="st">"Pinball Loss"</span>, <span class="at">main =</span> <span class="st">"Pinball Loss by Quantile"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="08_quantile_regression_files/figure-html/unnamed-chunk-15-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
 </div>
 </div>
 </section>

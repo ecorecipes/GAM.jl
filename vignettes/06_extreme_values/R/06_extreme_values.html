@@ -93,12 +93,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#fit-the-gev-model" id="toc-fit-the-gev-model" class="nav-link" data-scroll-target="#fit-the-gev-model">Fit the GEV model</a></li>
   <li><a href="#examine-parameter-estimates" id="toc-examine-parameter-estimates" class="nav-link" data-scroll-target="#examine-parameter-estimates">Examine parameter estimates</a></li>
   <li><a href="#compare-fitted-vs-true" id="toc-compare-fitted-vs-true" class="nav-link" data-scroll-target="#compare-fitted-vs-true">Compare fitted vs true</a></li>
+  <li><a href="#gev-fitted-vs-true-plots" id="toc-gev-fitted-vs-true-plots" class="nav-link" data-scroll-target="#gev-fitted-vs-true-plots">GEV fitted vs true plots</a></li>
+  <li><a href="#gev-residual-diagnostics" id="toc-gev-residual-diagnostics" class="nav-link" data-scroll-target="#gev-residual-diagnostics">GEV residual diagnostics</a></li>
   </ul></li>
   <li><a href="#gpd-model" id="toc-gpd-model" class="nav-link" data-scroll-target="#gpd-model">GPD model</a>
   <ul class="collapse">
   <li><a href="#load-gpd-data" id="toc-load-gpd-data" class="nav-link" data-scroll-target="#load-gpd-data">Load GPD data</a></li>
   <li><a href="#fit-the-gpd-model" id="toc-fit-the-gpd-model" class="nav-link" data-scroll-target="#fit-the-gpd-model">Fit the GPD model</a></li>
   <li><a href="#examine-gpd-estimates" id="toc-examine-gpd-estimates" class="nav-link" data-scroll-target="#examine-gpd-estimates">Examine GPD estimates</a></li>
+  <li><a href="#gpd-fitted-vs-true-plots" id="toc-gpd-fitted-vs-true-plots" class="nav-link" data-scroll-target="#gpd-fitted-vs-true-plots">GPD fitted vs true plots</a></li>
+  <li><a href="#gpd-residual-diagnostics" id="toc-gpd-residual-diagnostics" class="nav-link" data-scroll-target="#gpd-residual-diagnostics">GPD residual diagnostics</a></li>
   </ul></li>
   <li><a href="#comparison-with-julia" id="toc-comparison-with-julia" class="nav-link" data-scroll-target="#comparison-with-julia">Comparison with Julia</a></li>
   </ul>
@@ -264,22 +268,69 @@ s(x) 1.02      7  21.24 4.41e-06</code></pre>
 </div>
 </div>
 </section>
+<section id="gev-fitted-vs-true-plots" class="level3">
+<h3 class="anchored" data-anchor-id="gev-fitted-vs-true-plots">GEV fitted vs true plots</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>ord <span class="ot">&lt;-</span> <span class="fu">order</span>(x)</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>x_sorted <span class="ot">&lt;-</span> x[ord]</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>))</span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x, y_gev, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="at">alpha.f =</span> <span class="fl">0.3</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.5</span>,</span>
+<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"Location μ"</span>, <span class="at">main =</span> <span class="st">"GEV Location"</span>)</span>
+<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_sorted, mu_hat[ord], <span class="at">col =</span> <span class="st">"steelblue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb24-9"><a href="#cb24-9" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_sorted, mu_true[ord], <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lty =</span> <span class="dv">2</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb24-10"><a href="#cb24-10" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topright"</span>, <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"Fitted"</span>, <span class="st">"True"</span>, <span class="st">"Data"</span>),</span>
+<span id="cb24-11"><a href="#cb24-11" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>, <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="fl">0.3</span>)),</span>
+<span id="cb24-12"><a href="#cb24-12" aria-hidden="true" tabindex="-1"></a>       <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>, <span class="cn">NA</span>), <span class="at">pch =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="cn">NA</span>, <span class="dv">16</span>), <span class="at">lwd =</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">2</span>, <span class="cn">NA</span>), <span class="at">cex =</span> <span class="fl">0.8</span>)</span>
+<span id="cb24-13"><a href="#cb24-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-14"><a href="#cb24-14" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x_sorted, psi_hat[ord], <span class="at">type =</span> <span class="st">"l"</span>, <span class="at">col =</span> <span class="st">"steelblue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>,</span>
+<span id="cb24-15"><a href="#cb24-15" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"Log-scale ψ"</span>, <span class="at">main =</span> <span class="st">"GEV Log-scale"</span>)</span>
+<span id="cb24-16"><a href="#cb24-16" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_sorted, logsigma_true[ord], <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lty =</span> <span class="dv">2</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb24-17"><a href="#cb24-17" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topleft"</span>, <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"Fitted"</span>, <span class="st">"True"</span>),</span>
+<span id="cb24-18"><a href="#cb24-18" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>), <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">cex =</span> <span class="fl">0.8</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="06_extreme_values_files/figure-html/unnamed-chunk-6-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+<section id="gev-residual-diagnostics" class="level3">
+<h3 class="anchored" data-anchor-id="gev-residual-diagnostics">GEV residual diagnostics</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>))</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>resid_gev <span class="ot">&lt;-</span> y_gev <span class="sc">-</span> mu_hat</span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(mu_hat, resid_gev, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"steelblue"</span>, <span class="at">alpha.f =</span> <span class="fl">0.4</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.5</span>,</span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"Fitted μ"</span>, <span class="at">ylab =</span> <span class="st">"Residual (y − μ̂)"</span>, <span class="at">main =</span> <span class="st">"GEV Residuals vs Fitted"</span>)</span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">h =</span> <span class="dv">0</span>, <span class="at">col =</span> <span class="st">"grey40"</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="06_extreme_values_files/figure-html/unnamed-chunk-7-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
 </section>
 <section id="gpd-model" class="level2">
 <h2 class="anchored" data-anchor-id="gpd-model">GPD model</h2>
 <section id="load-gpd-data" class="level3">
 <h3 class="anchored" data-anchor-id="load-gpd-data">Load GPD data</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>dat_gpd <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../data_gpd.csv"</span>)</span>
-<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>n_gpd <span class="ot">&lt;-</span> <span class="fu">nrow</span>(dat_gpd)</span>
-<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>x_gpd <span class="ot">&lt;-</span> dat_gpd<span class="sc">$</span>x</span>
-<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>y_gpd <span class="ot">&lt;-</span> dat_gpd<span class="sc">$</span>y</span>
-<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a>logsigma_gpd_true <span class="ot">&lt;-</span> <span class="fl">0.5</span> <span class="sc">*</span> <span class="fu">sin</span>(<span class="dv">2</span> <span class="sc">*</span> pi <span class="sc">*</span> x_gpd)</span>
-<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>sigma_gpd_true <span class="ot">&lt;-</span> <span class="fu">exp</span>(logsigma_gpd_true)</span>
-<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a>xi_gpd_true <span class="ot">&lt;-</span> <span class="fl">0.15</span></span>
-<span id="cb24-9"><a href="#cb24-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb24-10"><a href="#cb24-10" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(dat_gpd)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>dat_gpd <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../data_gpd.csv"</span>)</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>n_gpd <span class="ot">&lt;-</span> <span class="fu">nrow</span>(dat_gpd)</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>x_gpd <span class="ot">&lt;-</span> dat_gpd<span class="sc">$</span>x</span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>y_gpd <span class="ot">&lt;-</span> dat_gpd<span class="sc">$</span>y</span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a>logsigma_gpd_true <span class="ot">&lt;-</span> <span class="fl">0.5</span> <span class="sc">*</span> <span class="fu">sin</span>(<span class="dv">2</span> <span class="sc">*</span> pi <span class="sc">*</span> x_gpd)</span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a>sigma_gpd_true <span class="ot">&lt;-</span> <span class="fu">exp</span>(logsigma_gpd_true)</span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a>xi_gpd_true <span class="ot">&lt;-</span> <span class="fl">0.15</span></span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-10"><a href="#cb26-10" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(dat_gpd)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>       y                   x          
  Min.   : 0.004085   Min.   :0.00159  
@@ -294,13 +345,13 @@ s(x) 1.02      7  21.24 4.41e-06</code></pre>
 <section id="fit-the-gpd-model" class="level3">
 <h3 class="anchored" data-anchor-id="fit-the-gpd-model">Fit the GPD model</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>m_gpd <span class="ot">&lt;-</span> <span class="fu">evgam</span>(</span>
-<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">list</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">10</span>, <span class="at">bs =</span> <span class="st">"cr"</span>),   <span class="co"># log-scale ψ(x)</span></span>
-<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>       <span class="sc">~</span> <span class="dv">1</span>),                            <span class="co"># shape ξ (constant)</span></span>
-<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">data =</span> dat_gpd,</span>
-<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">family =</span> <span class="st">"gpd"</span></span>
-<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_gpd)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>m_gpd <span class="ot">&lt;-</span> <span class="fu">evgam</span>(</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">list</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">10</span>, <span class="at">bs =</span> <span class="st">"cr"</span>),   <span class="co"># log-scale ψ(x)</span></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>       <span class="sc">~</span> <span class="dv">1</span>),                            <span class="co"># shape ξ (constant)</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">data =</span> dat_gpd,</span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">family =</span> <span class="st">"gpd"</span></span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_gpd)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>
 ** Parametric terms **
@@ -324,18 +375,67 @@ s(x) 2.6      9  11.56  0.00614</code></pre>
 <section id="examine-gpd-estimates" class="level3">
 <h3 class="anchored" data-anchor-id="examine-gpd-estimates">Examine GPD estimates</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>psi_gpd_hat <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_gpd)<span class="sc">$</span>logscale</span>
-<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Log-scale fitted range:"</span>, <span class="fu">range</span>(psi_gpd_hat), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>psi_gpd_hat <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_gpd)<span class="sc">$</span>logscale</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Log-scale fitted range:"</span>, <span class="fu">range</span>(psi_gpd_hat), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Log-scale fitted range: 0.3562527 0.898087 </code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Log-scale true range:"</span>, <span class="fu">range</span>(logsigma_gpd_true), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Log-scale true range:"</span>, <span class="fu">range</span>(logsigma_gpd_true), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Log-scale true range: -0.4999986 0.4999976 </code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Correlation (log-scale):"</span>, <span class="fu">cor</span>(psi_gpd_hat, logsigma_gpd_true), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Correlation (log-scale):"</span>, <span class="fu">cor</span>(psi_gpd_hat, logsigma_gpd_true), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Correlation (log-scale): -0.2538327 </code></pre>
+</div>
+</div>
+</section>
+<section id="gpd-fitted-vs-true-plots" class="level3">
+<h3 class="anchored" data-anchor-id="gpd-fitted-vs-true-plots">GPD fitted vs true plots</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>ord_gpd <span class="ot">&lt;-</span> <span class="fu">order</span>(x_gpd)</span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>x_gpd_sorted <span class="ot">&lt;-</span> x_gpd[ord_gpd]</span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>))</span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-6"><a href="#cb36-6" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x_gpd_sorted, psi_gpd_hat[ord_gpd], <span class="at">type =</span> <span class="st">"l"</span>, <span class="at">col =</span> <span class="st">"steelblue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>,</span>
+<span id="cb36-7"><a href="#cb36-7" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"Log-scale ψ"</span>, <span class="at">main =</span> <span class="st">"GPD Log-scale"</span>)</span>
+<span id="cb36-8"><a href="#cb36-8" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_gpd_sorted, logsigma_gpd_true[ord_gpd], <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lty =</span> <span class="dv">2</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb36-9"><a href="#cb36-9" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topright"</span>, <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"Fitted"</span>, <span class="st">"True"</span>),</span>
+<span id="cb36-10"><a href="#cb36-10" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>), <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">cex =</span> <span class="fl">0.8</span>)</span>
+<span id="cb36-11"><a href="#cb36-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-12"><a href="#cb36-12" aria-hidden="true" tabindex="-1"></a>sigma_gpd_hat <span class="ot">&lt;-</span> <span class="fu">exp</span>(psi_gpd_hat)</span>
+<span id="cb36-13"><a href="#cb36-13" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x_gpd, y_gpd, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="at">alpha.f =</span> <span class="fl">0.3</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.5</span>,</span>
+<span id="cb36-14"><a href="#cb36-14" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"y"</span>, <span class="at">main =</span> <span class="st">"GPD Data + Fitted Scale"</span>)</span>
+<span id="cb36-15"><a href="#cb36-15" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_gpd_sorted, sigma_gpd_hat[ord_gpd], <span class="at">col =</span> <span class="st">"steelblue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb36-16"><a href="#cb36-16" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_gpd_sorted, sigma_gpd_true[ord_gpd], <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lty =</span> <span class="dv">2</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb36-17"><a href="#cb36-17" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topright"</span>, <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"Fitted σ"</span>, <span class="st">"True σ"</span>, <span class="st">"Data"</span>),</span>
+<span id="cb36-18"><a href="#cb36-18" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>, <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="fl">0.3</span>)),</span>
+<span id="cb36-19"><a href="#cb36-19" aria-hidden="true" tabindex="-1"></a>       <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>, <span class="cn">NA</span>), <span class="at">pch =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="cn">NA</span>, <span class="dv">16</span>), <span class="at">lwd =</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">2</span>, <span class="cn">NA</span>), <span class="at">cex =</span> <span class="fl">0.8</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="06_extreme_values_files/figure-html/unnamed-chunk-11-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+<section id="gpd-residual-diagnostics" class="level3">
+<h3 class="anchored" data-anchor-id="gpd-residual-diagnostics">GPD residual diagnostics</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>))</span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>resid_gpd <span class="ot">&lt;-</span> y_gpd <span class="sc">/</span> sigma_gpd_hat</span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(sigma_gpd_hat, resid_gpd, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"steelblue"</span>, <span class="at">alpha.f =</span> <span class="fl">0.4</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.5</span>,</span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"Fitted σ"</span>, <span class="at">ylab =</span> <span class="st">"Standardized residual (y / σ̂)"</span>,</span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="st">"GPD Residuals vs Fitted Scale"</span>)</span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">h =</span> <span class="dv">1</span>, <span class="at">col =</span> <span class="st">"grey40"</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="06_extreme_values_files/figure-html/unnamed-chunk-12-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
 </div>
 </div>
 </section>

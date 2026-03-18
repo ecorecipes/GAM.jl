@@ -10,8 +10,6 @@ format:
   pdf:
     toc: true
 engine: julia
-julia:
-  project: "../../"
 ---
 
 ## Introduction
@@ -37,12 +35,6 @@ where $g$ is the link function, $f_k$ are smooth functions estimated via penaliz
 ## Setup
 
 ```{julia}
-#| output: false
-import Pkg
-Pkg.activate(joinpath(@__DIR__, "..", ".."))
-```
-
-```{julia}
 using GAM
 using CSV
 using DataFrames
@@ -50,6 +42,7 @@ using Distributions
 using GLM: LogLink, IdentityLink
 using Statistics: mean, std, var, cor
 using StatsAPI: fitted, deviance, nobs, coef, predict
+using Plots
 using Printf
 ```
 
@@ -107,6 +100,30 @@ true_re = [dat.re_true[findfirst(dat.subject .== s)] for s in sort(unique(dat.su
 @printf("Correlation of estimated vs true RE: %.4f\n", cor(est, true_re))
 ```
 
+### Visualizing the Gaussian GAMM
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+
+# Population smooth on a prediction grid (unknown subject → zero RE)
+x_grid = range(minimum(dat.x), maximum(dat.x); length=200)
+pop_pred = predict(m, DataFrame(x=x_grid, subject=fill(999, 200)))
+
+p1 = scatter(dat.x, dat.y; group=dat.subject, markersize=2, alpha=0.5,
+    xlabel="x", ylabel="y", title="Gaussian GAMM: data by subject",
+    legend=:none)
+plot!(p1, x_grid, pop_pred; color=:black, linewidth=3, label="population smooth")
+
+n_groups = length(levels)
+p2 = bar(1:n_groups, [est true_re]; label=["Estimated" "True"], legend=:topright,
+    xlabel="Subject", ylabel="Random intercept",
+    title="Random intercepts: estimated vs true",
+    xticks=(1:n_groups, string.(levels)))
+
+plot(p1, p2; layout=(1, 2), size=(900, 400))
+```
+
 ### Equivalence with `s(subject, bs=:re)`
 
 In GAM.jl, `gamm(@gamm_formula(y ~ s(x) + (1|subject)), ...)` is mathematically equivalent to `gam(@gam_formula(y ~ s(x) + s(subject, bs=:re)), ...)`. Both treat the random intercept as a smooth with identity penalty:
@@ -151,6 +168,31 @@ true_re2 = [dat2.re_true[findfirst(dat2.site .== s)] for s in sort(unique(dat2.s
 
 vc2 = VarCorr(m2)
 @printf("Estimated σ_RE: %.4f (true: 0.4)\n", vc2[1].std)
+```
+
+### Visualizing the Poisson GAMM
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+
+# Population smooth on prediction grid
+x_grid2 = range(minimum(dat2.x), maximum(dat2.x); length=200)
+pop_pred2 = predict(m2, DataFrame(x=x_grid2, site=fill(999, 200)))
+
+site_levels = sort(unique(dat2.site))
+p1 = scatter(dat2.x, dat2.y; group=dat2.site, markersize=2, alpha=0.5,
+    xlabel="x", ylabel="y (count)", title="Poisson GAMM: data by site",
+    legend=:none)
+plot!(p1, x_grid2, pop_pred2; color=:black, linewidth=3, label="population mean")
+
+n_sites = length(site_levels)
+p2 = bar(1:n_sites, [est2 true_re2]; label=["Estimated" "True"], legend=:topright,
+    xlabel="Site", ylabel="Random intercept (log-scale)",
+    title="Site random effects: estimated vs true",
+    xticks=(1:n_sites, string.(site_levels)))
+
+plot(p1, p2; layout=(1, 2), size=(900, 400))
 ```
 
 ## Example 3: Alternative Formula Interfaces

@@ -10,8 +10,6 @@ format:
   pdf:
     toc: true
 engine: julia
-julia:
-  project: "../../"
 ---
 
 ## Introduction
@@ -30,11 +28,6 @@ GAM.jl implements this via a **Turing.jl package extension**: simply pass `prior
 
 ```{julia}
 #| output: false
-import Pkg
-Pkg.activate(joinpath(@__DIR__, "..", ".."))
-```
-
-```{julia}
 using GAM
 using Turing
 using CSV
@@ -42,6 +35,7 @@ using DataFrames
 using Distributions
 using Statistics: mean, std, var, cor, median, quantile
 using StatsAPI: coef, coeftable, confint, fitted, nobs
+using Plots
 using Printf
 using LinearAlgebra: I
 ```
@@ -53,6 +47,7 @@ using LinearAlgebra: I
 Simulated data with $y = \sin(2\pi x) + \varepsilon$, $\varepsilon \sim N(0, 0.3^2)$.
 
 ```{julia}
+#| echo: false
 dat = CSV.read("data_bayes_gaussian.csv", DataFrame)
 @printf("n = %d, y range: [%.2f, %.2f]\n", nrow(dat), minimum(dat.y), maximum(dat.y))
 ```
@@ -63,6 +58,10 @@ dat = CSV.read("data_bayes_gaussian.csv", DataFrame)
 m_freq = gam(@gam_formula(y ~ s(x, k = 10)), dat)
 freq_int = coef(m_freq)[1]
 freq_σ = sqrt(m_freq.scale)
+```
+
+```{julia}
+#| echo: false
 @printf("Frequentist: intercept = %.4f, σ = %.4f, edf = %.1f\n",
     freq_int, freq_σ, m_freq.edf_total)
 ```
@@ -72,10 +71,14 @@ freq_σ = sqrt(m_freq.scale)
 To trigger Bayesian fitting, pass a `PriorSpec` to `gam()`. The same formula syntax is used — the dispatch is automatic:
 
 ```{julia}
+#| output: false
 m_bayes = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 2000, nchains = 2)
+```
 
+```{julia}
+#| echo: false
 show(stdout, MIME("text/plain"), m_bayes)
 ```
 
@@ -88,6 +91,7 @@ show(stdout, MIME("text/plain"), m_bayes)
 - **`b`**: Prior on fixed-effect coefficients. Default: `Normal(0, 10)`.
 
 ```{julia}
+#| echo: false
 ps = PriorSpec(sds = Exponential(1.0))
 show(stdout, MIME("text/plain"), ps)
 ```
@@ -97,6 +101,7 @@ show(stdout, MIME("text/plain"), ps)
 The `coeftable()` method returns posterior mean, SD, and 95% credible intervals:
 
 ```{julia}
+#| echo: false
 ct = coeftable(m_bayes)
 show(stdout, MIME("text/plain"), ct)
 println()
@@ -105,6 +110,7 @@ println()
 Credible intervals at different levels:
 
 ```{julia}
+#| echo: false
 ci_95 = confint(m_bayes; level = 0.95)
 ci_90 = confint(m_bayes; level = 0.90)
 @printf("\nIntercept CIs:\n")
@@ -117,6 +123,7 @@ ci_90 = confint(m_bayes; level = 0.90)
 The full MCMC chains are accessible via `m_bayes.chains`:
 
 ```{julia}
+#| echo: false
 chains = m_bayes.chains
 
 # Residual SD posterior
@@ -132,9 +139,21 @@ chains = m_bayes.chains
 @printf("  Larger σ_s → more flexible smooth; smaller → smoother\n")
 ```
 
+### Posterior density of σ_obs
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+histogram(σ_obs; normalize=:pdf, bins=50, alpha=0.7, color=:steelblue,
+    label="posterior", xlabel="σ_obs", ylabel="density",
+    title="Posterior density of σ_obs (Gaussian model)")
+vline!([freq_σ]; color=:red, linewidth=2, label="frequentist σ")
+```
+
 ### Comparing posteriors: frequentist vs Bayesian
 
 ```{julia}
+#| echo: false
 bayes_int = coef(m_bayes)[1]
 @printf("Intercept: frequentist = %.4f, Bayesian posterior mean = %.4f\n",
     freq_int, bayes_int)
@@ -142,11 +161,24 @@ bayes_int = coef(m_bayes)[1]
     freq_σ, mean(σ_obs))
 ```
 
+### Posterior density of intercept β[1]
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+β1_samples = vec(chains[Symbol("β[1]")].data)
+histogram(β1_samples; normalize=:pdf, bins=50, alpha=0.7, color=:steelblue,
+    label="posterior", xlabel="β[1] (intercept)", ylabel="density",
+    title="Posterior density of intercept (Gaussian model)")
+vline!([freq_int]; color=:red, linewidth=2, label="frequentist")
+```
+
 ### Empirical CDF comparison
 
 We compare the posterior distribution of $\sigma_{obs}$ against the frequentist point estimate using the empirical CDF:
 
 ```{julia}
+#| echo: false
 # ECDF of σ_obs posterior
 σ_sorted = sort(σ_obs)
 n_samples = length(σ_sorted)
@@ -170,6 +202,7 @@ end
 Compare the posterior mean fitted values to the frequentist fitted values:
 
 ```{julia}
+#| echo: false
 # The Bayesian fitted values come from the posterior mean coefficients
 bayes_coefs = coef(m_bayes)
 freq_coefs = coef(m_freq)
@@ -184,6 +217,7 @@ freq_coefs = coef(m_freq)
 Count data with $\log(\lambda) = 1 + 1.5\sin(2\pi x)$.
 
 ```{julia}
+#| echo: false
 dat2 = CSV.read("data_bayes_poisson.csv", DataFrame)
 @printf("n = %d, y range: [%.0f, %.0f]\n", nrow(dat2), minimum(dat2.y), maximum(dat2.y))
 ```
@@ -191,6 +225,7 @@ dat2 = CSV.read("data_bayes_poisson.csv", DataFrame)
 ### Frequentist vs Bayesian
 
 ```{julia}
+#| output: false
 m_freq2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink())
 
@@ -203,6 +238,7 @@ m_bayes2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
 ### Posterior summary
 
 ```{julia}
+#| echo: false
 ct2 = coeftable(m_bayes2)
 show(stdout, MIME("text/plain"), ct2)
 println()
@@ -222,6 +258,7 @@ chains2 = m_bayes2.chains
 ### ECDF comparison for intercept
 
 ```{julia}
+#| echo: false
 β1_post = vec(chains2[Symbol("β[1]")].data)
 β1_sorted = sort(β1_post)
 n_s = length(β1_sorted)
@@ -238,6 +275,7 @@ freq_rank2 = searchsortedfirst(β1_sorted, freq_int2) / n_s
 We load posterior samples from R's brms (Stan MCMC) and mgcv (Gaussian approximation) to compare with GAM.jl's Turing posteriors. The key metric is the **pairwise ECDF correlation**: evaluate both ECDFs on a common grid and compute Pearson's $r$. A value of 1.0 means the distributions are identical.
 
 ```{julia}
+#| echo: false
 # Load R posterior samples
 brms_gauss = CSV.read("posteriors_gaussian_brms.csv", DataFrame)
 brms_poisson = CSV.read("posteriors_poisson_brms.csv", DataFrame)
@@ -264,6 +302,7 @@ end
 ### Gaussian model
 
 ```{julia}
+#| echo: false
 # Three-way comparison table
 @printf("Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)\n")
 @printf("------------------|-------------------|-------------------|--------------\n")
@@ -280,6 +319,7 @@ end
 ```
 
 ```{julia}
+#| echo: false
 # Pairwise ECDF correlation + KS statistic
 julia_sigma = σ_obs
 julia_int = vec(chains[Symbol("β[1]")].data)
@@ -299,9 +339,36 @@ mgcv_int = mgcv_gauss.beta_intercept
     ecdf_cor(brms_sigma, mgcv_sigma), ecdf_cor(brms_int, mgcv_int))
 ```
 
+### ECDF comparison plots (Gaussian)
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+p1 = plot(sort(julia_sigma), (1:length(julia_sigma)) ./ length(julia_sigma);
+    label="GAM.jl", color=:steelblue, linewidth=2,
+    xlabel="σ_obs", ylabel="ECDF", title="σ_obs posterior ECDF")
+plot!(p1, sort(brms_sigma), (1:length(brms_sigma)) ./ length(brms_sigma);
+    label="brms", color=:darkorange, linewidth=2)
+plot!(p1, sort(mgcv_sigma), (1:length(mgcv_sigma)) ./ length(mgcv_sigma);
+    label="mgcv", color=:green4, linewidth=2, linestyle=:dash)
+vline!(p1, [freq_σ]; color=:red, linewidth=1, linestyle=:dot, label="frequentist")
+
+p2 = plot(sort(julia_int), (1:length(julia_int)) ./ length(julia_int);
+    label="GAM.jl", color=:steelblue, linewidth=2,
+    xlabel="β[1] (intercept)", ylabel="ECDF", title="Intercept posterior ECDF")
+plot!(p2, sort(brms_int), (1:length(brms_int)) ./ length(brms_int);
+    label="brms", color=:darkorange, linewidth=2)
+plot!(p2, sort(mgcv_int), (1:length(mgcv_int)) ./ length(mgcv_int);
+    label="mgcv", color=:green4, linewidth=2, linestyle=:dash)
+vline!(p2, [freq_int]; color=:red, linewidth=1, linestyle=:dot, label="frequentist")
+
+plot(p1, p2; layout=(1, 2), size=(900, 400), legend=:bottomright)
+```
+
 ### Poisson model
 
 ```{julia}
+#| echo: false
 julia_int2 = vec(chains2[Symbol("β[1]")].data)
 brms_int2 = brms_poisson.beta_intercept
 mgcv_int2 = mgcv_poisson.beta_intercept
@@ -317,6 +384,7 @@ mgcv_int2 = mgcv_poisson.beta_intercept
 The prior on `sds` directly controls the amount of smoothing. A tighter prior yields smoother fits:
 
 ```{julia}
+#| output: false
 # Tight prior: Exponential(0.1) → small σ_s → smoother
 m_tight = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(0.1)),
@@ -326,7 +394,10 @@ m_tight = gam(@gam_formula(y ~ s(x, k = 10)), dat;
 m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(5.0)),
     nsamples = 1000, nchains = 1)
+```
 
+```{julia}
+#| echo: false
 σ_tight = mean(vec(m_tight.chains[Symbol("σ_s[1]")].data))
 σ_wide = mean(vec(m_wide.chains[Symbol("σ_s[1]")].data))
 @printf("Tight prior (Exp(0.1)): posterior mean σ_s = %.4f\n", σ_tight)
@@ -334,45 +405,98 @@ m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
 @printf("Ratio: %.1fx\n", σ_wide / σ_tight)
 ```
 
-## Example 4: Building custom Turing models
+### Prior sensitivity: σ_s posterior
 
-For full control, use `gam_matrices()` and `gam_smooth()` to extract the basis matrices, then write your own `@model`:
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+σ_s_tight = vec(m_tight.chains[Symbol("σ_s[1]")].data)
+σ_s_default = σ_s  # from default Exp(1.0) model
+σ_s_wide = vec(m_wide.chains[Symbol("σ_s[1]")].data)
+
+histogram(σ_s_tight; normalize=:pdf, bins=30, alpha=0.5, color=:steelblue,
+    label="tight: Exp(0.1)", xlabel="σ_s", ylabel="density",
+    title="Prior sensitivity: σ_s posterior")
+histogram!(σ_s_default; normalize=:pdf, bins=30, alpha=0.5, color=:darkorange,
+    label="default: Exp(1.0)")
+histogram!(σ_s_wide; normalize=:pdf, bins=30, alpha=0.5, color=:green4,
+    label="wide: Exp(5.0)")
+```
+
+## Example 4: Composable smooth terms with `smooth_prior`
+
+For custom Bayesian models, use `smooth_prior()` as a composable building block
+inside your own `@model`. Each call creates a sub-model that samples the smooth's
+parameters internally and returns the evaluated smooth function:
+
+```{julia}
+# Create smooth components (mixed-model reparameterization)
+sm = GAM.gam_smooth(:x, dat; k = 10, bs = :cr)
+```
+
+```{julia}
+#| echo: false
+println("Smooth component:")
+println("  Xf (null space): ", size(sm.Xf))
+println("  Zs (penalized):  ", [size(Z) for Z in sm.Zs])
+```
+
+```{julia}
+# Compose into a custom @model using to_submodel + prefix
+@model function my_gam(y_obs, sm)
+    β0 ~ Normal(0, 10)
+    σ ~ truncated(Normal(0, 2.5); lower = 0.0)
+
+    # smooth_prior samples β_f, σ_s, z internally; returns f(x)
+    f ~ to_submodel(prefix(GAM.smooth_prior(sm), :s_x))
+
+    y_obs ~ MvNormal(β0 .+ f, σ^2 * I)
+end
+
+custom_chains = sample(my_gam(dat.y, sm), NUTS(), 1000; progress = false)
+```
+
+```{julia}
+#| echo: false
+σ_custom = mean(vec(custom_chains[:σ].data))
+σ_s_custom = mean(vec(custom_chains[Symbol("f.s_x.σ_s")].data))
+@printf("Custom model σ posterior mean: %.4f (compare to %.4f from gam())\n",
+    σ_custom, mean(vec(m_bayes.chains[Symbol("σ_obs")].data)))
+@printf("Custom model σ_s: %.4f\n", σ_s_custom)
+```
+
+This is much cleaner than manually extracting matrices. For multiple smooths, give each a unique prefix:
+
+```{julia}
+#| eval: false
+sm1 = GAM.gam_smooth(:x1, data; k = 10)
+sm2 = GAM.gam_smooth(:x2, data; k = 8, bs = :cr)
+
+@model function multi_gam(y, sm1, sm2)
+    β0 ~ Normal(0, 10)
+    σ ~ Exponential(1.0)
+    f1 ~ to_submodel(prefix(GAM.smooth_prior(sm1), :s_x1))
+    f2 ~ to_submodel(prefix(GAM.smooth_prior(sm2), :s_x2))
+    y ~ MvNormal(β0 .+ f1 .+ f2, σ^2 * I)
+end
+```
+
+## Example 5: Low-level matrix extraction
+
+For maximum control, extract the raw matrices with `gam_matrices()`:
 
 ```{julia}
 # Extract matrices from a formula
 gf = @gam_formula(y ~ s(x, k = 10))
-X, sms, labels = gam_matrices(gf, dat)
+X, sms, labels = GAM.gam_matrices(gf, dat)
+```
+
+```{julia}
+#| echo: false
 println("Fixed matrix X: ", size(X), " (intercept)")
 println("Smooth '$(labels[1])':")
 println("  Xf (null space): ", size(sms[1].Xf))
 println("  Zs (penalized):  ", [size(Z) for Z in sms[1].Zs])
-
-# Build custom model
-Xf = sms[1].Xf
-Zs = sms[1].Zs[1]
-X_fixed = hcat(X, Xf)
-
-@model function my_gam(y_obs, X_f, Z)
-    n_f = size(X_f, 2)
-    n_z = size(Z, 2)
-
-    # Priors
-    β ~ MvNormal(zeros(n_f), 10.0 * I)
-    σ ~ truncated(Normal(0, 2.5); lower = 0.0)
-    σ_s ~ Exponential(1.0)
-
-    # Random effects (non-centered parameterization)
-    z ~ MvNormal(zeros(n_z), I)
-    η = X_f * β .+ σ_s .* (Z * z)
-
-    # Likelihood
-    y_obs ~ MvNormal(η, σ^2 * I)
-end
-
-custom_chains = sample(my_gam(dat.y, X_fixed, Zs), NUTS(), 1000; progress = false)
-σ_custom = mean(vec(custom_chains[:σ].data))
-@printf("Custom model σ posterior mean: %.4f (compare to %.4f from gam())\n",
-    σ_custom, mean(vec(m_bayes.chains[Symbol("σ_obs")].data)))
 ```
 
 ## Summary
@@ -383,10 +507,11 @@ custom_chains = sample(my_gam(dat.y, X_fixed, Zs), NUTS(), 1000; progress = fals
 | Custom priors | `PriorSpec(sds = Exponential(1.0), sigma = InverseGamma(2, 3))` |
 | Per-smooth priors | `PriorSpec(specific = Dict("sds_s(x2)" => Exponential(0.5)))` |
 | Poisson | `gam(formula, data; family = Poisson(), priors = PriorSpec())` |
+| Composable smooth | `f ~ to_submodel(prefix(smooth_prior(sm), :name))` |
+| Low-level matrices | `gam_matrices()` + `@model` + `sample()` |
 | Coefficient table | `coeftable(m)` — posterior mean, SD, 95% CI |
 | Credible intervals | `confint(m; level = 0.95)` |
 | Full posterior | `m.chains[Symbol("σ_obs")]` |
-| Custom model | `gam_matrices()` + `@model` + `sample()` |
 
 ### Key design choices
 
@@ -394,6 +519,8 @@ custom_chains = sample(my_gam(dat.y, X_fixed, Zs), NUTS(), 1000; progress = fals
 
 2. **smooth2random decomposition**: Smooth terms are split into a fixed null-space (unpenalized, estimated via `β`) and random-effects blocks (penalized, estimated via `σ_s × z`).
 
-3. **Non-centered parameterization**: Random effects use $\mathbf{b} = \sigma_s \cdot \mathbf{z}$ where $\mathbf{z} \sim N(0, I)$, which improves NUTS sampling geometry.
+3. **Composable `smooth_prior`**: Each smooth is a self-contained Turing `@model` that samples its own parameters. Compose multiple smooths via `to_submodel` with `prefix` to avoid name collisions.
 
-4. **Package extension**: Turing.jl is only loaded when needed (`using Turing`), keeping the base GAM.jl lightweight.
+4. **Non-centered parameterization**: Random effects use $\mathbf{b} = \sigma_s \cdot \mathbf{z}$ where $\mathbf{z} \sim N(0, I)$, which improves NUTS sampling geometry.
+
+5. **Package extension**: Turing.jl is only loaded when needed (`using Turing`), keeping the base GAM.jl lightweight.

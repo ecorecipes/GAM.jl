@@ -122,18 +122,21 @@ window.Quarto = {
   <li><a href="#fit-unconstrained-gam-vs-scam" id="toc-fit-unconstrained-gam-vs-scam" class="nav-link" data-scroll-target="#fit-unconstrained-gam-vs-scam">Fit unconstrained GAM vs SCAM</a></li>
   <li><a href="#compare-fitted-values" id="toc-compare-fitted-values" class="nav-link" data-scroll-target="#compare-fitted-values">Compare fitted values</a></li>
   <li><a href="#verify-monotonicity" id="toc-verify-monotonicity" class="nav-link" data-scroll-target="#verify-monotonicity">Verify monotonicity</a></li>
+  <li><a href="#plot-gam-vs-scam-vs-truth" id="toc-plot-gam-vs-scam-vs-truth" class="nav-link" data-scroll-target="#plot-gam-vs-scam-vs-truth">Plot: GAM vs SCAM vs truth</a></li>
   </ul></li>
   <li><a href="#example-2-convex-function" id="toc-example-2-convex-function" class="nav-link" data-scroll-target="#example-2-convex-function">Example 2: Convex function</a>
   <ul class="collapse">
   <li><a href="#simulate-data" id="toc-simulate-data" class="nav-link" data-scroll-target="#simulate-data">Simulate data</a></li>
   <li><a href="#fit-with-convexity-constraint" id="toc-fit-with-convexity-constraint" class="nav-link" data-scroll-target="#fit-with-convexity-constraint">Fit with convexity constraint</a></li>
   <li><a href="#verify-convexity" id="toc-verify-convexity" class="nav-link" data-scroll-target="#verify-convexity">Verify convexity</a></li>
+  <li><a href="#plot-convex-fit-and-second-derivative" id="toc-plot-convex-fit-and-second-derivative" class="nav-link" data-scroll-target="#plot-convex-fit-and-second-derivative">Plot: Convex fit and second derivative</a></li>
   </ul></li>
   <li><a href="#example-3-monotone-increasing-and-concave" id="toc-example-3-monotone-increasing-and-concave" class="nav-link" data-scroll-target="#example-3-monotone-increasing-and-concave">Example 3: Monotone increasing and concave</a>
   <ul class="collapse">
   <li><a href="#simulate-data-1" id="toc-simulate-data-1" class="nav-link" data-scroll-target="#simulate-data-1">Simulate data</a></li>
   <li><a href="#fit-with-monotone-increasing-concave-constraint" id="toc-fit-with-monotone-increasing-concave-constraint" class="nav-link" data-scroll-target="#fit-with-monotone-increasing-concave-constraint">Fit with monotone increasing + concave constraint</a></li>
   <li><a href="#verify-constraints" id="toc-verify-constraints" class="nav-link" data-scroll-target="#verify-constraints">Verify constraints</a></li>
+  <li><a href="#plot-monotone-increasing-concave-fit" id="toc-plot-monotone-increasing-concave-fit" class="nav-link" data-scroll-target="#plot-monotone-increasing-concave-fit">Plot: Monotone increasing &amp; concave fit</a></li>
   </ul></li>
   <li><a href="#scam-model-summaries" id="toc-scam-model-summaries" class="nav-link" data-scroll-target="#scam-model-summaries">SCAM model summaries</a></li>
   <li><a href="#comparison-table" id="toc-comparison-table" class="nav-link" data-scroll-target="#comparison-table">Comparison table</a></li>
@@ -250,6 +253,40 @@ window.Quarto = {
 </div>
 </div>
 </section>
+<section id="plot-gam-vs-scam-vs-truth" class="level3">
+<h3 class="anchored" data-anchor-id="plot-gam-vs-scam-vs-truth">Plot: GAM vs SCAM vs truth</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>x_grid <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fu">min</span>(x), <span class="fu">max</span>(x), <span class="at">length.out =</span> <span class="dv">200</span>)</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>nd <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">x =</span> x_grid)</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>pred_scam <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_scam, <span class="at">newdata =</span> nd, <span class="at">se.fit =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>pred_gam <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_gam, <span class="at">newdata =</span> nd, <span class="at">se.fit =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>f_true_grid <span class="ot">&lt;-</span> <span class="dv">3</span> <span class="sc">*</span> (<span class="dv">1</span> <span class="sc">-</span> <span class="fu">exp</span>(<span class="sc">-</span><span class="dv">5</span> <span class="sc">*</span> x_grid))</span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x, y, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="fl">0.4</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.6</span>,</span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"f(x)"</span>,</span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="st">"Monotone Increasing: SCAM vs GAM vs Truth"</span>)</span>
+<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a><span class="fu">polygon</span>(<span class="fu">c</span>(x_grid, <span class="fu">rev</span>(x_grid)),</span>
+<span id="cb20-11"><a href="#cb20-11" aria-hidden="true" tabindex="-1"></a>        <span class="fu">c</span>(pred_scam<span class="sc">$</span>fit <span class="sc">+</span> <span class="dv">2</span> <span class="sc">*</span> pred_scam<span class="sc">$</span>se.fit,</span>
+<span id="cb20-12"><a href="#cb20-12" aria-hidden="true" tabindex="-1"></a>          <span class="fu">rev</span>(pred_scam<span class="sc">$</span>fit <span class="sc">-</span> <span class="dv">2</span> <span class="sc">*</span> pred_scam<span class="sc">$</span>se.fit)),</span>
+<span id="cb20-13"><a href="#cb20-13" aria-hidden="true" tabindex="-1"></a>        <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"steelblue"</span>, <span class="fl">0.2</span>), <span class="at">border =</span> <span class="cn">NA</span>)</span>
+<span id="cb20-14"><a href="#cb20-14" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_grid, pred_scam<span class="sc">$</span>fit, <span class="at">col =</span> <span class="st">"steelblue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb20-15"><a href="#cb20-15" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_grid, pred_gam<span class="sc">$</span>fit, <span class="at">col =</span> <span class="st">"orange"</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">lty =</span> <span class="dv">3</span>)</span>
+<span id="cb20-16"><a href="#cb20-16" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_grid, f_true_grid, <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span>
+<span id="cb20-17"><a href="#cb20-17" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"bottomright"</span>,</span>
+<span id="cb20-18"><a href="#cb20-18" aria-hidden="true" tabindex="-1"></a>       <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"SCAM (mpi) ± 2SE"</span>, <span class="st">"GAM (unconstrained)"</span>, <span class="st">"True f(x)"</span>, <span class="st">"Data"</span>),</span>
+<span id="cb20-19"><a href="#cb20-19" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"orange"</span>, <span class="st">"red"</span>, <span class="st">"grey40"</span>),</span>
+<span id="cb20-20"><a href="#cb20-20" aria-hidden="true" tabindex="-1"></a>       <span class="at">lwd =</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">2</span>, <span class="dv">2</span>, <span class="cn">NA</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">3</span>, <span class="dv">2</span>, <span class="cn">NA</span>),</span>
+<span id="cb20-21"><a href="#cb20-21" aria-hidden="true" tabindex="-1"></a>       <span class="at">pch =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="cn">NA</span>, <span class="cn">NA</span>, <span class="dv">16</span>), <span class="at">pt.cex =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="cn">NA</span>, <span class="cn">NA</span>, <span class="fl">0.6</span>),</span>
+<span id="cb20-22"><a href="#cb20-22" aria-hidden="true" tabindex="-1"></a>       <span class="at">bg =</span> <span class="st">"white"</span>, <span class="at">cex =</span> <span class="fl">0.8</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="07_shape_constraints_files/figure-html/unnamed-chunk-6-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
 </section>
 <section id="example-2-convex-function" class="level2">
 <h2 class="anchored" data-anchor-id="example-2-convex-function">Example 2: Convex function</h2>
@@ -257,22 +294,22 @@ window.Quarto = {
 <h3 class="anchored" data-anchor-id="simulate-data">Simulate data</h3>
 <p>True function: <span class="math inline">\(f(x) = 2x^2\)</span></p>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>dat_cx <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../data_cx.csv"</span>)</span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>x_cx <span class="ot">&lt;-</span> dat_cx<span class="sc">$</span>x</span>
-<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>y_cx <span class="ot">&lt;-</span> dat_cx<span class="sc">$</span>y</span>
-<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>dat2 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">y =</span> y_cx, <span class="at">x =</span> x_cx)</span>
-<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>f_true2 <span class="ot">&lt;-</span> <span class="dv">2</span> <span class="sc">*</span> x_cx<span class="sc">^</span><span class="dv">2</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>dat_cx <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../data_cx.csv"</span>)</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>x_cx <span class="ot">&lt;-</span> dat_cx<span class="sc">$</span>x</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>y_cx <span class="ot">&lt;-</span> dat_cx<span class="sc">$</span>y</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>dat2 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">y =</span> y_cx, <span class="at">x =</span> x_cx)</span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>f_true2 <span class="ot">&lt;-</span> <span class="dv">2</span> <span class="sc">*</span> x_cx<span class="sc">^</span><span class="dv">2</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 </section>
 <section id="fit-with-convexity-constraint" class="level3">
 <h3 class="anchored" data-anchor-id="fit-with-convexity-constraint">Fit with convexity constraint</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>m_cx <span class="ot">&lt;-</span> <span class="fu">scam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">15</span>, <span class="at">bs =</span> <span class="st">"cx"</span>), <span class="at">data =</span> dat2)</span>
-<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>yhat_cx <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_cx)</span>
-<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>rmse_cx <span class="ot">&lt;-</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_cx <span class="sc">-</span> f_true2)<span class="sc">^</span><span class="dv">2</span>))</span>
-<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"RMSE (convex SCAM):"</span>, <span class="fu">round</span>(rmse_cx, <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>m_cx <span class="ot">&lt;-</span> <span class="fu">scam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">15</span>, <span class="at">bs =</span> <span class="st">"cx"</span>), <span class="at">data =</span> dat2)</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>yhat_cx <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_cx)</span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a>rmse_cx <span class="ot">&lt;-</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_cx <span class="sc">-</span> f_true2)<span class="sc">^</span><span class="dv">2</span>))</span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"RMSE (convex SCAM):"</span>, <span class="fu">round</span>(rmse_cx, <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>RMSE (convex SCAM): 6.7673 </code></pre>
 </div>
@@ -281,16 +318,64 @@ window.Quarto = {
 <section id="verify-convexity" class="level3">
 <h3 class="anchored" data-anchor-id="verify-convexity">Verify convexity</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>first_diffs <span class="ot">&lt;-</span> <span class="fu">diff</span>(yhat_cx)</span>
-<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>second_diffs <span class="ot">&lt;-</span> <span class="fu">diff</span>(first_diffs)</span>
-<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Min second difference:"</span>, <span class="fu">round</span>(<span class="fu">min</span>(second_diffs), <span class="dv">6</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>first_diffs <span class="ot">&lt;-</span> <span class="fu">diff</span>(yhat_cx)</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>second_diffs <span class="ot">&lt;-</span> <span class="fu">diff</span>(first_diffs)</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Min second difference:"</span>, <span class="fu">round</span>(<span class="fu">min</span>(second_diffs), <span class="dv">6</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Min second difference: -0.061069 </code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"All convex:"</span>, <span class="fu">all</span>(second_diffs <span class="sc">&gt;=</span> <span class="sc">-</span><span class="fl">1e-10</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"All convex:"</span>, <span class="fu">all</span>(second_diffs <span class="sc">&gt;=</span> <span class="sc">-</span><span class="fl">1e-10</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>All convex: FALSE </code></pre>
 </div>
+</div>
+</section>
+<section id="plot-convex-fit-and-second-derivative" class="level3">
+<h3 class="anchored" data-anchor-id="plot-convex-fit-and-second-derivative">Plot: Convex fit and second derivative</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>x_grid_cx <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fu">min</span>(x_cx), <span class="fu">max</span>(x_cx), <span class="at">length.out =</span> <span class="dv">200</span>)</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>nd_cx <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">x =</span> x_grid_cx)</span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>pred_cx <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_cx, <span class="at">newdata =</span> nd_cx, <span class="at">se.fit =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>f_true2_grid <span class="ot">&lt;-</span> <span class="dv">2</span> <span class="sc">*</span> x_grid_cx<span class="sc">^</span><span class="dv">2</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>))</span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Left: fit vs truth</span></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x_cx, y_cx, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="fl">0.4</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.6</span>,</span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"f(x)"</span>, <span class="at">main =</span> <span class="st">"Convex Constraint: Fit vs Truth"</span>)</span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a><span class="fu">polygon</span>(<span class="fu">c</span>(x_grid_cx, <span class="fu">rev</span>(x_grid_cx)),</span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>        <span class="fu">c</span>(pred_cx<span class="sc">$</span>fit <span class="sc">+</span> <span class="dv">2</span> <span class="sc">*</span> pred_cx<span class="sc">$</span>se.fit,</span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a>          <span class="fu">rev</span>(pred_cx<span class="sc">$</span>fit <span class="sc">-</span> <span class="dv">2</span> <span class="sc">*</span> pred_cx<span class="sc">$</span>se.fit)),</span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a>        <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"steelblue"</span>, <span class="fl">0.2</span>), <span class="at">border =</span> <span class="cn">NA</span>)</span>
+<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_grid_cx, pred_cx<span class="sc">$</span>fit, <span class="at">col =</span> <span class="st">"steelblue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb28-16"><a href="#cb28-16" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_grid_cx, f_true2_grid, <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span>
+<span id="cb28-17"><a href="#cb28-17" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topleft"</span>,</span>
+<span id="cb28-18"><a href="#cb28-18" aria-hidden="true" tabindex="-1"></a>       <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"SCAM (cx) ± 2SE"</span>, <span class="st">"True f(x) = 2x²"</span>, <span class="st">"Data"</span>),</span>
+<span id="cb28-19"><a href="#cb28-19" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>, <span class="st">"grey40"</span>),</span>
+<span id="cb28-20"><a href="#cb28-20" aria-hidden="true" tabindex="-1"></a>       <span class="at">lwd =</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">2</span>, <span class="cn">NA</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>, <span class="cn">NA</span>),</span>
+<span id="cb28-21"><a href="#cb28-21" aria-hidden="true" tabindex="-1"></a>       <span class="at">pch =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="cn">NA</span>, <span class="dv">16</span>), <span class="at">pt.cex =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="cn">NA</span>, <span class="fl">0.6</span>),</span>
+<span id="cb28-22"><a href="#cb28-22" aria-hidden="true" tabindex="-1"></a>       <span class="at">bg =</span> <span class="st">"white"</span>, <span class="at">cex =</span> <span class="fl">0.8</span>)</span>
+<span id="cb28-23"><a href="#cb28-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-24"><a href="#cb28-24" aria-hidden="true" tabindex="-1"></a><span class="co"># Right: numerical second derivative</span></span>
+<span id="cb28-25"><a href="#cb28-25" aria-hidden="true" tabindex="-1"></a>dx <span class="ot">&lt;-</span> <span class="fu">diff</span>(x_grid_cx)</span>
+<span id="cb28-26"><a href="#cb28-26" aria-hidden="true" tabindex="-1"></a>first_deriv <span class="ot">&lt;-</span> <span class="fu">diff</span>(pred_cx<span class="sc">$</span>fit) <span class="sc">/</span> dx</span>
+<span id="cb28-27"><a href="#cb28-27" aria-hidden="true" tabindex="-1"></a>x_mid <span class="ot">&lt;-</span> (x_grid_cx[<span class="sc">-</span><span class="dv">1</span>] <span class="sc">+</span> x_grid_cx[<span class="sc">-</span><span class="fu">length</span>(x_grid_cx)]) <span class="sc">/</span> <span class="dv">2</span></span>
+<span id="cb28-28"><a href="#cb28-28" aria-hidden="true" tabindex="-1"></a>dx2 <span class="ot">&lt;-</span> <span class="fu">diff</span>(x_mid)</span>
+<span id="cb28-29"><a href="#cb28-29" aria-hidden="true" tabindex="-1"></a>second_deriv <span class="ot">&lt;-</span> <span class="fu">diff</span>(first_deriv) <span class="sc">/</span> dx2</span>
+<span id="cb28-30"><a href="#cb28-30" aria-hidden="true" tabindex="-1"></a>x_mid2 <span class="ot">&lt;-</span> (x_mid[<span class="sc">-</span><span class="dv">1</span>] <span class="sc">+</span> x_mid[<span class="sc">-</span><span class="fu">length</span>(x_mid)]) <span class="sc">/</span> <span class="dv">2</span></span>
+<span id="cb28-31"><a href="#cb28-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-32"><a href="#cb28-32" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x_mid2, second_deriv, <span class="at">type =</span> <span class="st">"l"</span>, <span class="at">col =</span> <span class="st">"steelblue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>,</span>
+<span id="cb28-33"><a href="#cb28-33" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"f''(x)"</span>,</span>
+<span id="cb28-34"><a href="#cb28-34" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="st">"Numerical 2nd Derivative (should be ≥ 0)"</span>)</span>
+<span id="cb28-35"><a href="#cb28-35" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">h =</span> <span class="dv">0</span>, <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">1</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="07_shape_constraints_files/figure-html/unnamed-chunk-10-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 </section>
 </section>
@@ -300,22 +385,22 @@ window.Quarto = {
 <h3 class="anchored" data-anchor-id="simulate-data-1">Simulate data</h3>
 <p>True function: <span class="math inline">\(f(x) = 3\sqrt{x}\)</span></p>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>dat_micv <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../data_micv.csv"</span>)</span>
-<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>x_micv <span class="ot">&lt;-</span> dat_micv<span class="sc">$</span>x</span>
-<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>y_micv <span class="ot">&lt;-</span> dat_micv<span class="sc">$</span>y</span>
-<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a>dat3 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">y =</span> y_micv, <span class="at">x =</span> x_micv)</span>
-<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>f_true3 <span class="ot">&lt;-</span> <span class="dv">3</span> <span class="sc">*</span> <span class="fu">sqrt</span>(x_micv)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>dat_micv <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../data_micv.csv"</span>)</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>x_micv <span class="ot">&lt;-</span> dat_micv<span class="sc">$</span>x</span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>y_micv <span class="ot">&lt;-</span> dat_micv<span class="sc">$</span>y</span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>dat3 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">y =</span> y_micv, <span class="at">x =</span> x_micv)</span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a>f_true3 <span class="ot">&lt;-</span> <span class="dv">3</span> <span class="sc">*</span> <span class="fu">sqrt</span>(x_micv)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 </section>
 <section id="fit-with-monotone-increasing-concave-constraint" class="level3">
 <h3 class="anchored" data-anchor-id="fit-with-monotone-increasing-concave-constraint">Fit with monotone increasing + concave constraint</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>m_micv <span class="ot">&lt;-</span> <span class="fu">scam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">15</span>, <span class="at">bs =</span> <span class="st">"micv"</span>), <span class="at">data =</span> dat3)</span>
-<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>yhat_micv <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_micv)</span>
-<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>rmse_micv <span class="ot">&lt;-</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_micv <span class="sc">-</span> f_true3)<span class="sc">^</span><span class="dv">2</span>))</span>
-<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"RMSE (monotone increasing + concave):"</span>, <span class="fu">round</span>(rmse_micv, <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>m_micv <span class="ot">&lt;-</span> <span class="fu">scam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">15</span>, <span class="at">bs =</span> <span class="st">"micv"</span>), <span class="at">data =</span> dat3)</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>yhat_micv <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_micv)</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>rmse_micv <span class="ot">&lt;-</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_micv <span class="sc">-</span> f_true3)<span class="sc">^</span><span class="dv">2</span>))</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"RMSE (monotone increasing + concave):"</span>, <span class="fu">round</span>(rmse_micv, <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>RMSE (monotone increasing + concave): 1.5225 </code></pre>
 </div>
@@ -324,23 +409,55 @@ window.Quarto = {
 <section id="verify-constraints" class="level3">
 <h3 class="anchored" data-anchor-id="verify-constraints">Verify constraints</h3>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>first_diffs_micv <span class="ot">&lt;-</span> <span class="fu">diff</span>(yhat_micv)</span>
-<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>second_diffs_micv <span class="ot">&lt;-</span> <span class="fu">diff</span>(first_diffs_micv)</span>
-<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Min first difference (monotonicity):"</span>, <span class="fu">round</span>(<span class="fu">min</span>(first_diffs_micv), <span class="dv">6</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>first_diffs_micv <span class="ot">&lt;-</span> <span class="fu">diff</span>(yhat_micv)</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>second_diffs_micv <span class="ot">&lt;-</span> <span class="fu">diff</span>(first_diffs_micv)</span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Min first difference (monotonicity):"</span>, <span class="fu">round</span>(<span class="fu">min</span>(first_diffs_micv), <span class="dv">6</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Min first difference (monotonicity): 0 </code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Max second difference (concavity):"</span>, <span class="fu">round</span>(<span class="fu">max</span>(second_diffs_micv), <span class="dv">6</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Max second difference (concavity):"</span>, <span class="fu">round</span>(<span class="fu">max</span>(second_diffs_micv), <span class="dv">6</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Max second difference (concavity): 0.032084 </code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Monotone increasing:"</span>, <span class="fu">all</span>(first_diffs_micv <span class="sc">&gt;=</span> <span class="sc">-</span><span class="fl">1e-10</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Monotone increasing:"</span>, <span class="fu">all</span>(first_diffs_micv <span class="sc">&gt;=</span> <span class="sc">-</span><span class="fl">1e-10</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Monotone increasing: TRUE </code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Concave:"</span>, <span class="fu">all</span>(second_diffs_micv <span class="sc">&lt;=</span> <span class="fl">1e-10</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Concave:"</span>, <span class="fu">all</span>(second_diffs_micv <span class="sc">&lt;=</span> <span class="fl">1e-10</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Concave: FALSE </code></pre>
+</div>
+</div>
+</section>
+<section id="plot-monotone-increasing-concave-fit" class="level3">
+<h3 class="anchored" data-anchor-id="plot-monotone-increasing-concave-fit">Plot: Monotone increasing &amp; concave fit</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a>x_grid_micv <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fu">min</span>(x_micv), <span class="fu">max</span>(x_micv), <span class="at">length.out =</span> <span class="dv">200</span>)</span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>nd_micv <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">x =</span> x_grid_micv)</span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>pred_micv <span class="ot">&lt;-</span> <span class="fu">predict</span>(m_micv, <span class="at">newdata =</span> nd_micv, <span class="at">se.fit =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a>f_true3_grid <span class="ot">&lt;-</span> <span class="dv">3</span> <span class="sc">*</span> <span class="fu">sqrt</span>(x_grid_micv)</span>
+<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-6"><a href="#cb41-6" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x_micv, y_micv, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"grey40"</span>, <span class="fl">0.4</span>), <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.6</span>,</span>
+<span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"x"</span>, <span class="at">ylab =</span> <span class="st">"f(x)"</span>,</span>
+<span id="cb41-8"><a href="#cb41-8" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="st">"Monotone Increasing &amp; Concave: Fit vs Truth"</span>)</span>
+<span id="cb41-9"><a href="#cb41-9" aria-hidden="true" tabindex="-1"></a><span class="fu">polygon</span>(<span class="fu">c</span>(x_grid_micv, <span class="fu">rev</span>(x_grid_micv)),</span>
+<span id="cb41-10"><a href="#cb41-10" aria-hidden="true" tabindex="-1"></a>        <span class="fu">c</span>(pred_micv<span class="sc">$</span>fit <span class="sc">+</span> <span class="dv">2</span> <span class="sc">*</span> pred_micv<span class="sc">$</span>se.fit,</span>
+<span id="cb41-11"><a href="#cb41-11" aria-hidden="true" tabindex="-1"></a>          <span class="fu">rev</span>(pred_micv<span class="sc">$</span>fit <span class="sc">-</span> <span class="dv">2</span> <span class="sc">*</span> pred_micv<span class="sc">$</span>se.fit)),</span>
+<span id="cb41-12"><a href="#cb41-12" aria-hidden="true" tabindex="-1"></a>        <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"steelblue"</span>, <span class="fl">0.2</span>), <span class="at">border =</span> <span class="cn">NA</span>)</span>
+<span id="cb41-13"><a href="#cb41-13" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_grid_micv, pred_micv<span class="sc">$</span>fit, <span class="at">col =</span> <span class="st">"steelblue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb41-14"><a href="#cb41-14" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(x_grid_micv, f_true3_grid, <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span>
+<span id="cb41-15"><a href="#cb41-15" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"bottomright"</span>,</span>
+<span id="cb41-16"><a href="#cb41-16" aria-hidden="true" tabindex="-1"></a>       <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"SCAM (micv) ± 2SE"</span>, <span class="st">"True f(x) = 3√x"</span>, <span class="st">"Data"</span>),</span>
+<span id="cb41-17"><a href="#cb41-17" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>, <span class="st">"grey40"</span>),</span>
+<span id="cb41-18"><a href="#cb41-18" aria-hidden="true" tabindex="-1"></a>       <span class="at">lwd =</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">2</span>, <span class="cn">NA</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>, <span class="cn">NA</span>),</span>
+<span id="cb41-19"><a href="#cb41-19" aria-hidden="true" tabindex="-1"></a>       <span class="at">pch =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="cn">NA</span>, <span class="dv">16</span>), <span class="at">pt.cex =</span> <span class="fu">c</span>(<span class="cn">NA</span>, <span class="cn">NA</span>, <span class="fl">0.6</span>),</span>
+<span id="cb41-20"><a href="#cb41-20" aria-hidden="true" tabindex="-1"></a>       <span class="at">bg =</span> <span class="st">"white"</span>, <span class="at">cex =</span> <span class="fl">0.8</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="07_shape_constraints_files/figure-html/unnamed-chunk-14-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
 </div>
 </div>
 </section>
@@ -348,7 +465,7 @@ window.Quarto = {
 <section id="scam-model-summaries" class="level2">
 <h2 class="anchored" data-anchor-id="scam-model-summaries">SCAM model summaries</h2>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_scam)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_scam)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>
 Family: gaussian 
@@ -374,7 +491,7 @@ GCV score = 0.084902  Scale est. = 0.083031  n = 200</code></pre>
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_cx)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_cx)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>
 Family: gaussian 
@@ -401,7 +518,7 @@ GCV score = 0.08451  Scale est. = 0.083303  n = 200</code></pre>
 </div>
 </div>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_micv)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m_micv)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>
 Family: gaussian 

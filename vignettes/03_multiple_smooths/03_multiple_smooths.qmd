@@ -27,12 +27,6 @@ This vignette uses the classic **Gu–Wahba** simulation (equivalent to `gamSim(
 ## Setup
 
 ```{julia}
-#| output: false
-import Pkg
-Pkg.activate(joinpath(@__DIR__, "..", ".."))
-```
-
-```{julia}
 using GAM
 using CSV
 using StatsAPI: r2
