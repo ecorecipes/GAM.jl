@@ -46,6 +46,35 @@ m <- gam(y ~ s(x, k = 10), data = dat, method = "REML")
 summary(m)
 ```
 
+### Gaussian fit with credible intervals (mgcv Bayesian posterior)
+
+mgcv's `predict()` with `se.fit=TRUE` uses the Bayesian posterior covariance $\mathbf{V}_p$ to produce credible intervals:
+
+```{r fig.width=9, fig.height=6}
+# Predict on a fine grid
+x_grid <- data.frame(x = seq(min(dat$x), max(dat$x), length.out = 200))
+pred <- predict(m, newdata = x_grid, se.fit = TRUE)
+
+# 95% and 80% credible intervals
+ci95_lo <- pred$fit - 1.96 * pred$se.fit
+ci95_hi <- pred$fit + 1.96 * pred$se.fit
+ci80_lo <- pred$fit - 1.282 * pred$se.fit
+ci80_hi <- pred$fit + 1.282 * pred$se.fit
+
+plot(dat$x, dat$y, pch = 16, col = adjustcolor("gray50", 0.3), cex = 0.8,
+     xlab = "x", ylab = "y",
+     main = "Gaussian GAM: data + mgcv Bayesian fit with credible intervals")
+polygon(c(x_grid$x, rev(x_grid$x)), c(ci95_lo, rev(ci95_hi)),
+        col = adjustcolor("steelblue", 0.15), border = NA)
+polygon(c(x_grid$x, rev(x_grid$x)), c(ci80_lo, rev(ci80_hi)),
+        col = adjustcolor("steelblue", 0.25), border = NA)
+lines(x_grid$x, pred$fit, col = "steelblue", lwd = 2.5)
+legend("topright", c("mgcv Bayesian mean", "80% CI", "95% CI", "data"),
+       col = c("steelblue", adjustcolor("steelblue", 0.25),
+               adjustcolor("steelblue", 0.15), "gray50"),
+       lwd = c(2.5, 8, 8, NA), pch = c(NA, NA, NA, 16), cex = 0.8)
+```
+
 ### brms fit
 
 The brms model uses the same priors as GAM.jl: `Exponential(1)` on smooth SDs, `Normal(0, 10)` on fixed effects, and `truncated Normal(0, 2.5)` on σ:
@@ -229,6 +258,33 @@ abline(0, 1, col = "red", lwd = 2)
 dat2 <- read.csv("../data_bayes_poisson.csv")
 m2 <- gam(y ~ s(x, k = 10), data = dat2, family = poisson(), method = "REML")
 cat(sprintf("Frequentist intercept (log-scale): %.4f (true: 1.0)\n", coef(m2)[1]))
+```
+
+### Poisson fit with credible intervals
+
+```{r fig.width=9, fig.height=6}
+x_grid2 <- data.frame(x = seq(min(dat2$x), max(dat2$x), length.out = 200))
+pred2 <- predict(m2, newdata = x_grid2, se.fit = TRUE, type = "link")
+
+# On link (log) scale, then transform to response
+ci95_lo2 <- exp(pred2$fit - 1.96 * pred2$se.fit)
+ci95_hi2 <- exp(pred2$fit + 1.96 * pred2$se.fit)
+ci80_lo2 <- exp(pred2$fit - 1.282 * pred2$se.fit)
+ci80_hi2 <- exp(pred2$fit + 1.282 * pred2$se.fit)
+mu_hat <- exp(pred2$fit)
+
+plot(dat2$x, dat2$y, pch = 16, col = adjustcolor("gray50", 0.3), cex = 0.8,
+     xlab = "x", ylab = "count",
+     main = "Poisson GAM: data + mgcv Bayesian fit with credible intervals")
+polygon(c(x_grid2$x, rev(x_grid2$x)), c(ci95_lo2, rev(ci95_hi2)),
+        col = adjustcolor("steelblue", 0.15), border = NA)
+polygon(c(x_grid2$x, rev(x_grid2$x)), c(ci80_lo2, rev(ci80_hi2)),
+        col = adjustcolor("steelblue", 0.25), border = NA)
+lines(x_grid2$x, mu_hat, col = "steelblue", lwd = 2.5)
+legend("topright", c("mgcv Bayesian mean", "80% CI", "95% CI", "data"),
+       col = c("steelblue", adjustcolor("steelblue", 0.25),
+               adjustcolor("steelblue", 0.15), "gray50"),
+       lwd = c(2.5, 8, 8, NA), pch = c(NA, NA, NA, 16), cex = 0.8)
 ```
 
 ### mgcv Bayesian posterior
