@@ -1,21 +1,26 @@
 # Bayesian GAMs: R Comparison (brms + mgcv)
-GAM.jl Contributors
+Simon Frost
 
 - [Overview](#overview)
 - [Setup](#setup)
 - [Example 1: Gaussian GAM](#example-1-gaussian-gam)
   - [Frequentist reference (mgcv)](#frequentist-reference-mgcv)
+  - [Gaussian fit with credible intervals (mgcv Bayesian
+    posterior)](#gaussian-fit-with-credible-intervals-mgcv-bayesian-posterior)
   - [brms fit](#brms-fit)
   - [mgcv Bayesian posterior
     approximation](#mgcv-bayesian-posterior-approximation)
   - [Three-way comparison: GAM.jl vs brms vs
     mgcv](#three-way-comparison-gamjl-vs-brms-vs-mgcv)
+  - [Posterior density plots](#posterior-density-plots)
   - [Kolmogorov-Smirnov tests and ECDF
     correlation](#kolmogorov-smirnov-tests-and-ecdf-correlation)
   - [ECDF comparison plots](#ecdf-comparison-plots)
   - [Q-Q plots: GAM.jl vs brms](#q-q-plots-gamjl-vs-brms)
 - [Example 2: Poisson GAM](#example-2-poisson-gam)
   - [Frequentist fit](#frequentist-fit)
+  - [Poisson fit with credible
+    intervals](#poisson-fit-with-credible-intervals)
   - [mgcv Bayesian posterior](#mgcv-bayesian-posterior)
   - [Three-way comparison](#three-way-comparison)
   - [KS tests and ECDF](#ks-tests-and-ecdf)
@@ -88,6 +93,38 @@ summary(m)
 
     R-sq.(adj) =  0.832   Deviance explained = 83.8%
     -REML = 65.726  Scale est. = 0.098196  n = 200
+
+### Gaussian fit with credible intervals (mgcv Bayesian posterior)
+
+mgcv’s `predict()` with `se.fit=TRUE` uses the Bayesian posterior
+covariance $\mathbf{V}_p$ to produce credible intervals:
+
+``` r
+# Predict on a fine grid
+x_grid <- data.frame(x = seq(min(dat$x), max(dat$x), length.out = 200))
+pred <- predict(m, newdata = x_grid, se.fit = TRUE)
+
+# 95% and 80% credible intervals
+ci95_lo <- pred$fit - 1.96 * pred$se.fit
+ci95_hi <- pred$fit + 1.96 * pred$se.fit
+ci80_lo <- pred$fit - 1.282 * pred$se.fit
+ci80_hi <- pred$fit + 1.282 * pred$se.fit
+
+plot(dat$x, dat$y, pch = 16, col = adjustcolor("gray50", 0.3), cex = 0.8,
+     xlab = "x", ylab = "y",
+     main = "Gaussian GAM: data + mgcv Bayesian fit with credible intervals")
+polygon(c(x_grid$x, rev(x_grid$x)), c(ci95_lo, rev(ci95_hi)),
+        col = adjustcolor("steelblue", 0.15), border = NA)
+polygon(c(x_grid$x, rev(x_grid$x)), c(ci80_lo, rev(ci80_hi)),
+        col = adjustcolor("steelblue", 0.25), border = NA)
+lines(x_grid$x, pred$fit, col = "steelblue", lwd = 2.5)
+legend("topright", c("mgcv Bayesian mean", "80% CI", "95% CI", "data"),
+       col = c("steelblue", adjustcolor("steelblue", 0.25),
+               adjustcolor("steelblue", 0.15), "gray50"),
+       lwd = c(2.5, 8, 8, NA), pch = c(NA, NA, NA, 16), cex = 0.8)
+```
+
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-3-1.png)
 
 ### brms fit
 
@@ -177,6 +214,32 @@ cat(sprintf("Intercept sd      | %.4f             | %.4f             | %.4f     
 ```
 
     Intercept sd      | 0.0223             | 0.0223             | 0.0221             |
+
+### Posterior density plots
+
+``` r
+par(mfrow = c(1, 2))
+
+# σ_obs posterior histogram
+hist(julia_gauss$sigma_obs, breaks = 50, probability = TRUE,
+     col = adjustcolor("steelblue", 0.7), border = NA,
+     main = expression("Posterior density of " * sigma[obs]),
+     xlab = expression(sigma[obs]), ylab = "Density")
+abline(v = sqrt(m$scale), col = "red", lwd = 2)
+legend("topright", c("GAM.jl posterior", "Frequentist"),
+       col = c("steelblue", "red"), lwd = c(10, 2), cex = 0.8)
+
+# Intercept posterior histogram
+hist(julia_gauss$beta_intercept, breaks = 50, probability = TRUE,
+     col = adjustcolor("steelblue", 0.7), border = NA,
+     main = expression("Posterior density of " * beta[1]),
+     xlab = expression(beta[1] ~ "(intercept)"), ylab = "Density")
+abline(v = coef(m)[1], col = "red", lwd = 2)
+legend("topright", c("GAM.jl posterior", "Frequentist"),
+       col = c("steelblue", "red"), lwd = c(10, 2), cex = 0.8)
+```
+
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-7-1.png)
 
 ### Kolmogorov-Smirnov tests and ECDF correlation
 
@@ -327,7 +390,7 @@ legend("bottomright", c("GAM.jl (Turing)", "brms (Stan)", "mgcv (approx)", "Freq
        col = c("red", "darkgreen", "blue", "black"), lty = c(1, 1, 2, 3), lwd = 2, cex = 0.7)
 ```
 
-![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-7-1.png)
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-9-1.png)
 
 ### Q-Q plots: GAM.jl vs brms
 
@@ -355,7 +418,7 @@ plot(q_brms_int, q_julia_int, pch = 16, cex = 0.6,
 abline(0, 1, col = "red", lwd = 2)
 ```
 
-![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-8-1.png)
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-10-1.png)
 
 ## Example 2: Poisson GAM
 
@@ -368,6 +431,35 @@ cat(sprintf("Frequentist intercept (log-scale): %.4f (true: 1.0)\n", coef(m2)[1]
 ```
 
     Frequentist intercept (log-scale): 0.9094 (true: 1.0)
+
+### Poisson fit with credible intervals
+
+``` r
+x_grid2 <- data.frame(x = seq(min(dat2$x), max(dat2$x), length.out = 200))
+pred2 <- predict(m2, newdata = x_grid2, se.fit = TRUE, type = "link")
+
+# On link (log) scale, then transform to response
+ci95_lo2 <- exp(pred2$fit - 1.96 * pred2$se.fit)
+ci95_hi2 <- exp(pred2$fit + 1.96 * pred2$se.fit)
+ci80_lo2 <- exp(pred2$fit - 1.282 * pred2$se.fit)
+ci80_hi2 <- exp(pred2$fit + 1.282 * pred2$se.fit)
+mu_hat <- exp(pred2$fit)
+
+plot(dat2$x, dat2$y, pch = 16, col = adjustcolor("gray50", 0.3), cex = 0.8,
+     xlab = "x", ylab = "count",
+     main = "Poisson GAM: data + mgcv Bayesian fit with credible intervals")
+polygon(c(x_grid2$x, rev(x_grid2$x)), c(ci95_lo2, rev(ci95_hi2)),
+        col = adjustcolor("steelblue", 0.15), border = NA)
+polygon(c(x_grid2$x, rev(x_grid2$x)), c(ci80_lo2, rev(ci80_hi2)),
+        col = adjustcolor("steelblue", 0.25), border = NA)
+lines(x_grid2$x, mu_hat, col = "steelblue", lwd = 2.5)
+legend("topright", c("mgcv Bayesian mean", "80% CI", "95% CI", "data"),
+       col = c("steelblue", adjustcolor("steelblue", 0.25),
+               adjustcolor("steelblue", 0.15), "gray50"),
+       lwd = c(2.5, 8, 8, NA), pch = c(NA, NA, NA, 16), cex = 0.8)
+```
+
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-12-1.png)
 
 ### mgcv Bayesian posterior
 
@@ -487,7 +579,7 @@ plot(q_b2, q_j2, pch = 16, cex = 0.6,
 abline(0, 1, col = "red", lwd = 2)
 ```
 
-![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-12-1.png)
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-15-1.png)
 
 ## Syntax Comparison
 

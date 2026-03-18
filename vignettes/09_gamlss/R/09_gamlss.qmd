@@ -1,11 +1,13 @@
 ---
 title: "GAMLSS: R Comparison"
-author: "GAM.jl Contributors"
+author: "Simon Frost"
 format:
   html:
     code-fold: false
     toc: true
   gfm:
+    toc: true
+  pdf:
     toc: true
 engine: knitr
 ---

@@ -1,5 +1,5 @@
 # Extreme Value GAMs
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)
@@ -8,10 +8,14 @@ GAM.jl Contributors
   - [Fit the GEV model](#fit-the-gev-model)
   - [Examine parameter estimates](#examine-parameter-estimates)
   - [Compare fitted vs true](#compare-fitted-vs-true)
+  - [GEV fitted vs true plots](#gev-fitted-vs-true-plots)
+  - [GEV residual diagnostics](#gev-residual-diagnostics)
 - [GPD model](#gpd-model)
   - [Load GPD data](#load-gpd-data)
   - [Fit the GPD model](#fit-the-gpd-model)
   - [Examine GPD estimates](#examine-gpd-estimates)
+  - [GPD fitted vs true plots](#gpd-fitted-vs-true-plots)
+  - [GPD residual diagnostics](#gpd-residual-diagnostics)
 - [Comparison with Julia](#comparison-with-julia)
 
 ## Introduction
@@ -159,6 +163,43 @@ cat("RMSE (log-scale):", round(rmse_psi, 3), "\n")
 
     RMSE (log-scale): 0.039 
 
+### GEV fitted vs true plots
+
+``` r
+ord <- order(x)
+x_sorted <- x[ord]
+
+par(mfrow = c(1, 2))
+
+plot(x, y_gev, col = adjustcolor("grey40", alpha.f = 0.3), pch = 16, cex = 0.5,
+     xlab = "x", ylab = "Location μ", main = "GEV Location")
+lines(x_sorted, mu_hat[ord], col = "steelblue", lwd = 2)
+lines(x_sorted, mu_true[ord], col = "red", lty = 2, lwd = 2)
+legend("topright", legend = c("Fitted", "True", "Data"),
+       col = c("steelblue", "red", adjustcolor("grey40", 0.3)),
+       lty = c(1, 2, NA), pch = c(NA, NA, 16), lwd = c(2, 2, NA), cex = 0.8)
+
+plot(x_sorted, psi_hat[ord], type = "l", col = "steelblue", lwd = 2,
+     xlab = "x", ylab = "Log-scale ψ", main = "GEV Log-scale")
+lines(x_sorted, logsigma_true[ord], col = "red", lty = 2, lwd = 2)
+legend("topleft", legend = c("Fitted", "True"),
+       col = c("steelblue", "red"), lty = c(1, 2), lwd = 2, cex = 0.8)
+```
+
+![](06_extreme_values_files/figure-commonmark/unnamed-chunk-6-1.png)
+
+### GEV residual diagnostics
+
+``` r
+par(mfrow = c(1, 1))
+resid_gev <- y_gev - mu_hat
+plot(mu_hat, resid_gev, col = adjustcolor("steelblue", alpha.f = 0.4), pch = 16, cex = 0.5,
+     xlab = "Fitted μ", ylab = "Residual (y − μ̂)", main = "GEV Residuals vs Fitted")
+abline(h = 0, col = "grey40", lty = 2)
+```
+
+![](06_extreme_values_files/figure-commonmark/unnamed-chunk-7-1.png)
+
 ## GPD model
 
 ### Load GPD data
@@ -233,6 +274,45 @@ cat("Correlation (log-scale):", cor(psi_gpd_hat, logsigma_gpd_true), "\n")
 ```
 
     Correlation (log-scale): -0.2538327 
+
+### GPD fitted vs true plots
+
+``` r
+ord_gpd <- order(x_gpd)
+x_gpd_sorted <- x_gpd[ord_gpd]
+
+par(mfrow = c(1, 2))
+
+plot(x_gpd_sorted, psi_gpd_hat[ord_gpd], type = "l", col = "steelblue", lwd = 2,
+     xlab = "x", ylab = "Log-scale ψ", main = "GPD Log-scale")
+lines(x_gpd_sorted, logsigma_gpd_true[ord_gpd], col = "red", lty = 2, lwd = 2)
+legend("topright", legend = c("Fitted", "True"),
+       col = c("steelblue", "red"), lty = c(1, 2), lwd = 2, cex = 0.8)
+
+sigma_gpd_hat <- exp(psi_gpd_hat)
+plot(x_gpd, y_gpd, col = adjustcolor("grey40", alpha.f = 0.3), pch = 16, cex = 0.5,
+     xlab = "x", ylab = "y", main = "GPD Data + Fitted Scale")
+lines(x_gpd_sorted, sigma_gpd_hat[ord_gpd], col = "steelblue", lwd = 2)
+lines(x_gpd_sorted, sigma_gpd_true[ord_gpd], col = "red", lty = 2, lwd = 2)
+legend("topright", legend = c("Fitted σ", "True σ", "Data"),
+       col = c("steelblue", "red", adjustcolor("grey40", 0.3)),
+       lty = c(1, 2, NA), pch = c(NA, NA, 16), lwd = c(2, 2, NA), cex = 0.8)
+```
+
+![](06_extreme_values_files/figure-commonmark/unnamed-chunk-11-1.png)
+
+### GPD residual diagnostics
+
+``` r
+par(mfrow = c(1, 1))
+resid_gpd <- y_gpd / sigma_gpd_hat
+plot(sigma_gpd_hat, resid_gpd, col = adjustcolor("steelblue", alpha.f = 0.4), pch = 16, cex = 0.5,
+     xlab = "Fitted σ", ylab = "Standardized residual (y / σ̂)",
+     main = "GPD Residuals vs Fitted Scale")
+abline(h = 1, col = "grey40", lty = 2)
+```
+
+![](06_extreme_values_files/figure-commonmark/unnamed-chunk-12-1.png)
 
 ## Comparison with Julia
 

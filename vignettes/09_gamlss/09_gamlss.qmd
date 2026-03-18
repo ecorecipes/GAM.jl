@@ -1,6 +1,6 @@
 ---
 title: "GAMLSS: Location, Scale, and Shape Models"
-author: "GAM.jl Contributors"
+author: "Simon Frost"
 format:
   html:
     code-fold: false

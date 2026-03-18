@@ -1,5 +1,5 @@
 # GAMLSS: Location, Scale, and Shape Models
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)
@@ -8,16 +8,19 @@ GAM.jl Contributors
   - [Fitting the model](#fitting-the-model)
   - [Extracting fitted parameters](#extracting-fitted-parameters)
   - [Comparison with standard GAM](#comparison-with-standard-gam)
+  - [Visualisation](#visualisation)
   - [Constant-variance special case](#constant-variance-special-case)
 - [Gamma Location-Scale Model](#gamma-location-scale-model)
   - [Data](#data-1)
   - [Fitting](#fitting)
   - [Results](#results)
+  - [Visualisation](#visualisation-1)
   - [Why not just `Gamma()` in `gam()`?](#why-not-just-gamma-in-gam)
 - [Beta Regression](#beta-regression)
   - [Data](#data-2)
   - [Fitting](#fitting-1)
   - [Results](#results-1)
+  - [Visualisation](#visualisation-2)
 - [Custom Links](#custom-links)
 - [Available Families](#available-families)
 - [Effective Degrees of Freedom](#effective-degrees-of-freedom)
@@ -51,11 +54,6 @@ Distributions.jl types and GLM.jl link functions.
 ## Setup
 
 ``` julia
-import Pkg
-Pkg.activate(joinpath(@__DIR__, "..", ".."))
-```
-
-``` julia
 using GAM
 using CSV
 using DataFrames
@@ -65,6 +63,7 @@ using Statistics: mean, std, var, cor
 using StatsAPI: fitted, deviance
 using LinearAlgebra: diag
 using Random
+using Plots
 ```
 
 ## Normal Location-Scale Model
@@ -145,6 +144,25 @@ println("Max |μ_gam - μ_gamlss|: $(round(maximum(abs.(μ_gam - μ_fit)); digit
 The location estimates are similar, but GAMLSS additionally captures how
 the spread changes.
 
+### Visualisation
+
+``` julia
+idx = sortperm(dat.x)
+
+p1 = scatter(dat.x, dat.y; label="data", ms=2, alpha=0.3, color=:grey40,
+    xlabel="x", ylabel="y", title="Location (μ)")
+plot!(p1, dat.x[idx], μ_fit[idx]; label="fitted", lw=2, color=:steelblue)
+plot!(p1, dat.x[idx], dat.mu_true[idx]; label="true", lw=2, ls=:dash, color=:red)
+
+p2 = plot(dat.x[idx], σ_fit[idx]; label="fitted", lw=2, color=:steelblue,
+    xlabel="x", ylabel="σ", title="Scale (σ)")
+plot!(p2, dat.x[idx], dat.sigma_true[idx]; label="true", lw=2, ls=:dash, color=:red)
+
+plot(p1, p2; layout=(1, 2), size=(700, 300))
+```
+
+![](09_gamlss_files/figure-commonmark/cell-7-output-1.svg)
+
 ### Constant-variance special case
 
 When $\sigma$ is modeled as intercept-only (`y ~ 1`), GAMLSS reduces to
@@ -214,6 +232,25 @@ println("Mean fitted CV: $(round(mean(σ_fit); digits=3))")
     σ: cor with truth = 0.99327
     Mean fitted CV: 0.368
 
+### Visualisation
+
+``` julia
+idx_g = sortperm(dat_g.x)
+
+p1 = scatter(dat_g.x, dat_g.y; label="data", ms=2, alpha=0.3, color=:grey40,
+    xlabel="x", ylabel="y", title="Location (μ)")
+plot!(p1, dat_g.x[idx_g], μ_fit[idx_g]; label="fitted", lw=2, color=:steelblue)
+plot!(p1, dat_g.x[idx_g], dat_g.mu_true[idx_g]; label="true", lw=2, ls=:dash, color=:red)
+
+p2 = plot(dat_g.x[idx_g], σ_fit[idx_g]; label="fitted", lw=2, color=:steelblue,
+    xlabel="x", ylabel="σ (CV)", title="Scale (σ)")
+plot!(p2, dat_g.x[idx_g], dat_g.sigma_true[idx_g]; label="true", lw=2, ls=:dash, color=:red)
+
+plot(p1, p2; layout=(1, 2), size=(700, 300))
+```
+
+![](09_gamlss_files/figure-commonmark/cell-12-output-1.svg)
+
 ### Why not just `Gamma()` in `gam()`?
 
 A standard `gam(...; family=Gamma())` only models the mean with a single
@@ -269,6 +306,19 @@ println("Fitted precision φ ≈ $(round(mean(φ_fit); digits=1)) (true: 15.0)")
 
     μ: cor with truth = 0.99727
     Fitted precision φ ≈ 16.5 (true: 15.0)
+
+### Visualisation
+
+``` julia
+idx_b = sortperm(dat_b.x)
+
+scatter(dat_b.x, dat_b.y; label="data", ms=2, alpha=0.3, color=:grey40,
+    xlabel="x", ylabel="y", title="Beta regression — fitted mean")
+plot!(dat_b.x[idx_b], μ_fit[idx_b]; label="fitted", lw=2, color=:steelblue)
+plot!(dat_b.x[idx_b], dat_b.mu_true[idx_b]; label="true", lw=2, ls=:dash, color=:red)
+```
+
+![](09_gamlss_files/figure-commonmark/cell-16-output-1.svg)
 
 ## Custom Links
 
@@ -400,11 +450,6 @@ else
     println("σ: Julia–R correlation = $(round(cor(σ_j, sigma_r); digits=6))")
 end
 ```
-
-    μ: Julia–R correlation = 0.99984
-    σ: Julia–R correlation = 0.999633
-    μ: max |diff| = 0.0938
-    σ: max |diff| = 0.0219
 
 ## Summary
 

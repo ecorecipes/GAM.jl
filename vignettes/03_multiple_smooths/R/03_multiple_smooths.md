@@ -1,5 +1,5 @@
 # Multiple Smooth Terms
-GAM.jl Contributors
+Simon Frost
 
 - [Overview](#overview)
 - [Setup](#setup)

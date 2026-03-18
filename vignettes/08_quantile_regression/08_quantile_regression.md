@@ -1,5 +1,5 @@
 # Quantile GAM Regression
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)
@@ -46,11 +46,8 @@ using DataFrames
 using CSV
 using Random
 using Statistics
+using Plots
 ```
-
-    Precompiling packages...
-       3518.7 ms  ✓ GAM
-      1 dependency successfully precompiled in 5 seconds. 105 already precompiled.
 
 ## Simulate heteroscedastic data
 
@@ -70,6 +67,17 @@ println("Mean y: $(round(mean(y), digits=3))")
     Data: n = 500
     y range: [-3.15, 2.27]
     Mean y: -0.002
+
+``` julia
+scatter(x, y, color=:grey40, markersize=2, alpha=0.3,
+    xlabel="x", ylabel="y",
+    title="Heteroscedastic Data: Variance Increases with x",
+    label="Data", legend=:topleft)
+x_grid = range(0, 1, length=200)
+plot!(x_grid, sin.(2π .* x_grid), color=:red, linewidth=2, label="True mean: sin(2πx)")
+```
+
+![](08_quantile_regression_files/figure-commonmark/cell-4-output-1.svg)
 
 ## Fit a single quantile GAM
 
@@ -164,6 +172,20 @@ end
     τ = 0.75: fitted range [-0.191, 0.831]
     τ = 0.9: fitted range [1.103, 1.103]
 
+``` julia
+qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
+scatter(x, y, color=:grey40, markersize=2, alpha=0.3,
+    xlabel="x", ylabel="y", title="Individual Quantile GAM Fits",
+    label="Data", legend=:topleft)
+for qu in quantiles
+    yhat = predict(fits[qu])[ord]
+    plot!(x[ord], yhat, color=qcolors[qu], linewidth=2, label="τ = $qu")
+end
+current()
+```
+
+![](08_quantile_regression_files/figure-commonmark/cell-10-output-1.svg)
+
 ### Using `mqgam` for simultaneous fitting
 
 `mqgam` fits all quantiles simultaneously, sharing the preliminary
@@ -198,6 +220,20 @@ end
     τ = 0.75: fitted range [-0.191, 0.831]
     τ = 0.9: fitted range [1.103, 1.103]
 
+``` julia
+qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
+scatter(x, y, color=:grey40, markersize=2, alpha=0.3,
+    xlabel="x", ylabel="y", title="mqgam: Simultaneous Quantile Fits",
+    label="Data", legend=:topleft)
+for qu in quantiles
+    yhat = predict(mq.fits[qu])[ord]
+    plot!(x[ord], yhat, color=qcolors[qu], linewidth=2, label="τ = $qu")
+end
+current()
+```
+
+![](08_quantile_regression_files/figure-commonmark/cell-14-output-1.svg)
+
 ## Quantile crossing check
 
 A known issue with independent quantile fits is **quantile crossing**,
@@ -219,6 +255,25 @@ println("Quantile crossings: $n_crossings out of $n observations ($(round(100*n_
 
     Quantile crossings: 245 out of 500 observations (49.0%)
 
+``` julia
+qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
+p = plot(xlabel="x", ylabel="Predicted quantile", title="Quantile Crossing Check",
+    legend=:topleft)
+for qu in quantiles
+    plot!(x_sorted, predictions[qu], color=qcolors[qu], linewidth=2, label="τ = $qu")
+end
+crossing_flags = [!issorted([predictions[qu][i] for qu in quantiles]) for i in eachindex(x_sorted)]
+if any(crossing_flags)
+    idx = findall(crossing_flags)
+    scatter!(x_sorted[idx], [predictions[0.5][i] for i in idx],
+        color=:red, markersize=5, markershape=:xcross,
+        label="Crossing ($(length(idx)) pts)")
+end
+p
+```
+
+![](08_quantile_regression_files/figure-commonmark/cell-16-output-1.svg)
+
 ## Verify quantile coverage
 
 For well-calibrated quantile estimates, approximately
@@ -238,6 +293,20 @@ end
     τ = 0.5: empirical coverage = 0.496 (target = 0.5)
     τ = 0.75: empirical coverage = 0.682 (target = 0.75)
     τ = 0.9: empirical coverage = 0.9 (target = 0.9)
+
+``` julia
+coverages = [mean(y .< predict(mq.fits[qu])) for qu in quantiles]
+xs = 1:length(quantiles)
+qlabels = ["τ=$(qu)" for qu in quantiles]
+bar(xs, coverages, label="Empirical", color=:steelblue, alpha=0.8,
+    xlabel="Quantile (τ)", ylabel="Coverage",
+    title="Coverage Validation: Empirical vs Target",
+    xticks=(xs, qlabels), ylim=(0, 1), legend=:topleft)
+scatter!(xs, collect(quantiles), label="Target", color=:red,
+    markersize=8, markershape=:diamond)
+```
+
+![](08_quantile_regression_files/figure-commonmark/cell-18-output-1.svg)
 
 ## The ELF family
 
@@ -268,6 +337,18 @@ end
     Pinball loss (τ=0.5): 115.234
     Pinball loss (τ=0.75): 103.175
     Pinball loss (τ=0.9): 69.533
+
+``` julia
+losses = [pinball_loss(y, predict(mq.fits[qu]), qu) for qu in quantiles]
+xs = 1:length(quantiles)
+qlabels = ["τ=$(qu)" for qu in quantiles]
+bar(xs, losses, color=:teal, alpha=0.8, legend=false,
+    xlabel="Quantile (τ)", ylabel="Pinball Loss",
+    title="Pinball Loss by Quantile",
+    xticks=(xs, qlabels))
+```
+
+![](08_quantile_regression_files/figure-commonmark/cell-21-output-1.svg)
 
 ## Summary
 

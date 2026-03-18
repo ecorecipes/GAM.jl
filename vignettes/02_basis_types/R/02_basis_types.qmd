@@ -1,6 +1,6 @@
 ---
 title: "Comparing Smooth Basis Types"
-author: "GAM.jl Contributors"
+author: "Simon Frost"
 format:
   html:
     code-fold: false

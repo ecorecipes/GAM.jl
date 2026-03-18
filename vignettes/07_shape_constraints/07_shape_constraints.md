@@ -1,5 +1,5 @@
 # Shape-Constrained Additive Models
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)
@@ -10,18 +10,24 @@ GAM.jl Contributors
   - [Fit unconstrained GAM vs SCAM](#fit-unconstrained-gam-vs-scam)
   - [Compare fitted values](#compare-fitted-values)
   - [Verify monotonicity](#verify-monotonicity)
+  - [Plot: GAM vs SCAM vs truth](#plot-gam-vs-scam-vs-truth)
 - [Example 2: Convex function](#example-2-convex-function)
   - [Simulate data](#simulate-data-1)
   - [Fit with convexity constraint](#fit-with-convexity-constraint)
   - [Verify convexity](#verify-convexity)
+  - [Plot: Convex fit and second
+    derivative](#plot-convex-fit-and-second-derivative)
 - [Example 3: Monotone increasing and concave (diminishing
   returns)](#example-3-monotone-increasing-and-concave-diminishing-returns)
   - [Simulate data](#simulate-data-2)
   - [Fit with monotone increasing + concave
     constraint](#fit-with-monotone-increasing--concave-constraint)
   - [Verify constraints](#verify-constraints)
+  - [Plot: Monotone increasing & concave
+    fit](#plot-monotone-increasing--concave-fit)
 - [SCAM fitting details](#scam-fitting-details)
 - [Comparing all constraint types](#comparing-all-constraint-types)
+  - [Plot: All constraint types](#plot-all-constraint-types)
 - [Summary](#summary)
 
 ## Introduction
@@ -49,6 +55,7 @@ using DataFrames
 using CSV
 using Random
 using Statistics
+using Plots
 ```
 
 ## Available basis types
@@ -172,6 +179,35 @@ println("GAM all non-decreasing: ", all(diffs_gam .>= -1e-10))
     Min successive difference (GAM): -0.001143
     GAM all non-decreasing: false
 
+### Plot: GAM vs SCAM vs truth
+
+``` julia
+se_scam = smooth_estimates(m_scam; n=200)
+x_grid = se_scam.covariates[:x]
+f_hat_scam = se_scam.estimate
+f_se_scam = se_scam.se
+f_true_grid = 3.0 .* (1.0 .- exp.(-5.0 .* x_grid))
+
+se_gam = smooth_estimates(m_gam; n=200)
+f_hat_gam = se_gam.estimate
+
+p = plot(x_grid, f_hat_scam;
+    ribbon=2 .* f_se_scam, fillalpha=0.2, fillcolor=:steelblue,
+    label="SCAM (mpi) ± 2SE", linewidth=2, color=:steelblue,
+    xlabel="x", ylabel="f(x)",
+    title="Monotone Increasing: SCAM vs GAM vs Truth",
+    legend=:bottomright)
+plot!(p, x_grid, f_hat_gam;
+    label="GAM (unconstrained)", linewidth=2, color=:orange, linestyle=:dot)
+plot!(p, x_grid, f_true_grid;
+    label="True f(x)", linewidth=2, color=:red, linestyle=:dash)
+scatter!(p, x, y;
+    label="Data", alpha=0.3, markersize=2, color=:grey40)
+p
+```
+
+![](07_shape_constraints_files/figure-commonmark/cell-7-output-1.svg)
+
 ## Example 2: Convex function
 
 Cost functions and accelerating growth curves are often convex.
@@ -236,6 +272,46 @@ println("All convex: ", all(second_diffs .>= -1e-10))
 
     Min second difference: -0.058956
     All convex: false
+
+### Plot: Convex fit and second derivative
+
+``` julia
+se_cx = smooth_estimates(m_cx; n=200)
+x_grid_cx = se_cx.covariates[:x]
+f_hat_cx = se_cx.estimate
+f_se_cx = se_cx.se
+f_true2_grid = 2.0 .* x_grid_cx.^2
+
+p1 = plot(x_grid_cx, f_hat_cx;
+    ribbon=2 .* f_se_cx, fillalpha=0.2, fillcolor=:steelblue,
+    label="SCAM (cx) ± 2SE", linewidth=2, color=:steelblue,
+    xlabel="x", ylabel="f(x)",
+    title="Convex Constraint: Fit vs Truth",
+    legend=:topleft)
+plot!(p1, x_grid_cx, f_true2_grid;
+    label="True f(x) = 2x²", linewidth=2, color=:red, linestyle=:dash)
+scatter!(p1, x_cx, y_cx;
+    label="Data", alpha=0.3, markersize=2, color=:grey40)
+
+# Verify second derivative ≥ 0
+dx = diff(x_grid_cx)
+first_deriv = diff(f_hat_cx) ./ dx
+x_mid = (x_grid_cx[1:end-1] .+ x_grid_cx[2:end]) ./ 2
+dx2 = diff(x_mid)
+second_deriv = diff(first_deriv) ./ dx2
+x_mid2 = (x_mid[1:end-1] .+ x_mid[2:end]) ./ 2
+
+p2 = plot(x_mid2, second_deriv;
+    label="f̂''(x)", linewidth=2, color=:steelblue,
+    xlabel="x", ylabel="f''(x)",
+    title="Numerical 2nd Derivative (should be ≥ 0)",
+    legend=:topright)
+hline!(p2, [0.0]; label="zero", color=:red, linestyle=:dash, linewidth=1)
+
+plot(p1, p2; layout=(1, 2), size=(900, 400))
+```
+
+![](07_shape_constraints_files/figure-commonmark/cell-11-output-1.svg)
 
 ## Example 3: Monotone increasing and concave (diminishing returns)
 
@@ -305,6 +381,30 @@ println("Concave: ", all(second_diffs_micv .<= 1e-10))
     Max second difference (concavity): 0.01685
     Monotone increasing: true
     Concave: false
+
+### Plot: Monotone increasing & concave fit
+
+``` julia
+se_micv = smooth_estimates(m_micv; n=200)
+x_grid_micv = se_micv.covariates[:x]
+f_hat_micv = se_micv.estimate
+f_se_micv = se_micv.se
+f_true3_grid = 3.0 .* sqrt.(x_grid_micv)
+
+p = plot(x_grid_micv, f_hat_micv;
+    ribbon=2 .* f_se_micv, fillalpha=0.2, fillcolor=:steelblue,
+    label="SCAM (micv) ± 2SE", linewidth=2, color=:steelblue,
+    xlabel="x", ylabel="f(x)",
+    title="Monotone Increasing & Concave: Fit vs Truth",
+    legend=:bottomright)
+plot!(p, x_grid_micv, f_true3_grid;
+    label="True f(x) = 3√x", linewidth=2, color=:red, linestyle=:dash)
+scatter!(p, x_micv, y_micv;
+    label="Data", alpha=0.3, markersize=2, color=:grey40)
+p
+```
+
+![](07_shape_constraints_files/figure-commonmark/cell-15-output-1.svg)
 
 ## SCAM fitting details
 
@@ -420,6 +520,67 @@ end
     bs=:micv — EDF: 2.42, range: [0.13, 0.98]
     bs=:mdcx — EDF: 1.0, range: [0.14, 1.19]
     bs=:mdcv — EDF: 1.0, range: [-0.05, 0.7]
+
+### Plot: All constraint types
+
+``` julia
+true_funcs = Dict(
+    :mpi  => x_test.^2,
+    :mpd  => 1.0 .- x_test.^2,
+    :cx   => x_test.^2,
+    :cv   => sqrt.(x_test),
+    :micx => x_test.^2,
+    :micv => sqrt.(x_test),
+    :mdcx => 1.0 .- x_test.^2,
+    :mdcv => 1.0 .- sqrt.(x_test)
+)
+
+constraint_labels = Dict(
+    :mpi  => "Monotone ↑",
+    :mpd  => "Monotone ↓",
+    :cx   => "Convex",
+    :cv   => "Concave",
+    :micx => "Mono ↑ + Convex",
+    :micv => "Mono ↑ + Concave",
+    :mdcx => "Mono ↓ + Convex",
+    :mdcv => "Mono ↓ + Concave"
+)
+
+plots = []
+for bs in basis_types
+    df_test = DataFrame(y=y_data[bs], x=x_test)
+    m_test = scam(GamFormula(:y, Symbol[], true, [s(:x, k=10, bs=bs)]), df_test)
+    se_test = smooth_estimates(m_test; n=200)
+    x_g = se_test.covariates[:x]
+    f_g = se_test.estimate
+
+    f_true_g = if bs in [:mpi, :cx, :micx]
+        x_g.^2
+    elseif bs == :mpd
+        1.0 .- x_g.^2
+    elseif bs in [:cv, :micv]
+        sqrt.(x_g)
+    elseif bs == :mdcx
+        1.0 .- x_g.^2
+    else
+        1.0 .- sqrt.(x_g)
+    end
+
+    pi = plot(x_g, f_g;
+        label="SCAM", linewidth=2, color=:steelblue,
+        title=constraint_labels[bs] * " (:$bs)",
+        xlabel="x", ylabel="f(x)", legend=:best, titlefontsize=9)
+    plot!(pi, x_g, f_true_g;
+        label="Truth", linewidth=2, color=:red, linestyle=:dash)
+    scatter!(pi, x_test, y_data[bs];
+        label="", alpha=0.15, markersize=1.5, color=:grey40)
+    push!(plots, pi)
+end
+
+plot(plots...; layout=(4, 2), size=(800, 900))
+```
+
+![](07_shape_constraints_files/figure-commonmark/cell-19-output-1.svg)
 
 ## Summary
 

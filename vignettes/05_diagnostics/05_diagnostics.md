@@ -1,5 +1,5 @@
 # Model Diagnostics and Visualization
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)

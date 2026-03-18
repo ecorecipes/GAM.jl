@@ -1,5 +1,5 @@
 # Quantile GAM Regression
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)
@@ -56,6 +56,17 @@ cat("y range:", range(y), "\n")
 ```
 
     y range: -3.150623 2.272297 
+
+``` r
+plot(x, y, col = adjustcolor("grey40", alpha.f = 0.3), pch = 16, cex = 0.5,
+     xlab = "x", ylab = "y", main = "Heteroscedastic Data: Variance Increases with x")
+x_grid <- seq(0, 1, length.out = 200)
+lines(x_grid, sin(2 * pi * x_grid), col = "red", lwd = 2)
+legend("topleft", legend = c("Data", "True mean: sin(2πx)"),
+       col = c("grey40", "red"), pch = c(16, NA), lty = c(NA, 1), lwd = c(NA, 2))
+```
+
+![](08_quantile_regression_files/figure-commonmark/unnamed-chunk-3-1.png)
 
 ## Fit a single quantile GAM
 
@@ -146,6 +157,21 @@ for (qu in quantiles) {
     τ = 0.75: fitted range [-0.556, 1.277]
     τ = 0.9: fitted range [-0.134, 1.575]
 
+``` r
+qcolors <- c("0.1" = "red", "0.25" = "orange", "0.5" = "black",
+             "0.75" = "dodgerblue", "0.9" = "blue")
+plot(x, y, col = adjustcolor("grey40", alpha.f = 0.3), pch = 16, cex = 0.5,
+     xlab = "x", ylab = "y", main = "mqgam: Simultaneous Quantile Fits")
+for (qu in quantiles) {
+  yhat <- qdo(mq, qu, predict, newdata = dat)
+  ord_tmp <- order(x)
+  lines(x[ord_tmp], yhat[ord_tmp], col = qcolors[as.character(qu)], lwd = 2)
+}
+legend("topleft", legend = paste("τ =", quantiles), col = qcolors, lwd = 2)
+```
+
+![](08_quantile_regression_files/figure-commonmark/unnamed-chunk-9-1.png)
+
 ## Quantile crossing check
 
 ``` r
@@ -160,6 +186,20 @@ cat(sprintf("Quantile crossings: %d out of %d observations (%.1f%%)\n",
 ```
 
     Quantile crossings: 0 out of 500 observations (0.0%)
+
+``` r
+qcolors <- c("red", "orange", "black", "dodgerblue", "blue")
+matplot(x[ord], predictions, type = "l", lty = 1, lwd = 2, col = qcolors,
+        xlab = "x", ylab = "Predicted quantile", main = "Quantile Crossing Check")
+crossing_flags <- apply(predictions, 1, is.unsorted)
+if (any(crossing_flags)) {
+  rug(x[ord][crossing_flags], col = "red", lwd = 2)
+}
+legend("topleft", legend = paste("τ =", quantiles), col = qcolors, lwd = 2)
+mtext(paste0(sum(crossing_flags), " crossings out of ", n, " observations"), side = 3, line = 0.2, cex = 0.8)
+```
+
+![](08_quantile_regression_files/figure-commonmark/unnamed-chunk-11-1.png)
 
 ## Verify quantile coverage
 
@@ -176,6 +216,21 @@ for (qu in quantiles) {
     τ = 0.5: empirical coverage = 0.500 (target = 0.50)
     τ = 0.75: empirical coverage = 0.758 (target = 0.75)
     τ = 0.9: empirical coverage = 0.912 (target = 0.90)
+
+``` r
+coverages <- sapply(quantiles, function(qu) {
+  yhat <- qdo(mq, qu, predict, newdata = dat)
+  mean(y < yhat)
+})
+bp <- barplot(coverages, names.arg = paste("τ =", quantiles), col = "steelblue",
+              ylim = c(0, 1), ylab = "Coverage",
+              main = "Coverage Validation: Empirical vs Target")
+points(bp, quantiles, col = "red", pch = 18, cex = 2)
+legend("topleft", legend = c("Empirical", "Target"),
+       col = c("steelblue", "red"), pch = c(15, 18))
+```
+
+![](08_quantile_regression_files/figure-commonmark/unnamed-chunk-13-1.png)
 
 ## Individual quantile model summaries
 
@@ -299,6 +354,21 @@ for (qu in quantiles) {
 
     R-sq.(adj) =  0.474   Deviance explained = 79.9%
     -REML = 617.69  Scale est. = 1         n = 500
+
+``` r
+pinball <- function(y, yhat, qu) {
+  r <- y - yhat
+  mean(ifelse(r > 0, qu * r, (qu - 1) * r))
+}
+losses <- sapply(quantiles, function(qu) {
+  yhat <- qdo(mq, qu, predict, newdata = dat)
+  pinball(y, yhat, qu)
+})
+barplot(losses, names.arg = paste("τ =", quantiles), col = "steelblue",
+        ylab = "Pinball Loss", main = "Pinball Loss by Quantile")
+```
+
+![](08_quantile_regression_files/figure-commonmark/unnamed-chunk-15-1.png)
 
 ## Comparison table
 

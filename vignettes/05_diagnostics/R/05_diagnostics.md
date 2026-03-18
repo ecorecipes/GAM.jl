@@ -1,5 +1,5 @@
 # Model Diagnostics and Visualization
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)
@@ -391,10 +391,10 @@ k.check(m)
 ```
 
           k'      edf   k-index p-value
-    s(x0)  9 3.426140 1.0475474  0.8125
-    s(x1)  9 3.199210 1.0197537  0.6350
-    s(x2)  9 7.833919 1.0422706  0.7950
-    s(x3)  9 1.886556 0.9756429  0.3100
+    s(x0)  9 3.426140 1.0475474  0.8000
+    s(x1)  9 3.199210 1.0197537  0.6525
+    s(x2)  9 7.833919 1.0422706  0.7900
+    s(x3)  9 1.886556 0.9756429  0.2925
 
 ## Summary
 

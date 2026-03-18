@@ -1,5 +1,5 @@
 # Introduction to GAMs with GAM.jl
-GAM.jl Contributors
+Simon Frost
 
 - [Overview](#overview)
 - [Setup](#setup)
@@ -45,10 +45,6 @@ using StatsAPI: nobs, deviance, predict, coef, residuals, r2
 using DataFrames
 using Plots
 ```
-
-    Precompiling packages...
-       3686.0 ms  ✓ GAM → GAMPlotsExt
-      1 dependency successfully precompiled in 6 seconds. 239 already precompiled.
 
 ## Simulating data
 
