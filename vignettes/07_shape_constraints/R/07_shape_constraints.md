@@ -1,5 +1,5 @@
 # Shape-Constrained Additive Models
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)
@@ -9,16 +9,21 @@ GAM.jl Contributors
   - [Fit unconstrained GAM vs SCAM](#fit-unconstrained-gam-vs-scam)
   - [Compare fitted values](#compare-fitted-values)
   - [Verify monotonicity](#verify-monotonicity)
+  - [Plot: GAM vs SCAM vs truth](#plot-gam-vs-scam-vs-truth)
 - [Example 2: Convex function](#example-2-convex-function)
   - [Simulate data](#simulate-data)
   - [Fit with convexity constraint](#fit-with-convexity-constraint)
   - [Verify convexity](#verify-convexity)
+  - [Plot: Convex fit and second
+    derivative](#plot-convex-fit-and-second-derivative)
 - [Example 3: Monotone increasing and
   concave](#example-3-monotone-increasing-and-concave)
   - [Simulate data](#simulate-data-1)
   - [Fit with monotone increasing + concave
     constraint](#fit-with-monotone-increasing--concave-constraint)
   - [Verify constraints](#verify-constraints)
+  - [Plot: Monotone increasing & concave
+    fit](#plot-monotone-increasing--concave-fit)
 - [SCAM model summaries](#scam-model-summaries)
 - [Comparison table](#comparison-table)
 
@@ -114,6 +119,35 @@ cat("All non-decreasing (GAM):", all(diffs_gam >= -1e-10), "\n")
 
     All non-decreasing (GAM): TRUE 
 
+### Plot: GAM vs SCAM vs truth
+
+``` r
+x_grid <- seq(min(x), max(x), length.out = 200)
+nd <- data.frame(x = x_grid)
+pred_scam <- predict(m_scam, newdata = nd, se.fit = TRUE)
+pred_gam <- predict(m_gam, newdata = nd, se.fit = TRUE)
+f_true_grid <- 3 * (1 - exp(-5 * x_grid))
+
+plot(x, y, col = adjustcolor("grey40", 0.4), pch = 16, cex = 0.6,
+     xlab = "x", ylab = "f(x)",
+     main = "Monotone Increasing: SCAM vs GAM vs Truth")
+polygon(c(x_grid, rev(x_grid)),
+        c(pred_scam$fit + 2 * pred_scam$se.fit,
+          rev(pred_scam$fit - 2 * pred_scam$se.fit)),
+        col = adjustcolor("steelblue", 0.2), border = NA)
+lines(x_grid, pred_scam$fit, col = "steelblue", lwd = 2)
+lines(x_grid, pred_gam$fit, col = "orange", lwd = 2, lty = 3)
+lines(x_grid, f_true_grid, col = "red", lwd = 2, lty = 2)
+legend("bottomright",
+       legend = c("SCAM (mpi) ± 2SE", "GAM (unconstrained)", "True f(x)", "Data"),
+       col = c("steelblue", "orange", "red", "grey40"),
+       lwd = c(2, 2, 2, NA), lty = c(1, 3, 2, NA),
+       pch = c(NA, NA, NA, 16), pt.cex = c(NA, NA, NA, 0.6),
+       bg = "white", cex = 0.8)
+```
+
+![](07_shape_constraints_files/figure-commonmark/unnamed-chunk-6-1.png)
+
 ## Example 2: Convex function
 
 ### Simulate data
@@ -156,6 +190,52 @@ cat("All convex:", all(second_diffs >= -1e-10), "\n")
 ```
 
     All convex: FALSE 
+
+### Plot: Convex fit and second derivative
+
+``` r
+x_grid_cx <- seq(min(x_cx), max(x_cx), length.out = 200)
+nd_cx <- data.frame(x = x_grid_cx)
+pred_cx <- predict(m_cx, newdata = nd_cx, se.fit = TRUE)
+f_true2_grid <- 2 * x_grid_cx^2
+
+par(mfrow = c(1, 2))
+
+# Left: fit vs truth
+plot(x_cx, y_cx, col = adjustcolor("grey40", 0.4), pch = 16, cex = 0.6,
+     xlab = "x", ylab = "f(x)", main = "Convex Constraint: Fit vs Truth")
+polygon(c(x_grid_cx, rev(x_grid_cx)),
+        c(pred_cx$fit + 2 * pred_cx$se.fit,
+          rev(pred_cx$fit - 2 * pred_cx$se.fit)),
+        col = adjustcolor("steelblue", 0.2), border = NA)
+lines(x_grid_cx, pred_cx$fit, col = "steelblue", lwd = 2)
+lines(x_grid_cx, f_true2_grid, col = "red", lwd = 2, lty = 2)
+legend("topleft",
+       legend = c("SCAM (cx) ± 2SE", "True f(x) = 2x²", "Data"),
+       col = c("steelblue", "red", "grey40"),
+       lwd = c(2, 2, NA), lty = c(1, 2, NA),
+       pch = c(NA, NA, 16), pt.cex = c(NA, NA, 0.6),
+       bg = "white", cex = 0.8)
+
+# Right: numerical second derivative
+dx <- diff(x_grid_cx)
+first_deriv <- diff(pred_cx$fit) / dx
+x_mid <- (x_grid_cx[-1] + x_grid_cx[-length(x_grid_cx)]) / 2
+dx2 <- diff(x_mid)
+second_deriv <- diff(first_deriv) / dx2
+x_mid2 <- (x_mid[-1] + x_mid[-length(x_mid)]) / 2
+
+plot(x_mid2, second_deriv, type = "l", col = "steelblue", lwd = 2,
+     xlab = "x", ylab = "f''(x)",
+     main = "Numerical 2nd Derivative (should be ≥ 0)")
+abline(h = 0, col = "red", lwd = 1, lty = 2)
+```
+
+![](07_shape_constraints_files/figure-commonmark/unnamed-chunk-10-1.png)
+
+``` r
+par(mfrow = c(1, 1))
+```
 
 ## Example 3: Monotone increasing and concave
 
@@ -211,6 +291,33 @@ cat("Concave:", all(second_diffs_micv <= 1e-10), "\n")
 ```
 
     Concave: FALSE 
+
+### Plot: Monotone increasing & concave fit
+
+``` r
+x_grid_micv <- seq(min(x_micv), max(x_micv), length.out = 200)
+nd_micv <- data.frame(x = x_grid_micv)
+pred_micv <- predict(m_micv, newdata = nd_micv, se.fit = TRUE)
+f_true3_grid <- 3 * sqrt(x_grid_micv)
+
+plot(x_micv, y_micv, col = adjustcolor("grey40", 0.4), pch = 16, cex = 0.6,
+     xlab = "x", ylab = "f(x)",
+     main = "Monotone Increasing & Concave: Fit vs Truth")
+polygon(c(x_grid_micv, rev(x_grid_micv)),
+        c(pred_micv$fit + 2 * pred_micv$se.fit,
+          rev(pred_micv$fit - 2 * pred_micv$se.fit)),
+        col = adjustcolor("steelblue", 0.2), border = NA)
+lines(x_grid_micv, pred_micv$fit, col = "steelblue", lwd = 2)
+lines(x_grid_micv, f_true3_grid, col = "red", lwd = 2, lty = 2)
+legend("bottomright",
+       legend = c("SCAM (micv) ± 2SE", "True f(x) = 3√x", "Data"),
+       col = c("steelblue", "red", "grey40"),
+       lwd = c(2, 2, NA), lty = c(1, 2, NA),
+       pch = c(NA, NA, 16), pt.cex = c(NA, NA, 0.6),
+       bg = "white", cex = 0.8)
+```
+
+![](07_shape_constraints_files/figure-commonmark/unnamed-chunk-14-1.png)
 
 ## SCAM model summaries
 

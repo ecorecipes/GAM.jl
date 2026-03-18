@@ -1,5 +1,5 @@
 # GAMM: Generalized Additive Mixed Models
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
   - [Model specification](#model-specification)
@@ -11,12 +11,14 @@ GAM.jl Contributors
   - [Random effects](#random-effects)
   - [Variance components](#variance-components)
   - [Comparison with true values](#comparison-with-true-values)
+  - [Visualizing the Gaussian GAMM](#visualizing-the-gaussian-gamm)
   - [Equivalence with
     `s(subject, bs=:re)`](#equivalence-with-ssubject-bsre)
 - [Example 2: Poisson GAMM for Count
   Data](#example-2-poisson-gamm-for-count-data)
   - [Fitting](#fitting)
   - [Random effects](#random-effects-1)
+  - [Visualizing the Poisson GAMM](#visualizing-the-poisson-gamm)
 - [Example 3: Alternative Formula
   Interfaces](#example-3-alternative-formula-interfaces)
   - [Using `@formula` with `(1|group)`](#using-formula-with-1group)
@@ -59,11 +61,6 @@ penalized regression splines, and $b_j$ are random intercepts.
 ## Setup
 
 ``` julia
-import Pkg
-Pkg.activate(joinpath(@__DIR__, "..", ".."))
-```
-
-``` julia
 using GAM
 using CSV
 using DataFrames
@@ -71,6 +68,7 @@ using Distributions
 using GLM: LogLink, IdentityLink
 using Statistics: mean, std, var, cor
 using StatsAPI: fitted, deviance, nobs, coef, predict
+using Plots
 using Printf
 ```
 
@@ -172,6 +170,29 @@ true_re = [dat.re_true[findfirst(dat.subject .== s)] for s in sort(unique(dat.su
 
     Correlation of estimated vs true RE: 0.8471
 
+### Visualizing the Gaussian GAMM
+
+``` julia
+# Population smooth on a prediction grid (unknown subject → zero RE)
+x_grid = range(minimum(dat.x), maximum(dat.x); length=200)
+pop_pred = predict(m, DataFrame(x=x_grid, subject=fill(999, 200)))
+
+p1 = scatter(dat.x, dat.y; group=dat.subject, markersize=2, alpha=0.5,
+    xlabel="x", ylabel="y", title="Gaussian GAMM: data by subject",
+    legend=:none)
+plot!(p1, x_grid, pop_pred; color=:black, linewidth=3, label="population smooth")
+
+n_groups = length(levels)
+p2 = bar(1:n_groups, [est true_re]; label=["Estimated" "True"], legend=:topright,
+    xlabel="Subject", ylabel="Random intercept",
+    title="Random intercepts: estimated vs true",
+    xticks=(1:n_groups, string.(levels)))
+
+plot(p1, p2; layout=(1, 2), size=(900, 400))
+```
+
+![](10_gamm_files/figure-commonmark/cell-8-output-1.svg)
+
 ### Equivalence with `s(subject, bs=:re)`
 
 In GAM.jl, `gamm(@gamm_formula(y ~ s(x) + (1|subject)), ...)` is
@@ -249,6 +270,30 @@ vc2 = VarCorr(m2)
 
     RE correlation with truth: 0.6420
     Estimated σ_RE: 0.1150 (true: 0.4)
+
+### Visualizing the Poisson GAMM
+
+``` julia
+# Population smooth on prediction grid
+x_grid2 = range(minimum(dat2.x), maximum(dat2.x); length=200)
+pop_pred2 = predict(m2, DataFrame(x=x_grid2, site=fill(999, 200)))
+
+site_levels = sort(unique(dat2.site))
+p1 = scatter(dat2.x, dat2.y; group=dat2.site, markersize=2, alpha=0.5,
+    xlabel="x", ylabel="y (count)", title="Poisson GAMM: data by site",
+    legend=:none)
+plot!(p1, x_grid2, pop_pred2; color=:black, linewidth=3, label="population mean")
+
+n_sites = length(site_levels)
+p2 = bar(1:n_sites, [est2 true_re2]; label=["Estimated" "True"], legend=:topright,
+    xlabel="Site", ylabel="Random intercept (log-scale)",
+    title="Site random effects: estimated vs true",
+    xticks=(1:n_sites, string.(site_levels)))
+
+plot(p1, p2; layout=(1, 2), size=(900, 400))
+```
+
+![](10_gamm_files/figure-commonmark/cell-13-output-1.svg)
 
 ## Example 3: Alternative Formula Interfaces
 

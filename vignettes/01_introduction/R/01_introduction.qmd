@@ -1,6 +1,6 @@
 ---
 title: "Introduction to GAMs with mgcv"
-author: "GAM.jl Contributors"
+author: "Simon Frost"
 format:
   html:
     code-fold: false

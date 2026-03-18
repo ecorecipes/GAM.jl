@@ -1,6 +1,6 @@
 ---
 title: "GAMM: Generalized Additive Mixed Models"
-author: "GAM.jl Contributors"
+author: "Simon Frost"
 format:
   html:
     code-fold: false

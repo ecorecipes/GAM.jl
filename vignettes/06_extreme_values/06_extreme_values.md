@@ -1,5 +1,5 @@
 # Extreme Value GAMs
-GAM.jl Contributors
+Simon Frost
 
 - [Introduction](#introduction)
 - [Setup](#setup)
@@ -9,10 +9,14 @@ GAM.jl Contributors
   - [Examine parameter estimates](#examine-parameter-estimates)
   - [Compare fitted vs true
     functions](#compare-fitted-vs-true-functions)
+  - [GEV fitted vs true plots](#gev-fitted-vs-true-plots)
+  - [GEV residual diagnostics](#gev-residual-diagnostics)
 - [GPD model](#gpd-model)
   - [Simulate GPD data](#simulate-gpd-data)
   - [Fit the GPD model](#fit-the-gpd-model)
   - [Examine GPD estimates](#examine-gpd-estimates)
+  - [GPD fitted vs true plots](#gpd-fitted-vs-true-plots)
+  - [GPD residual diagnostics](#gpd-residual-diagnostics)
 - [Model structure](#model-structure)
 - [Summary](#summary)
 
@@ -44,6 +48,7 @@ using DataFrames
 using CSV
 using Random
 using Statistics
+using Plots
 ```
 
 ## GEV model
@@ -164,6 +169,35 @@ println("RMSE (log-scale): ", round(sqrt(mean((psi_hat .- logsigma_true).^2)), d
     RMSE (location): 0.138
     RMSE (log-scale): 0.078
 
+### GEV fitted vs true plots
+
+``` julia
+p1 = plot(x_sorted, mu_hat[ord], label="Fitted μ(x)", color=:steelblue, lw=2,
+          xlabel="x", ylabel="Location μ", title="GEV Location")
+plot!(p1, x_sorted, mu_true[ord], label="True μ(x)", color=:red, ls=:dash, lw=2)
+scatter!(p1, x, y_gev, label="Data", color=:grey40, markersize=2, alpha=0.3)
+
+p2 = plot(x_sorted, psi_hat[ord], label="Fitted ψ(x)", color=:steelblue, lw=2,
+          xlabel="x", ylabel="Log-scale ψ", title="GEV Log-scale")
+plot!(p2, x_sorted, logsigma_true[ord], label="True ψ(x)", color=:red, ls=:dash, lw=2)
+
+plot(p1, p2; layout=(1, 2), size=(800, 400))
+```
+
+![](06_extreme_values_files/figure-commonmark/cell-10-output-1.svg)
+
+### GEV residual diagnostics
+
+``` julia
+resid_gev = y_gev .- mu_hat
+scatter(mu_hat, resid_gev, xlabel="Fitted μ", ylabel="Residual (y − μ̂)",
+        title="GEV Residuals vs Fitted", color=:steelblue, markersize=2, alpha=0.4,
+        legend=false)
+hline!([0.0], color=:grey40, ls=:dash)
+```
+
+![](06_extreme_values_files/figure-commonmark/cell-11-output-1.svg)
+
 ## GPD model
 
 ### Simulate GPD data
@@ -230,6 +264,39 @@ println("Correlation (fitted vs true log-scale): ", round(cor_gpd, digits=4))
     Shape estimate: 0.0625
     True shape: 0.15
     Correlation (fitted vs true log-scale): -0.2538
+
+### GPD fitted vs true plots
+
+``` julia
+ord_gpd = sortperm(x_gpd)
+x_gpd_sorted = x_gpd[ord_gpd]
+
+p3 = plot(x_gpd_sorted, psi_gpd_hat[ord_gpd], label="Fitted ψ(x)", color=:steelblue, lw=2,
+          xlabel="x", ylabel="Log-scale ψ", title="GPD Log-scale")
+plot!(p3, x_gpd_sorted, logsigma_gpd_true[ord_gpd], label="True ψ(x)", color=:red, ls=:dash, lw=2)
+
+p4 = scatter(x_gpd, y_gpd, label="Data", color=:grey40, markersize=2, alpha=0.3,
+             xlabel="x", ylabel="y", title="GPD Data + Fitted Scale")
+plot!(p4, x_gpd_sorted, exp.(psi_gpd_hat[ord_gpd]), label="Fitted σ(x)", color=:steelblue, lw=2)
+plot!(p4, x_gpd_sorted, sigma_gpd_true[ord_gpd], label="True σ(x)", color=:red, ls=:dash, lw=2)
+
+plot(p3, p4; layout=(1, 2), size=(800, 400))
+```
+
+![](06_extreme_values_files/figure-commonmark/cell-15-output-1.svg)
+
+### GPD residual diagnostics
+
+``` julia
+sigma_gpd_hat = exp.(psi_gpd_hat)
+resid_gpd = y_gpd ./ sigma_gpd_hat
+scatter(sigma_gpd_hat, resid_gpd, xlabel="Fitted σ", ylabel="Standardized residual (y / σ̂)",
+        title="GPD Residuals vs Fitted Scale", color=:steelblue, markersize=2, alpha=0.4,
+        legend=false)
+hline!([1.0], color=:grey40, ls=:dash)
+```
+
+![](06_extreme_values_files/figure-commonmark/cell-16-output-1.svg)
 
 ## Model structure
 

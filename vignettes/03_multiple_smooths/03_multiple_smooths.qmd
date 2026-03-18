@@ -1,6 +1,6 @@
 ---
 title: "Multiple Smooth Terms"
-author: "GAM.jl Contributors"
+author: "Simon Frost"
 format:
   html:
     code-fold: false

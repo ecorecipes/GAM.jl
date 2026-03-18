@@ -1,6 +1,6 @@
 ---
 title: "Shape-Constrained Additive Models"
-author: "GAM.jl Contributors"
+author: "Simon Frost"
 format:
   html:
     code-fold: false

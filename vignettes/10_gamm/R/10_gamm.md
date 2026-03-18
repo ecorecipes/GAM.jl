@@ -1,5 +1,5 @@
 # GAMM: R Comparison
-GAM.jl Contributors
+Simon Frost
 
 - [Overview](#overview)
 - [Setup](#setup)
@@ -11,12 +11,16 @@ GAM.jl Contributors
   - [Comparison with true values](#comparison-with-true-values)
   - [Equivalence with
     `s(subject, bs="re")`](#equivalence-with-ssubject-bsre)
+  - [Plot: Data by Subject with Population
+    Smooth](#plot-data-by-subject-with-population-smooth)
   - [Plot: Smooth Effect](#plot-smooth-effect)
 - [Example 2: Poisson GAMM for Count
   Data](#example-2-poisson-gamm-for-count-data)
   - [Fitting](#fitting)
   - [Random effects](#random-effects-1)
-  - [Plot](#plot)
+  - [Plot: Data by Site with Population
+    Smooth](#plot-data-by-site-with-population-smooth)
+  - [Plot: Smooth Effect](#plot-smooth-effect-1)
 - [Syntax Comparison](#syntax-comparison)
   - [Key differences](#key-differences)
 
@@ -191,6 +195,34 @@ cat(sprintf("Scale (gam):  %.6f\n", m_gam$scale))
 
     Scale (gam):  0.168889
 
+### Plot: Data by Subject with Population Smooth
+
+``` r
+par(mfrow = c(1, 2))
+
+# Scatter colored by subject with population smooth
+subject_ids <- sort(unique(dat$subject))
+n_subj <- length(subject_ids)
+cols <- rainbow(n_subj, alpha = 0.5)
+plot(dat$x, dat$y, col = cols[match(dat$subject, subject_ids)],
+     pch = 16, cex = 0.6, xlab = "x", ylab = "y",
+     main = "Gaussian GAMM: data by subject")
+x_grid <- seq(min(dat$x), max(dat$x), length.out = 200)
+pop_pred <- predict(m$gam, newdata = data.frame(x = x_grid))
+lines(x_grid, pop_pred, col = "black", lwd = 3)
+
+# Grouped bar: estimated vs true random intercepts
+re_mat <- rbind(Estimated = re[, 1], True = true_re[rownames(re)])
+barplot(re_mat, beside = TRUE, names.arg = rownames(re),
+        col = c("steelblue", "darkorange"), las = 1,
+        main = "Random intercepts: estimated vs true",
+        xlab = "Subject", ylab = "Random intercept")
+legend("topright", c("Estimated", "True"),
+       fill = c("steelblue", "darkorange"), cex = 0.8)
+```
+
+![](10_gamm_files/figure-commonmark/unnamed-chunk-9-1.png)
+
 ### Plot: Smooth Effect
 
 ``` r
@@ -209,7 +241,7 @@ barplot(sort(re_est), horiz = TRUE, las = 1,
 abline(v = 0, lty = 2)
 ```
 
-![](10_gamm_files/figure-commonmark/unnamed-chunk-9-1.png)
+![](10_gamm_files/figure-commonmark/unnamed-chunk-10-1.png)
 
 ## Example 2: Poisson GAMM for Count Data
 
@@ -281,7 +313,35 @@ cat(sprintf("RE correlation with truth: %.4f\n",
 
     RE correlation with truth: 0.6505
 
-### Plot
+### Plot: Data by Site with Population Smooth
+
+``` r
+par(mfrow = c(1, 2))
+
+# Scatter colored by site with population smooth
+site_ids <- sort(unique(dat2$site))
+n_sites <- length(site_ids)
+cols2 <- rainbow(n_sites, alpha = 0.5)
+plot(dat2$x, dat2$y, col = cols2[match(dat2$site, site_ids)],
+     pch = 16, cex = 0.6, xlab = "x", ylab = "y (count)",
+     main = "Poisson GAMM: data by site")
+x_grid2 <- seq(min(dat2$x), max(dat2$x), length.out = 200)
+pop_pred2 <- predict(m2$gam, newdata = data.frame(x = x_grid2), type = "response")
+lines(x_grid2, pop_pred2, col = "black", lwd = 3)
+
+# Grouped bar: estimated vs true random effects
+re2_mat <- rbind(Estimated = re2[, 1], True = true_re2[rownames(re2)])
+barplot(re2_mat, beside = TRUE, names.arg = rownames(re2),
+        col = c("steelblue", "darkorange"), las = 1,
+        main = "Site random effects: estimated vs true",
+        xlab = "Site", ylab = "Random intercept (log-scale)")
+legend("topright", c("Estimated", "True"),
+       fill = c("steelblue", "darkorange"), cex = 0.8)
+```
+
+![](10_gamm_files/figure-commonmark/unnamed-chunk-14-1.png)
+
+### Plot: Smooth Effect
 
 ``` r
 par(mfrow = c(1, 2))
@@ -296,7 +356,7 @@ barplot(sort(re2_est), horiz = TRUE, las = 1,
 abline(v = 0, lty = 2)
 ```
 
-![](10_gamm_files/figure-commonmark/unnamed-chunk-13-1.png)
+![](10_gamm_files/figure-commonmark/unnamed-chunk-15-1.png)
 
 ## Syntax Comparison
 

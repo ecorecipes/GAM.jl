@@ -1,5 +1,5 @@
 # GAMLSS: R Comparison
-GAM.jl Contributors
+Simon Frost
 
 - [Overview](#overview)
 - [Setup](#setup)
@@ -10,9 +10,11 @@ GAM.jl Contributors
 - [Gamma Location-Scale](#gamma-location-scale)
   - [Fit](#fit-1)
   - [Results](#results-1)
+  - [Plot](#plot-1)
 - [Beta Regression](#beta-regression)
   - [Fit](#fit-2)
   - [Results](#results-2)
+  - [Plot](#plot-2)
 - [Comparison with mgcv::gaulss](#comparison-with-mgcvgaulss)
 
 ## Overview
@@ -163,17 +165,17 @@ cat(sprintf("σ: cor with truth = %.5f\n", cor(sigma_fit, df$sigma_true)))
 
 ``` r
 par(mfrow = c(1, 2))
-plot(df$x, df$y, pch = ".", col = "grey70", main = "Location (μ)",
+plot(df$x, df$y, pch = ".", col = "grey40", main = "Location (μ)",
      xlab = "x", ylab = "y")
-lines(df$x, mu_fit, col = "blue", lwd = 2)
+lines(df$x, mu_fit, col = "steelblue", lwd = 2)
 lines(df$x, df$mu_true, col = "red", lty = 2, lwd = 2)
-legend("topright", c("Fitted", "True"), col = c("blue", "red"), lty = c(1, 2))
+legend("topright", c("Fitted", "True"), col = c("steelblue", "red"), lty = c(1, 2))
 
-plot(df$x, sigma_fit, type = "l", col = "blue", lwd = 2,
+plot(df$x, sigma_fit, type = "l", col = "steelblue", lwd = 2,
      main = "Scale (σ)", xlab = "x", ylab = "σ",
      ylim = range(c(sigma_fit, df$sigma_true)))
 lines(df$x, df$sigma_true, col = "red", lty = 2, lwd = 2)
-legend("topright", c("Fitted", "True"), col = c("blue", "red"), lty = c(1, 2))
+legend("topright", c("Fitted", "True"), col = c("steelblue", "red"), lty = c(1, 2))
 ```
 
 ![](09_gamlss_files/figure-commonmark/unnamed-chunk-5-1.png)
@@ -212,6 +214,26 @@ cat(sprintf("σ: cor with truth = %.5f\n", cor(sigma_g, df_g$sigma_true)))
 
     σ: cor with truth = 0.97411
 
+### Plot
+
+``` r
+par(mfrow = c(1, 2))
+idx <- order(df_g$x)
+plot(df_g$x, df_g$y, pch = ".", col = "grey40", main = "Location (μ)",
+     xlab = "x", ylab = "y")
+lines(df_g$x[idx], mu_g[idx], col = "steelblue", lwd = 2)
+lines(df_g$x[idx], df_g$mu_true[idx], col = "red", lty = 2, lwd = 2)
+legend("topright", c("Fitted", "True"), col = c("steelblue", "red"), lty = c(1, 2))
+
+plot(df_g$x[idx], sigma_g[idx], type = "l", col = "steelblue", lwd = 2,
+     main = "Scale (σ)", xlab = "x", ylab = "σ (CV)",
+     ylim = range(c(sigma_g, df_g$sigma_true)))
+lines(df_g$x[idx], df_g$sigma_true[idx], col = "red", lty = 2, lwd = 2)
+legend("topright", c("Fitted", "True"), col = c("steelblue", "red"), lty = c(1, 2))
+```
+
+![](09_gamlss_files/figure-commonmark/unnamed-chunk-9-1.png)
+
 ## Beta Regression
 
 ``` r
@@ -238,6 +260,20 @@ cat(sprintf("μ: cor with truth = %.5f\n", cor(mu_b, df_b$mu_true)))
 ```
 
     μ: cor with truth = 0.99577
+
+### Plot
+
+``` r
+idx <- order(df_b$x)
+plot(df_b$x, df_b$y, pch = ".", col = "grey40",
+     main = "Beta regression — fitted mean",
+     xlab = "x", ylab = "y")
+lines(df_b$x[idx], mu_b[idx], col = "steelblue", lwd = 2)
+lines(df_b$x[idx], df_b$mu_true[idx], col = "red", lty = 2, lwd = 2)
+legend("topright", c("Fitted", "True"), col = c("steelblue", "red"), lty = c(1, 2))
+```
+
+![](09_gamlss_files/figure-commonmark/unnamed-chunk-13-1.png)
 
 ## Comparison with mgcv::gaulss
 

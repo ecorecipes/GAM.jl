@@ -1,5 +1,5 @@
 # Introduction to GAMs with mgcv
-GAM.jl Contributors
+Simon Frost
 
 - [Overview](#overview)
 - [Setup](#setup)
@@ -241,7 +241,7 @@ gam.check(m)
     indicate that k is too low, especially if edf is close to k'.
 
             k'   edf k-index p-value
-    s(x) 14.00  7.72    1.09    0.92
+    s(x) 14.00  7.72    1.09     0.9
 
 ``` r
 par(mfrow = c(1, 1))

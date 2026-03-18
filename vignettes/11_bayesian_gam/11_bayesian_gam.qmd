@@ -1,6 +1,6 @@
 ---
 title: "Bayesian GAMs with Turing.jl"
-author: "GAM.jl Contributors"
+author: "Simon Frost"
 format:
   html:
     code-fold: false
