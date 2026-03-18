@@ -80,21 +80,31 @@
     "08_quantile_regression.tex": "54270b1f"
   },
   "10_gamm/R/10_gamm.qmd": {
-    "10_gamm.md": "997119bf"
+    "10_gamm.md": "997119bf",
+    "10_gamm.html": "73210dd5"
   },
   "11_bayesian_gam/R/11_bayesian_gam.qmd": {
-    "11_bayesian_gam.md": "f68add11"
+    "11_bayesian_gam.md": "f68add11",
+    "11_bayesian_gam.html": "6d3fa7b1",
+    "11_bayesian_gam.tex": "6e34733b"
   },
   "10_gamm/10_gamm.qmd": {
-    "10_gamm.md": "eb18388f"
+    "10_gamm.md": "eb18388f",
+    "10_gamm.html": "ab54fc2a",
+    "10_gamm.tex": "50b75a7c"
   },
   "11_bayesian_gam/11_bayesian_gam.qmd": {
-    "11_bayesian_gam.md": "5ca26e2e"
+    "11_bayesian_gam.md": "5ca26e2e",
+    "11_bayesian_gam.html": "da6178f5",
+    "11_bayesian_gam.tex": "cb846139"
   },
   "09_gamlss/09_gamlss.qmd": {
-    "09_gamlss.md": "daf32e20"
+    "09_gamlss.md": "daf32e20",
+    "09_gamlss.html": "cb067dca",
+    "09_gamlss.tex": "065c2431"
   },
   "09_gamlss/R/09_gamlss.qmd": {
-    "09_gamlss.md": "bc0cfefd"
+    "09_gamlss.md": "bc0cfefd",
+    "09_gamlss.html": "c392ce8f"
   }
 }
