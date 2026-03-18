@@ -33,7 +33,9 @@ julia_poisson <- read.csv("../posteriors_poisson_julia.csv")
 # brms posterior samples (from Stan MCMC)
 brms_gauss <- read.csv("../posteriors_gaussian_brms.csv")
 brms_poisson <- read.csv("../posteriors_poisson_brms.csv")
+```
 
+```{r echo=FALSE}
 cat(sprintf("Posterior samples: Julia=%d, brms=%d\n",
             nrow(julia_gauss), nrow(brms_gauss)))
 ```
@@ -117,7 +119,7 @@ sigma_post <- sqrt(sigma2_post)
 
 ### Three-way comparison: GAM.jl vs brms vs mgcv
 
-```{r}
+```{r echo=FALSE}
 cat("Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | Freq\n")
 cat("------------------|-------------------|-------------------|-------------------|------\n")
 cat(sprintf("sigma  mean       | %.4f             | %.4f             | %.4f             | %.4f\n",
@@ -161,7 +163,7 @@ legend("topright", c("GAM.jl posterior", "Frequentist"),
 
 The KS statistic measures the maximum vertical distance between two ECDFs, while the **pairwise ECDF correlation** evaluates both ECDFs on a common grid and computes their Pearson correlation — a value of 1.0 indicates identical distributions:
 
-```{r}
+```{r echo=FALSE}
 # Helper: pairwise ECDF correlation on a common grid
 ecdf_cor <- function(x, y, n_grid = 500) {
   grid <- seq(min(c(x, y)), max(c(x, y)), length.out = n_grid)
@@ -259,6 +261,9 @@ abline(0, 1, col = "red", lwd = 2)
 ```{r}
 dat2 <- read.csv("../data_bayes_poisson.csv")
 m2 <- gam(y ~ s(x, k = 10), data = dat2, family = poisson(), method = "REML")
+```
+
+```{r echo=FALSE}
 cat(sprintf("Frequentist intercept (log-scale): %.4f (true: 1.0)\n", coef(m2)[1]))
 ```
 
@@ -297,7 +302,7 @@ beta_post2 <- mvrnorm(n_samples, coef(m2), vcov(m2))
 
 ### Three-way comparison
 
-```{r}
+```{r echo=FALSE}
 cat("Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | True\n")
 cat("------------------|-------------------|-------------------|-------------------|------\n")
 cat(sprintf("Intercept mean    | %.4f            | %.4f            | %.4f            | 1.0\n",
@@ -310,7 +315,7 @@ cat(sprintf("Intercept sd      | %.4f             | %.4f             | %.4f     
 
 ### KS tests and ECDF
 
-```{r fig.width=10, fig.height=4}
+```{r echo=FALSE}
 ks_jb2 <- ks.test(julia_poisson$beta_intercept, brms_poisson$beta_intercept)
 ks_jm2 <- ks.test(julia_poisson$beta_intercept, beta_post2[, 1])
 ks_bm2 <- ks.test(brms_poisson$beta_intercept, beta_post2[, 1])
@@ -326,7 +331,9 @@ cat(sprintf("GAM.jl vs mgcv (approx)| %.4f  | %.4f  | %.6f\n",
 cat(sprintf("brms vs mgcv (approx)  | %.4f  | %.4f  | %.6f\n",
             ks_bm2$statistic, ks_bm2$p.value,
             ecdf_cor(brms_poisson$beta_intercept, beta_post2[, 1])))
+```
 
+```{r fig.width=10, fig.height=4}
 par(mfrow = c(1, 2))
 
 # ECDF
