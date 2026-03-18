@@ -33,12 +33,6 @@ GAM.jl's `gamlss()` function provides this capability using Distributions.jl typ
 ## Setup
 
 ```{julia}
-#| output: false
-import Pkg
-Pkg.activate(joinpath(@__DIR__, "..", ".."))
-```
-
-```{julia}
 using GAM
 using CSV
 using DataFrames
@@ -48,6 +42,7 @@ using Statistics: mean, std, var, cor
 using StatsAPI: fitted, deviance
 using LinearAlgebra: diag
 using Random
+using Plots
 ```
 
 ## Normal Location-Scale Model
@@ -109,6 +104,25 @@ println("Max |μ_gam - μ_gamlss|: $(round(maximum(abs.(μ_gam - μ_fit)); digit
 
 The location estimates are similar, but GAMLSS additionally captures how the spread changes.
 
+### Visualisation
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 4
+idx = sortperm(dat.x)
+
+p1 = scatter(dat.x, dat.y; label="data", ms=2, alpha=0.3, color=:grey40,
+    xlabel="x", ylabel="y", title="Location (μ)")
+plot!(p1, dat.x[idx], μ_fit[idx]; label="fitted", lw=2, color=:steelblue)
+plot!(p1, dat.x[idx], dat.mu_true[idx]; label="true", lw=2, ls=:dash, color=:red)
+
+p2 = plot(dat.x[idx], σ_fit[idx]; label="fitted", lw=2, color=:steelblue,
+    xlabel="x", ylabel="σ", title="Scale (σ)")
+plot!(p2, dat.x[idx], dat.sigma_true[idx]; label="true", lw=2, ls=:dash, color=:red)
+
+plot(p1, p2; layout=(1, 2), size=(700, 300))
+```
+
 ### Constant-variance special case
 
 When $\sigma$ is modeled as intercept-only (`y ~ 1`), GAMLSS reduces to a standard GAM:
@@ -163,6 +177,25 @@ println("σ: cor with truth = $(round(cor(σ_fit, dat_g.sigma_true); digits=5))"
 println("Mean fitted CV: $(round(mean(σ_fit); digits=3))")
 ```
 
+### Visualisation
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 4
+idx_g = sortperm(dat_g.x)
+
+p1 = scatter(dat_g.x, dat_g.y; label="data", ms=2, alpha=0.3, color=:grey40,
+    xlabel="x", ylabel="y", title="Location (μ)")
+plot!(p1, dat_g.x[idx_g], μ_fit[idx_g]; label="fitted", lw=2, color=:steelblue)
+plot!(p1, dat_g.x[idx_g], dat_g.mu_true[idx_g]; label="true", lw=2, ls=:dash, color=:red)
+
+p2 = plot(dat_g.x[idx_g], σ_fit[idx_g]; label="fitted", lw=2, color=:steelblue,
+    xlabel="x", ylabel="σ (CV)", title="Scale (σ)")
+plot!(p2, dat_g.x[idx_g], dat_g.sigma_true[idx_g]; label="true", lw=2, ls=:dash, color=:red)
+
+plot(p1, p2; layout=(1, 2), size=(700, 300))
+```
+
 ### Why not just `Gamma()` in `gam()`?
 
 A standard `gam(...; family=Gamma())` only models the mean with a single scale parameter. The GAMLSS version lets the CV *vary* with $x$, capturing heterogeneity in the dispersion.
@@ -205,6 +238,19 @@ logit_inv(x) = 1 / (1 + exp(-x))
 
 println("μ: cor with truth = $(round(cor(μ_fit, dat_b.mu_true); digits=5))")
 println("Fitted precision φ ≈ $(round(mean(φ_fit); digits=1)) (true: 15.0)")
+```
+
+### Visualisation
+
+```{julia}
+#| fig-width: 6
+#| fig-height: 4
+idx_b = sortperm(dat_b.x)
+
+scatter(dat_b.x, dat_b.y; label="data", ms=2, alpha=0.3, color=:grey40,
+    xlabel="x", ylabel="y", title="Beta regression — fitted mean")
+plot!(dat_b.x[idx_b], μ_fit[idx_b]; label="fitted", lw=2, color=:steelblue)
+plot!(dat_b.x[idx_b], dat_b.mu_true[idx_b]; label="true", lw=2, ls=:dash, color=:red)
 ```
 
 ## Custom Links
@@ -279,6 +325,7 @@ end
 The R `gamlss` package (with `gamlss.add` for smooth terms) fits similar models. Here we verify GAM.jl matches R:
 
 ```{julia}
+#| eval: false
 using RCall
 
 # Re-fit the Normal location-scale model for comparison

@@ -27,12 +27,6 @@ GAM.jl's `evgam` function fits **multi-parameter GAMs** where each distribution 
 ## Setup
 
 ```{julia}
-#| output: false
-import Pkg
-Pkg.activate(joinpath(@__DIR__, "..", ".."))
-```
-
-```{julia}
 using GAM
 using StatsAPI: fitted
 using LinearAlgebra: diag
@@ -40,6 +34,7 @@ using DataFrames
 using CSV
 using Random
 using Statistics
+using Plots
 ```
 
 ## GEV model
@@ -131,6 +126,35 @@ println("RMSE (location): ", round(sqrt(mean((mu_hat .- mu_true).^2)), digits=3)
 println("RMSE (log-scale): ", round(sqrt(mean((psi_hat .- logsigma_true).^2)), digits=3))
 ```
 
+### GEV fitted vs true plots
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+p1 = plot(x_sorted, mu_hat[ord], label="Fitted μ(x)", color=:steelblue, lw=2,
+          xlabel="x", ylabel="Location μ", title="GEV Location")
+plot!(p1, x_sorted, mu_true[ord], label="True μ(x)", color=:red, ls=:dash, lw=2)
+scatter!(p1, x, y_gev, label="Data", color=:grey40, markersize=2, alpha=0.3)
+
+p2 = plot(x_sorted, psi_hat[ord], label="Fitted ψ(x)", color=:steelblue, lw=2,
+          xlabel="x", ylabel="Log-scale ψ", title="GEV Log-scale")
+plot!(p2, x_sorted, logsigma_true[ord], label="True ψ(x)", color=:red, ls=:dash, lw=2)
+
+plot(p1, p2; layout=(1, 2), size=(800, 400))
+```
+
+### GEV residual diagnostics
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+resid_gev = y_gev .- mu_hat
+scatter(mu_hat, resid_gev, xlabel="Fitted μ", ylabel="Residual (y − μ̂)",
+        title="GEV Residuals vs Fitted", color=:steelblue, markersize=2, alpha=0.4,
+        legend=false)
+hline!([0.0], color=:grey40, ls=:dash)
+```
+
 ## GPD model
 
 ### Simulate GPD data
@@ -182,6 +206,39 @@ println("True shape: ", xi_gpd_true)
 
 cor_gpd = cor(psi_gpd_hat, logsigma_gpd_true)
 println("Correlation (fitted vs true log-scale): ", round(cor_gpd, digits=4))
+```
+
+### GPD fitted vs true plots
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+ord_gpd = sortperm(x_gpd)
+x_gpd_sorted = x_gpd[ord_gpd]
+
+p3 = plot(x_gpd_sorted, psi_gpd_hat[ord_gpd], label="Fitted ψ(x)", color=:steelblue, lw=2,
+          xlabel="x", ylabel="Log-scale ψ", title="GPD Log-scale")
+plot!(p3, x_gpd_sorted, logsigma_gpd_true[ord_gpd], label="True ψ(x)", color=:red, ls=:dash, lw=2)
+
+p4 = scatter(x_gpd, y_gpd, label="Data", color=:grey40, markersize=2, alpha=0.3,
+             xlabel="x", ylabel="y", title="GPD Data + Fitted Scale")
+plot!(p4, x_gpd_sorted, exp.(psi_gpd_hat[ord_gpd]), label="Fitted σ(x)", color=:steelblue, lw=2)
+plot!(p4, x_gpd_sorted, sigma_gpd_true[ord_gpd], label="True σ(x)", color=:red, ls=:dash, lw=2)
+
+plot(p3, p4; layout=(1, 2), size=(800, 400))
+```
+
+### GPD residual diagnostics
+
+```{julia}
+#| fig-width: 8
+#| fig-height: 5
+sigma_gpd_hat = exp.(psi_gpd_hat)
+resid_gpd = y_gpd ./ sigma_gpd_hat
+scatter(sigma_gpd_hat, resid_gpd, xlabel="Fitted σ", ylabel="Standardized residual (y / σ̂)",
+        title="GPD Residuals vs Fitted Scale", color=:steelblue, markersize=2, alpha=0.4,
+        legend=false)
+hline!([1.0], color=:grey40, ls=:dash)
 ```
 
 ## Model structure

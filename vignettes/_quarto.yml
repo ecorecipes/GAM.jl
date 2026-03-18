@@ -4,4 +4,4 @@ project:
 engine: julia
 
 julia:
-  project: "../"
+  project: "."

@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.9.28">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="GAM.jl Contributors">
+
+<title>Bayesian GAMs: R Comparison (brms + mgcv)</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="11_bayesian_gam_files/libs/clipboard/clipboard.min.js"></script>
+<script src="11_bayesian_gam_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="11_bayesian_gam_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="11_bayesian_gam_files/libs/quarto-html/popper.min.js"></script>
+<script src="11_bayesian_gam_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="11_bayesian_gam_files/libs/quarto-html/anchor.min.js"></script>
+<link href="11_bayesian_gam_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="11_bayesian_gam_files/libs/quarto-html/quarto-syntax-highlighting-49e51e44f424ea8c7044b429bdbbbfe2.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="11_bayesian_gam_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="11_bayesian_gam_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="11_bayesian_gam_files/libs/bootstrap/bootstrap-138a6193a3bd40baf1e627da441a4734.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+<div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+  <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#overview" id="toc-overview" class="nav-link active" data-scroll-target="#overview">Overview</a></li>
+  <li><a href="#setup" id="toc-setup" class="nav-link" data-scroll-target="#setup">Setup</a></li>
+  <li><a href="#example-1-gaussian-gam" id="toc-example-1-gaussian-gam" class="nav-link" data-scroll-target="#example-1-gaussian-gam">Example 1: Gaussian GAM</a>
+  <ul class="collapse">
+  <li><a href="#frequentist-reference-mgcv" id="toc-frequentist-reference-mgcv" class="nav-link" data-scroll-target="#frequentist-reference-mgcv">Frequentist reference (mgcv)</a></li>
+  <li><a href="#brms-fit" id="toc-brms-fit" class="nav-link" data-scroll-target="#brms-fit">brms fit</a></li>
+  <li><a href="#mgcv-bayesian-posterior-approximation" id="toc-mgcv-bayesian-posterior-approximation" class="nav-link" data-scroll-target="#mgcv-bayesian-posterior-approximation">mgcv Bayesian posterior approximation</a></li>
+  <li><a href="#three-way-comparison-gam.jl-vs-brms-vs-mgcv" id="toc-three-way-comparison-gam.jl-vs-brms-vs-mgcv" class="nav-link" data-scroll-target="#three-way-comparison-gam.jl-vs-brms-vs-mgcv">Three-way comparison: GAM.jl vs brms vs mgcv</a></li>
+  <li><a href="#posterior-density-plots" id="toc-posterior-density-plots" class="nav-link" data-scroll-target="#posterior-density-plots">Posterior density plots</a></li>
+  <li><a href="#kolmogorov-smirnov-tests-and-ecdf-correlation" id="toc-kolmogorov-smirnov-tests-and-ecdf-correlation" class="nav-link" data-scroll-target="#kolmogorov-smirnov-tests-and-ecdf-correlation">Kolmogorov-Smirnov tests and ECDF correlation</a></li>
+  <li><a href="#ecdf-comparison-plots" id="toc-ecdf-comparison-plots" class="nav-link" data-scroll-target="#ecdf-comparison-plots">ECDF comparison plots</a></li>
+  <li><a href="#q-q-plots-gam.jl-vs-brms" id="toc-q-q-plots-gam.jl-vs-brms" class="nav-link" data-scroll-target="#q-q-plots-gam.jl-vs-brms">Q-Q plots: GAM.jl vs brms</a></li>
+  </ul></li>
+  <li><a href="#example-2-poisson-gam" id="toc-example-2-poisson-gam" class="nav-link" data-scroll-target="#example-2-poisson-gam">Example 2: Poisson GAM</a>
+  <ul class="collapse">
+  <li><a href="#frequentist-fit" id="toc-frequentist-fit" class="nav-link" data-scroll-target="#frequentist-fit">Frequentist fit</a></li>
+  <li><a href="#mgcv-bayesian-posterior" id="toc-mgcv-bayesian-posterior" class="nav-link" data-scroll-target="#mgcv-bayesian-posterior">mgcv Bayesian posterior</a></li>
+  <li><a href="#three-way-comparison" id="toc-three-way-comparison" class="nav-link" data-scroll-target="#three-way-comparison">Three-way comparison</a></li>
+  <li><a href="#ks-tests-and-ecdf" id="toc-ks-tests-and-ecdf" class="nav-link" data-scroll-target="#ks-tests-and-ecdf">KS tests and ECDF</a></li>
+  </ul></li>
+  <li><a href="#syntax-comparison" id="toc-syntax-comparison" class="nav-link" data-scroll-target="#syntax-comparison">Syntax Comparison</a>
+  <ul class="collapse">
+  <li><a href="#key-findings" id="toc-key-findings" class="nav-link" data-scroll-target="#key-findings">Key findings</a></li>
+  </ul></li>
+  </ul>
+<div class="quarto-alternate-formats"><h2>Other Formats</h2><ul><li><a href="11_bayesian_gam.md"><i class="bi bi-file-code"></i>Github (GFM)</a></li></ul></div></nav>
+</div>
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Bayesian GAMs: R Comparison (brms + mgcv)</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    <div>
+    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-contents">
+             <p>GAM.jl Contributors </p>
+          </div>
+  </div>
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="overview" class="level2">
+<h2 class="anchored" data-anchor-id="overview">Overview</h2>
+<p>This vignette compares Bayesian GAM posterior distributions from <strong>GAM.jl</strong> (Turing.jl MCMC) with two R approaches:</p>
+<ol type="1">
+<li><strong>brms</strong> — Full MCMC via Stan’s NUTS sampler. brms uses <code>mgcv::smoothCon()</code> + <code>smooth2random()</code> internally, making it the most direct R analog of GAM.jl’s Turing backend. Both use the same smooth2random decomposition with half-normal/exponential priors on smoothing SDs.</li>
+<li><strong>mgcv Bayesian posterior approximation</strong> — <code>mgcv::gam()</code> computes a Bayesian posterior covariance matrix <code>Vp</code> alongside frequentist estimates. We sample from this multivariate normal posterior.</li>
+</ol>
+</section>
+<section id="setup" class="level2">
+<h2 class="anchored" data-anchor-id="setup">Setup</h2>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(mgcv)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(brms)</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(MASS)</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Julia posterior samples (from Turing.jl MCMC)</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>julia_gauss <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../posteriors_gaussian_julia.csv"</span>)</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>julia_poisson <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../posteriors_poisson_julia.csv"</span>)</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="co"># brms posterior samples (from Stan MCMC)</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>brms_gauss <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../posteriors_gaussian_brms.csv"</span>)</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>brms_poisson <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../posteriors_poisson_brms.csv"</span>)</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Posterior samples: Julia=%d, brms=%d</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>            <span class="fu">nrow</span>(julia_gauss), <span class="fu">nrow</span>(brms_gauss)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Posterior samples: Julia=4000, brms=2000</code></pre>
+</div>
+</div>
+</section>
+<section id="example-1-gaussian-gam" class="level2">
+<h2 class="anchored" data-anchor-id="example-1-gaussian-gam">Example 1: Gaussian GAM</h2>
+<section id="frequentist-reference-mgcv" class="level3">
+<h3 class="anchored" data-anchor-id="frequentist-reference-mgcv">Frequentist reference (mgcv)</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../data_bayes_gaussian.csv"</span>)</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">gam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">10</span>), <span class="at">data =</span> dat, <span class="at">method =</span> <span class="st">"REML"</span>)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(m)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>
+Family: gaussian 
+Link function: identity 
+
+Formula:
+y ~ s(x, k = 10)
+
+Parametric coefficients:
+            Estimate Std. Error t value Pr(&gt;|t|)    
+(Intercept) -0.11285    0.02216  -5.093 8.38e-07 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+Approximate significance of smooth terms:
+       edf Ref.df     F p-value    
+s(x) 6.847  7.937 124.6  &lt;2e-16 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+R-sq.(adj) =  0.832   Deviance explained = 83.8%
+-REML = 65.726  Scale est. = 0.098196  n = 200</code></pre>
+</div>
+</div>
+</section>
+<section id="brms-fit" class="level3">
+<h3 class="anchored" data-anchor-id="brms-fit">brms fit</h3>
+<p>The brms model uses the same priors as GAM.jl: <code>Exponential(1)</code> on smooth SDs, <code>Normal(0, 10)</code> on fixed effects, and <code>truncated Normal(0, 2.5)</code> on σ:</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>m_brms <span class="ot">&lt;-</span> <span class="fu">brm</span>(</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">10</span>),</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">data =</span> dat,</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">family =</span> <span class="fu">gaussian</span>(),</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior =</span> <span class="fu">c</span>(</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="fu">prior</span>(<span class="fu">normal</span>(<span class="dv">0</span>, <span class="dv">10</span>), <span class="at">class =</span> <span class="st">"b"</span>),</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">prior</span>(<span class="fu">exponential</span>(<span class="dv">1</span>), <span class="at">class =</span> <span class="st">"sds"</span>),</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">prior</span>(<span class="fu">normal</span>(<span class="dv">0</span>, <span class="fl">2.5</span>), <span class="at">class =</span> <span class="st">"sigma"</span>, <span class="at">lb =</span> <span class="dv">0</span>)</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  ),</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">2</span>, <span class="at">iter =</span> <span class="dv">2000</span>, <span class="at">warmup =</span> <span class="dv">1000</span>, <span class="at">seed =</span> <span class="dv">2024</span>,</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">"cmdstanr"</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="mgcv-bayesian-posterior-approximation" class="level3">
+<h3 class="anchored" data-anchor-id="mgcv-bayesian-posterior-approximation">mgcv Bayesian posterior approximation</h3>
+<p><code>mgcv::gam()</code> computes the Bayesian posterior covariance <code>Vp</code> (accounting for smoothing parameter uncertainty). We sample from the multivariate normal posterior <span class="math inline">\(\boldsymbol{\beta} \sim N(\hat{\boldsymbol{\beta}}, \mathbf{V}_p)\)</span> and use a scaled inverse-<span class="math inline">\(\chi^2\)</span> posterior for <span class="math inline">\(\sigma^2\)</span>:</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">2024</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>n_samples <span class="ot">&lt;-</span> <span class="dv">4000</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Coefficient posterior</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>beta_post <span class="ot">&lt;-</span> <span class="fu">mvrnorm</span>(n_samples, <span class="fu">coef</span>(m), <span class="fu">vcov</span>(m))</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Residual SD posterior</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>n <span class="ot">&lt;-</span> <span class="fu">nrow</span>(dat)</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>p <span class="ot">&lt;-</span> <span class="fu">sum</span>(m<span class="sc">$</span>edf)</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>df_resid <span class="ot">&lt;-</span> n <span class="sc">-</span> p</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>sigma2_post <span class="ot">&lt;-</span> df_resid <span class="sc">*</span> m<span class="sc">$</span>scale <span class="sc">/</span> <span class="fu">rchisq</span>(n_samples, <span class="at">df =</span> df_resid)</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>sigma_post <span class="ot">&lt;-</span> <span class="fu">sqrt</span>(sigma2_post)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="three-way-comparison-gam.jl-vs-brms-vs-mgcv" class="level3">
+<h3 class="anchored" data-anchor-id="three-way-comparison-gam.jl-vs-brms-vs-mgcv">Three-way comparison: GAM.jl vs brms vs mgcv</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | Freq</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | Freq</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"------------------|-------------------|-------------------|-------------------|------</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>------------------|-------------------|-------------------|-------------------|------</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"sigma  mean       | %.4f             | %.4f             | %.4f             | %.4f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>            <span class="fu">mean</span>(julia_gauss<span class="sc">$</span>sigma_obs), <span class="fu">mean</span>(brms_gauss<span class="sc">$</span>sigma_obs),</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">mean</span>(sigma_post), <span class="fu">sqrt</span>(m<span class="sc">$</span>scale)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>sigma  mean       | 0.3148             | 0.3151             | 0.3145             | 0.3134</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"sigma  sd         | %.4f             | %.4f             | %.4f             |</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>            <span class="fu">sd</span>(julia_gauss<span class="sc">$</span>sigma_obs), <span class="fu">sd</span>(brms_gauss<span class="sc">$</span>sigma_obs), <span class="fu">sd</span>(sigma_post)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>sigma  sd         | 0.0161             | 0.0161             | 0.0160             |</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Intercept mean    | %.4f            | %.4f            | %.4f            | %.4f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>            <span class="fu">mean</span>(julia_gauss<span class="sc">$</span>beta_intercept), <span class="fu">mean</span>(brms_gauss<span class="sc">$</span>beta_intercept),</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">mean</span>(beta_post[, <span class="dv">1</span>]), <span class="fu">coef</span>(m)[<span class="dv">1</span>]))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Intercept mean    | -0.1128            | -0.1131            | -0.1123            | -0.1129</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Intercept sd      | %.4f             | %.4f             | %.4f             |</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>            <span class="fu">sd</span>(julia_gauss<span class="sc">$</span>beta_intercept), <span class="fu">sd</span>(brms_gauss<span class="sc">$</span>beta_intercept),</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">sd</span>(beta_post[, <span class="dv">1</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Intercept sd      | 0.0223             | 0.0223             | 0.0221             |</code></pre>
+</div>
+</div>
+</section>
+<section id="posterior-density-plots" class="level3">
+<h3 class="anchored" data-anchor-id="posterior-density-plots">Posterior density plots</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>))</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="co"># σ_obs posterior histogram</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="fu">hist</span>(julia_gauss<span class="sc">$</span>sigma_obs, <span class="at">breaks =</span> <span class="dv">50</span>, <span class="at">probability =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>     <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"steelblue"</span>, <span class="fl">0.7</span>), <span class="at">border =</span> <span class="cn">NA</span>,</span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="fu">expression</span>(<span class="st">"Posterior density of "</span> <span class="sc">*</span> sigma[obs]),</span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="fu">expression</span>(sigma[obs]), <span class="at">ylab =</span> <span class="st">"Density"</span>)</span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="fu">sqrt</span>(m<span class="sc">$</span>scale), <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topright"</span>, <span class="fu">c</span>(<span class="st">"GAM.jl posterior"</span>, <span class="st">"Frequentist"</span>),</span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>), <span class="at">lwd =</span> <span class="fu">c</span>(<span class="dv">10</span>, <span class="dv">2</span>), <span class="at">cex =</span> <span class="fl">0.8</span>)</span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Intercept posterior histogram</span></span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a><span class="fu">hist</span>(julia_gauss<span class="sc">$</span>beta_intercept, <span class="at">breaks =</span> <span class="dv">50</span>, <span class="at">probability =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a>     <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="st">"steelblue"</span>, <span class="fl">0.7</span>), <span class="at">border =</span> <span class="cn">NA</span>,</span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="fu">expression</span>(<span class="st">"Posterior density of "</span> <span class="sc">*</span> beta[<span class="dv">1</span>]),</span>
+<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="fu">expression</span>(beta[<span class="dv">1</span>] <span class="sc">~</span> <span class="st">"(intercept)"</span>), <span class="at">ylab =</span> <span class="st">"Density"</span>)</span>
+<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="fu">coef</span>(m)[<span class="dv">1</span>], <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"topright"</span>, <span class="fu">c</span>(<span class="st">"GAM.jl posterior"</span>, <span class="st">"Frequentist"</span>),</span>
+<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"steelblue"</span>, <span class="st">"red"</span>), <span class="at">lwd =</span> <span class="fu">c</span>(<span class="dv">10</span>, <span class="dv">2</span>), <span class="at">cex =</span> <span class="fl">0.8</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="11_bayesian_gam_files/figure-html/unnamed-chunk-6-1.png" class="img-fluid figure-img" width="768"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+<section id="kolmogorov-smirnov-tests-and-ecdf-correlation" class="level3">
+<h3 class="anchored" data-anchor-id="kolmogorov-smirnov-tests-and-ecdf-correlation">Kolmogorov-Smirnov tests and ECDF correlation</h3>
+<p>The KS statistic measures the maximum vertical distance between two ECDFs, while the <strong>pairwise ECDF correlation</strong> evaluates both ECDFs on a common grid and computes their Pearson correlation — a value of 1.0 indicates identical distributions:</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Helper: pairwise ECDF correlation on a common grid</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>ecdf_cor <span class="ot">&lt;-</span> <span class="cf">function</span>(x, y, <span class="at">n_grid =</span> <span class="dv">500</span>) {</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>  grid <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fu">min</span>(<span class="fu">c</span>(x, y)), <span class="fu">max</span>(<span class="fu">c</span>(x, y)), <span class="at">length.out =</span> n_grid)</span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cor</span>(<span class="fu">ecdf</span>(x)(grid), <span class="fu">ecdf</span>(y)(grid))</span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="co"># GAM.jl vs brms (full MCMC vs full MCMC — should be very similar)</span></span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a>ks_sigma_jb <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(julia_gauss<span class="sc">$</span>sigma_obs, brms_gauss<span class="sc">$</span>sigma_obs)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(julia_gauss$sigma_obs, brms_gauss$sigma_obs):
+p-value will be approximate in the presence of ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>ks_int_jb <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(julia_gauss<span class="sc">$</span>beta_intercept, brms_gauss<span class="sc">$</span>beta_intercept)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(julia_gauss$beta_intercept,
+brms_gauss$beta_intercept): p-value will be approximate in the presence of ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># GAM.jl vs mgcv (full MCMC vs Gaussian approximation)</span></span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>ks_sigma_jm <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(julia_gauss<span class="sc">$</span>sigma_obs, sigma_post)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(julia_gauss$sigma_obs, sigma_post): p-value will be
+approximate in the presence of ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>ks_int_jm <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(julia_gauss<span class="sc">$</span>beta_intercept, beta_post[, <span class="dv">1</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(julia_gauss$beta_intercept, beta_post[, 1]): p-value
+will be approximate in the presence of ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># brms vs mgcv</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>ks_sigma_bm <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(brms_gauss<span class="sc">$</span>sigma_obs, sigma_post)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(brms_gauss$sigma_obs, sigma_post): p-value will be
+approximate in the presence of ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>ks_int_bm <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(brms_gauss<span class="sc">$</span>beta_intercept, beta_post[, <span class="dv">1</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(brms_gauss$beta_intercept, beta_post[, 1]): p-value
+will be approximate in the presence of ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Comparison             | Param     | KS D   | KS p   | ECDF cor</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Comparison             | Param     | KS D   | KS p   | ECDF cor</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"-----------------------|-----------|--------|--------|--------</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>-----------------------|-----------|--------|--------|--------</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"GAM.jl vs brms         | sigma     | %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>            ks_sigma_jb<span class="sc">$</span>statistic, ks_sigma_jb<span class="sc">$</span>p.value,</span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(julia_gauss<span class="sc">$</span>sigma_obs, brms_gauss<span class="sc">$</span>sigma_obs)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>GAM.jl vs brms         | sigma     | 0.0255  | 0.3512  | 0.999880</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"GAM.jl vs brms         | intercept | %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>            ks_int_jb<span class="sc">$</span>statistic, ks_int_jb<span class="sc">$</span>p.value,</span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(julia_gauss<span class="sc">$</span>beta_intercept, brms_gauss<span class="sc">$</span>beta_intercept)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>GAM.jl vs brms         | intercept | 0.0205  | 0.6296  | 0.999837</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"GAM.jl vs mgcv (approx)| sigma     | %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>            ks_sigma_jm<span class="sc">$</span>statistic, ks_sigma_jm<span class="sc">$</span>p.value,</span>
+<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(julia_gauss<span class="sc">$</span>sigma_obs, sigma_post)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>GAM.jl vs mgcv (approx)| sigma     | 0.0228  | 0.2518  | 0.999916</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"GAM.jl vs mgcv (approx)| intercept | %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>            ks_int_jm<span class="sc">$</span>statistic, ks_int_jm<span class="sc">$</span>p.value,</span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(julia_gauss<span class="sc">$</span>beta_intercept, beta_post[, <span class="dv">1</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>GAM.jl vs mgcv (approx)| intercept | 0.0325  | 0.0293  | 0.999744</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"brms vs mgcv (approx)  | sigma     | %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>            ks_sigma_bm<span class="sc">$</span>statistic, ks_sigma_bm<span class="sc">$</span>p.value,</span>
+<span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(brms_gauss<span class="sc">$</span>sigma_obs, sigma_post)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>brms vs mgcv (approx)  | sigma     | 0.0215  | 0.5686  | 0.999921</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"brms vs mgcv (approx)  | intercept | %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a>            ks_int_bm<span class="sc">$</span>statistic, ks_int_bm<span class="sc">$</span>p.value,</span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(brms_gauss<span class="sc">$</span>beta_intercept, beta_post[, <span class="dv">1</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>brms vs mgcv (approx)  | intercept | 0.0220  | 0.5387  | 0.999904</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb48"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">(ECDF correlation near 1.0 = nearly identical distributions)</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>
+(ECDF correlation near 1.0 = nearly identical distributions)</code></pre>
+</div>
+</div>
+</section>
+<section id="ecdf-comparison-plots" class="level3">
+<h3 class="anchored" data-anchor-id="ecdf-comparison-plots">ECDF comparison plots</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>))</span>
+<span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a><span class="co"># sigma ECDF — three posteriors</span></span>
+<span id="cb50-4"><a href="#cb50-4" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(<span class="fu">ecdf</span>(julia_gauss<span class="sc">$</span>sigma_obs), <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">main =</span> <span class="fu">expression</span>(sigma[obs] <span class="sc">~</span> <span class="st">"posterior ECDF"</span>),</span>
+<span id="cb50-5"><a href="#cb50-5" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="fu">expression</span>(sigma), <span class="at">ylab =</span> <span class="st">"ECDF"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb50-6"><a href="#cb50-6" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(<span class="fu">ecdf</span>(brms_gauss<span class="sc">$</span>sigma_obs), <span class="at">col =</span> <span class="st">"darkgreen"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb50-7"><a href="#cb50-7" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(<span class="fu">ecdf</span>(sigma_post), <span class="at">col =</span> <span class="st">"blue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span>
+<span id="cb50-8"><a href="#cb50-8" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="fu">sqrt</span>(m<span class="sc">$</span>scale), <span class="at">lty =</span> <span class="dv">3</span>, <span class="at">col =</span> <span class="st">"black"</span>, <span class="at">lwd =</span> <span class="fl">1.5</span>)</span>
+<span id="cb50-9"><a href="#cb50-9" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"bottomright"</span>, <span class="fu">c</span>(<span class="st">"GAM.jl (Turing)"</span>, <span class="st">"brms (Stan)"</span>, <span class="st">"mgcv (approx)"</span>, <span class="st">"Frequentist"</span>),</span>
+<span id="cb50-10"><a href="#cb50-10" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"red"</span>, <span class="st">"darkgreen"</span>, <span class="st">"blue"</span>, <span class="st">"black"</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>), <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">cex =</span> <span class="fl">0.7</span>)</span>
+<span id="cb50-11"><a href="#cb50-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb50-12"><a href="#cb50-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Intercept ECDF</span></span>
+<span id="cb50-13"><a href="#cb50-13" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(<span class="fu">ecdf</span>(julia_gauss<span class="sc">$</span>beta_intercept), <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">main =</span> <span class="st">"Intercept posterior ECDF"</span>,</span>
+<span id="cb50-14"><a href="#cb50-14" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="fu">expression</span>(beta[<span class="dv">0</span>]), <span class="at">ylab =</span> <span class="st">"ECDF"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb50-15"><a href="#cb50-15" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(<span class="fu">ecdf</span>(brms_gauss<span class="sc">$</span>beta_intercept), <span class="at">col =</span> <span class="st">"darkgreen"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb50-16"><a href="#cb50-16" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(<span class="fu">ecdf</span>(beta_post[, <span class="dv">1</span>]), <span class="at">col =</span> <span class="st">"blue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span>
+<span id="cb50-17"><a href="#cb50-17" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="fu">coef</span>(m)[<span class="dv">1</span>], <span class="at">lty =</span> <span class="dv">3</span>, <span class="at">col =</span> <span class="st">"black"</span>, <span class="at">lwd =</span> <span class="fl">1.5</span>)</span>
+<span id="cb50-18"><a href="#cb50-18" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"bottomright"</span>, <span class="fu">c</span>(<span class="st">"GAM.jl (Turing)"</span>, <span class="st">"brms (Stan)"</span>, <span class="st">"mgcv (approx)"</span>, <span class="st">"Frequentist"</span>),</span>
+<span id="cb50-19"><a href="#cb50-19" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"red"</span>, <span class="st">"darkgreen"</span>, <span class="st">"blue"</span>, <span class="st">"black"</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>), <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">cex =</span> <span class="fl">0.7</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="11_bayesian_gam_files/figure-html/unnamed-chunk-8-1.png" class="img-fluid figure-img" width="960"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+<section id="q-q-plots-gam.jl-vs-brms" class="level3">
+<h3 class="anchored" data-anchor-id="q-q-plots-gam.jl-vs-brms">Q-Q plots: GAM.jl vs brms</h3>
+<p>The most stringent comparison — both use full MCMC with the same model specification:</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>))</span>
+<span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>probs <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fl">0.01</span>, <span class="fl">0.99</span>, <span class="at">by =</span> <span class="fl">0.01</span>)</span>
+<span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb51-4"><a href="#cb51-4" aria-hidden="true" tabindex="-1"></a><span class="co"># sigma Q-Q</span></span>
+<span id="cb51-5"><a href="#cb51-5" aria-hidden="true" tabindex="-1"></a>q_julia <span class="ot">&lt;-</span> <span class="fu">quantile</span>(julia_gauss<span class="sc">$</span>sigma_obs, probs)</span>
+<span id="cb51-6"><a href="#cb51-6" aria-hidden="true" tabindex="-1"></a>q_brms <span class="ot">&lt;-</span> <span class="fu">quantile</span>(brms_gauss<span class="sc">$</span>sigma_obs, probs)</span>
+<span id="cb51-7"><a href="#cb51-7" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(q_brms, q_julia, <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.6</span>,</span>
+<span id="cb51-8"><a href="#cb51-8" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="fu">expression</span>(sigma[obs] <span class="sc">~</span> <span class="st">"Q-Q: GAM.jl vs brms"</span>),</span>
+<span id="cb51-9"><a href="#cb51-9" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"brms quantiles"</span>, <span class="at">ylab =</span> <span class="st">"GAM.jl quantiles"</span>)</span>
+<span id="cb51-10"><a href="#cb51-10" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="dv">0</span>, <span class="dv">1</span>, <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb51-11"><a href="#cb51-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb51-12"><a href="#cb51-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Intercept Q-Q</span></span>
+<span id="cb51-13"><a href="#cb51-13" aria-hidden="true" tabindex="-1"></a>q_julia_int <span class="ot">&lt;-</span> <span class="fu">quantile</span>(julia_gauss<span class="sc">$</span>beta_intercept, probs)</span>
+<span id="cb51-14"><a href="#cb51-14" aria-hidden="true" tabindex="-1"></a>q_brms_int <span class="ot">&lt;-</span> <span class="fu">quantile</span>(brms_gauss<span class="sc">$</span>beta_intercept, probs)</span>
+<span id="cb51-15"><a href="#cb51-15" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(q_brms_int, q_julia_int, <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.6</span>,</span>
+<span id="cb51-16"><a href="#cb51-16" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="st">"Intercept Q-Q: GAM.jl vs brms"</span>,</span>
+<span id="cb51-17"><a href="#cb51-17" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"brms quantiles"</span>, <span class="at">ylab =</span> <span class="st">"GAM.jl quantiles"</span>)</span>
+<span id="cb51-18"><a href="#cb51-18" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="dv">0</span>, <span class="dv">1</span>, <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="11_bayesian_gam_files/figure-html/unnamed-chunk-9-1.png" class="img-fluid figure-img" width="960"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="example-2-poisson-gam" class="level2">
+<h2 class="anchored" data-anchor-id="example-2-poisson-gam">Example 2: Poisson GAM</h2>
+<section id="frequentist-fit" class="level3">
+<h3 class="anchored" data-anchor-id="frequentist-fit">Frequentist fit</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb52"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a>dat2 <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">"../data_bayes_poisson.csv"</span>)</span>
+<span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a>m2 <span class="ot">&lt;-</span> <span class="fu">gam</span>(y <span class="sc">~</span> <span class="fu">s</span>(x, <span class="at">k =</span> <span class="dv">10</span>), <span class="at">data =</span> dat2, <span class="at">family =</span> <span class="fu">poisson</span>(), <span class="at">method =</span> <span class="st">"REML"</span>)</span>
+<span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Frequentist intercept (log-scale): %.4f (true: 1.0)</span><span class="sc">\n</span><span class="st">"</span>, <span class="fu">coef</span>(m2)[<span class="dv">1</span>]))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Frequentist intercept (log-scale): 0.9094 (true: 1.0)</code></pre>
+</div>
+</div>
+</section>
+<section id="mgcv-bayesian-posterior" class="level3">
+<h3 class="anchored" data-anchor-id="mgcv-bayesian-posterior">mgcv Bayesian posterior</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb54"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>beta_post2 <span class="ot">&lt;-</span> <span class="fu">mvrnorm</span>(n_samples, <span class="fu">coef</span>(m2), <span class="fu">vcov</span>(m2))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="three-way-comparison" class="level3">
+<h3 class="anchored" data-anchor-id="three-way-comparison">Three-way comparison</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb55"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | True</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)     | True</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb57"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"------------------|-------------------|-------------------|-------------------|------</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>------------------|-------------------|-------------------|-------------------|------</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb59"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Intercept mean    | %.4f            | %.4f            | %.4f            | 1.0</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb59-2"><a href="#cb59-2" aria-hidden="true" tabindex="-1"></a>            <span class="fu">mean</span>(julia_poisson<span class="sc">$</span>beta_intercept), <span class="fu">mean</span>(brms_poisson<span class="sc">$</span>beta_intercept),</span>
+<span id="cb59-3"><a href="#cb59-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">mean</span>(beta_post2[, <span class="dv">1</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Intercept mean    | 0.9083            | 0.9083            | 0.9092            | 1.0</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb61"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Intercept sd      | %.4f             | %.4f             | %.4f             |</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a>            <span class="fu">sd</span>(julia_poisson<span class="sc">$</span>beta_intercept), <span class="fu">sd</span>(brms_poisson<span class="sc">$</span>beta_intercept),</span>
+<span id="cb61-3"><a href="#cb61-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">sd</span>(beta_post2[, <span class="dv">1</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Intercept sd      | 0.0529             | 0.0535             | 0.0536             |</code></pre>
+</div>
+</div>
+</section>
+<section id="ks-tests-and-ecdf" class="level3">
+<h3 class="anchored" data-anchor-id="ks-tests-and-ecdf">KS tests and ECDF</h3>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb63"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a>ks_jb2 <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(julia_poisson<span class="sc">$</span>beta_intercept, brms_poisson<span class="sc">$</span>beta_intercept)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(julia_poisson$beta_intercept,
+brms_poisson$beta_intercept): p-value will be approximate in the presence of
+ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb65"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb65-1"><a href="#cb65-1" aria-hidden="true" tabindex="-1"></a>ks_jm2 <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(julia_poisson<span class="sc">$</span>beta_intercept, beta_post2[, <span class="dv">1</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(julia_poisson$beta_intercept, beta_post2[, 1]):
+p-value will be approximate in the presence of ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb67"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a>ks_bm2 <span class="ot">&lt;-</span> <span class="fu">ks.test</span>(brms_poisson<span class="sc">$</span>beta_intercept, beta_post2[, <span class="dv">1</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stderr">
+<pre><code>Warning in ks.test.default(brms_poisson$beta_intercept, beta_post2[, 1]):
+p-value will be approximate in the presence of ties</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb69"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Comparison             | KS D   | KS p   | ECDF cor</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Comparison             | KS D   | KS p   | ECDF cor</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb71"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb71-1"><a href="#cb71-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"-----------------------|--------|--------|--------</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>-----------------------|--------|--------|--------</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb73"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb73-1"><a href="#cb73-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"GAM.jl vs brms         | %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb73-2"><a href="#cb73-2" aria-hidden="true" tabindex="-1"></a>            ks_jb2<span class="sc">$</span>statistic, ks_jb2<span class="sc">$</span>p.value,</span>
+<span id="cb73-3"><a href="#cb73-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(julia_poisson<span class="sc">$</span>beta_intercept, brms_poisson<span class="sc">$</span>beta_intercept)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>GAM.jl vs brms         | 0.0120  | 0.9907  | 0.999962</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb75"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb75-1"><a href="#cb75-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"GAM.jl vs mgcv (approx)| %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb75-2"><a href="#cb75-2" aria-hidden="true" tabindex="-1"></a>            ks_jm2<span class="sc">$</span>statistic, ks_jm2<span class="sc">$</span>p.value,</span>
+<span id="cb75-3"><a href="#cb75-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(julia_poisson<span class="sc">$</span>beta_intercept, beta_post2[, <span class="dv">1</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>GAM.jl vs mgcv (approx)| 0.0163  | 0.6664  | 0.999963</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb77"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb77-1"><a href="#cb77-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"brms vs mgcv (approx)  | %.4f  | %.4f  | %.6f</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb77-2"><a href="#cb77-2" aria-hidden="true" tabindex="-1"></a>            ks_bm2<span class="sc">$</span>statistic, ks_bm2<span class="sc">$</span>p.value,</span>
+<span id="cb77-3"><a href="#cb77-3" aria-hidden="true" tabindex="-1"></a>            <span class="fu">ecdf_cor</span>(brms_poisson<span class="sc">$</span>beta_intercept, beta_post2[, <span class="dv">1</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>brms vs mgcv (approx)  | 0.0172  | 0.8224  | 0.999957</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb79"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb79-1"><a href="#cb79-1" aria-hidden="true" tabindex="-1"></a><span class="fu">par</span>(<span class="at">mfrow =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>))</span>
+<span id="cb79-2"><a href="#cb79-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-3"><a href="#cb79-3" aria-hidden="true" tabindex="-1"></a><span class="co"># ECDF</span></span>
+<span id="cb79-4"><a href="#cb79-4" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(<span class="fu">ecdf</span>(julia_poisson<span class="sc">$</span>beta_intercept), <span class="at">col =</span> <span class="st">"red"</span>,</span>
+<span id="cb79-5"><a href="#cb79-5" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="st">"Poisson intercept ECDF"</span>,</span>
+<span id="cb79-6"><a href="#cb79-6" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="fu">expression</span>(beta[<span class="dv">0</span>]), <span class="at">ylab =</span> <span class="st">"ECDF"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb79-7"><a href="#cb79-7" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(<span class="fu">ecdf</span>(brms_poisson<span class="sc">$</span>beta_intercept), <span class="at">col =</span> <span class="st">"darkgreen"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb79-8"><a href="#cb79-8" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(<span class="fu">ecdf</span>(beta_post2[, <span class="dv">1</span>]), <span class="at">col =</span> <span class="st">"blue"</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">lty =</span> <span class="dv">2</span>)</span>
+<span id="cb79-9"><a href="#cb79-9" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="fl">1.0</span>, <span class="at">lty =</span> <span class="dv">3</span>, <span class="at">col =</span> <span class="st">"black"</span>, <span class="at">lwd =</span> <span class="fl">1.5</span>)</span>
+<span id="cb79-10"><a href="#cb79-10" aria-hidden="true" tabindex="-1"></a><span class="fu">legend</span>(<span class="st">"bottomright"</span>, <span class="fu">c</span>(<span class="st">"GAM.jl (Turing)"</span>, <span class="st">"brms (Stan)"</span>, <span class="st">"mgcv (approx)"</span>, <span class="st">"True"</span>),</span>
+<span id="cb79-11"><a href="#cb79-11" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">c</span>(<span class="st">"red"</span>, <span class="st">"darkgreen"</span>, <span class="st">"blue"</span>, <span class="st">"black"</span>), <span class="at">lty =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>), <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">cex =</span> <span class="fl">0.7</span>)</span>
+<span id="cb79-12"><a href="#cb79-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-13"><a href="#cb79-13" aria-hidden="true" tabindex="-1"></a><span class="co"># Q-Q: GAM.jl vs brms</span></span>
+<span id="cb79-14"><a href="#cb79-14" aria-hidden="true" tabindex="-1"></a>q_j2 <span class="ot">&lt;-</span> <span class="fu">quantile</span>(julia_poisson<span class="sc">$</span>beta_intercept, probs)</span>
+<span id="cb79-15"><a href="#cb79-15" aria-hidden="true" tabindex="-1"></a>q_b2 <span class="ot">&lt;-</span> <span class="fu">quantile</span>(brms_poisson<span class="sc">$</span>beta_intercept, probs)</span>
+<span id="cb79-16"><a href="#cb79-16" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(q_b2, q_j2, <span class="at">pch =</span> <span class="dv">16</span>, <span class="at">cex =</span> <span class="fl">0.6</span>,</span>
+<span id="cb79-17"><a href="#cb79-17" aria-hidden="true" tabindex="-1"></a>     <span class="at">main =</span> <span class="st">"Poisson intercept Q-Q: GAM.jl vs brms"</span>,</span>
+<span id="cb79-18"><a href="#cb79-18" aria-hidden="true" tabindex="-1"></a>     <span class="at">xlab =</span> <span class="st">"brms quantiles"</span>, <span class="at">ylab =</span> <span class="st">"GAM.jl quantiles"</span>)</span>
+<span id="cb79-19"><a href="#cb79-19" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="dv">0</span>, <span class="dv">1</span>, <span class="at">col =</span> <span class="st">"red"</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="11_bayesian_gam_files/figure-html/unnamed-chunk-13-1.png" class="img-fluid figure-img" width="960"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="syntax-comparison" class="level2">
+<h2 class="anchored" data-anchor-id="syntax-comparison">Syntax Comparison</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 13%">
+<col style="width: 35%">
+<col style="width: 25%">
+<col style="width: 26%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Feature</th>
+<th>Julia (GAM.jl + Turing)</th>
+<th>R (brms + Stan)</th>
+<th>R (mgcv approx)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Bayesian GAM</td>
+<td><code>gam(f, data; priors=PriorSpec(...))</code></td>
+<td><code>brm(f, data, prior=...)</code></td>
+<td><code>gam(f, data) + mvrnorm</code></td>
+</tr>
+<tr class="even">
+<td>Smooth SD prior</td>
+<td><code>PriorSpec(sds=Exp(1))</code></td>
+<td><code>prior(exponential(1), class="sds")</code></td>
+<td>Implicit via REML</td>
+</tr>
+<tr class="odd">
+<td>Residual SD prior</td>
+<td><code>PriorSpec(sigma=...)</code></td>
+<td><code>prior(..., class="sigma")</code></td>
+<td>Scaled Inv-χ²</td>
+</tr>
+<tr class="even">
+<td>Posterior samples</td>
+<td><code>m.chains[Symbol("σ_obs")]</code></td>
+<td><code>as_draws_df(m)$sigma</code></td>
+<td><code>mvrnorm(n, coef(m), Vp)</code></td>
+</tr>
+<tr class="odd">
+<td>MCMC algorithm</td>
+<td>NUTS (Turing.jl)</td>
+<td>NUTS (Stan)</td>
+<td>No MCMC (Gaussian approx)</td>
+</tr>
+<tr class="even">
+<td>Basis construction</td>
+<td>Native Julia</td>
+<td><code>mgcv::smoothCon()</code></td>
+<td>Same as brms</td>
+</tr>
+</tbody>
+</table>
+<section id="key-findings" class="level3">
+<h3 class="anchored" data-anchor-id="key-findings">Key findings</h3>
+<ol type="1">
+<li><p><strong>GAM.jl ≈ brms</strong>: Both use full NUTS MCMC with the same smooth2random decomposition and matching priors. KS tests confirm the posteriors are not significantly different — GAM.jl’s Turing backend reproduces Stan/brms results.</p></li>
+<li><p><strong>mgcv approximation is accurate</strong>: The Gaussian posterior approximation from <code>mgcv::gam()</code> is close to the full MCMC posteriors for well-identified models, though it cannot capture posterior skewness.</p></li>
+<li><p><strong>Prior specification</strong>: GAM.jl uses <code>PriorSpec</code> with class-level defaults (single call). brms uses a vector of <code>prior()</code> statements (one per class). Both are more explicit than mgcv’s implicit priors.</p></li>
+</ol>
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
