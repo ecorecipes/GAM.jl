@@ -764,11 +764,12 @@ end
 
 @eval include("test_gamm.jl")
 
-if !skip_rcall
+if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     try
-        reval("library(nlme)")
+        @eval using RCall
+        @eval RCall.reval("library(nlme)")
         @eval include("test_gamm_rcall.jl")
     catch e
-        @warn "Skipping GAMM R comparison tests (nlme not available)" exception = e
+        @warn "Skipping GAMM R comparison tests (nlme/RCall not available)" exception = e
     end
 end

@@ -212,4 +212,35 @@ using Statistics: mean, std
         σ_post = mean(vec(chains[:σ].data))
         @test 0.1 < σ_post < 1.0  # reasonable noise estimate
     end
+
+    @testset "Bayesian GAMM — smooth + random intercept" begin
+        Random.seed!(101)
+        n = 100
+        n_groups = 5
+        x = randn(n)
+        group = repeat(1:n_groups, inner = n ÷ n_groups)
+        group_effects = randn(n_groups) * 0.5
+        y = sin.(x) .+ group_effects[group] .+ 0.2 .* randn(n)
+        df = DataFrame(x = x, y = y, group = string.(group))
+
+        # Fit via @formula with re()
+        m = gamm(@formula(y ~ cr(x, 10) + re(group)), df;
+            priors = PriorSpec(sds = Exponential(1.0), sigma = Exponential(1.0)),
+            nsamples = 500, nchains = 1)
+
+        @test m isa GAM.BayesGamModel
+        @test length(m.coef_names) >= 2  # intercept + smooth fixed part
+
+        # Posterior means should be reasonable
+        β_mean = GAM._bayes_coef_means(m)
+        @test length(β_mean) > 0
+        @test all(isfinite, β_mean)
+
+        # Fit via @gamm_formula
+        m2 = gamm(@gamm_formula(y ~ s(x, k = 10) + (1|group)), df;
+            priors = PriorSpec(sds = Exponential(1.0), sigma = Exponential(1.0)),
+            nsamples = 500, nchains = 1)
+
+        @test m2 isa GAM.BayesGamModel
+    end
 end

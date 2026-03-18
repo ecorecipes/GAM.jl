@@ -160,10 +160,10 @@ macro gam_formula(ex)
     _parse_gam_rhs!(rhs, parametric, smooth_calls, has_intercept)
 
     return esc(quote
-        GamFormula($response,
+        $GamFormula($response,
             Symbol[$(parametric.args...)],
             $(has_intercept[]),
-            SmoothSpec[$(smooth_calls.args...)])
+            $SmoothSpec[$(smooth_calls.args...)])
     end)
 end
 
