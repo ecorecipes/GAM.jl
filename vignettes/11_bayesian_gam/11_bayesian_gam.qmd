@@ -199,15 +199,52 @@ end
 
 ### Posterior predictive check
 
-Compare the posterior mean fitted values to the frequentist fitted values:
+Compare the posterior fitted values (with 95% credible intervals) to the raw data and the frequentist fit:
 
 ```{julia}
-#| echo: false
-# The Bayesian fitted values come from the posterior mean coefficients
-bayes_coefs = coef(m_bayes)
-freq_coefs = coef(m_freq)
-@printf("Number of coefficients: frequentist = %d, Bayesian = %d\n",
-    length(freq_coefs), length(bayes_coefs))
+#| fig-width: 9
+#| fig-height: 6
+# Reconstruct full design matrix
+X_para, smooths, _ = GAM.gam_matrices(@gam_formula(y ~ s(x, k = 10)), dat)
+Xf = smooths[1].Xf
+Zs = smooths[1].Zs[1]
+
+# Extract posterior draws for all parameters
+chains = m_bayes.chains
+n_draws = length(vec(chains[Symbol("β[1]")].data))
+n_obs = nrow(dat)
+
+# Compute fitted values for each posterior draw
+η_draws = Matrix{Float64}(undef, n_draws, n_obs)
+for i in 1:n_draws
+    β1_i = chains[Symbol("β[1]")].data[i]
+    β2_i = chains[Symbol("β[2]")].data[i]
+    σ_s_i = chains[Symbol("σ_s[1]")].data[i]
+    z_vec = [chains[Symbol("z[$j]")].data[i] for j in 1:size(Zs, 2)]
+    η_draws[i, :] = X_para * [β1_i] .+ Xf * [β2_i] .+ σ_s_i .* (Zs * z_vec)
+end
+
+# Sort by x for plotting
+order = sortperm(dat.x)
+x_sorted = dat.x[order]
+
+# Posterior summaries
+η_mean = vec(mean(η_draws; dims=1))[order]
+η_lo = [quantile(η_draws[:, j], 0.025) for j in 1:n_obs][order]
+η_hi = [quantile(η_draws[:, j], 0.975) for j in 1:n_obs][order]
+η_lo80 = [quantile(η_draws[:, j], 0.1) for j in 1:n_obs][order]
+η_hi80 = [quantile(η_draws[:, j], 0.9) for j in 1:n_obs][order]
+
+# Frequentist fitted
+freq_fitted = fitted(m_freq)[order]
+
+# Plot
+scatter(dat.x, dat.y; alpha=0.3, color=:gray60, markersize=3, label="data",
+    xlabel="x", ylabel="y", title="Gaussian GAM: data + Bayesian fit with credible intervals")
+plot!(x_sorted, η_mean; color=:steelblue, linewidth=2.5, label="Bayesian posterior mean")
+plot!(x_sorted, freq_fitted; color=:red, linewidth=1.5, linestyle=:dash, label="frequentist fit")
+plot!(x_sorted, η_lo; fillrange=η_hi, alpha=0.15, color=:steelblue, label="95% CI", linewidth=0)
+plot!(x_sorted, η_lo80; fillrange=η_hi80, alpha=0.25, color=:steelblue, label="80% CI", linewidth=0)
 ```
 
 ## Example 2: Poisson GAM
@@ -268,6 +305,49 @@ freq_rank2 = searchsortedfirst(β1_sorted, freq_int2) / n_s
     freq_int2, 100 * freq_rank2)
 @printf("True intercept = 1.0 sits at %.1f%% of posterior\n",
     100 * searchsortedfirst(β1_sorted, 1.0) / n_s)
+```
+
+### Poisson fit with credible intervals
+
+```{julia}
+#| fig-width: 9
+#| fig-height: 6
+# Reconstruct design matrix for Poisson model
+X_para2, smooths2, _ = GAM.gam_matrices(@gam_formula(y ~ s(x, k = 10)), dat2)
+Xf2 = smooths2[1].Xf
+Zs2 = smooths2[1].Zs[1]
+
+n_draws2 = length(vec(chains2[Symbol("β[1]")].data))
+n_obs2 = nrow(dat2)
+
+# Compute linear predictor for each draw, then apply inverse link (exp)
+μ_draws = Matrix{Float64}(undef, n_draws2, n_obs2)
+for i in 1:n_draws2
+    β1_i = chains2[Symbol("β[1]")].data[i]
+    β2_i = chains2[Symbol("β[2]")].data[i]
+    σ_s_i = chains2[Symbol("σ_s[1]")].data[i]
+    z_vec = [chains2[Symbol("z[$j]")].data[i] for j in 1:size(Zs2, 2)]
+    η = X_para2 * [β1_i] .+ Xf2 * [β2_i] .+ σ_s_i .* (Zs2 * z_vec)
+    μ_draws[i, :] = exp.(η)  # inverse link for Poisson
+end
+
+order2 = sortperm(dat2.x)
+x_sorted2 = dat2.x[order2]
+
+μ_mean = vec(mean(μ_draws; dims=1))[order2]
+μ_lo = [quantile(μ_draws[:, j], 0.025) for j in 1:n_obs2][order2]
+μ_hi = [quantile(μ_draws[:, j], 0.975) for j in 1:n_obs2][order2]
+μ_lo80 = [quantile(μ_draws[:, j], 0.1) for j in 1:n_obs2][order2]
+μ_hi80 = [quantile(μ_draws[:, j], 0.9) for j in 1:n_obs2][order2]
+
+freq_fitted2 = fitted(m_freq2)[order2]
+
+scatter(dat2.x, dat2.y; alpha=0.3, color=:gray60, markersize=3, label="data",
+    xlabel="x", ylabel="count", title="Poisson GAM: data + Bayesian fit with credible intervals")
+plot!(x_sorted2, μ_mean; color=:steelblue, linewidth=2.5, label="Bayesian posterior mean")
+plot!(x_sorted2, freq_fitted2; color=:red, linewidth=1.5, linestyle=:dash, label="frequentist fit")
+plot!(x_sorted2, μ_lo; fillrange=μ_hi, alpha=0.15, color=:steelblue, label="95% CI", linewidth=0)
+plot!(x_sorted2, μ_lo80; fillrange=μ_hi80, alpha=0.25, color=:steelblue, label="80% CI", linewidth=0)
 ```
 
 ## Cross-language comparison: GAM.jl vs brms vs mgcv
