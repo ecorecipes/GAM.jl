@@ -511,7 +511,8 @@ parameters internally and returns the evaluated smooth function:
 
 ```{julia}
 # Create smooth components (mixed-model reparameterization)
-sm = GAM.gam_smooth(:x, dat; k = 10, bs = :cr)
+# Use bs=:tp to match the default in gam(@gam_formula(y ~ s(x, k=10)))
+sm = GAM.gam_smooth(:x, dat; k = 10, bs = :tp)
 ```
 
 ```{julia}
@@ -533,7 +534,7 @@ println("  Zs (penalized):  ", [size(Z) for Z in sm.Zs])
     y_obs ~ MvNormal(β0 .+ f, σ^2 * I)
 end
 
-custom_chains = sample(my_gam(dat.y, sm), NUTS(), 1000; progress = false)
+custom_chains = sample(my_gam(dat.y, sm), NUTS(), MCMCThreads(), 2000, 2; progress = false)
 ```
 
 ```{julia}
@@ -542,7 +543,113 @@ custom_chains = sample(my_gam(dat.y, sm), NUTS(), 1000; progress = false)
 σ_s_custom = mean(vec(custom_chains[Symbol("f.s_x.σ_s")].data))
 @printf("Custom model σ posterior mean: %.4f (compare to %.4f from gam())\n",
     σ_custom, mean(vec(m_bayes.chains[Symbol("σ_obs")].data)))
-@printf("Custom model σ_s: %.4f\n", σ_s_custom)
+@printf("Custom model σ_s: %.4f (compare to %.4f from gam())\n",
+    σ_s_custom, mean(vec(m_bayes.chains[Symbol("σ_s[1]")].data)))
+```
+
+### Comparing `smooth_prior` to the brms-like `gam()` interface
+
+Both approaches use the same smooth2random decomposition and the same non-centered parameterization — they should give equivalent posterior distributions. Let's verify by computing fitted values from both and comparing:
+
+```{julia}
+#| fig-width: 10
+#| fig-height: 8
+# --- smooth_prior fitted values (from custom_chains) ---
+n_draws_c = length(vec(custom_chains[:σ].data))
+n_obs_c = nrow(dat)
+Xf_c = sm.Xf
+Zs_c = sm.Zs[1]
+
+η_custom = Matrix{Float64}(undef, n_draws_c, n_obs_c)
+for i in 1:n_draws_c
+    β0_i = custom_chains[Symbol("β0")].data[i]
+    βf_i = custom_chains[Symbol("f.s_x.β_f[1]")].data[i]
+    σ_s_i = custom_chains[Symbol("f.s_x.σ_s")].data[i]
+    z_i = [custom_chains[Symbol("f.s_x.z[$j]")].data[i] for j in 1:size(Zs_c, 2)]
+    η_custom[i, :] = β0_i .+ Xf_c * [βf_i] .+ σ_s_i .* (Zs_c * z_i)
+end
+
+# --- gam() brms-like fitted values (from m_bayes) ---
+X_b, sm_b, _ = GAM.gam_matrices(@gam_formula(y ~ s(x, k = 10)), dat)
+Xf_b = sm_b[1].Xf
+Zs_b = sm_b[1].Zs[1]
+chains_b = m_bayes.chains
+n_draws_b = length(vec(chains_b[Symbol("β[1]")].data))
+
+η_gam = Matrix{Float64}(undef, n_draws_b, n_obs_c)
+for i in 1:n_draws_b
+    β1_i = chains_b[Symbol("β[1]")].data[i]
+    β2_i = chains_b[Symbol("β[2]")].data[i]
+    σ_s_i = chains_b[Symbol("σ_s[1]")].data[i]
+    z_i = [chains_b[Symbol("z[$j]")].data[i] for j in 1:size(Zs_b, 2)]
+    η_gam[i, :] = X_b * [β1_i] .+ Xf_b * [β2_i] .+ σ_s_i .* (Zs_b * z_i)
+end
+
+# Sort by x
+ord = sortperm(dat.x)
+x_s = dat.x[ord]
+
+# Posterior summaries
+μ_custom = vec(mean(η_custom; dims=1))[ord]
+lo_custom = [quantile(η_custom[:, j], 0.025) for j in 1:n_obs_c][ord]
+hi_custom = [quantile(η_custom[:, j], 0.975) for j in 1:n_obs_c][ord]
+
+μ_gam = vec(mean(η_gam; dims=1))[ord]
+lo_gam = [quantile(η_gam[:, j], 0.025) for j in 1:n_obs_c][ord]
+hi_gam = [quantile(η_gam[:, j], 0.975) for j in 1:n_obs_c][ord]
+
+# --- Plots ---
+p1 = scatter(dat.x, dat.y; alpha=0.2, color=:gray60, markersize=2, label="data",
+    xlabel="x", ylabel="y", title="smooth_prior (composable API)")
+plot!(p1, x_s, μ_custom; color=:steelblue, linewidth=2, label="posterior mean")
+plot!(p1, x_s, lo_custom; fillrange=hi_custom, alpha=0.2, color=:steelblue,
+    label="95% CI", linewidth=0)
+
+p2 = scatter(dat.x, dat.y; alpha=0.2, color=:gray60, markersize=2, label="data",
+    xlabel="x", ylabel="y", title="gam(..., priors=...) (brms-like API)")
+plot!(p2, x_s, μ_gam; color=:darkorange, linewidth=2, label="posterior mean")
+plot!(p2, x_s, lo_gam; fillrange=hi_gam, alpha=0.2, color=:darkorange,
+    label="95% CI", linewidth=0)
+
+# Scatter of posterior means
+r_val = cor(μ_custom, μ_gam)
+p3 = scatter(μ_gam, μ_custom; alpha=0.5, color=:purple, markersize=3,
+    xlabel="gam() fitted", ylabel="smooth_prior fitted",
+    title="Posterior mean correlation: r = $(round(r_val, digits=4))",
+    aspect_ratio=:equal, legend=false)
+mn = min(minimum(μ_gam), minimum(μ_custom))
+mx = max(maximum(μ_gam), maximum(μ_custom))
+plot!(p3, [mn, mx], [mn, mx]; color=:gray40, linestyle=:dash, linewidth=1)
+
+# CI width comparison
+ci_w_custom = hi_custom .- lo_custom
+ci_w_gam = hi_gam .- lo_gam
+p4 = plot(x_s, ci_w_custom; color=:steelblue, linewidth=2, label="smooth_prior",
+    xlabel="x", ylabel="95% CI width", title="Credible interval width comparison")
+plot!(p4, x_s, ci_w_gam; color=:darkorange, linewidth=2, linestyle=:dash, label="gam()")
+
+plot(p1, p2, p3, p4; layout=(2, 2), size=(900, 700))
+```
+
+```{julia}
+#| echo: false
+# Quantitative comparison
+@printf("Posterior mean correlation:  r = %.4f\n", cor(μ_custom, μ_gam))
+@printf("Max |mean difference|:      %.6f\n", maximum(abs.(μ_custom .- μ_gam)))
+@printf("Mean CI width (smooth_prior): %.4f\n", mean(hi_custom .- lo_custom))
+@printf("Mean CI width (gam()):        %.4f\n", mean(hi_gam .- lo_gam))
+
+# Compare σ posteriors
+σ_gam_samples = vec(m_bayes.chains[Symbol("σ_obs")].data)
+σ_sp_samples = vec(custom_chains[:σ].data)
+@printf("\nσ posterior:  gam() mean=%.4f sd=%.4f  |  smooth_prior mean=%.4f sd=%.4f\n",
+    mean(σ_gam_samples), std(σ_gam_samples), mean(σ_sp_samples), std(σ_sp_samples))
+
+# Compare σ_s posteriors
+σs_gam_samples = vec(m_bayes.chains[Symbol("σ_s[1]")].data)
+σs_sp_samples = vec(custom_chains[Symbol("f.s_x.σ_s")].data)
+@printf("σ_s posterior: gam() mean=%.4f sd=%.4f  |  smooth_prior mean=%.4f sd=%.4f\n",
+    mean(σs_gam_samples), std(σs_gam_samples), mean(σs_sp_samples), std(σs_sp_samples))
 ```
 
 This is much cleaner than manually extracting matrices. For multiple smooths, give each a unique prefix:
