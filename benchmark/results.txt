@@ -32,8 +32,12 @@ GAM.jl vs R Benchmark Suite  (2026-03-22, Julia 1.12.5, R 4.5.2, macOS ARM64)
   QGAM full calib n=1000 k=10                   Julia:  0.0997s  R:  0.1260s  Speedup:   1.26x
 
 ── GAMLSS (Multi-Parameter) ────────────────────────────────────
-  GAMLSS Normal LS n=1000 (pb)                  Julia:  0.1074s  R:  0.1360s  Speedup:   1.27x
-  GAMLSS Normal LS n=1000 (ga)                  Julia:  0.1768s  R:  0.0580s  Speedup:   0.33x
+  GAMLSS Normal LS n=500  (EFS)                 Julia:  0.0032s  R(mgcv):  0.0944s  Speedup:  29.50x
+  GAMLSS Normal LS n=500  (RS+ML)               Julia:  0.0130s  R(gamlss): 0.0588s  Speedup:   4.52x
+  GAMLSS Normal LS n=2000 (EFS)                 Julia:  0.0092s  R(mgcv):  0.2442s  Speedup:  26.54x
+  GAMLSS Normal LS n=2000 (RS+ML)               Julia:  0.0373s  R(gamlss): 0.1398s  Speedup:   3.75x
+  GAMLSS Normal LS n=5000 (EFS)                 Julia:  0.0470s  R(mgcv):  0.7490s  Speedup:  15.94x
+  GAMLSS Normal LS n=5000 (RS+ML)               Julia:  0.0664s  R(gamlss): 0.3758s  Speedup:   5.66x
 
 ================================================================================
 Summary
@@ -44,16 +48,19 @@ Summary
   Basis Construction         Geometric mean speedup:   6.16x
   SCAM                       Geometric mean speedup:   1.99x
   QGAM                       Geometric mean speedup:   1.82x
-  GAMLSS                     Geometric mean speedup:   0.64x
+  GAMLSS                     Geometric mean speedup:  10.66x
 
-  OVERALL                    Geometric mean speedup:   3.97x
+  OVERALL                    Geometric mean speedup:   5.55x
 ================================================================================
 
 Notes:
+- GAMLSS EFS solver is 15-30x faster than mgcv gaulss (REML outer loop).
+  RS+local_ml is 4-6x faster than R gamlss with pb(method="ML").
+  Previous 0.64x bottleneck was ForwardDiff per-obs overhead; hand-coded
+  derivatives for all 5 families (Normal, Gamma, Beta, NegBin, InvGauss)
+  and pre-allocated buffers resolved this.
 - QGAM full calibration improved from 0.04x to 1.26x via three optimizations:
   (1) pre-build X/smooths/penalty once, (2) fix SP from Gaussian fit + PIRLS-only
   bootstrap (no outer loop), (3) thread-ready parallel bootstrap evaluation.
-- GAMLSS ga() comparison is slower due to R's gamlss.add wrapping mgcv C code.
-  The pb() comparison (1.27x) is closer since both use native smoothers.
 - GAM.jl excels at TPRS (14-16x), large n (7.9x), prediction with SE (7.6x).
-- Overall geometric mean speedup: ~4x across all benchmarks.
+- Overall geometric mean speedup: ~5.5x across all benchmarks.
