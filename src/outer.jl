@@ -292,6 +292,10 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
     log_sp = copy(penalty.sp)
     prev_result = nothing
+    prev_dev = Inf
+    Xw_buf = similar(X)
+    A_buf = zeros(p, p)
+    efs_mult = 1.0
 
     for outer_iter in 1:(control.outer_maxit)
         S_total = total_penalty(penalty, log_sp, p)
@@ -314,10 +318,43 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             scale_est = 1.0
         end
 
-        # Newton step on conditional REML via autodiff
-        log_sp_new, max_change = _newton_sp_update(
-            log_sp, X, beta, w, dev, penalty, family, method,
-            scale_est, n, p, edf_total, y, weights, control)
+        # Build A = X'WX + S and compute Ainv for EFS
+        _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n, Xw_buf)
+        A_chol = cholesky(Symmetric(copy(A_buf)))
+        Ainv = inv(A_chol)
+
+        # EFS update
+        log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
+            scale_est, efs_mult)
+        max_change = maximum(abs.(log_sp_new .- log_sp))
+
+        # Step halving: use penalized deviance as criterion for extended families
+        if outer_iter > 1 && max_change > control.epsilon
+            bSb = 0.0
+            sp_idx = 1
+            for block in penalty.blocks
+                idx = block.start:block.stop
+                beta_block = beta[idx]
+                for Si in block.S
+                    bSb += exp(log_sp[sp_idx]) * dot(beta_block, Si * beta_block)
+                    sp_idx += 1
+                end
+            end
+            pdev_old = prev_dev + dot(prev_result.coefficients,
+                total_penalty(penalty, log_sp, p) * prev_result.coefficients)
+            pdev_new = dev + bSb
+
+            if pdev_new > pdev_old + control.epsilon * abs(pdev_old)
+                for _halve in 1:4
+                    efs_mult *= 0.5
+                    log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
+                        scale_est, efs_mult)
+                end
+                max_change = maximum(abs.(log_sp_new .- log_sp))
+            else
+                efs_mult = min(1.0, efs_mult * 2.0)
+            end
+        end
 
         if control.trace
             println("Outer iter $outer_iter: " *
@@ -327,14 +364,20 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         end
 
         log_sp .= log_sp_new
+        prev_dev_change = abs(dev - prev_dev)
         prev_result = result
+        prev_dev = dev
 
         # Update extra parameter after each outer iteration
         if _has_extra_param(family)
             estimate_theta!(family, y, result.fitted_values, weights, scale_est)
         end
 
-        if max_change < control.epsilon * 10
+        # Convergence: SP change small OR deviance change negligible (stable fit)
+        sp_converged = max_change < control.epsilon * 10
+        dev_converged = outer_iter > 3 && max_change < 1e-4 &&
+            prev_dev_change < control.epsilon * abs(dev)
+        if sp_converged || dev_converged
             if control.trace
                 println("Outer iteration converged at iteration $outer_iter")
             end
