@@ -287,67 +287,306 @@ end
 
 """
 Hand-coded NLL derivatives for GammaLocationScale(μ, σ) with LogLink, LogLink.
-μ = exp(η₁), σ = exp(η₂), α = 1/σ², θ = μσ²
-NLL = α*log(θ) + lgamma(α) - (α-1)*log(y) + y/θ
+η₁ = log(μ), η₂ = log(σ). α = exp(-2η₂) = 1/σ², θ = exp(η₁+2η₂) = μσ².
+NLL = α·log(θ) + lgamma(α) − (α−1)·log(y) + y/θ.
+Verified against ForwardDiff via Symbolics.jl derivation.
 """
 function nll_derivs!(family::GammaLocationScale, out::Matrix{Float64},
                      y::AbstractVector, η_list::Vector{<:AbstractVector})
     if !all(l -> l isa LogLink, family.links)
-        # Fallback to AD for non-standard links
         return _nll_derivs_ad!(family, out, y, η_list)
     end
     n = length(y)
     η₁ = η_list[1]  # log(μ)
     η₂ = η_list[2]  # log(σ)
     @inbounds for i in 1:n
-        μ = exp(η₁[i])
-        σ = exp(η₂[i])
-        σ2 = σ * σ
-        α = 1.0 / max(σ2, 1e-10)
-        θ = max(μ, 1e-10) * max(σ2, 1e-10)
         yi = y[i]
+        # α = exp(-2η₂), θ = exp(η₁+2η₂), so α·θ = exp(η₁) = μ
+        α = exp(-2.0 * η₂[i])
+        θ = exp(η₁[i] + 2.0 * η₂[i])
+        μ = exp(η₁[i])
+        yoθ = yi / θ
+        logθ = η₁[i] + 2.0 * η₂[i]
+        logyi = log(max(yi, 1e-300))
+        ψα = digamma(α)
+        ψ1α = trigamma(α)
 
-        # NLL = α*log(θ) + lgamma(α) - (α-1)*log(y) + y/θ
-        # ∂NLL/∂μ = α/θ * (1 - y/μ) = (1/μ)(1 - y_i/(μ))  wait, need chain rule through η
+        # ∂NLL/∂η₁ = α − y/θ  (from Symbolics: (θα − y)/θ = (μ − y)/θ)
+        g1 = α - yoθ
 
-        # Work with η₁=log(μ), η₂=log(σ)
-        # dNLL/dη₁ = dNLL/dμ * dμ/dη₁ = dNLL/dμ * μ
-        # dNLL/dη₂ = dNLL/dσ * dσ/dη₂ = dNLL/dσ * σ
+        # ∂NLL/∂η₂ = −2α(logθ + ψα − logyi) + 2(α − y/θ)
+        # (from dα/dη₂ = −2α, dθ/dη₂ = 2θ, and lgamma term ψα·(−2α))
+        dNdα_nolg = logθ - logyi  # ∂(NLL−lgamma)/∂α = log(θ) − log(y)
+        g2 = -2.0 * α * (dNdα_nolg + ψα) + 2.0 * (α - yoθ)
 
-        # dNLL/dμ = α/θ - y/θ² * (-θ/μ) ... let me do this carefully via α,θ
-        # α = 1/σ², θ = μσ², so dθ/dμ = σ²
-        # dNLL/dμ = (α/θ)*σ² + (-y/θ²)*σ² = σ²(α/θ - y/θ²) = (1/(μ)) - y/(μ²σ²)
-        #         = (1 - y/μ)/(μ)  ... hmm
+        # ∂²NLL/∂η₁² = y/θ  (since ∂(α−y/θ)/∂η₁ = y/θ via dθ/dη₁=θ)
+        h11 = yoθ
 
-        # Let me use ForwardDiff approach for Gamma as it's complex
-        # Actually let me do it properly:
-        # NLL_i = α*log(θ) + lgamma(α) - (α-1)*log(y_i) + y_i/θ
-        # where α=exp(-2η₂), θ=exp(η₁+2η₂)
-        #
-        # ∂NLL/∂η₁ = α*(1/θ)*exp(η₁+2η₂) - y_i/θ² * exp(η₁+2η₂)
-        #           = α - y_i/θ = exp(-2η₂) - y_i*exp(-η₁-2η₂)
-        #           = 1/σ² - y_i/(μσ²) = (1 - y_i/μ)/σ² = (μ - y_i)/(μσ²)
+        # ∂²NLL/∂η₁∂η₂ = 2(y/θ − α)  (from ∂(α−y/θ)/∂η₂ = −2α+2y/θ)
+        h12 = 2.0 * (yoθ - α)
 
-        inv_s2 = 1.0 / max(σ2, 1e-10)
-        inv_ms2 = inv_s2 / max(μ, 1e-10)
-        r = μ - yi
+        # ∂²NLL/∂η₂²: full product rule on g2 = dNdα·(−2α) + dNdθ·(2θ)
+        # h22 = d(dNdα)/dη₂·(−2α) + dNdα·(4α) + d(dNdθ)/dη₂·(2θ) + dNdθ·(4θ)
+        dNdα = logθ + ψα - logyi
+        dNdθ = α / θ - yi / (θ * θ)
+        ddNdα_dη₂ = 2.0 - 2.0 * α * ψ1α
+        ddNdθ_dη₂ = -4.0 * α / θ + 4.0 * yi / (θ * θ)
+        h22 = ddNdα_dη₂ * (-2.0 * α) + dNdα * (4.0 * α) +
+              ddNdθ_dη₂ * (2.0 * θ) + dNdθ * (4.0 * θ)
 
-        # ∂NLL/∂η₁ = (μ - y_i)/(μσ²) = r * inv_ms2 ... wait this is dNLL/dμ * μ
-        # Actually: dα/dη₂ = -2exp(-2η₂) = -2α, dθ/dη₂ = 2exp(η₁+2η₂) = 2θ
-        # ∂NLL/∂η₂ = -2α*log(θ) + α*2 + digamma(α)*(-2α) - (-2α)*log(y_i) + y_i*(-2)/θ ... no
-
-        # Let me just use the generic AD fallback for Gamma. The Normal one is the big win.
-        η_vec = [η₁[i], η₂[i]]
-        f_i = η -> nll_obs(family, yi, η)
-        val, grad, hess = DifferentiationInterface.value_gradient_and_hessian(f_i, _ad_backend, η_vec)
-
-        out[i, 1] = grad[1]
-        out[i, 2] = grad[2]
-        out[i, 3] = hess[1, 1]
-        out[i, 4] = hess[1, 2]
-        out[i, 5] = hess[2, 2]
+        out[i, 1] = g1
+        out[i, 2] = g2
+        out[i, 3] = h11
+        out[i, 4] = h12
+        out[i, 5] = h22
     end
     return out
+end
+
+"""Vectorized NLL total for GammaLocationScale with LogLink, LogLink."""
+function nll_total(family::GammaLocationScale, y::AbstractVector,
+                   η_list::Vector{<:AbstractVector})
+    if !all(l -> l isa LogLink, family.links)
+        return invoke(nll_total, Tuple{MultiParameterFamily, AbstractVector,
+                      Vector{<:AbstractVector}}, family, y, η_list)
+    end
+    n = length(y)
+    η₁ = η_list[1]; η₂ = η_list[2]
+    total = 0.0
+    @inbounds for i in 1:n
+        α = exp(-2.0 * η₂[i])
+        θ = exp(η₁[i] + 2.0 * η₂[i])
+        total += α * log(θ) + lgamma(α) - (α - 1.0) * log(max(y[i], 1e-300)) + y[i] / θ
+    end
+    return total
+end
+
+"""
+Hand-coded NLL derivatives for BetaRegression(μ, φ) with LogitLink, LogLink.
+η₁ = logit(μ), η₂ = log(φ). μ = sigmoid(η₁), φ = exp(η₂).
+a = μφ, b = (1−μ)φ. NLL = lgamma(a)+lgamma(b)−lgamma(a+b)−(a−1)log(y)−(b−1)log(1−y).
+Chain rule through (a,b) with digamma/trigamma.
+Verified against ForwardDiff via Symbolics.jl derivation.
+"""
+function nll_derivs!(family::BetaRegression, out::Matrix{Float64},
+                     y::AbstractVector, η_list::Vector{<:AbstractVector})
+    if !(family.links[1] isa LogitLink && family.links[2] isa LogLink)
+        return _nll_derivs_ad!(family, out, y, η_list)
+    end
+    n = length(y)
+    η₁ = η_list[1]  # logit(μ)
+    η₂ = η_list[2]  # log(φ)
+    @inbounds for i in 1:n
+        yi = clamp(y[i], 1e-10, 1.0 - 1e-10)
+        # μ = sigmoid(η₁), φ = exp(η₂)
+        eη₁ = exp(-η₁[i])
+        μ = 1.0 / (1.0 + eη₁)
+        μ = clamp(μ, 1e-6, 1.0 - 1e-6)
+        μ1 = 1.0 - μ
+        dμ = μ * μ1           # dμ/dη₁
+        d2μ = dμ * (1.0 - 2.0 * μ)  # d²μ/dη₁²
+
+        φ = exp(η₂[i])
+        φ = max(φ, 1e-6)
+
+        a = μ * φ;  b = μ1 * φ
+        logyi = log(yi);  log1yi = log(1.0 - yi)
+        ψa = digamma(a);  ψb = digamma(b);  ψab = digamma(a + b)
+        ψ1a = trigamma(a); ψ1b = trigamma(b); ψ1ab = trigamma(a + b)
+
+        # NLL partials w.r.t. (a, b)
+        Na = ψa - ψab - logyi
+        Nb = ψb - ψab - log1yi
+        Naa = ψ1a - ψ1ab
+        Nbb = ψ1b - ψ1ab
+        Nab = -ψ1ab
+
+        # da/dη₁ = φ·dμ, db/dη₁ = −φ·dμ
+        dadη₁ = φ * dμ;  dbdη₁ = -φ * dμ
+
+        # g1 = Na·dadη₁ + Nb·dbdη₁ = φ·dμ·(Na − Nb)
+        g1 = Na * dadη₁ + Nb * dbdη₁
+
+        # g2 = Na·a + Nb·b  (da/dη₂=a, db/dη₂=b)
+        g2 = Na * a + Nb * b
+
+        # h11: second-order chain rule with d²a/dη₁²=φ·d2μ, d²b/dη₁²=−φ·d2μ
+        h11 = Naa * dadη₁^2 + 2.0 * Nab * dadη₁ * dbdη₁ + Nbb * dbdη₁^2 +
+              Na * φ * d2μ + Nb * (-φ * d2μ)
+
+        # h12: ∂²NLL/∂η₁∂η₂
+        # d(dadη₁)/dη₂ = dμ·φ = dadη₁, d(dbdη₁)/dη₂ = dbdη₁
+        h12 = (Naa * a + Nab * b) * dadη₁ + (Nab * a + Nbb * b) * dbdη₁ +
+              Na * dadη₁ + Nb * dbdη₁
+
+        # h22: ∂²NLL/∂η₂² (d²a/dη₂²=a, d²b/dη₂²=b)
+        h22 = Naa * a^2 + 2.0 * Nab * a * b + Nbb * b^2 +
+              Na * a + Nb * b
+
+        out[i, 1] = g1
+        out[i, 2] = g2
+        out[i, 3] = h11
+        out[i, 4] = h12
+        out[i, 5] = h22
+    end
+    return out
+end
+
+"""
+Hand-coded NLL derivatives for NegativeBinomialLocationScale(μ, σ) with LogLink, LogLink.
+η₁ = log(μ), η₂ = log(σ). r = 1/σ² = exp(-2η₂), p = r/(r+μ).
+NLL = −lgamma(y+r) + lgamma(y+1) + lgamma(r) − r·log(r/(r+μ)) − y·log(μ/(r+μ)).
+Verified against ForwardDiff via Symbolics.jl derivation.
+"""
+function nll_derivs!(family::NegativeBinomialLocationScale, out::Matrix{Float64},
+                     y::AbstractVector, η_list::Vector{<:AbstractVector})
+    if !all(l -> l isa LogLink, family.links)
+        return _nll_derivs_ad!(family, out, y, η_list)
+    end
+    n = length(y)
+    η₁ = η_list[1]  # log(μ)
+    η₂ = η_list[2]  # log(σ)
+    @inbounds for i in 1:n
+        yi = max(y[i], 0.0)
+        μ = exp(η₁[i])
+        r = exp(-2.0 * η₂[i])  # r = 1/σ²
+        rmu = r + μ
+
+        ψyr = digamma(yi + r);  ψr = digamma(r)
+        ψ1yr = trigamma(yi + r); ψ1r = trigamma(r)
+        logrmu = log(rmu); logr = log(r)
+
+        # ∂NLL/∂μ = (r+y)/(r+μ) − y/μ
+        dNdμ = (r + yi) / rmu - yi / μ
+
+        # ∂NLL/∂r = −ψ(y+r) + ψ(r) + log(r+μ) − log(r) − 1 + (r+y)/(r+μ)
+        dNdr = -ψyr + ψr + logrmu - logr - 1.0 + (r + yi) / rmu
+
+        # dr/dη₂ = −2r, d²r/dη₂² = 4r
+        drdη₂ = -2.0 * r
+
+        # g1 = dNdμ·μ (chain rule: dμ/dη₁ = μ)
+        g1 = dNdμ * μ
+
+        # g2 = dNdr·(−2r)
+        g2 = dNdr * drdη₂
+
+        # ∂²NLL/∂μ² = −(r+y)/(r+μ)² + y/μ²
+        d2Ndμ2 = -(r + yi) / (rmu * rmu) + yi / (μ * μ)
+
+        # ∂²NLL/∂r² = −ψ₁(y+r) + ψ₁(r) − 1/r + 1/(r+μ) + (μ−y)/(r+μ)²
+        d2Ndr2 = -ψ1yr + ψ1r - 1.0 / r + 1.0 / rmu + (μ - yi) / (rmu * rmu)
+
+        # ∂²NLL/∂μ∂r = (μ−y)/(r+μ)²
+        d2Ndμdr = (μ - yi) / (rmu * rmu)
+
+        # h11 = d2Ndμ2·μ² + dNdμ·μ
+        h11 = d2Ndμ2 * μ * μ + dNdμ * μ
+
+        # h12 = d2Ndμdr·μ·(−2r)
+        h12 = d2Ndμdr * μ * drdη₂
+
+        # h22 = d2Ndr2·(−2r)² + dNdr·4r
+        h22 = d2Ndr2 * drdη₂ * drdη₂ + dNdr * 4.0 * r
+
+        out[i, 1] = g1
+        out[i, 2] = g2
+        out[i, 3] = h11
+        out[i, 4] = h12
+        out[i, 5] = h22
+    end
+    return out
+end
+
+"""Vectorized NLL total for NegativeBinomialLocationScale with LogLink, LogLink."""
+function nll_total(family::NegativeBinomialLocationScale, y::AbstractVector,
+                   η_list::Vector{<:AbstractVector})
+    if !all(l -> l isa LogLink, family.links)
+        return invoke(nll_total, Tuple{MultiParameterFamily, AbstractVector,
+                      Vector{<:AbstractVector}}, family, y, η_list)
+    end
+    n = length(y)
+    η₁ = η_list[1]; η₂ = η_list[2]
+    total = 0.0
+    @inbounds for i in 1:n
+        yi = max(y[i], 0.0)
+        μ = exp(η₁[i])
+        r = exp(-2.0 * η₂[i])
+        rmu = r + μ
+        total += -lgamma(yi + r) + lgamma(yi + 1.0) + lgamma(r) -
+                 r * log(r / rmu) - yi * log(μ / rmu)
+    end
+    return total
+end
+
+"""
+Hand-coded NLL derivatives for InverseGaussianLocationScale(μ, σ) with LogLink, LogLink.
+η₁ = log(μ), η₂ = log(σ). λ = μ/σ².
+NLL = −0.5·log(μ) + log(σ) + (y−μ)²/(2μσ²y) + const(y).
+Q = (y−μ)²/(2μσ²y) = y/(2μσ²) − 1/σ² + μ/(2σ²y).
+"""
+function nll_derivs!(family::InverseGaussianLocationScale, out::Matrix{Float64},
+                     y::AbstractVector, η_list::Vector{<:AbstractVector})
+    if !all(l -> l isa LogLink, family.links)
+        return _nll_derivs_ad!(family, out, y, η_list)
+    end
+    n = length(y)
+    η₁ = η_list[1]  # log(μ)
+    η₂ = η_list[2]  # log(σ)
+    @inbounds for i in 1:n
+        yi = max(y[i], 1e-300)
+        μ = exp(η₁[i])
+        σ2 = exp(2.0 * η₂[i])     # σ²
+        σ2inv = 1.0 / σ2           # 1/σ²
+
+        # Q decomposition: Q = y/(2μσ²) − 1/σ² + μ/(2σ²y)
+        t1 = yi / (2.0 * μ * σ2)   # y/(2μσ²)
+        t3 = μ / (2.0 * σ2 * yi)   # μ/(2σ²y)
+
+        # g1 = ∂NLL/∂η₁ = μ·∂NLL/∂μ = −0.5 − y/(2μσ²) + μ/(2σ²y)
+        g1 = -0.5 - t1 + t3
+
+        # g2 = ∂NLL/∂η₂ = 1 − (y−μ)²/(μσ²y)
+        rv = yi - μ
+        Q2 = rv * rv * σ2inv / (μ * yi)  # (y−μ)²/(μσ²y)
+        g2 = 1.0 - Q2
+
+        # h11 = y/(2μσ²) + μ/(2σ²y)
+        h11 = t1 + t3
+
+        # h12 = y/(μσ²) − μ/(σ²y) = 2(t1 − t3)
+        h12 = 2.0 * (t1 - t3)
+
+        # h22 = 2(y−μ)²/(μσ²y)
+        h22 = 2.0 * Q2
+
+        out[i, 1] = g1
+        out[i, 2] = g2
+        out[i, 3] = h11
+        out[i, 4] = h12
+        out[i, 5] = h22
+    end
+    return out
+end
+
+"""Vectorized NLL total for InverseGaussianLocationScale with LogLink, LogLink."""
+function nll_total(family::InverseGaussianLocationScale, y::AbstractVector,
+                   η_list::Vector{<:AbstractVector})
+    if !all(l -> l isa LogLink, family.links)
+        return invoke(nll_total, Tuple{MultiParameterFamily, AbstractVector,
+                      Vector{<:AbstractVector}}, family, y, η_list)
+    end
+    n = length(y)
+    η₁ = η_list[1]; η₂ = η_list[2]
+    total = 0.0
+    @inbounds for i in 1:n
+        yi = max(y[i], 1e-300)
+        μ = exp(η₁[i])
+        σ2 = exp(2.0 * η₂[i])
+        λ = μ / σ2
+        total += -0.5 * log(λ / (2π * yi^3)) + λ * (yi - μ)^2 / (2.0 * μ^2 * yi)
+    end
+    return total
 end
 
 """AD fallback for nll_derivs! (used when hand-coded not available)."""
