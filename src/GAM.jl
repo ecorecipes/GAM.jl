@@ -91,6 +91,9 @@ export
     TensorInteraction,
     GPSmooth,
     DuchonSpline,
+    FactorSmooth,
+    SoapFilm,
+    MarkovRandomField,
 
     # Smooth construction
     smooth_construct,

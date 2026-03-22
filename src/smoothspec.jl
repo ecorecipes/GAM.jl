@@ -1,13 +1,14 @@
 # Smooth specification constructors — user-facing s(), te(), ti()
 
 """
-    s(vars...; bs=:tp, k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+    s(vars...; bs=:tp, k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing,
+      xt=Dict{Symbol,Any}())
 
 Specify a smooth term for use in a GAM formula.
 
 # Arguments
 - `vars`: one or more variable names (as symbols or Term objects)
-- `bs`: basis type (`:tp`, `:ts`, `:cr`, `:cs`, `:cc`, `:ps`, `:bs`, `:re`)
+- `bs`: basis type (`:tp`, `:ts`, `:cr`, `:cs`, `:cc`, `:ps`, `:bs`, `:re`, `:mrf`)
 - `k`: basis dimension. `-1` (default) uses a sensible default based on basis type
 - `by`: optional `by` variable for varying-coefficient models
 - `id`: optional identifier for linking smooths sharing smoothing parameters
@@ -31,7 +32,8 @@ s(:x, fx=true, k=5)        # unpenalized with 5 basis functions
 ```
 """
 function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
-    id = nothing, sp = nothing, fx::Bool = false, m = nothing)
+    id = nothing, sp = nothing, fx::Bool = false, m = nothing,
+    xt::Dict{Symbol,Any} = Dict{Symbol,Any}())
     length(vars) >= 1 || throw(ArgumentError("s() requires at least one variable"))
 
     basis = resolve_basis_type(bs)
@@ -39,8 +41,12 @@ function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
     # Default k based on dimension and basis type
     if k == -1
         d = length(vars)
-        if basis isa RandomEffect
+        if basis isa Union{RandomEffect, MarkovRandomField}
             k = -1  # determined at construction time from data
+        elseif basis isa FactorSmooth
+            # k refers to the marginal basis dimension; last var is the factor
+            d_cont = max(d - 1, 1)
+            k = d_cont == 1 ? 10 : (d_cont == 2 ? 30 : 10 * d_cont)
         elseif d == 1
             k = 10
         elseif d == 2
@@ -57,7 +63,8 @@ function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
 
     label = _smooth_label(vars, by_sym, bs)
 
-    return SmoothSpec(collect(vars), basis, k, by_sym, id_sym, sp_val, fx, m_val, label)
+    return SmoothSpec{typeof(basis)}(collect(vars), basis, k, by_sym, id_sym, sp_val,
+        fx, m_val, label, xt)
 end
 
 # Overload to accept Term objects from @formula context
