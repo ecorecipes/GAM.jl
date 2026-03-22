@@ -49,6 +49,9 @@ struct CyclicCubic <: AbstractBasisType end
 """P-spline: B-spline basis with difference penalty (mgcv `bs="ps"`)."""
 struct PSpline <: AbstractBasisType end
 
+"""Cyclic P-spline: periodic B-spline basis with cyclic difference penalty."""
+struct CyclicPSpline <: AbstractBasisType end
+
 """B-spline basis with derivative penalty (mgcv `bs="bs"`)."""
 struct BSplineBasis <: AbstractBasisType end
 
@@ -97,6 +100,7 @@ const BASIS_TYPES = Dict{Symbol, AbstractBasisType}(
     :cs => CubicShrink(),
     :cc => CyclicCubic(),
     :ps => PSpline(),
+    :cps => CyclicPSpline(),
     :bs => BSplineBasis(),
     :re => RandomEffect(),
     :mpi => MonoIncBasis(),

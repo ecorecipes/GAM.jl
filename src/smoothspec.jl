@@ -287,8 +287,18 @@ function ps(vars::Symbol...; k::Int = -1, by = nothing, id = nothing,
     return s(vars...; bs = :ps, k = k, by = by, id = id, sp = sp, fx = fx, m = m)
 end
 
+"""
+    cps(vars...; k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+
+Cyclic P-spline smooth term. Equivalent to `s(vars...; bs=:cps, ...)`.
+"""
+function cps(vars::Symbol...; k::Int = -1, by = nothing, id = nothing,
+    sp = nothing, fx::Bool = false, m = nothing)
+    return s(vars...; bs = :cps, k = k, by = by, id = id, sp = sp, fx = fx, m = m)
+end
+
 # Accept Term objects from @formula context
-for fname in (:cr, :tp, :ts, :cs, :cc, :ps)
+for fname in (:cr, :tp, :ts, :cs, :cc, :ps, :cps)
     @eval function $fname(vars::Union{Symbol, StatsModels.AbstractTerm}...; kwargs...)
         syms = map(vars) do v
             v isa Symbol ? v :
@@ -301,5 +311,5 @@ end
 
 # Register aliases so _is_smooth_function recognizes them
 function _register_smooth_aliases()
-    push!(_SMOOTH_ALIASES, cr, tp, ts, cs, cc, ps)
+    push!(_SMOOTH_ALIASES, cr, tp, ts, cs, cc, ps, cps)
 end

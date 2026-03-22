@@ -315,3 +315,126 @@ function _predict_matrix(::Union{PSpline, BSplineBasis},
     end
     return X_new
 end
+
+# ============================================================================
+# Cyclic P-splines: periodic B-spline basis with cyclic difference penalty
+# ============================================================================
+
+"""
+    _cyclic_diff_penalty(k, d) -> Matrix{Float64}
+
+Construct the d-th order cyclic difference penalty matrix D'D of size k × k.
+D is the k × k cyclic finite difference matrix where rows wrap around.
+"""
+function _cyclic_diff_penalty(k::Int, d::Int)
+    d >= 0 || throw(ArgumentError("penalty order d must be ≥ 0"))
+    d < k || throw(ArgumentError("penalty order d=$d must be < k=$k"))
+
+    D = zeros(k, k)
+    @inbounds for i in 1:k
+        for j in 0:d
+            col = mod1(i + j, k)
+            D[i, col] += (-1)^(d - j) * binomial(d, j)
+        end
+    end
+    return D' * D
+end
+
+function _smooth_construct(::CyclicPSpline, spec::SmoothSpec, data, user_knots)
+    length(spec.term_vars) == 1 ||
+        throw(ArgumentError("Cyclic P-splines only support 1d smooths"))
+    var = spec.term_vars[1]
+    x = Float64.(Tables.getcolumn(data, var))
+    n = length(x)
+
+    k = min(spec.k, n)
+    m_order = spec.m === nothing ? 2 : spec.m  # difference penalty order
+    spline_order = m_order + 2  # B-spline order (degree + 1)
+    degree = spline_order - 1
+
+    ndx = k  # number of intervals = number of basis functions after wrapping
+    ndx >= 2 || throw(ArgumentError(
+        "k=$k too small for cyclic P-spline (need k ≥ 2)"))
+
+    lo, hi = minimum(x), maximum(x)
+    period = hi - lo
+    period > 0 || throw(ArgumentError("Data range is zero — cannot build cyclic basis"))
+
+    if user_knots !== nothing
+        interior = Float64.(user_knots)
+        dk = length(interior) > 1 ? interior[2] - interior[1] : period
+    else
+        # Place ndx+1 evenly spaced knots spanning [lo, hi]
+        interior = collect(range(lo, hi; length = ndx + 1))
+        dk = interior[2] - interior[1]
+    end
+
+    # Extend by degree knots on each side for B-spline evaluation
+    knot_vec = vcat(
+        [interior[1] - dk * i for i in degree:-1:1],
+        interior,
+        [interior[end] + dk * i for i in 1:degree],
+    )
+
+    # B-spline basis (n × (ndx + degree))
+    X_full = _bspline_basis(x, knot_vec, spline_order)
+
+    # Wrap: add the last `degree` columns onto the first `degree` columns
+    X = X_full[:, 1:ndx]
+    @inbounds for j in 1:degree
+        X[:, j] .+= X_full[:, ndx + j]
+    end
+
+    # Cyclic difference penalty
+    S = _cyclic_diff_penalty(ndx, m_order)
+    penalties = Matrix{Float64}[S]
+
+    # For cyclic d-th order differences, only constants are in the null space
+    null_dim = 1
+    pen_rank = ndx - null_dim
+
+    # Absorb constraints
+    X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)
+
+    return ConstructedSmooth(
+        spec, X_cons, S_cons,
+        knot_vec,
+        null_dim, pen_rank,
+        C, nothing, 0, 0,
+        nothing, nothing, nothing,
+    )
+end
+
+function _predict_matrix(::CyclicPSpline, smooth::ConstructedSmooth, newdata)
+    var = smooth.spec.term_vars[1]
+    x_new = Float64.(Tables.getcolumn(newdata, var))
+    knots = smooth.knots
+    m_order = smooth.spec.m === nothing ? 2 : smooth.spec.m
+    spline_order = m_order + 2
+    degree = spline_order - 1
+
+    # Recover period from knot vector
+    lo = knots[degree + 1]
+    hi = knots[end - degree]
+    period = hi - lo
+
+    # Map to [lo, hi) via modular arithmetic
+    x_mod = lo .+ mod.(x_new .- lo, period)
+
+    # Build B-spline basis at mapped points
+    X_full = _bspline_basis(x_mod, knots, spline_order)
+    ndx = size(X_full, 2) - degree
+
+    # Wrap columns
+    X = X_full[:, 1:ndx]
+    @inbounds for j in 1:degree
+        X[:, j] .+= X_full[:, ndx + j]
+    end
+
+    if smooth.constraint !== nothing
+        C = smooth.constraint
+        Z = nullspace(C)
+        return X * Z
+    end
+    return X
+end
