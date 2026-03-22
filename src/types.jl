@@ -217,13 +217,22 @@ struct GamControl
     gamma::Float64
     scale_est::Symbol
     edge_correct::Bool
+    sp_optimizer::Symbol
 end
 
 """
     gam_control(; epsilon=1e-7, maxit=200, outer_maxit=200, trace=false,
-                  gamma=1.0, scale_est=:fletcher, edge_correct=true)
+                  gamma=1.0, scale_est=:fletcher, edge_correct=true,
+                  sp_optimizer=:efs)
 
 Construct a [`GamControl`](@ref) with the given parameters.
+
+# Smoothing parameter optimizers
+- `:efs` (default) — Extended Fellner-Schall (Wood & Fasiolo 2017). Fast,
+  monotonically convergent, one PIRLS call per outer iteration.
+- `:newton` — Newton's method with autodiff Hessian. Uses ForwardDiff to
+  differentiate the REML score w.r.t. log(sp). More expensive but may
+  converge in fewer iterations for difficult problems.
 """
 function gam_control(;
     epsilon::Real = 1e-7,
@@ -233,9 +242,12 @@ function gam_control(;
     gamma::Real = 1.0,
     scale_est::Symbol = :fletcher,
     edge_correct::Bool = true,
+    sp_optimizer::Symbol = :efs,
 )
+    sp_optimizer in (:efs, :newton) ||
+        throw(ArgumentError("sp_optimizer must be :efs or :newton, got :$sp_optimizer"))
     return GamControl(Float64(epsilon), maxit, outer_maxit, trace,
-        Float64(gamma), scale_est, edge_correct)
+        Float64(gamma), scale_est, edge_correct, sp_optimizer)
 end
 
 # ============================================================================

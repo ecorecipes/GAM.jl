@@ -110,21 +110,24 @@ end
 Compute the log pseudo-determinant of the total penalty:
 log|Σ λ_j S_j|_+ (product of non-zero eigenvalues).
 """
-function _log_penalty_det(penalty::PenaltySetup, log_sp::Vector{Float64})
-    ldet = 0.0
+function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
+    T = promote_type(Float64, eltype(log_sp))
+    ldet = zero(T)
     sp_idx = 1
     for block in penalty.blocks
         k = block.stop - block.start + 1
-        S_block = zeros(k, k)
+        S_block = zeros(T, k, k)
         for Si in block.S
             λ = exp(log_sp[sp_idx])
-            S_block .+= λ .* Si
+            @inbounds for j in 1:k, m in 1:k
+                S_block[j, m] += λ * Si[j, m]
+            end
             sp_idx += 1
         end
         eig = eigvals(Symmetric(S_block))
-        # Only count positive eigenvalues
+        thresh = eps(real(T)) * maximum(abs.(eig))
         for ev in eig
-            if ev > eps() * maximum(abs.(eig))
+            if ev > thresh
                 ldet += log(ev)
             end
         end

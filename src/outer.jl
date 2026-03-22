@@ -1,8 +1,13 @@
 # Outer iteration — smoothing parameter optimization
 #
-# Uses the Extended Fellner-Schall (EFS) update from Wood & Fasiolo (2017),
-# which is the default in mgcv. This is a simple, monotonically convergent
-# iteration that avoids the complexities of Newton optimization on REML.
+# Two optimizers available (selected via control.sp_optimizer):
+#   :efs    — Extended Fellner-Schall (Wood & Fasiolo 2017). Default.
+#             Fast, monotonically convergent, 1 PIRLS per outer iteration.
+#   :newton — Newton's method with autodiff Hessian via ForwardDiff.
+#             Computes exact Hessian of conditional REML w.r.t. log(sp).
+#             More expensive per step but fewer iterations for difficult problems.
+
+using ForwardDiff
 
 """
     outer_iteration(X, y, smooths, penalty, family, link;
@@ -78,6 +83,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
         beta = result.coefficients
         w = result.working_weights
+        dev = result.deviance
 
         # Estimate scale
         edf_total = sum(result.edf_vec)
@@ -87,7 +93,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             scale_est = 1.0
         end
 
-        # Smoothing parameter update — method-dependent
+        # Smoothing parameter update
         if XtWX_cached !== nothing
             copyto!(A_buf, XtWX_cached)
             @inbounds for j in 1:p, k in 1:p
@@ -100,36 +106,41 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         Ainv = inv(A_chol)
 
         log_sp_new = copy(log_sp)
-        sp_idx = 1
         max_change = 0.0
 
-        # Extended Fellner-Schall (EFS) update — same formula used for
-        # extended families, now applied to all exponential families.
-        # Avoids the (n_sp + 1) PIRLS calls of the FD-Hessian Newton approach.
-        # Reference: Wood & Fasiolo (2017), JASA.
-        for block in penalty.blocks
-            idx = block.start:block.stop
-            beta_block = beta[idx]
+        if control.sp_optimizer == :newton
+            # Newton with autodiff Hessian on conditional REML.
+            # Differentiates REML score w.r.t. log_sp, holding β and w fixed.
+            log_sp_new, max_change = _newton_sp_update(
+                log_sp, X, beta, w, dev, penalty, family, method,
+                scale_est, n, p, edf_total, y, weights, control)
+        else
+            # EFS update (default) — Wood & Fasiolo (2017)
+            sp_idx = 1
+            for block in penalty.blocks
+                idx = block.start:block.stop
+                beta_block = beta[idx]
 
-            for Si in block.S
-                λ = exp(log_sp[sp_idx])
-                rank_j = Float64(block.rank)
+                for Si in block.S
+                    λ = exp(log_sp[sp_idx])
+                    rank_j = Float64(block.rank)
 
-                bSb = dot(beta_block, Si * beta_block)
-                Ainv_block = Ainv[idx, idx]
-                trVS = tr(Ainv_block * Si)
+                    bSb = dot(beta_block, Si * beta_block)
+                    Ainv_block = Ainv[idx, idx]
+                    trVS = tr(Ainv_block * Si)
 
-                a = max(0.0, rank_j / λ - trVS)
+                    a = max(0.0, rank_j / λ - trVS)
 
-                if a > 0 && bSb > eps()
-                    r = scale_est * a / bSb
-                    log_sp_new[sp_idx] = clamp(
-                        log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
+                    if a > 0 && bSb > eps()
+                        r = scale_est * a / bSb
+                        log_sp_new[sp_idx] = clamp(
+                            log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
+                    end
+
+                    max_change = max(max_change,
+                        abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
+                    sp_idx += 1
                 end
-
-                max_change = max(max_change,
-                    abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
-                sp_idx += 1
             end
         end
 
@@ -286,4 +297,129 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         control = control)
 
     return log_sp, final_result
+end
+
+# ============================================================================
+# Newton + autodiff smoothing parameter update
+# ============================================================================
+
+"""
+    _conditional_reml(log_sp, XtWX, beta, dev, penalty, scale_est, n, p,
+                      edf_total, method, gamma, ls)
+
+Compute the conditional REML score as a function of `log_sp` only, holding
+β, w, and deviance fixed at their current PIRLS values. This makes the
+function differentiable via ForwardDiff w.r.t. `log_sp`.
+
+`ls` is the precomputed log saturated likelihood (constant w.r.t. log_sp).
+"""
+function _conditional_reml(log_sp::AbstractVector, XtWX::Matrix{Float64},
+    beta::Vector{Float64}, dev::Float64,
+    penalty::PenaltySetup, scale_est::Float64,
+    n::Int, p::Int, edf_total::Float64,
+    method::Symbol, gamma::Float64, ls::Float64)
+
+    T = eltype(log_sp)
+    S_total = total_penalty(penalty, log_sp, p)
+
+    # A = X'WX + S (XtWX is Float64, S_total may be Dual)
+    A = zeros(T, p, p)
+    @inbounds for j in 1:p, k in 1:p
+        A[j, k] = XtWX[j, k] + S_total[j, k]
+    end
+
+    A_chol = cholesky(Symmetric(A))
+    log_det_A = logdet(A_chol)
+
+    # Log pseudo-determinant of penalty
+    log_det_S = _log_penalty_det(penalty, log_sp)
+
+    # Penalty null space dimension
+    Mp = sum(b.stop - b.start + 1 - b.rank for b in penalty.blocks; init = 0)
+
+    # Penalized deviance
+    penalty_contrib = zero(T)
+    @inbounds for i in eachindex(beta)
+        for j in eachindex(beta)
+            penalty_contrib += beta[i] * S_total[i, j] * beta[j]
+        end
+    end
+    Dp = dev + penalty_contrib
+
+    if method == :GCV
+        denom = n - gamma * edf_total
+        return T(n * dev / denom^2)
+    end
+
+    # REML/ML score (ls is constant w.r.t. log_sp, precomputed by caller)
+    if method == :REML
+        return (Dp / (2 * scale_est) - ls) / gamma +
+               T(0.5) * log_det_A - T(0.5) * log_det_S -
+               T(0.5) * Mp * (log(T(2π) * scale_est) - log(T(gamma)))
+    else  # :ML
+        return (Dp / (2 * scale_est) - ls) / gamma +
+               T(0.5) * log_det_A - T(0.5) * log_det_S
+    end
+end
+
+"""
+    _newton_sp_update(log_sp, X, beta, w, dev, penalty, family, method,
+                      scale_est, n, p, edf_total, weights, control)
+
+Newton step on log smoothing parameters using ForwardDiff for the Hessian.
+Returns `(log_sp_new, max_change)`.
+"""
+function _newton_sp_update(log_sp::Vector{Float64},
+    X::Matrix{Float64}, beta::Vector{Float64},
+    w::Vector{Float64}, dev::Float64,
+    penalty::PenaltySetup,
+    family::UnivariateDistribution,
+    method::Symbol, scale_est::Float64,
+    n::Int, p::Int, edf_total::Float64,
+    y::Vector{Float64},
+    weights::Vector{Float64}, control::GamControl)
+
+    n_sp = length(log_sp)
+    gamma = control.gamma
+
+    # Precompute XtWX (constant w.r.t. log_sp since w is fixed)
+    XtWX = X' * Diagonal(w) * X
+
+    # Precompute log saturated likelihood (constant w.r.t. log_sp)
+    ls = _log_saturated_likelihood(family, y, weights, scale_est)
+
+    # Compute gradient and Hessian via ForwardDiff
+    reml_fn = lsp -> _conditional_reml(lsp, XtWX, beta, dev, penalty,
+        scale_est, n, p, edf_total, method, gamma, ls)
+
+    grad = ForwardDiff.gradient(reml_fn, log_sp)
+    hess = ForwardDiff.hessian(reml_fn, log_sp)
+
+    # Stabilize Hessian: eigendecompose and flip negative eigenvalues
+    # (same approach as mgcv's fast.REML.fit Newton step)
+    eh = eigen(Symmetric(hess))
+    ev = copy(eh.values)
+    min_ev = maximum(abs.(ev)) * 1e-6
+    @inbounds for i in eachindex(ev)
+        ev[i] = max(abs(ev[i]), min_ev)
+    end
+
+    # Newton step: Δρ = -H⁻¹ g
+    step = -(eh.vectors * Diagonal(1.0 ./ ev) * eh.vectors') * grad
+    step .= clamp.(step, -5.0, 5.0)
+
+    log_sp_new = clamp.(log_sp .+ step, -15.0, 15.0)
+
+    # Step halving if score increases
+    cur_score = reml_fn(log_sp)
+    trial_score = reml_fn(log_sp_new)
+    for _ in 1:30
+        trial_score <= cur_score && break
+        step .*= 0.5
+        log_sp_new .= clamp.(log_sp .+ step, -15.0, 15.0)
+        trial_score = reml_fn(log_sp_new)
+    end
+
+    max_change = maximum(abs.(log_sp_new .- log_sp))
+    return log_sp_new, max_change
 end
