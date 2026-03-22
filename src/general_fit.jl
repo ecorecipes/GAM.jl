@@ -425,9 +425,6 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
 
     log_sp = copy(penalty.sp)
     prev_result = nothing
-    prev_ll = 0.0
-    prev_neg_hess = zeros(p, p)
-    score_hist = Float64[]
 
     for outer_iter in 1:control.outer_maxit
         S_total = total_penalty(penalty, log_sp, p)
@@ -440,73 +437,63 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
             @warn "Newton inner did not converge at outer iteration $outer_iter"
         end
 
-        # LAML score and gradient
-        cur_score, cur_grad = laml_score(X, y, penalty, log_sp, family, link,
-            weights, result, ll, neg_hess; method=method, gamma=control.gamma)
+        beta = result.coefficients
+        w = result.working_weights
 
-        # FD Hessian diagonal for Newton step
-        h_fd = 1e-4
-        hess_diag = zeros(n_sp)
-        for j in 1:n_sp
-            lsp_p = copy(log_sp); lsp_p[j] += h_fd
-            S_p = total_penalty(penalty, lsp_p, p)
-            r_p, ll_p, nh_p = general_fit(X, y, S_p, family, link;
-                weights=weights, start=result.coefficients, control=control)
-            _, grad_p = laml_score(X, y, penalty, lsp_p, family, link,
-                weights, r_p, ll_p, nh_p; method=method, gamma=control.gamma)
-            hess_diag[j] = (grad_p[j] - cur_grad[j]) / h_fd
+        # Scale estimation
+        edf_total = sum(result.edf_vec)
+        if _needs_scale_estimate(family)
+            scale_est = max(result.pearson / (n - edf_total), 1e-10)
+        else
+            scale_est = 1.0
         end
 
-        # Newton step with clamping
+        # EFS update — same approach as PIRLS outer iteration
+        A = neg_hess .+ S_total
+        A_chol = cholesky(Symmetric(A))
+        Ainv = inv(A_chol)
+
         log_sp_new = copy(log_sp)
-        for j in 1:n_sp
-            if hess_diag[j] > eps()
-                step = -cur_grad[j] / hess_diag[j]
-            else
-                step = -sign(cur_grad[j]) * min(abs(cur_grad[j]) * 2.0, 2.0)
+        sp_idx = 1
+        max_change = 0.0
+
+        for block in penalty.blocks
+            idx = block.start:block.stop
+            beta_block = beta[idx]
+
+            for Si in block.S
+                λ = exp(log_sp[sp_idx])
+                rank_j = Float64(block.rank)
+
+                bSb = dot(beta_block, Si * beta_block)
+                Ainv_block = Ainv[idx, idx]
+                trVS = tr(Ainv_block * Si)
+
+                a = max(0.0, rank_j / λ - trVS)
+
+                if a > 0 && bSb > eps()
+                    r = scale_est * a / bSb
+                    log_sp_new[sp_idx] = clamp(
+                        log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
+                end
+
+                max_change = max(max_change,
+                    abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
+                sp_idx += 1
             end
-            step = clamp(step, -5.0, 5.0)
-            log_sp_new[j] = clamp(log_sp[j] + step, -15.0, 15.0)
         end
-
-        # Step halving
-        S_trial = total_penalty(penalty, log_sp_new, p)
-        r_trial, ll_trial, nh_trial = general_fit(X, y, S_trial, family, link;
-            weights=weights, start=result.coefficients, control=control)
-        trial_score, _ = laml_score(X, y, penalty, log_sp_new, family, link,
-            weights, r_trial, ll_trial, nh_trial; method=method, gamma=control.gamma)
-
-        for _ in 1:30
-            if trial_score <= cur_score; break; end
-            log_sp_new .= (log_sp .+ log_sp_new) ./ 2.0
-            S_trial = total_penalty(penalty, log_sp_new, p)
-            r_trial, ll_trial, nh_trial = general_fit(X, y, S_trial, family, link;
-                weights=weights, start=result.coefficients, control=control)
-            trial_score, _ = laml_score(X, y, penalty, log_sp_new, family, link,
-                weights, r_trial, ll_trial, nh_trial; method=method, gamma=control.gamma)
-        end
-        max_change = maximum(abs.(log_sp_new .- log_sp))
-
-        push!(score_hist, trial_score)
 
         if control.trace
-            println("General outer $outer_iter: score=$(@sprintf("%.6f", trial_score)), " *
-                    "sp=[$(join([@sprintf("%.4f", exp(s)) for s in log_sp_new], ", "))]")
+            println("General outer $outer_iter: " *
+                    "sp=[$(join([@sprintf("%.4f", exp(s)) for s in log_sp_new], ", "))]" *
+                    ", max_change=$(@sprintf("%.6f", max_change))")
         end
 
         log_sp .= log_sp_new
         prev_result = result
-        prev_ll = ll
-        prev_neg_hess = neg_hess
 
         if max_change < control.epsilon * 10
             break
-        end
-        if length(score_hist) > 3 && max_change < 0.05
-            recent = score_hist[max(1, end-3):end]
-            if maximum(abs.(diff(recent))) < control.epsilon
-                break
-            end
         end
     end
 

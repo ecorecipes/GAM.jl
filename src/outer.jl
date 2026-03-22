@@ -57,7 +57,6 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     end
 
     A_buf = zeros(p, p)
-    score_hist = Float64[]
 
     for outer_iter in 1:(control.outer_maxit)
         # Inner: P-IRLS for current smoothing parameters
@@ -104,106 +103,52 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         sp_idx = 1
         max_change = 0.0
 
-        # Newton optimization with analytical gradient + FD Hessian
-        # (matching mgcv's newton() optimizer — used for GCV, REML, and ML)
-        gamma = control.gamma
-        scale_param = _needs_scale_estimate(family) ? -1.0 : 1.0
+        # Extended Fellner-Schall (EFS) update — same formula used for
+        # extended families, now applied to all exponential families.
+        # Avoids the (n_sp + 1) PIRLS calls of the FD-Hessian Newton approach.
+        # Reference: Wood & Fasiolo (2017), JASA.
+        for block in penalty.blocks
+            idx = block.start:block.stop
+            beta_block = beta[idx]
 
-        # Get analytical gradient (and score for step control)
-        cur_score, cur_grad = reml_score(X, y, penalty, log_sp, family, link,
-            weights, result; method = method, gamma = gamma,
-            scale = scale_param)
+            for Si in block.S
+                λ = exp(log_sp[sp_idx])
+                rank_j = Float64(block.rank)
 
-        # Approximate Hessian via finite differences on the gradient
-        h_fd = 1e-4
-        hess_diag = zeros(n_sp)
-        for j in 1:n_sp
-            lsp_p = copy(log_sp); lsp_p[j] += h_fd
-            S_p = total_penalty(penalty, lsp_p, p)
-            if is_gaussian_identity
-                r_p = pirls_gaussian(X, y, S_p, XtWX_cached, Xty_cached;
-                    weights = weights)
-            else
-                r_p = pirls(X, y, S_p, family, link;
-                    weights = weights, start = beta, control = control)
+                bSb = dot(beta_block, Si * beta_block)
+                Ainv_block = Ainv[idx, idx]
+                trVS = tr(Ainv_block * Si)
+
+                a = max(0.0, rank_j / λ - trVS)
+
+                if a > 0 && bSb > eps()
+                    r = scale_est * a / bSb
+                    log_sp_new[sp_idx] = clamp(
+                        log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
+                end
+
+                max_change = max(max_change,
+                    abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
+                sp_idx += 1
             end
-            _, grad_p = reml_score(X, y, penalty, lsp_p, family, link,
-                weights, r_p; method = method, gamma = gamma,
-                scale = scale_param)
-            hess_diag[j] = (grad_p[j] - cur_grad[j]) / h_fd
         end
-
-        # Newton step with safeguards (like R's newton())
-        for j in 1:n_sp
-            if hess_diag[j] > eps()
-                step = -cur_grad[j] / hess_diag[j]
-            else
-                step = -sign(cur_grad[j]) * min(abs(cur_grad[j]) * 2.0, 2.0)
-            end
-            step = clamp(step, -5.0, 5.0)
-            log_sp_new[j] = clamp(log_sp[j] + step, -15.0, 15.0)
-            max_change = max(max_change, abs(log_sp_new[j] - log_sp[j]))
-        end
-
-        # Step halving if score didn't improve
-        S_trial = total_penalty(penalty, log_sp_new, p)
-        if is_gaussian_identity
-            r_trial = pirls_gaussian(X, y, S_trial, XtWX_cached, Xty_cached;
-                weights = weights)
-        else
-            r_trial = pirls(X, y, S_trial, family, link;
-                weights = weights, start = beta, control = control)
-        end
-        trial_score, _ = reml_score(X, y, penalty, log_sp_new, family, link,
-            weights, r_trial; method = method, gamma = gamma,
-            scale = scale_param)
-
-        for half_iter in 1:30
-            if trial_score <= cur_score
-                break
-            end
-            log_sp_new .= (log_sp .+ log_sp_new) ./ 2.0
-            S_trial = total_penalty(penalty, log_sp_new, p)
-            if is_gaussian_identity
-                r_trial = pirls_gaussian(X, y, S_trial, XtWX_cached, Xty_cached;
-                    weights = weights)
-            else
-                r_trial = pirls(X, y, S_trial, family, link;
-                    weights = weights, start = beta, control = control)
-            end
-            trial_score, _ = reml_score(X, y, penalty, log_sp_new, family, link,
-                weights, r_trial; method = method, gamma = gamma,
-                scale = scale_param)
-        end
-        max_change = maximum(abs.(log_sp_new .- log_sp))
-
-        # Compute score for convergence tracking
-        push!(score_hist, trial_score)
 
         if control.trace
-            println("Outer iter $outer_iter: score=$(@sprintf("%.6f", trial_score)), " *
+            println("Outer iter $outer_iter: " *
                     "sp=[$(join([@sprintf("%.4f", exp(s)) for s in log_sp_new], ", "))]" *
-                    ", edf=$(round(edf_total; digits=2))")
+                    ", edf=$(round(edf_total; digits=2))" *
+                    ", max_change=$(@sprintf("%.6f", max_change))")
         end
 
         log_sp .= log_sp_new
         prev_result = result
 
-        # Convergence check: step small and score stable
+        # Convergence check: smoothing parameter changes small
         if max_change < control.epsilon * 10
             if control.trace
                 println("Outer iteration converged at iteration $outer_iter")
             end
             break
-        end
-        if length(score_hist) > 3 && max_change < 0.05
-            recent = score_hist[max(1, end - 3):end]
-            if maximum(abs.(diff(recent))) < control.epsilon
-                if control.trace
-                    println("Outer iteration converged at iteration $outer_iter")
-                end
-                break
-            end
         end
     end
 
