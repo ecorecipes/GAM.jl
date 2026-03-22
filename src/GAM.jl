@@ -74,6 +74,7 @@ export
     cs,
     cc,
     ps,
+    cps,
     SmoothSpec,
     SmoothTerm,
 
@@ -85,6 +86,7 @@ export
     CubicShrink,
     CyclicCubic,
     PSpline,
+    CyclicPSpline,
     BSplineBasis,
     RandomEffect,
     TensorProduct,
