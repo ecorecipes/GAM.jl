@@ -87,6 +87,12 @@ _has_extra_param(f::NegBinFamily) = f.estimate_theta
 _has_extra_param(f::TweedieFamily) = f.estimate_p
 _has_extra_param(f::BetaFamily) = f.estimate_phi
 
+"""Whether the family provides Dd derivatives for proper PIRLS working weights."""
+_has_Dd(::ExtendedFamily) = false
+
+"""Dd derivatives (override for families that provide them)."""
+_family_Dd(f::ExtendedFamily, y, mu, wt; level=0) = error("Dd not implemented for $(typeof(f))")
+
 """Name string for display."""
 _family_name(::NegBinFamily) = "NegativeBinomial"
 _family_name(::TweedieFamily) = "Tweedie"

@@ -101,6 +101,8 @@ _default_link(::ELFFamily) = IdentityLink()
 _family_name(::ELFFamily) = "ELF"
 _has_extra_param(f::ELFFamily) = f.estimate_theta
 _estimates_scale(::ELFFamily) = false
+_has_Dd(::ELFFamily) = true
+_family_Dd(f::ELFFamily, y, mu, wt; level=0) = elf_Dd(f, y, mu, wt; level=level)
 
 function _null_deviance(f::ELFFamily, y, wt)
     mu = fill(quantile(y, f.qu), length(y))
@@ -119,9 +121,20 @@ end
 function _get_sig(f::ELFFamily, n::Int)
     sig = exp(f.theta)
     co = _get_co(f, n)
-    lam = co
-    mean_lam = mean(lam)
-    return sig .* lam ./ mean_lam
+    mean_lam = mean(co)
+    return sig .* co ./ mean_lam
+end
+
+# Precomputed constants for tight inner loops
+function _elf_constants(f::ELFFamily, n::Int)
+    tau = f.qu
+    co = _get_co(f, n)
+    sig_base = exp(f.theta)
+    mean_lam = mean(co)
+    log_tau = log(tau)
+    log1m_tau = log1p(-tau)
+    return (tau=tau, co=co, sig_base=sig_base, mean_lam=mean_lam,
+            log_tau=log_tau, log1m_tau=log1m_tau)
 end
 
 # ============================================================================
@@ -137,6 +150,7 @@ end
 function _clamp_mu(::ELFFamily, mu)
     return mu  # No clamping needed for ELF (continuous response)
 end
+_clamp_mu(::ELFFamily, mu::Float64) = mu  # scalar method
 
 function _variance(f::ELFFamily, mu)
     # Working variance for PIRLS: use observed information
@@ -147,6 +161,13 @@ function _variance(f::ELFFamily, mu)
     return sig
 end
 
+# Scalar variance: for use in tight loops
+function _elf_var_i(f::ELFFamily, i::Int, mean_lam::Float64)
+    sig_base = exp(f.theta)
+    co_val = length(f.co) == 1 ? f.co[1] : f.co[i]
+    return sig_base * co_val / mean_lam
+end
+
 """
     _deviance(f::ELFFamily, y, mu, wt)
 
@@ -155,18 +176,25 @@ Compute the ELF deviance: -2 × (log-likelihood - saturated log-likelihood).
 function _deviance(f::ELFFamily, y, mu, wt)
     tau = f.qu
     n = length(y)
-    co = _get_co(f, n)
-    sig = _get_sig(f, n)
-    lam = co
+    co = f.co
+    sig_base = exp(f.theta)
+    is_scalar_co = length(co) == 1
+    co_val = is_scalar_co ? co[1] : 0.0
+    mean_lam = is_scalar_co ? co_val : mean(co)
+    log_tau = log(tau)
+    log1m_tau = log1p(-tau)
+    one_m_tau = 1.0 - tau
 
     dev = 0.0
     @inbounds for i in eachindex(y, mu, wt)
+        lam_i = is_scalar_co ? co_val : co[i]
+        sig_i = sig_base * lam_i / mean_lam
         z = y[i] - mu[i]
-        term = (1.0 - tau) * lam[i] * log1p(-tau) +
-               lam[i] * tau * log(tau) -
-               (1.0 - tau) * z +
-               lam[i] * log1pexp(z / lam[i])
-        dev += 2.0 * wt[i] * term / sig[i]
+        term = one_m_tau * lam_i * log1m_tau +
+               lam_i * tau * log_tau -
+               one_m_tau * z +
+               lam_i * log1pexp(z / lam_i)
+        dev += 2.0 * wt[i] * term / sig_i
     end
     return dev
 end
@@ -503,9 +531,10 @@ function qgam(formula, data, qu::Real;
                                 control=control, kwargs...)
     end
 
-    # Step 5: Fit the quantile model with ELF family
+    # Step 5: Fit the quantile model with ELF family, starting from Gaussian fit
     elf = ELFFamily(qu=qu, co=fill(co, n), theta=Float64(lsig))
-    fit = gam(formula, data; family=elf, control=control, kwargs...)
+    fit = gam(formula, data; family=elf, start=gauss_fit.coefficients,
+              control=control, kwargs...)
 
     return fit
 end
@@ -602,6 +631,7 @@ function _tune_learn_fast(formula, data, qu::Real, co::Real, var_hat::Real, gaus
     end
 
     # Objective: mean out-of-sample pinball loss over bootstrap samples
+    gauss_coef = gauss_fit.coefficients
     function _boot_pinball_loss(lsig_val)
         elf = ELFFamily(qu=qu, co=fill(co, n), theta=lsig_val)
         total_loss = 0.0
@@ -610,8 +640,9 @@ function _tune_learn_fast(formula, data, qu::Real, co::Real, var_hat::Real, gaus
         for b in 1:K
             w = boot_weights[b]
             try
-                # Fit on bootstrap (weighted) sample
-                fit_b = gam(formula, data; family=elf, weights=w, control=control, kwargs...)
+                # Fit on bootstrap (weighted) sample, starting from Gaussian coefficients
+                fit_b = gam(formula, data; family=elf, weights=w,
+                            start=gauss_coef, control=control, kwargs...)
                 mu_b = fit_b.fitted_values
 
                 # Evaluate pinball loss only on out-of-bag observations (w[i] == 0)

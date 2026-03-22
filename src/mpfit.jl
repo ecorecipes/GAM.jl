@@ -1,11 +1,12 @@
 # Multi-parameter model fitting
 #
 # Inner loop: penalized Newton for β given λ
-# Outer loop: BFGS on REML criterion for log(λ)
+# Outer loop: EFS (default) or BFGS (fallback) on REML criterion for log(λ)
 # User API: evgam() function
 
 using LinearAlgebra
 using Statistics: mean, std
+using Printf: @sprintf
 
 # ============================================================================
 # Inner Newton solver
@@ -306,16 +307,121 @@ function _logdet_penalty(Sl::Vector{Matrix{Float64}}, log_sp::Vector{Float64}, p
 end
 
 # ============================================================================
-# BFGS outer optimization
+# EFS outer optimization (Extended Fellner-Schall, Wood & Fasiolo 2017)
 # ============================================================================
 
 """
-    mp_bfgs_outer(family, y, X_list, Sl, β_init, log_sp_init, param_offsets, control)
+    mp_efs_outer(family, y, X_list, Sl, β_init, log_sp_init, param_offsets, control)
     → (log_sp_opt, β_opt, reml_val)
 
-BFGS optimization of REML criterion w.r.t. log smoothing parameters.
-Uses finite-difference gradients of REML.
+EFS optimization of smoothing parameters for multi-parameter models.
+Each outer iteration: 1 inner Newton solve + closed-form SP update.
+Much faster than BFGS+FD which requires 2×nsp inner solves per outer step.
 """
+function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
+                      X_list::Vector{Matrix{Float64}},
+                      Sl::Vector{Matrix{Float64}},
+                      β_init::Vector{Float64},
+                      log_sp_init::Vector{Float64},
+                      param_offsets::Vector{Int},
+                      control::MPFitControl;
+                      Mp::Int=0)
+    nsp = length(log_sp_init)
+    if nsp == 0
+        p = length(β_init)
+        S = zeros(p, p)
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control)
+        return Float64[], β_opt, nll_pen
+    end
+
+    p = length(β_init)
+    log_sp = copy(log_sp_init)
+    β_current = copy(β_init)
+
+    # Precompute penalty ranks
+    pen_ranks = Float64[]
+    for Sj in Sl
+        eigs = eigvals(Symmetric(Sj))
+        push!(pen_ranks, Float64(count(e -> e > 1e-10 * maximum(abs, eigs), eigs)))
+    end
+
+    for outer_iter in 1:control.outer_maxit
+        # Build total penalty
+        S = zeros(p, p)
+        for (j, Sj) in enumerate(Sl)
+            S .+= exp(log_sp[j]) .* Sj
+        end
+
+        # Inner Newton solve
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_current, S, control)
+
+        # H is the penalized Hessian = H0 + S
+        # For EFS we need A⁻¹ where A = H (the penalized Hessian)
+        F = _safe_cholesky(Symmetric(H))
+        if F === nothing
+            if control.trace
+                @info "Outer iteration $outer_iter: Cholesky failed, stopping"
+            end
+            break
+        end
+        Ainv = inv(F)
+
+        # EFS update for each smoothing parameter
+        log_sp_new = copy(log_sp)
+        max_change = 0.0
+
+        for j in 1:nsp
+            λ = exp(log_sp[j])
+            Sj = Sl[j]
+            rank_j = pen_ranks[j]
+
+            bSb = dot(β_opt, Sj * β_opt)
+            trAS = tr(Ainv * Sj)
+
+            # EFS formula: scale_est=1 for multi-parameter (no separate scale)
+            a = max(0.0, rank_j / λ - trAS)
+
+            if a > 0 && bSb > eps()
+                r = a / bSb  # scale_est = 1 for multi-parameter
+                log_sp_new[j] = clamp(log_sp[j] + log(max(r, 1e-15)), -15.0, 15.0)
+            end
+
+            max_change = max(max_change, abs(log_sp_new[j] - log_sp[j]))
+        end
+
+        if control.trace
+            sp_str = join([@sprintf("%.4f", exp(s)) for s in log_sp_new], ", ")
+            @info "Outer iteration $outer_iter: sp=[$sp_str], max_change=$(round(max_change, sigdigits=3))"
+        end
+
+        log_sp .= log_sp_new
+        β_current .= β_opt
+
+        if max_change < 1e-4
+            if control.trace
+                @info "Outer converged at iteration $outer_iter"
+            end
+            break
+        end
+    end
+
+    # Compute final REML for return value
+    S_final = zeros(p, p)
+    for (j, Sj) in enumerate(Sl)
+        S_final .+= exp(log_sp[j]) .* Sj
+    end
+    β_final, nll_pen_final, _, H_final, _ = mp_newton_inner(
+        family, y, X_list, β_current, S_final, control)
+
+    F_final = _safe_cholesky(Symmetric(H_final))
+    logdetH = F_final !== nothing ? 2.0 * sum(log.(diag(F_final.L))) : 0.0
+    logdetS = _logdet_penalty(Sl, log_sp, p)
+    reml_val = nll_pen_final + 0.5 * logdetH - 0.5 * logdetS + 0.5 * Mp * log(2π)
+
+    return log_sp, β_final, reml_val
+end
+
+# Keep BFGS as fallback (legacy, not used by default)
 function mp_bfgs_outer(family::MultiParameterFamily, y::AbstractVector,
                        X_list::Vector{Matrix{Float64}},
                        Sl::Vector{Matrix{Float64}},
@@ -326,7 +432,6 @@ function mp_bfgs_outer(family::MultiParameterFamily, y::AbstractVector,
                        Mp::Int=0)
     nsp = length(log_sp_init)
     if nsp == 0
-        # No smoothing parameters to optimize
         p = length(β_init)
         S = zeros(p, p)
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control)
@@ -336,69 +441,47 @@ function mp_bfgs_outer(family::MultiParameterFamily, y::AbstractVector,
     log_sp = copy(log_sp_init)
     β_current = copy(β_init)
 
-    # Initial REML
     reml_val, β_current, _ = mp_reml(log_sp, family, y, X_list, Sl, β_current,
                                       param_offsets, control; Mp=Mp)
-
-    # BFGS state
-    B = Matrix{Float64}(I, nsp, nsp)  # inverse Hessian approximation
+    B = Matrix{Float64}(I, nsp, nsp)
 
     for outer_iter in 1:control.outer_maxit
-        # Finite-difference REML gradient
         grad = _fd_reml_gradient(log_sp, family, y, X_list, Sl, β_current,
                                  param_offsets, control, reml_val; Mp=Mp)
 
-        grad_max = maximum(abs, grad)
-        if grad_max < control.outer_tol
-            if control.trace
-                @info "Outer converged (gradient) at iteration $outer_iter: REML = $(round(reml_val, digits=4))"
-            end
+        if maximum(abs, grad) < control.outer_tol
             break
         end
 
-        # BFGS search direction
         direction = -(B * grad)
 
-        # Line search
         step = 1.0
-        # Clamp log_sp to prevent overflow in exp()
         log_sp_new = clamp.(log_sp .+ step .* direction, -30.0, 30.0)
         reml_new, β_new, _ = mp_reml(log_sp_new, family, y, X_list, Sl, β_current,
                                       param_offsets, control; Mp=Mp)
 
-        # Backtracking
         for _ in 1:20
             if isfinite(reml_new) && reml_new < reml_val - 1e-4 * step * dot(grad, direction)
                 break
             end
             step *= 0.5
-            if step < 1e-10
-                break
-            end
+            step < 1e-10 && break
             log_sp_new = clamp.(log_sp .+ step .* direction, -30.0, 30.0)
             reml_new, β_new, _ = mp_reml(log_sp_new, family, y, X_list, Sl, β_current,
                                           param_offsets, control; Mp=Mp)
         end
 
         if !isfinite(reml_new) || reml_new >= reml_val
-            # No improvement — try steepest descent with tiny step
             step = 0.01
             log_sp_new = clamp.(log_sp .- step .* grad, -30.0, 30.0)
             reml_new, β_new, _ = mp_reml(log_sp_new, family, y, X_list, Sl, β_current,
                                           param_offsets, control; Mp=Mp)
-            if !isfinite(reml_new) || reml_new >= reml_val
-                if control.trace
-                    @info "Outer iteration $outer_iter: no improvement, stopping"
-                end
-                break
-            end
+            (!isfinite(reml_new) || reml_new >= reml_val) && break
         end
 
-        # Check relative REML convergence
         reml_rel_change = abs(reml_new - reml_val) / (abs(reml_val) + 1.0)
         sp_change = maximum(abs, log_sp_new .- log_sp)
 
-        # BFGS update
         s_vec = log_sp_new .- log_sp
         grad_new = _fd_reml_gradient(log_sp_new, family, y, X_list, Sl, β_new,
                                      param_offsets, control, reml_new; Mp=Mp)
@@ -415,17 +498,7 @@ function mp_bfgs_outer(family::MultiParameterFamily, y::AbstractVector,
         β_current .= β_new
         reml_val = reml_new
 
-        if control.trace
-            @info "Outer iteration $outer_iter: REML = $(round(reml_val, digits=4)), max|grad| = $(round(grad_max, sigdigits=3)), Δsp = $(round(sp_change, sigdigits=3))"
-        end
-
-        # Early stop if both REML and smoothing parameters barely changed
-        if reml_rel_change < 1e-8 && sp_change < 1e-4
-            if control.trace
-                @info "Outer converged (REML change) at iteration $outer_iter: REML = $(round(reml_val, digits=4))"
-            end
-            break
-        end
+        (reml_rel_change < 1e-8 && sp_change < 1e-4) && break
     end
 
     return log_sp, β_current, reml_val
@@ -589,9 +662,9 @@ function evgam(formulas, data, family::MultiParameterFamily;
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl)
         reml_val = nll_pen
     else
-        # Estimate smoothing parameters via BFGS on REML
-        log_sp, β_opt, reml_val = mp_bfgs_outer(family, y, X_list, Sl, β_init,
-                                                  log_sp, param_offsets, ctrl; Mp=Mp)
+        # Estimate smoothing parameters via EFS
+        log_sp, β_opt, reml_val = mp_efs_outer(family, y, X_list, Sl, β_init,
+                                                log_sp, param_offsets, ctrl; Mp=Mp)
         conv = true
     end
 

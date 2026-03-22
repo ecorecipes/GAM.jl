@@ -41,32 +41,86 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
     converged = false
     n_iter = 0
 
+    # Pre-allocate working buffers
+    dmu_deta = Vector{Float64}(undef, n)
+    var_mu = Vector{Float64}(undef, n)
+    w = Vector{Float64}(undef, n)
+    z = Vector{Float64}(undef, n)
+    Xw = similar(X)           # n×p buffer for √w-scaled X
+    XtWX = Matrix{Float64}(undef, p, p)
+    A = Matrix{Float64}(undef, p, p)
+    beta_new = Vector{Float64}(undef, p)
+    beta_step = Vector{Float64}(undef, p)
+    eta_new = Vector{Float64}(undef, n)
+    mu_new = Vector{Float64}(undef, n)
+    rhs = Vector{Float64}(undef, p)
+
+    # Check if family provides Dd-based working quantities (like R's gam.fit3)
+    has_Dd = _has_Dd(family)
+
     for iter in 1:(control.maxit)
         n_iter = iter
 
         # Working weights and working response
-        dmu_deta = GLM.mueta.(Ref(link), eta)
-        var_mu = _variance(family, mu)
+        if has_Dd
+            # Use family's Dd derivatives for proper working weights
+            # (matches R's gam.fit3 for extended families)
+            dd = _family_Dd(family, y, mu, weights; level=0)
+            Dmu = dd[:Dmu]    # gradient of deviance w.r.t. mu
+            Dmu2 = dd[:Dmu2]  # 2nd deriv of deviance w.r.t. mu (working weight basis)
 
-        # Working weights: w_i * (dmu/deta)^2 / V(mu)
-        w = weights .* dmu_deta .^ 2 ./ max.(var_mu, eps())
-        w .= clamp.(w, eps(), 1e10)
+            dmu_deta .= GLM.mueta.(Ref(link), eta)
 
-        # Working response
-        z = eta .- offset .+ (y .- mu) ./ dmu_deta
+            @inbounds for i in 1:n
+                # Convert mu-derivatives to eta-derivatives via chain rule
+                Deta2_i = Dmu2[i] * dmu_deta[i]^2
+                w[i] = clamp(Deta2_i, eps(), 1e10)
+                # Working response: z = eta + Deta / Deta2, clamped to prevent instability
+                Deta_i = Dmu[i] * dmu_deta[i]
+                delta = Deta_i / max(Deta2_i, eps())
+                z[i] = eta[i] - offset[i] + clamp(delta, -40.0, 40.0)
+            end
+        else
+            # Fallback: standard IRLS working weights
+            dmu_deta .= GLM.mueta.(Ref(link), eta)
+            var_mu .= _variance(family, mu)
 
-        # Solve penalized WLS: (X'WX + S) β = X'Wz
-        XtW = X' * Diagonal(w)
-        XtWX = XtW * X
-        A = XtWX + S_total
-        A_sym = Symmetric((A + A') / 2)
-        A_chol = cholesky(A_sym)
-        beta_new = A_chol \ (XtW * z)
+            @inbounds for i in 1:n
+                w[i] = clamp(weights[i] * dmu_deta[i]^2 / max(var_mu[i], eps()), eps(), 1e10)
+                z[i] = eta[i] - offset[i] + (y[i] - mu[i]) / dmu_deta[i]
+            end
+        end
 
-        # Update
-        eta_new = X * beta_new .+ offset
-        mu_new = GLM.linkinv.(Ref(link), eta_new)
-        mu_new .= _clamp_mu(family, mu_new)
+        # Build X'WX via scaled X: Xw = √w .* X, then XtWX = Xw'Xw
+        @inbounds for j in 1:p, i in 1:n
+            Xw[i, j] = sqrt(w[i]) * X[i, j]
+        end
+        mul!(XtWX, Xw', Xw)
+
+        # A = X'WX + S_total
+        @inbounds for j in 1:p, k in 1:p
+            A[k, j] = XtWX[k, j] + S_total[k, j]
+        end
+
+        # RHS = X'Wz
+        @inbounds for j in 1:p
+            s = 0.0
+            for i in 1:n
+                s += X[i, j] * w[i] * z[i]
+            end
+            rhs[j] = s
+        end
+
+        # Solve: beta_new = A \ rhs
+        A_chol = cholesky(Symmetric(A))
+        ldiv!(beta_new, A_chol, rhs)
+
+        # Update: eta_new = X * beta_new + offset
+        mul!(eta_new, X, beta_new)
+        eta_new .+= offset
+        @inbounds for i in 1:n
+            mu_new[i] = _clamp_mu(family, GLM.linkinv(link, eta_new[i]))
+        end
         dev_new = _deviance(family, y, mu_new, weights)
 
         # Step halving if deviance increased
@@ -76,21 +130,29 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
                 break
             end
             step_factor *= 0.5
-            beta_try = beta .+ step_factor .* (beta_new .- beta)
-            eta_new = X * beta_try .+ offset
-            mu_new = GLM.linkinv.(Ref(link), eta_new)
-            mu_new .= _clamp_mu(family, mu_new)
-            dev_new = _deviance(family, y, mu_new, weights)
             if step_factor < 1e-8
                 break
             end
+            @inbounds for j in 1:p
+                beta_step[j] = beta[j] + step_factor * (beta_new[j] - beta[j])
+            end
+            mul!(eta_new, X, beta_step)
+            eta_new .+= offset
+            @inbounds for i in 1:n
+                mu_new[i] = _clamp_mu(family, GLM.linkinv(link, eta_new[i]))
+            end
+            dev_new = _deviance(family, y, mu_new, weights)
         end
 
         if step_factor < 1.0
-            beta_new = beta .+ step_factor .* (beta_new .- beta)
-            eta_new = X * beta_new .+ offset
-            mu_new = GLM.linkinv.(Ref(link), eta_new)
-            mu_new .= _clamp_mu(family, mu_new)
+            @inbounds for j in 1:p
+                beta_new[j] = beta[j] + step_factor * (beta_new[j] - beta[j])
+            end
+            mul!(eta_new, X, beta_new)
+            eta_new .+= offset
+            @inbounds for i in 1:n
+                mu_new[i] = _clamp_mu(family, GLM.linkinv(link, eta_new[i]))
+            end
             dev_new = _deviance(family, y, mu_new, weights)
         end
 
@@ -100,9 +162,8 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
 
         # Estimate extra parameter periodically (every 3 iterations after burn-in)
         if iter >= 3 && iter % 3 == 0 && _has_extra_param(family)
-            scale = _estimates_scale(family) ? max(dev_new / (n - sum(ones(p))), 1e-10) : 1.0
+            scale = _estimates_scale(family) ? max(dev_new / (n - p), 1e-10) : 1.0
             estimate_theta!(family, y, mu, weights, scale)
-            # Recompute deviance after theta update
             dev_new = _deviance(family, y, mu, weights)
         end
 
@@ -118,25 +179,43 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
 
     # Final extra parameter estimation
     if _has_extra_param(family)
-        scale = _estimates_scale(family) ? max(dev_old / max(n - sum(ones(p)), 1.0), 1e-10) : 1.0
+        scale = _estimates_scale(family) ? max(dev_old / max(n - p, 1.0), 1e-10) : 1.0
         estimate_theta!(family, y, mu, weights, scale)
         dev_old = _deviance(family, y, mu, weights)
     end
 
-    # Final quantities
-    dmu_deta = GLM.mueta.(Ref(link), eta)
-    var_mu = _variance(family, mu)
-    w = weights .* dmu_deta .^ 2 ./ max.(var_mu, eps())
-    w .= clamp.(w, eps(), 1e10)
-
-    # Pearson statistic
-    pearson = sum(weights .* (y .- mu) .^ 2 ./ max.(var_mu, eps()))
+    # Final quantities — reuse buffers
+    if has_Dd
+        dd_final = _family_Dd(family, y, mu, weights; level=0)
+        dmu_deta .= GLM.mueta.(Ref(link), eta)
+        @inbounds for i in 1:n
+            w[i] = clamp(dd_final[:Dmu2][i] * dmu_deta[i]^2, eps(), 1e10)
+        end
+        # Pearson using Dd-based variance
+        pearson = 0.0
+        @inbounds for i in 1:n
+            v_i = max(dd_final[:Dmu2][i] > 0 ? 1.0 / dd_final[:Dmu2][i] : 1.0, eps())
+            pearson += weights[i] * (y[i] - mu[i])^2 * v_i
+        end
+    else
+        dmu_deta .= GLM.mueta.(Ref(link), eta)
+        var_mu .= _variance(family, mu)
+        @inbounds for i in 1:n
+            w[i] = clamp(weights[i] * dmu_deta[i]^2 / max(var_mu[i], eps()), eps(), 1e10)
+        end
+        pearson = 0.0
+        @inbounds for i in 1:n
+            pearson += weights[i] * (y[i] - mu[i])^2 / max(var_mu[i], eps())
+        end
+    end
 
     # EDF and hat matrix
     edf_vec, hat_diag = penalty_edf(X, w, S_total)
 
-    # R factor
-    A = X' * Diagonal(w) * X + S_total
+    # R factor — reuse A buffer (already has XtWX + S_total from last iteration)
+    @inbounds for j in 1:p, k in 1:p
+        A[k, j] = XtWX[k, j] + S_total[k, j]
+    end
     R = Matrix(cholesky(Symmetric(A)).U)
 
     return PirlsResult(
