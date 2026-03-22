@@ -563,8 +563,8 @@ end
 """
     scam_outer_iteration(X, y, smooths, penalty, family, link, p_ident; kwargs...)
 
-Outer iteration for SCAM: optimize smoothing parameters using GCV or REML,
-with inner Newton loop using scam_pirls.
+Outer iteration for SCAM: optimize smoothing parameters using EFS
+(Extended Fellner-Schall), with inner Newton loop using scam_pirls.
 """
 function scam_outer_iteration(
     X::Matrix{Float64},
@@ -581,93 +581,88 @@ function scam_outer_iteration(
     n, p = size(X)
     n_sp = length(penalty.sp)
 
-    scale_known = !_needs_scale_estimate(family)
-    gamma = control.gamma
-    sig2 = scale_known ? 1.0 : -1.0
-
-    # -- Helper: fit at given log(sp) with cold start (avoids false local optima) --
-    function _scam_eval(rho)
-        S_e = total_penalty(penalty, rho, p)
-        r_e = scam_pirls(X, y, S_e, family, link, p_ident;
-            weights = weights, control = control)
-        edf_e = sum(r_e.edf_vec)
-        dev = r_e.deviance
-        if scale_known
-            sc = dev / n - sig2 + 2.0 * gamma * edf_e * sig2 / n
-        else
-            sc = n * dev / max(n - gamma * edf_e, 1.0)^2
-        end
-        return sc, r_e
-    end
-
     if n_sp == 0
-        sc0, r0 = _scam_eval(zeros(0))
-        return Float64[], r0
+        S_total = zeros(p, p)
+        result = scam_pirls(X, y, S_total, family, link, p_ident;
+            weights = weights, control = control)
+        return Float64[], result
     end
 
-    # -- Optimize each sp via golden section search --
-    # Cold-start each PIRLS to avoid false optima from warm-starting across
-    # distant sp values (SCAM PIRLS is non-convex due to exp transform).
     log_sp = zeros(n_sp)
-    best_score = Inf
-    best_result = nothing
+    prev_result = nothing
+    Xw_buf = similar(X)
+    A_buf = zeros(p, p)
 
     for outer in 1:control.outer_maxit
-        old_log_sp = copy(log_sp)
+        S_total = total_penalty(penalty, log_sp, p)
 
-        for j in 1:n_sp
-            golden = (sqrt(5.0) - 1.0) / 2.0
-            a = -8.0; b = 15.0
-            c = b - golden * (b - a)
-            d = a + golden * (b - a)
+        result = scam_pirls(X, y, S_total, family, link, p_ident;
+            weights = weights,
+            start = prev_result === nothing ? nothing : prev_result.coefficients,
+            control = control)
 
-            rho_c = copy(log_sp); rho_c[j] = c
-            sc_c, r_c = _scam_eval(rho_c)
-            rho_d = copy(log_sp); rho_d[j] = d
-            sc_d, r_d = _scam_eval(rho_d)
+        beta = result.coefficients
+        w = result.working_weights
 
-            for _ in 1:100
-                if sc_c < sc_d
-                    b = d
-                    d = c; sc_d = sc_c; r_d = r_c
-                    c = b - golden * (b - a)
-                    rho_c = copy(log_sp); rho_c[j] = c
-                    sc_c, r_c = _scam_eval(rho_c)
-                else
-                    a = c
-                    c = d; sc_c = sc_d; r_c = r_d
-                    d = a + golden * (b - a)
-                    rho_d = copy(log_sp); rho_d[j] = d
-                    sc_d, r_d = _scam_eval(rho_d)
+        # Scale estimation
+        edf_total = sum(result.edf_vec)
+        if _needs_scale_estimate(family)
+            scale_est = max(result.pearson / (n - edf_total), 1e-10)
+        else
+            scale_est = 1.0
+        end
+
+        # EFS update (same formula as standard GAM outer iteration)
+        _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n, Xw_buf)
+        A_chol = cholesky(Symmetric(copy(A_buf)))
+        Ainv = inv(A_chol)
+
+        log_sp_new = copy(log_sp)
+        sp_idx = 1
+        max_change = 0.0
+
+        for block in penalty.blocks
+            idx = block.start:block.stop
+            beta_block = beta[idx]
+
+            for Si in block.S
+                λ = exp(log_sp[sp_idx])
+                rank_j = Float64(block.rank)
+
+                bSb = dot(beta_block, Si * beta_block)
+                Ainv_block = Ainv[idx, idx]
+                trVS = tr(Ainv_block * Si)
+
+                a = max(0.0, rank_j / λ - trVS)
+
+                if a > 0 && bSb > eps()
+                    r = scale_est * a / bSb
+                    log_sp_new[sp_idx] = clamp(
+                        log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
                 end
-                (b - a) < 1e-5 && break
-            end
 
-            if sc_c < sc_d
-                log_sp[j] = c
-                if sc_c < best_score
-                    best_score = sc_c
-                    best_result = r_c
-                end
-            else
-                log_sp[j] = d
-                if sc_d < best_score
-                    best_score = sc_d
-                    best_result = r_d
-                end
+                max_change = max(max_change,
+                    abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
+                sp_idx += 1
             end
         end
 
-        sp_change = maximum(abs.(log_sp .- old_log_sp))
-        sp_change < 1e-5 && break
+        log_sp .= log_sp_new
+        prev_result = result
+
+        if max_change < 1e-5
+            break
+        end
     end
 
-    # Final fit at optimal sp
-    if best_result === nothing
-        _, best_result = _scam_eval(log_sp)
-    end
+    # Final fit at converged sp
+    S_total = total_penalty(penalty, log_sp, p)
+    final_result = scam_pirls(X, y, S_total, family, link, p_ident;
+        weights = weights,
+        start = prev_result === nothing ? nothing : prev_result.coefficients,
+        control = control)
 
-    return log_sp, best_result
+    return log_sp, final_result
 end
 
 # ============================================================================

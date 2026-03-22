@@ -136,19 +136,23 @@ function _initial_sp(X::Matrix{Float64}, penalty::PenaltySetup)
 end
 
 """
-    total_penalty(penalty::PenaltySetup, log_sp::Vector{Float64}, p::Int) -> Matrix{Float64}
+    total_penalty(penalty::PenaltySetup, log_sp, p::Int) -> Matrix
 
 Compute the total penalty matrix Σ λ_j S_j given log smoothing parameters.
+Accepts any numeric vector for `log_sp` (including ForwardDiff Dual types).
 """
-function total_penalty(penalty::PenaltySetup, log_sp::Vector{Float64}, p::Int)
-    S_total = zeros(p, p)
+function total_penalty(penalty::PenaltySetup, log_sp::AbstractVector, p::Int)
+    T = promote_type(Float64, eltype(log_sp))
+    S_total = zeros(T, p, p)
     sp_idx = 1
 
     for block in penalty.blocks
         idx = block.start:block.stop
         for Si in block.S
             λ = exp(log_sp[sp_idx])
-            S_total[idx, idx] .+= λ .* Si
+            @inbounds for j in eachindex(idx), k in eachindex(idx)
+                S_total[idx[j], idx[k]] += λ * Si[j, k]
+            end
             sp_idx += 1
         end
     end
