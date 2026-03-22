@@ -101,7 +101,7 @@ _default_link(::ELFFamily) = IdentityLink()
 _family_name(::ELFFamily) = "ELF"
 _has_extra_param(f::ELFFamily) = f.estimate_theta
 _estimates_scale(::ELFFamily) = false
-_has_Dd(::ELFFamily) = true
+_has_Dd(::ELFFamily) = false
 _family_Dd(f::ELFFamily, y, mu, wt; level=0) = elf_Dd(f, y, mu, wt; level=level)
 
 function _null_deviance(f::ELFFamily, y, wt)
