@@ -271,6 +271,7 @@ struct MultiParameterModel{F<:MultiParameterFamily}
     Vc::Matrix{Float64}              # corrected covariance (frequentist)
     nll::Float64                     # negative log-likelihood at optimum
     reml::Float64                    # REML score at optimum
+    laml::Float64                    # Laplace approx marginal likelihood
     y::Vector{Float64}               # response
     nobs::Int
     converged::Bool

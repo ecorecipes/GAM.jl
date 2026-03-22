@@ -573,5 +573,5 @@ function _gamlss_fit_rscg(method::Symbol, family::MultiParameterFamily,
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, y, n, conv, idpars, param_offsets)
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, idpars, param_offsets)
 end
