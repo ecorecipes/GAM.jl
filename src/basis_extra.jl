@@ -167,7 +167,7 @@ end
 #
 # Convention: s(x, group, bs=:fs, k=10)
 #   - term_vars = [:x, :group]  — last variable is the factor
-#   - The marginal basis is built for the continuous variable(s)
+#   - The marginal smooth is built (with constraint) for the continuous variable(s)
 #   - Model matrix is block-diagonal: one block per factor level
 #   - Penalty matrices are block-diagonal replications of the marginal penalty
 
@@ -183,7 +183,7 @@ Metadata for a factor-smooth interaction, stored for prediction.
 """
 struct FactorSmoothInfo
     levels::Vector{Any}
-    marginal::RawMarginalBasis
+    marginal_smooth::ConstructedSmooth
     factor_var::Symbol
 end
 
@@ -211,9 +211,11 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         "s($(join(cont_vars, ",")),bs=tp)",
     )
 
-    # Build unconstrained marginal basis
-    marginal = _build_raw_marginal(marginal_spec, data, user_knots)
-    X_marginal = marginal.X
+    # Construct the marginal smooth WITH constraint absorption.
+    # The sum-to-zero constraint removes one column (the global constant direction),
+    # preventing linear dependence with the model intercept.
+    marginal_sm = _smooth_construct(ThinPlateSpline(), marginal_spec, data, user_knots)
+    X_marginal = marginal_sm.X    # n × k_eff (after constraint)
     k_eff = size(X_marginal, 2)
 
     # Block-diagonal model matrix: one block per factor level
@@ -230,7 +232,7 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
 
     # Block-diagonal penalties: replicate each marginal penalty L times
     penalties = Matrix{Float64}[]
-    for S_j in marginal.S
+    for S_j in marginal_sm.S
         S_fs = zeros(total_cols, total_cols)
         for l in 1:L
             rng = ((l - 1) * k_eff + 1):(l * k_eff)
@@ -239,29 +241,20 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         push!(penalties, S_fs)
     end
 
-    null_dim = L * marginal.null_dim
-    pen_rank = total_cols - null_dim
-
-    # mgcv-style penalty rescaling (same logic as absorb_constraints! but no constraint)
-    maXX = opnorm(X, Inf)^2
-    if maXX > 0
-        for i in eachindex(penalties)
-            nS = opnorm(penalties[i], 1)
-            if nS > 0
-                penalties[i] = penalties[i] * (maXX / nS)
-            end
-        end
-    end
+    # The constrained marginal has penalty rank = marginal_sm.rank.
+    # Each level contributes k_eff columns with marginal_sm.rank penalized.
+    pen_rank = L * marginal_sm.rank
+    null_dim = total_cols - pen_rank
 
     sm = ConstructedSmooth(
         spec, X, penalties,
-        marginal.knots,
+        marginal_sm.knots,
         null_dim, pen_rank,
-        nothing, nothing, 0, 0,   # no identifiability constraint for fs smooths
+        nothing, nothing, 0, 0,   # no additional constraint on the full fs smooth
         nothing, nothing, nothing,
     )
 
-    _FS_INFO[objectid(sm)] = FactorSmoothInfo(levels, marginal, factor_var)
+    _FS_INFO[objectid(sm)] = FactorSmoothInfo(levels, marginal_sm, factor_var)
     return sm
 end
 
@@ -273,8 +266,9 @@ function _predict_matrix(::FactorSmooth, smooth::ConstructedSmooth, newdata)
     factor_col = Tables.getcolumn(newdata, info.factor_var)
     n_new = length(factor_col)
 
-    # Rebuild marginal prediction matrix at new data using training knots
-    X_marginal = _build_raw_marginal(info.marginal.spec, newdata, info.marginal.knots).X
+    # Predict marginal at new data (handles constraint absorption automatically)
+    marginal_sm = info.marginal_smooth
+    X_marginal = _predict_matrix(marginal_sm.spec.basis, marginal_sm, newdata)
     k_eff = size(X_marginal, 2)
     L = length(info.levels)
     total_cols = L * k_eff
