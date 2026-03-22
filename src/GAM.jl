@@ -160,6 +160,11 @@ export
     BetaLS,
     NegBinLS,
     gamlss,
+    GamlssControl,
+    gamlss_control,
+    gamlss_rs!,
+    gamlss_cg!,
+    mp_laml,
 
     # EGPD families
     EGPD1Family,
@@ -274,6 +279,7 @@ include("mpfit.jl")
 include("priors.jl")
 include("bayes_types.jl")
 include("gamlss.jl")
+include("gamlss_solvers.jl")
 include("gamfit.jl")
 include("gamm.jl")
 include("bam.jl")

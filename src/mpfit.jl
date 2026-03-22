@@ -51,13 +51,17 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
 
     param_offsets = cumsum([0; [size(X, 2) for X in X_list]])
 
+    # Pre-allocate η buffers
+    η_list = [Vector{Float64}(undef, n) for _ in 1:K]
+    Sβ = Vector{Float64}(undef, p)
+
     converged = false
     nll_pen = Inf
     nll_pen_prev = Inf
 
     for iter in 1:control.inner_maxit
-        # Compute linear predictors
-        η_list = _compute_eta(X_list, β, param_offsets, K)
+        # Compute linear predictors (in-place)
+        _compute_eta!(η_list, X_list, β, param_offsets, K)
 
         # Compute NLL and derivatives
         nll_val = nll_total(family, y, η_list)
@@ -68,9 +72,10 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
         assemble_hessian!(H, derivs, X_list)
 
         # Add penalty
-        pen = 0.5 * dot(β, S * β)
+        mul!(Sβ, S, β)
+        pen = 0.5 * dot(β, Sβ)
         nll_pen_new = nll_val + pen
-        g .+= S * β
+        g .+= Sβ
         H .+= S
 
         # Check convergence: gradient norm
@@ -170,12 +175,22 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
     return β, nll_pen, g, H, converged
 end
 
+"""Compute linear predictors, reusing pre-allocated η_list if provided."""
 function _compute_eta(X_list, β, param_offsets, K)
     η_list = Vector{Vector{Float64}}(undef, K)
     for k in 1:K
         s = param_offsets[k] + 1
         e = param_offsets[k + 1]
         η_list[k] = X_list[k] * @view(β[s:e])
+    end
+    return η_list
+end
+
+function _compute_eta!(η_list::Vector{Vector{Float64}}, X_list, β, param_offsets, K)
+    for k in 1:K
+        s = param_offsets[k] + 1
+        e = param_offsets[k + 1]
+        mul!(η_list[k], X_list[k], @view(β[s:e]))
     end
     return η_list
 end
@@ -304,6 +319,51 @@ function _logdet_penalty(Sl::Vector{Matrix{Float64}}, log_sp::Vector{Float64}, p
     eigs = eigvals(Symmetric(S))
     pos = filter(e -> e > 1e-10, eigs)
     return isempty(pos) ? 0.0 : sum(log, pos)
+end
+
+"""
+    mp_laml(family, y, X_list, β, S, Sl, log_sp, param_offsets; Mp=0) → Float64
+
+Compute the Laplace Approximate Marginal Likelihood (LAML):
+    LAML = -NLL(β*) - 0.5*β*'Sβ* - 0.5*log|H| + 0.5*log|S+| - 0.5*Mp*log(2π)
+
+LAML = -REML, so maximizing LAML is equivalent to minimizing REML.
+Useful for model comparison (higher LAML = better fit).
+"""
+function mp_laml(family::MultiParameterFamily, y::AbstractVector,
+                 X_list::Vector{Matrix{Float64}}, β::Vector{Float64},
+                 S::Matrix{Float64}, Sl::Vector{Matrix{Float64}},
+                 log_sp::Vector{Float64}, param_offsets::Vector{Int};
+                 Mp::Int=0)
+    K = nparams(family)
+    n = length(y)
+    p = length(β)
+    ncols = deriv_ncols(K)
+
+    # Compute NLL at β*
+    η_list = _compute_eta(X_list, β, param_offsets, K)
+    nll_val = nll_total(family, y, η_list)
+
+    # Penalty at β*
+    pen = 0.5 * dot(β, S * β)
+
+    # Penalized Hessian: H = H0 + S
+    derivs = Matrix{Float64}(undef, n, ncols)
+    nll_derivs!(family, derivs, y, η_list)
+    H0 = Matrix{Float64}(undef, p, p)
+    assemble_hessian!(H0, derivs, X_list)
+    H = H0 .+ S
+
+    F = _safe_cholesky(Symmetric(H))
+    if F === nothing
+        return -Inf
+    end
+    logdetH = 2.0 * sum(log.(diag(F.L)))
+
+    logdetS = _logdet_penalty(Sl, log_sp, p)
+
+    laml = -nll_val - pen - 0.5 * logdetH + 0.5 * logdetS - 0.5 * Mp * log(2π)
+    return isfinite(laml) ? laml : -Inf
 end
 
 # ============================================================================

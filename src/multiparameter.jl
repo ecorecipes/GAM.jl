@@ -199,8 +199,11 @@ function assemble_hessian!(H::Matrix{Float64}, derivs::Matrix{Float64},
     fill!(H, 0.0)
     offsets = cumsum([0; [size(X, 2) for X in X_list]])
 
-    # Temporary for diag(d) * X_j
     n = size(derivs, 1)
+    # Pre-allocate tmp buffer sized for the widest design matrix
+    max_p = maximum(size(X, 2) for X in X_list)
+    tmp = Matrix{Float64}(undef, n, max_p)
+
     for j in 1:K
         pj = size(X_list[j], 2)
         sj = offsets[j]
@@ -210,10 +213,8 @@ function assemble_hessian!(H::Matrix{Float64}, derivs::Matrix{Float64},
             col = hess_col(K, i, j)
             d = @view derivs[:, col]
 
-            # H[si+1:si+pi_, sj+1:sj+pj] = X_i' * diag(d) * X_j
-            # Compute as (X_i .* d)' * X_j
             Hij = @view H[(si+1):(si+pi_), (sj+1):(sj+pj)]
-            _weighted_crossprod!(Hij, X_list[i], d, X_list[j])
+            _weighted_crossprod!(Hij, X_list[i], d, X_list[j], tmp)
 
             if i != j
                 Hji = @view H[(sj+1):(sj+pj), (si+1):(si+pi_)]
@@ -224,21 +225,26 @@ function assemble_hessian!(H::Matrix{Float64}, derivs::Matrix{Float64},
     return H
 end
 
-"""Compute X_i' * diag(d) * X_j efficiently."""
+"""Compute X_i' * diag(d) * X_j efficiently (with pre-allocated buffer)."""
 function _weighted_crossprod!(out::AbstractMatrix, Xi::Matrix{Float64},
-                              d::AbstractVector, Xj::Matrix{Float64})
+                              d::AbstractVector, Xj::Matrix{Float64},
+                              tmp::Matrix{Float64})
     n = size(Xi, 1)
     pi_ = size(Xi, 2)
-    pj = size(Xj, 2)
-    # Form tmp = Xi .* d, then out = tmp' * Xj
-    tmp = similar(Xi)
     @inbounds for col in 1:pi_
         for row in 1:n
             tmp[row, col] = Xi[row, col] * d[row]
         end
     end
-    mul!(out, tmp', Xj)
+    mul!(out, view(tmp, :, 1:pi_)', Xj)
     return out
+end
+
+"""Compute X_i' * diag(d) * X_j (allocating fallback for backward compat)."""
+function _weighted_crossprod!(out::AbstractMatrix, Xi::Matrix{Float64},
+                              d::AbstractVector, Xj::Matrix{Float64})
+    tmp = similar(Xi)
+    return _weighted_crossprod!(out, Xi, d, Xj, tmp)
 end
 
 # ============================================================================
