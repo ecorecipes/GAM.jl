@@ -1,6 +1,6 @@
 # GAM.jl vs mgcv benchmark suite
 #
-# Compares fitting time and accuracy between GAM.jl and R's mgcv.
+# Compares fitting time and accuracy between GAM.jl and R equivalents.
 # Usage: julia --project benchmark/benchmarks.jl
 
 using GAM
@@ -8,15 +8,18 @@ using DataFrames
 using Statistics
 using Printf
 using RCall
+using StatsAPI: predict
 
 R"library(mgcv)"
 
 function benchmark_one(label, julia_fn, r_code; n_reps=5)
-    # Julia timing
-    julia_fn()  # warmup
+    # Julia timing — two warmups to ensure full JIT compilation
+    julia_fn()
+    julia_fn()
     j_times = Float64[]
     j_result = nothing
     for _ in 1:n_reps
+        GC.gc(false)
         t = @elapsed j_result = julia_fn()
         push!(j_times, t)
     end
@@ -30,10 +33,10 @@ function benchmark_one(label, julia_fn, r_code; n_reps=5)
     end
 
     j_med = median(j_times)
-    r_med = median(r_times)
-    speedup = r_med / j_med
+    r_med = max(median(r_times), 1e-4)  # floor to avoid Inf
+    speedup = r_med / max(j_med, 1e-6)
 
-    @printf("%-40s  Julia: %7.3fs  R: %7.3fs  Speedup: %5.1fx\n",
+    @printf("  %-44s  Julia: %7.4fs  R: %7.4fs  Speedup: %6.2fx\n",
         label, j_med, r_med, speedup)
 
     return (label=label, julia_time=j_med, r_time=r_med, speedup=speedup,
@@ -42,13 +45,17 @@ end
 
 function run_benchmarks()
     println("=" ^ 80)
-    println("GAM.jl vs mgcv Benchmark Suite")
+    println("GAM.jl vs R Benchmark Suite")
     println("=" ^ 80)
-    println()
 
-    results = []
+    all_results = NamedTuple[]
 
-    # ── 1. Small Gaussian CR ─────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════════
+    # Section 1: GAM fitting (gam vs mgcv::gam)
+    # ═══════════════════════════════════════════════════════════════════════
+    println("\n── GAM Fitting ─────────────────────────────────────────────────")
+
+    # 1a. Small Gaussian CR
     R"""
     set.seed(42)
     bm_x <- rnorm(500)
@@ -58,11 +65,11 @@ function run_benchmarks()
     x = rcopy(R"bm_x"); y = rcopy(R"bm_y")
     df = DataFrame(x=x, y=y)
 
-    push!(results, benchmark_one("Gaussian CR n=500 k=15",
+    push!(all_results, benchmark_one("Gaussian CR n=500 k=15",
         () -> gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df),
         "gam(y ~ s(x, k=15, bs='cr'), data=bm_df, method='REML')"))
 
-    # ── 2. Medium Gaussian CR ────────────────────────────────────────────
+    # 1b. Medium Gaussian CR
     R"""
     set.seed(42)
     bm_x2 <- rnorm(5000)
@@ -72,11 +79,11 @@ function run_benchmarks()
     x2 = rcopy(R"bm_x2"); y2 = rcopy(R"bm_y2")
     df2 = DataFrame(x=x2, y=y2)
 
-    push!(results, benchmark_one("Gaussian CR n=5000 k=20",
+    push!(all_results, benchmark_one("Gaussian CR n=5000 k=20",
         () -> gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df2),
         "gam(y ~ s(x, k=20, bs='cr'), data=bm_df2, method='REML')"))
 
-    # ── 3. Large Gaussian CR ─────────────────────────────────────────────
+    # 1c. Large Gaussian CR
     R"""
     set.seed(42)
     bm_x3 <- rnorm(50000)
@@ -86,12 +93,17 @@ function run_benchmarks()
     x3 = rcopy(R"bm_x3"); y3 = rcopy(R"bm_y3")
     df3 = DataFrame(x=x3, y=y3)
 
-    push!(results, benchmark_one("Gaussian CR n=50000 k=20",
+    push!(all_results, benchmark_one("Gaussian CR n=50000 k=20",
         () -> gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df3),
         "gam(y ~ s(x, k=20, bs='cr'), data=bm_df3, method='REML')";
         n_reps=3))
 
-    # ── 4. Two smooths ──────────────────────────────────────────────────
+    # 1d. TPRS (default basis)
+    push!(all_results, benchmark_one("Gaussian TP n=5000 k=20",
+        () -> gam(@gam_formula(y ~ s(x, k=20)), df2),
+        "gam(y ~ s(x, k=20), data=bm_df2, method='REML')"))
+
+    # 1e. Two smooths
     R"""
     set.seed(42)
     bm_x1m <- rnorm(2000)
@@ -102,11 +114,27 @@ function run_benchmarks()
     x1m = rcopy(R"bm_x1m"); x2m = rcopy(R"bm_x2m"); ym = rcopy(R"bm_ym")
     dfm = DataFrame(x1=x1m, x2=x2m, y=ym)
 
-    push!(results, benchmark_one("Gaussian 2 CR smooths n=2000",
+    push!(all_results, benchmark_one("Gaussian 2 smooths n=2000",
         () -> gam(@gam_formula(y ~ s(x1, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), dfm),
         "gam(y ~ s(x1, k=15, bs='cr') + s(x2, k=10, bs='cr'), data=bm_dfm, method='REML')"))
 
-    # ── 5. Poisson CR ────────────────────────────────────────────────────
+    # 1f. Three smooths
+    R"""
+    set.seed(42)
+    bm_x3m <- rnorm(3000)
+    bm_dfm3 <- data.frame(x1=bm_x1m[1:3000], x2=bm_x2m[1:3000], x3=bm_x3m, y=NA)
+    bm_dfm3$x1 <- rnorm(3000); bm_dfm3$x2 <- rnorm(3000)
+    bm_dfm3$y <- sin(bm_dfm3$x1) + 0.5*bm_dfm3$x2^2 + cos(bm_x3m) + rnorm(3000, sd=0.3)
+    """
+    x1_3 = rcopy(R"bm_dfm3$x1"); x2_3 = rcopy(R"bm_dfm3$x2")
+    x3_3 = rcopy(R"bm_x3m"); y_3 = rcopy(R"bm_dfm3$y")
+    dfm3 = DataFrame(x1=x1_3, x2=x2_3, x3=x3_3, y=y_3)
+
+    push!(all_results, benchmark_one("Gaussian 3 smooths n=3000",
+        () -> gam(@gam_formula(y ~ s(x1, k=10, bs=:cr) + s(x2, k=10, bs=:cr) + s(x3, k=10, bs=:cr)), dfm3),
+        "gam(y ~ s(x1, k=10, bs='cr') + s(x2, k=10, bs='cr') + s(x3, k=10, bs='cr'), data=bm_dfm3, method='REML')"))
+
+    # 1g. Poisson GLM-GAM
     R"""
     set.seed(42)
     bm_xp <- rnorm(2000)
@@ -116,12 +144,32 @@ function run_benchmarks()
     xp = rcopy(R"bm_xp"); yp = rcopy(R"as.numeric(bm_yp)")
     dfp = DataFrame(x=xp, y=yp)
 
-    push!(results, benchmark_one("Poisson CR n=2000 k=15",
+    push!(all_results, benchmark_one("Poisson CR n=2000 k=15",
         () -> gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), dfp;
             family=Poisson(), link=LogLink()),
         "gam(y ~ s(x, k=15, bs='cr'), data=bm_dfp, family=poisson(), method='REML')"))
 
-    # ── 6. BAM vs bam — large Gaussian ───────────────────────────────────
+    # 1h. Gamma GLM-GAM
+    R"""
+    set.seed(42)
+    bm_xg <- rnorm(2000)
+    bm_mu <- exp(1 + 0.5*sin(bm_xg))
+    bm_yg <- rgamma(2000, shape=5, rate=5/bm_mu)
+    bm_dfg <- data.frame(x=bm_xg, y=bm_yg)
+    """
+    xg = rcopy(R"bm_xg"); yg = rcopy(R"bm_yg")
+    dfg = DataFrame(x=xg, y=yg)
+
+    push!(all_results, benchmark_one("Gamma CR n=2000 k=15",
+        () -> gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), dfg;
+            family=Gamma(), link=LogLink()),
+        "gam(y ~ s(x, k=15, bs='cr'), data=bm_dfg, family=Gamma(link=log), method='REML')"))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Section 2: BAM (large-scale)
+    # ═══════════════════════════════════════════════════════════════════════
+    println("\n── BAM (Large-Scale) ───────────────────────────────────────────")
+
     R"""
     set.seed(42)
     bm_x6 <- rnorm(100000)
@@ -131,20 +179,182 @@ function run_benchmarks()
     x6 = rcopy(R"bm_x6"); y6 = rcopy(R"bm_y6")
     df6 = DataFrame(x=x6, y=y6)
 
-    push!(results, benchmark_one("BAM Gaussian n=100000 k=20",
+    push!(all_results, benchmark_one("BAM Gaussian n=100000 k=20",
         () -> bam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df6;
             bam_ctrl=bam_control(chunk_size=10000)),
         "bam(y ~ s(x, k=20, bs='cr'), data=bm_df6, method='fREML')";
         n_reps=3))
 
-    # ── Summary ──────────────────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════════
+    # Section 3: Prediction
+    # ═══════════════════════════════════════════════════════════════════════
+    println("\n── Prediction ──────────────────────────────────────────────────")
+
+    m_julia = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df2)
+    R"bm_m_r <- gam(y ~ s(x, k=20, bs='cr'), data=bm_df2, method='REML')"
+
+    # predict at new data
+    R"""
+    set.seed(99)
+    bm_newx <- rnorm(10000)
+    bm_newdf <- data.frame(x=bm_newx)
+    """
+    newx = rcopy(R"bm_newx")
+    newdf = DataFrame(x=newx)
+
+    push!(all_results, benchmark_one("predict(m, new) n=10000",
+        () -> predict(m_julia, newdf),
+        "predict(bm_m_r, newdata=bm_newdf)"))
+
+    # predict at new data with SE
+    push!(all_results, benchmark_one("predict(m, new, se) n=10000",
+        () -> predict(m_julia, newdf; se=true),
+        "predict(bm_m_r, newdata=bm_newdf, se.fit=TRUE)"))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Section 4: Basis construction
+    # ═══════════════════════════════════════════════════════════════════════
+    println("\n── Basis Construction ──────────────────────────────────────────")
+
+    # CR basis
+    spec_cr = GAM.s(:x; bs=:cr, k=20)
+    R"bm_sm_cr <- smoothCon(s(x, k=20, bs='cr'), data=bm_df2, absorb.cons=TRUE)[[1]]"
+    push!(all_results, benchmark_one("CR basis n=5000 k=20",
+        () -> GAM.smooth_construct(spec_cr, df2),
+        "smoothCon(s(x, k=20, bs='cr'), data=bm_df2, absorb.cons=TRUE)"))
+
+    # TPRS basis
+    spec_tp = GAM.s(:x; bs=:tp, k=20)
+    R"bm_sm_tp <- smoothCon(s(x, k=20, bs='tp'), data=bm_df2, absorb.cons=TRUE)[[1]]"
+    push!(all_results, benchmark_one("TPRS basis n=5000 k=20",
+        () -> GAM.smooth_construct(spec_tp, df2),
+        "smoothCon(s(x, k=20, bs='tp'), data=bm_df2, absorb.cons=TRUE)"))
+
+    # Large TPRS basis
+    spec_tp_lg = GAM.s(:x; bs=:tp, k=30)
+    push!(all_results, benchmark_one("TPRS basis n=50000 k=30",
+        () -> GAM.smooth_construct(spec_tp_lg, df3),
+        "smoothCon(s(x, k=30, bs='tp'), data=bm_df3, absorb.cons=TRUE)";
+        n_reps=3))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Section 5: SCAM (shape-constrained)
+    # ═══════════════════════════════════════════════════════════════════════
+    println("\n── SCAM (Shape-Constrained) ────────────────────────────────────")
+
+    R"library(scam)"
+    R"""
+    set.seed(42)
+    bm_xs <- sort(runif(1000))
+    bm_ys <- 2*bm_xs + 0.5*sin(4*bm_xs) + rnorm(1000, sd=0.2)
+    bm_dfs <- data.frame(x=bm_xs, y=bm_ys)
+    """
+    xs = rcopy(R"bm_xs"); ys = rcopy(R"bm_ys")
+    dfs = DataFrame(x=xs, y=ys)
+
+    push!(all_results, benchmark_one("SCAM monotone incr n=1000 k=15",
+        () -> scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), dfs),
+        "scam(y ~ s(x, k=15, bs='mpi'), data=bm_dfs)"))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Section 6: QGAM (quantile regression)
+    # ═══════════════════════════════════════════════════════════════════════
+    println("\n── QGAM (Quantile Regression) ──────────────────────────────────")
+
+    R"library(qgam)"
+
+    # Pre-calibrate sigma in R to get a comparable lsig, then benchmark the ELF fit only
+    R"""
+    set.seed(42)
+    bm_qfit_r <- qgam(y ~ s(x, k=15, bs='cr'), data=bm_df2, qu=0.5)
+    bm_lsig_r <- bm_qfit_r$family$getTheta()
+    """
+    lsig_r = rcopy(R"bm_lsig_r")
+
+    # QGAM with pre-calibrated sigma (ELF fit only, no bootstrap)
+    push!(all_results, benchmark_one("QGAM ELF fit n=5000 k=15",
+        () -> qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df2, 0.5; lsig=lsig_r),
+        "qgam(y ~ s(x, k=15, bs='cr'), data=bm_df2, qu=0.5, lsig=$lsig_r)";
+        n_reps=3))
+
+    # Full QGAM with calibration (smaller dataset, fewer reps due to cost)
+    dfq_small = DataFrame(x=x2[1:1000], y=y2[1:1000])
+    R"bm_dfq_small <- bm_df2[1:1000,]"
+    push!(all_results, benchmark_one("QGAM full calib n=1000 k=10",
+        () -> qgam(@gam_formula(y ~ s(x, k=10, bs=:cr)), dfq_small, 0.5),
+        "qgam(y ~ s(x, k=10, bs='cr'), data=bm_dfq_small, qu=0.5)";
+        n_reps=1))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Section 7: GAMLSS (multi-parameter)
+    # Uses mgcv::gam via gamlss.add::ga() for comparable smooth terms
+    # ═══════════════════════════════════════════════════════════════════════
+    println("\n── GAMLSS (Multi-Parameter) ────────────────────────────────────")
+
+    R"""
+    suppressPackageStartupMessages(library(gamlss))
+    suppressPackageStartupMessages(library(gamlss.add))
+    set.seed(42)
+    bm_xl <- rnorm(1000)
+    bm_mu_l <- sin(bm_xl)
+    bm_sig_l <- exp(0.3 + 0.2*bm_xl)
+    bm_yl <- rnorm(1000, bm_mu_l, bm_sig_l)
+    bm_dfl <- data.frame(x=bm_xl, y=bm_yl)
+    """
+    xl = rcopy(R"bm_xl"); yl = rcopy(R"bm_yl")
+    dfl = DataFrame(x=xl, y=yl)
+
+    # Compare GAM.jl gamlss (Newton/general_fit) vs R gamlss with pb() (RS algorithm)
+    push!(all_results, benchmark_one("GAMLSS Normal LS n=1000 (pb)",
+        () -> gamlss(
+            [@gam_formula(y ~ s(x, k=10, bs=:cr)),
+             @gam_formula(y ~ s(x, k=8, bs=:cr))],
+            dfl, Normal()),
+        "gamlss(y ~ pb(x), sigma.formula=~pb(x), data=bm_dfl, family=NO(), trace=FALSE)";
+        n_reps=3))
+
+    # Also compare using gamlss.add::ga() which wraps mgcv's s() — closer apples-to-apples
+    push!(all_results, benchmark_one("GAMLSS Normal LS n=1000 (ga)",
+        () -> gamlss(
+            [@gam_formula(y ~ s(x, k=10, bs=:cr)),
+             @gam_formula(y ~ s(x, k=8, bs=:cr))],
+            dfl, Normal()),
+        """gamlss(y ~ ga(~s(x, k=10, bs='cr')), sigma.formula=~ga(~s(x, k=8, bs='cr')),
+                data=bm_dfl, family=NO(), trace=FALSE)""";
+        n_reps=3))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Summary
+    # ═══════════════════════════════════════════════════════════════════════
     println()
     println("=" ^ 80)
-    geo_mean = exp(mean(log.(getfield.(results, :speedup))))
-    @printf("Geometric mean speedup: %.1fx\n", geo_mean)
+    println("Summary")
     println("=" ^ 80)
 
-    return results
+    # Group by section
+    sections = [
+        ("GAM Fitting", 1:8),
+        ("BAM", 9:9),
+        ("Prediction", 10:11),
+        ("Basis Construction", 12:14),
+        ("SCAM", 15:15),
+        ("QGAM", 16:17),
+        ("GAMLSS", 18:19),
+    ]
+
+    for (name, range) in sections
+        subset = all_results[intersect(range, 1:length(all_results))]
+        isempty(subset) && continue
+        geo = exp(mean(log.(getfield.(subset, :speedup))))
+        @printf("  %-25s  Geometric mean speedup: %6.2fx\n", name, geo)
+    end
+
+    overall_geo = exp(mean(log.(getfield.(all_results, :speedup))))
+    println()
+    @printf("  %-25s  Geometric mean speedup: %6.2fx\n", "OVERALL", overall_geo)
+    println("=" ^ 80)
+
+    return all_results
 end
 
-run_benchmarks()
+results = run_benchmarks()
