@@ -160,6 +160,7 @@ function gam(f::FormulaTerm, data;
     method::Symbol = :REML,
     optimizer::Symbol = :pirls,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    start::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
@@ -189,7 +190,7 @@ function gam(f::FormulaTerm, data;
     if family isa ExtendedFamily
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
-            method, weights, control)
+            method, weights, control; start = start)
     else
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
@@ -203,6 +204,7 @@ function gam(gf::GamFormula, data;
     method::Symbol = :REML,
     optimizer::Symbol = :pirls,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    start::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
@@ -234,7 +236,7 @@ function gam(gf::GamFormula, data;
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
         f = term(gf.response) ~ term(1)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
-            method, weights, control)
+            method, weights, control; start = start)
     else
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
         f = term(gf.response) ~ term(1)
@@ -363,7 +365,8 @@ end
 # ============================================================================
 
 function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
-    family::ExtendedFamily, link::GLM.Link, method, weights, control)
+    family::ExtendedFamily, link::GLM.Link, method, weights, control;
+    start::Union{AbstractVector{<:Real}, Nothing} = nothing)
     n, p = size(X)
 
     wts = weights === nothing ? ones(n) : Float64.(weights)
@@ -374,7 +377,8 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
     _initial_sp(X, penalty)
 
     log_sp, result = outer_iteration(X, y, smooths, penalty, family, link;
-        method = method, weights = wts, control = control)
+        method = method, weights = wts, control = control,
+        start = start === nothing ? nothing : Float64.(start))
 
     edf_per_smooth = smooth_edf(result.edf_vec, smooths)
     edf_total_val = sum(result.edf_vec)

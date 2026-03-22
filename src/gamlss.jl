@@ -406,7 +406,7 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl)
         reml_val = nll_pen
     else
-        log_sp, β_opt, reml_val = mp_bfgs_outer(family, y, X_list, Sl, β_init,
+        log_sp, β_opt, reml_val = mp_efs_outer(family, y, X_list, Sl, β_init,
             log_sp, param_offsets, ctrl; Mp = Mp)
         conv = true
     end

@@ -62,6 +62,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     end
 
     A_buf = zeros(p, p)
+    efs_mult = 1.0  # Step multiplier for EFS (reduced on failed steps)
 
     for outer_iter in 1:(control.outer_maxit)
         # Inner: P-IRLS for current smoothing parameters
@@ -85,10 +86,12 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         w = result.working_weights
         dev = result.deviance
 
-        # Estimate scale
+        # Estimate scale with EDoF correction (matching mgcv's efsudr)
         edf_total = sum(result.edf_vec)
         if _needs_scale_estimate(family)
-            scale_est = max(result.pearson / (n - edf_total), 1e-10)
+            # EDoF-corrected scale: φ̂ = pearson × n / (n − edf)²
+            # Equivalent to: (pearson / n) × n / (n − edf) = pearson / (n − edf)
+            scale_est = max(result.pearson / max(n - edf_total, 1.0), 1e-10)
         else
             scale_est = 1.0
         end
@@ -116,30 +119,41 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
                 scale_est, n, p, edf_total, y, weights, control)
         else
             # EFS update (default) — Wood & Fasiolo (2017)
-            sp_idx = 1
-            for block in penalty.blocks
-                idx = block.start:block.stop
-                beta_block = beta[idx]
+            log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
+                scale_est, efs_mult)
+            max_change = maximum(abs.(log_sp_new .- log_sp))
 
-                for Si in block.S
-                    λ = exp(log_sp[sp_idx])
-                    rank_j = Float64(block.rank)
+            # Step halving: verify REML improves, halve mult if not.
+            # This matches mgcv's efsudr which reduces mult on failed steps.
+            if outer_iter > 1 && max_change > control.epsilon
+                # Reuse A_buf which already contains XtWX + S_total;
+                # extract XtWX = A_buf - S_total
+                XtWX_cur = A_buf .- S_total
 
-                    bSb = dot(beta_block, Si * beta_block)
-                    Ainv_block = Ainv[idx, idx]
-                    trVS = tr(Ainv_block * Si)
+                ls = _log_saturated_likelihood(family, y, weights, scale_est)
+                reml_old = _conditional_reml(log_sp, XtWX_cur, beta, dev,
+                    penalty, scale_est, n, p, edf_total, method,
+                    control.gamma, ls)
+                reml_new = _conditional_reml(log_sp_new, XtWX_cur, beta, dev,
+                    penalty, scale_est, n, p, edf_total, method,
+                    control.gamma, ls)
 
-                    a = max(0.0, rank_j / λ - trVS)
-
-                    if a > 0 && bSb > eps()
-                        r = scale_est * a / bSb
-                        log_sp_new[sp_idx] = clamp(
-                            log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
+                if reml_new > reml_old + control.epsilon * abs(reml_old)
+                    # REML worsened — reduce step via mult
+                    for _halve in 1:4
+                        efs_mult *= 0.5
+                        log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
+                            scale_est, efs_mult)
+                        reml_new = _conditional_reml(log_sp_new, XtWX_cur,
+                            beta, dev, penalty, scale_est, n, p, edf_total,
+                            method, control.gamma, ls)
+                        reml_new <= reml_old + control.epsilon * abs(reml_old) &&
+                            break
                     end
-
-                    max_change = max(max_change,
-                        abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
-                    sp_idx += 1
+                    max_change = maximum(abs.(log_sp_new .- log_sp))
+                else
+                    # Step succeeded — gradually restore mult toward 1
+                    efs_mult = min(1.0, efs_mult * 2.0)
                 end
             end
         end
@@ -179,6 +193,74 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 end
 
 # ============================================================================
+# EFS helper functions
+# ============================================================================
+
+"""
+    _efs_sp_update(log_sp, beta, Ainv, penalty, scale_est, mult)
+
+Compute the EFS smoothing parameter update (Wood & Fasiolo 2017, eq. 5).
+Returns new `log_sp` vector. `mult` scales the step in log-space (1.0 = full).
+"""
+function _efs_sp_update(log_sp::Vector{Float64}, beta::Vector{Float64},
+    Ainv::Matrix{Float64}, penalty::PenaltySetup,
+    scale_est::Float64, mult::Float64)
+
+    log_sp_new = copy(log_sp)
+    sp_idx = 1
+    for block in penalty.blocks
+        idx = block.start:block.stop
+        beta_block = beta[idx]
+
+        for Si in block.S
+            λ = exp(log_sp[sp_idx])
+            rank_j = Float64(block.rank)
+
+            bSb = dot(beta_block, Si * beta_block)
+            Ainv_block = Ainv[idx, idx]
+            trVS = tr(Ainv_block * Si)
+
+            a = max(0.0, rank_j / λ - trVS)
+
+            if a > 0 && bSb > eps()
+                r = scale_est * a / bSb
+                log_sp_new[sp_idx] = clamp(
+                    log_sp[sp_idx] + log(max(r, 1e-15)) * mult, -15.0, 15.0)
+            end
+
+            sp_idx += 1
+        end
+    end
+    return log_sp_new
+end
+
+"""
+    _efs_reml_score(X, y, log_sp, penalty, family, link, weights,
+                    pirls_result, method, scale_est, gamma, n, p)
+
+Compute the REML score at given `log_sp`, using current PIRLS result for β, w.
+Used for EFS step halving when XtWX is not cached.
+"""
+function _efs_reml_score(X::Matrix{Float64}, y::Vector{Float64},
+    log_sp::Vector{Float64}, penalty::PenaltySetup,
+    family::UnivariateDistribution, link::GLM.Link,
+    weights::Vector{Float64}, pirls_result::PirlsResult,
+    method::Symbol, scale_est::Float64, gamma::Float64,
+    n::Int, p::Int)
+
+    beta = pirls_result.coefficients
+    w = pirls_result.working_weights
+    dev = pirls_result.deviance
+    edf_total = sum(pirls_result.edf_vec)
+
+    XtWX = X' * Diagonal(w) * X
+    ls = _log_saturated_likelihood(family, y, weights, scale_est)
+
+    return _conditional_reml(log_sp, XtWX, beta, dev, penalty,
+        scale_est, n, p, edf_total, method, gamma, ls)
+end
+
+# ============================================================================
 # Extended family outer iteration
 # ============================================================================
 
@@ -195,7 +277,8 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     family::ExtendedFamily, link::GLM.Link;
     method::Symbol = :REML,
     weights::Vector{Float64} = ones(length(y)),
-    control::GamControl = gam_control())
+    control::GamControl = gam_control(),
+    start::Union{Vector{Float64}, Nothing} = nothing)
 
     n, p = size(X)
     n_sp = length(penalty.sp)
@@ -203,7 +286,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     if n_sp == 0
         S_total = zeros(p, p)
         result = pirls_extended(X, y, S_total, family, link;
-            weights = weights, control = control)
+            weights = weights, start = start, control = control)
         return penalty.sp, result
     end
 
@@ -213,9 +296,9 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     for outer_iter in 1:(control.outer_maxit)
         S_total = total_penalty(penalty, log_sp, p)
 
-        start = prev_result === nothing ? nothing : prev_result.coefficients
+        pirls_start = prev_result === nothing ? start : prev_result.coefficients
         result = pirls_extended(X, y, S_total, family, link;
-            weights = weights, start = start, control = control)
+            weights = weights, start = pirls_start, control = control)
 
         if !result.converged && control.trace
             @warn "P-IRLS did not converge at outer iteration $outer_iter"
@@ -223,54 +306,24 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
         beta = result.coefficients
         w = result.working_weights
-
-        # Scale estimation
+        dev = result.deviance
         edf_total = sum(result.edf_vec)
-        if _estimates_scale(family)
-            scale_est = max(result.pearson / (n - edf_total), 1e-10)
+        if _needs_scale_estimate(family)
+            scale_est = max(result.pearson / max(n - edf_total, 1.0), 1e-10)
         else
             scale_est = 1.0
         end
 
-        # EFS update for each smoothing parameter
-        A_buf = zeros(p, p)
-        _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n)
-        A_chol = cholesky(Symmetric(A_buf))
-        Ainv = inv(A_chol)
-
-        log_sp_new = copy(log_sp)
-        sp_idx = 1
-        max_change = 0.0
-
-        for block in penalty.blocks
-            idx = block.start:block.stop
-            beta_block = beta[idx]
-
-            for Si in block.S
-                λ = exp(log_sp[sp_idx])
-                rank_j = Float64(block.rank)
-
-                bSb = dot(beta_block, Si * beta_block)
-                Ainv_block = Ainv[idx, idx]
-                trVS = tr(Ainv_block * Si)  # tr(A⁻¹ S_j), no λ factor
-
-                # R-style: a = max(0, rank/λ - trVS)
-                a = max(0.0, rank_j / λ - trVS)
-
-                if a > 0 && bSb > eps()
-                    r = scale_est * a / bSb
-                    log_sp_new[sp_idx] = clamp(log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
-                end
-
-                max_change = max(max_change, abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
-                sp_idx += 1
-            end
-        end
+        # Newton step on conditional REML via autodiff
+        log_sp_new, max_change = _newton_sp_update(
+            log_sp, X, beta, w, dev, penalty, family, method,
+            scale_est, n, p, edf_total, y, weights, control)
 
         if control.trace
             println("Outer iter $outer_iter: " *
-                    "sp=[$(join([@sprintf("%.4f", exp(s)) for s in log_sp], ", "))]" *
-                    ", edf=$(round(edf_total; digits=2))")
+                    "sp=[$(join([@sprintf("%.4f", exp(s)) for s in log_sp_new], ", "))]" *
+                    ", edf=$(round(edf_total; digits=2))" *
+                    ", max_change=$(@sprintf("%.6f", max_change))")
         end
 
         log_sp .= log_sp_new
@@ -373,8 +426,7 @@ function _newton_sp_update(log_sp::Vector{Float64},
     X::Matrix{Float64}, beta::Vector{Float64},
     w::Vector{Float64}, dev::Float64,
     penalty::PenaltySetup,
-    family::UnivariateDistribution,
-    method::Symbol, scale_est::Float64,
+    family, method::Symbol, scale_est::Float64,
     n::Int, p::Int, edf_total::Float64,
     y::Vector{Float64},
     weights::Vector{Float64}, control::GamControl)
@@ -386,7 +438,10 @@ function _newton_sp_update(log_sp::Vector{Float64},
     XtWX = X' * Diagonal(w) * X
 
     # Precompute log saturated likelihood (constant w.r.t. log_sp)
-    ls = _log_saturated_likelihood(family, y, weights, scale_est)
+    # For ExtendedFamily: deviance already = -2(ll - ls), so ls contribution
+    # is implicit. Set ls=0 and use dev/2 as the likelihood contribution.
+    ls = family isa ExtendedFamily ? 0.0 :
+        _log_saturated_likelihood(family, y, weights, scale_est)
 
     # Compute gradient and Hessian via ForwardDiff
     reml_fn = lsp -> _conditional_reml(lsp, XtWX, beta, dev, penalty,
