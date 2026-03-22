@@ -223,6 +223,7 @@ export
     predict_re_matrix,
     ranef,
     VarCorr,
+    VarCorrResult,
     re,
 
     # Bayesian GAM support (Turing.jl extension)

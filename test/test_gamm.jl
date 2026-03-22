@@ -141,7 +141,7 @@ using LinearAlgebra
 
         # Variance component should be in the right ballpark (true σ = 0.5)
         vc = VarCorr(m)
-        @test length(vc) == 1
+        @test length(vc) == 2  # 1 RE + 1 Residual
         @test vc[1].std > 0.1
         @test vc[1].std < 1.5
 
@@ -157,7 +157,7 @@ using LinearAlgebra
         show(io, m)
         str = String(take!(io))
         @test occursin("Generalized Additive Mixed Model", str)
-        @test occursin("Random Effects", str)
+        @test occursin("Variance Components", str)
         @test occursin("group", str)
     end
 
@@ -370,5 +370,211 @@ using LinearAlgebra
         @test occursin("1", s)
         @test occursin("x", s)
         @test occursin("subject", s)
+    end
+
+    # ========================================================================
+    # A. Formula parsing edge cases
+    # ========================================================================
+    @testset "Formula parsing edge cases" begin
+        @testset "Nested effects: (1|a/b) expands to (1|a) + (1|a_b)" begin
+            gf = @gamm_formula(y ~ s(x) + (1 | a / b))
+            @test length(gf.random_effects) == 2
+            re1 = gf.random_effects[1]
+            re2 = gf.random_effects[2]
+            @test re1.grouping == :a
+            @test re1.has_intercept == true
+            @test isempty(re1.terms)
+            @test re2.grouping == :a_b
+            @test re2.has_intercept == true
+            @test isempty(re2.terms)
+        end
+
+        @testset "Nested effects with slope: (0+x|a/b)" begin
+            gf = @gamm_formula(y ~ s(x) + (0 + x | a / b))
+            @test length(gf.random_effects) == 2
+            @test gf.random_effects[1].grouping == :a
+            @test gf.random_effects[1].has_intercept == false
+            @test :x in gf.random_effects[1].terms
+            @test gf.random_effects[2].grouping == :a_b
+            @test gf.random_effects[2].has_intercept == false
+            @test :x in gf.random_effects[2].terms
+        end
+
+        @testset "(1+x|group) and (x|group) are equivalent" begin
+            gf1 = @gamm_formula(y ~ s(x) + (1 + z | group))
+            gf2 = @gamm_formula(y ~ s(x) + (z | group))
+            re1 = gf1.random_effects[1]
+            re2 = gf2.random_effects[1]
+            @test re1.has_intercept == re2.has_intercept == true
+            @test re1.terms == re2.terms == [:z]
+            @test re1.grouping == re2.grouping == :group
+        end
+
+        @testset "Uncorrelated RE: (1|group) + (0+x|group) creates 2 blocks" begin
+            gf = @gamm_formula(y ~ s(x) + (1 | group) + (0 + x | group))
+            @test length(gf.random_effects) == 2
+            re1 = gf.random_effects[1]
+            re2 = gf.random_effects[2]
+            @test re1.has_intercept == true
+            @test isempty(re1.terms)
+            @test re2.has_intercept == false
+            @test :x in re2.terms
+
+            # Verify they create 2 separate ConstructedRandomEffect entries
+            Random.seed!(42)
+            n = 120
+            df = DataFrame(
+                x = randn(n), y = randn(n),
+                group = repeat(1:6, 20))
+            m = gamm(gf, df)
+            @test length(m.random_effects) == 2
+            @test m.random_effects[1].n_terms == 1  # intercept only
+            @test m.random_effects[2].n_terms == 1  # slope only
+        end
+
+        @testset "Nested effects fitting: (1|a/b)" begin
+            Random.seed!(42)
+            n = 300
+            a = repeat(1:3, inner = 100)
+            b = repeat(1:10, 30)
+            a_b = Symbol.(string.(a) .* "_" .* string.(b))
+            x = randn(n)
+            re_a = randn(3) * 0.5
+            re_ab = randn(30) * 0.3
+            ab_idx = (a .- 1) .* 10 .+ b
+            y = sin.(x) .+ re_a[a] .+ re_ab[ab_idx] .+ 0.2 .* randn(n)
+            df = DataFrame(x = x, y = y, a = a, a_b = a_b)
+
+            m = gamm(@gamm_formula(y ~ s(x) + (1 | a / b)), df)
+            @test m isa GammModel
+            @test length(m.random_effects) == 2
+            @test m.gam_model.converged
+        end
+    end
+
+    # ========================================================================
+    # B. VarCorr and ranef improvements
+    # ========================================================================
+    @testset "VarCorr and ranef improvements" begin
+        Random.seed!(42)
+        n_groups = 8
+        n_per = 50
+        n = n_groups * n_per
+        group = repeat(1:n_groups, inner = n_per)
+        x = randn(n)
+        true_re = randn(n_groups) * 0.5
+        y = sin.(x) .+ true_re[group] .+ 0.3 .* randn(n)
+        df = DataFrame(x = x, y = y, group = group)
+        m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+
+        @testset "ranef returns proper structure" begin
+            re = ranef(m)
+            @test haskey(re, :group)
+            @test re.group.levels == sort(unique(group))
+            @test size(re.group.effects, 1) == n_groups
+            @test re.group.names == [:Intercept]
+        end
+
+        @testset "VarCorr returns VarCorrResult with residual" begin
+            vc = VarCorr(m)
+            @test vc isa VarCorrResult
+            @test length(vc) == 2  # 1 RE + 1 Residual
+            @test vc[1].group == :group
+            @test vc[1].variance > 0
+            @test vc[1].std ≈ sqrt(vc[1].variance)
+            @test vc[end].group == :Residual
+            @test vc[end].variance > 0
+        end
+
+        @testset "VarCorr display is clean" begin
+            vc = VarCorr(m)
+            io = IOBuffer()
+            show(io, vc)
+            str = String(take!(io))
+            @test occursin("Variance Components:", str)
+            @test occursin("Group", str)
+            @test occursin("Std.Dev.", str)
+            @test occursin("group", str)
+            @test occursin("Residual", str)
+        end
+
+        @testset "show(GammModel) includes variance table" begin
+            io = IOBuffer()
+            show(io, m)
+            str = String(take!(io))
+            @test occursin("Variance Components:", str)
+            @test occursin("Residual", str)
+            @test occursin("Smooth Terms:", str)
+        end
+
+        @testset "VarCorr with multiple RE groups" begin
+            Random.seed!(42)
+            n = 300
+            site = repeat(1:5, 60)
+            subject = repeat(1:10, 30)
+            x = randn(n)
+            y = x .+ randn(5)[site] * 0.3 .+ randn(10)[subject] * 0.4 .+ 0.2 .* randn(n)
+            df = DataFrame(x = x, y = y, site = site, subject = subject)
+            m2 = gamm(@gamm_formula(y ~ s(x) + (1 | site) + (1 | subject)), df)
+            vc = VarCorr(m2)
+            @test length(vc) == 3  # site + subject + Residual
+            @test vc[1].group == :site
+            @test vc[2].group == :subject
+            @test vc[3].group == :Residual
+        end
+    end
+
+    # ========================================================================
+    # C. Prediction with new/missing groups
+    # ========================================================================
+    @testset "Prediction edge cases" begin
+        Random.seed!(42)
+        n_groups = 5
+        n_per = 60
+        n = n_groups * n_per
+        group = repeat(1:n_groups, inner = n_per)
+        x = randn(n)
+        true_re = randn(n_groups) * 0.4
+        y = x .+ true_re[group] .+ 0.2 .* randn(n)
+        df = DataFrame(x = x, y = y, group = group)
+        m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+
+        @testset "Known group → uses estimated BLUP" begin
+            df_known = DataFrame(x = [0.0, 1.0], group = [1, 2])
+            ŷ = predict(m, df_known)
+            @test length(ŷ) == 2
+            @test all(isfinite.(ŷ))
+            # Known groups should produce different predictions due to RE
+            @test ŷ[1] != ŷ[2]  # different groups → different predictions
+        end
+
+        @testset "Unknown group → zero RE (population average)" begin
+            df_unknown = DataFrame(x = [0.0, 0.0], group = [999, 1000])
+            ŷ_unk = predict(m, df_unknown)
+            @test length(ŷ_unk) == 2
+            @test all(isfinite.(ŷ_unk))
+            # Both unknown groups at same x should give same prediction
+            @test ŷ_unk[1] ≈ ŷ_unk[2]
+        end
+
+        @testset "Missing grouping column → zero RE (population average)" begin
+            df_no_group = DataFrame(x = [0.0, 1.0])
+            ŷ_pop = predict(m, df_no_group)
+            @test length(ŷ_pop) == 2
+            @test all(isfinite.(ŷ_pop))
+
+            # Compare with unknown group: should be the same
+            df_unknown = DataFrame(x = [0.0, 1.0], group = [999, 998])
+            ŷ_unk = predict(m, df_unknown)
+            @test ŷ_pop ≈ ŷ_unk
+        end
+
+        @testset "Mix of known and unknown groups" begin
+            df_mix = DataFrame(x = [0.0, 0.0, 0.0], group = [1, 999, 3])
+            ŷ_mix = predict(m, df_mix)
+            @test length(ŷ_mix) == 3
+            @test all(isfinite.(ŷ_mix))
+            # Known groups should differ from unknown (unless RE is tiny)
+        end
     end
 end

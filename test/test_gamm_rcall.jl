@@ -155,4 +155,153 @@ import Distributions: Poisson
         @test abs(m_gamm.gam_model.scale - r_scale) / r_scale < 0.5
         @test abs(m_gam_re.scale - r_scale) / r_scale < 0.2
     end
+
+    # ========================================================================
+    # Random intercept + slope: gamm(y ~ s(x) + (x|group)) vs R
+    # ========================================================================
+    @testset "Random intercept + slope vs R gamm()" begin
+        rng = StableRNG(77)
+        n_groups = 8
+        n_per = 60
+        n = n_groups * n_per
+        group = repeat(1:n_groups, inner = n_per)
+        x = randn(rng, n)
+        true_re_int = randn(rng, n_groups) * 0.4
+        true_re_slope = randn(rng, n_groups) * 0.2
+        y = sin.(x) .+ true_re_int[group] .+ true_re_slope[group] .* x .+ 0.3 .* randn(rng, n)
+        group_str = string.(group)
+        df = DataFrame(x = x, y = y, group = group_str)
+
+        # Julia: random intercept + slope
+        m_jl = gamm(@gamm_formula(y ~ s(x) + (x | group)), df)
+        re_jl = ranef(m_jl)
+        vc_jl = VarCorr(m_jl)
+
+        @test m_jl isa GammModel
+        @test m_jl.gam_model.converged
+
+        # R: gamm(y ~ s(x), random=list(group=~x))
+        @rput x y group_str
+        reval("library(mgcv); library(nlme)")
+        reval("df_r <- data.frame(x=x, y=y, group=factor(group_str))")
+        reval("m_r <- gamm(y ~ s(x), random=list(group=~x), data=df_r)")
+        reval("fitted_r <- fitted(m_r\$lme)")
+        reval("vc <- VarCorr(m_r\$lme)")
+        reval("sigma_int_r <- as.numeric(vc[rownames(vc)=='(Intercept)', 'StdDev'])")
+        reval("sigma_slope_r <- as.numeric(vc[rownames(vc)=='x', 'StdDev'])")
+
+        fitted_r = rcopy(reval("fitted_r"))
+        σ_int_r = rcopy(reval("sigma_int_r"))
+        σ_slope_r = rcopy(reval("sigma_slope_r"))
+
+        # Fitted values should be well correlated
+        fit_jl = fitted(m_jl)
+        @test cor(fit_jl, fitted_r) > 0.90
+
+        # Both Julia and R should recover reasonable variance components
+        @test vc_jl[1].std > 0.0
+        @test σ_int_r > 0.0
+        @test σ_slope_r > 0.0
+    end
+
+    # ========================================================================
+    # Multiple RE groups: (1|site) + (1|subject) vs R
+    # ========================================================================
+    @testset "Multiple RE groups vs R gamm()" begin
+        rng = StableRNG(55)
+        n_sites = 5
+        n_subjects = 10
+        n_per = 30
+        n = n_sites * n_subjects * n_per ÷ n_sites  # 300
+        site = repeat(1:n_sites, inner = n ÷ n_sites)
+        subject = repeat(1:n_subjects, n ÷ n_subjects)
+        x = randn(rng, n)
+        re_site = randn(rng, n_sites) * 0.3
+        re_subject = randn(rng, n_subjects) * 0.4
+        y = sin.(x) .+ re_site[site] .+ re_subject[subject] .+ 0.25 .* randn(rng, n)
+        site_str = string.(site)
+        subject_str = string.(subject)
+        df = DataFrame(x = x, y = y, site = site_str, subject = subject_str)
+
+        # Julia: two crossed random intercepts
+        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | site) + (1 | subject)), df)
+        vc_jl = VarCorr(m_jl)
+
+        @test m_jl isa GammModel
+        @test m_jl.gam_model.converged
+        @test length(m_jl.random_effects) == 2
+        # VarCorr: 2 RE + 1 Residual
+        @test length(vc_jl) == 3
+        @test vc_jl[1].group == :site
+        @test vc_jl[2].group == :subject
+        @test vc_jl[3].group == :Residual
+
+        # R: gamm with two random effects
+        @rput x y site_str subject_str
+        reval("library(mgcv); library(nlme)")
+        reval("df_r <- data.frame(x=x, y=y, site=factor(site_str), subject=factor(subject_str))")
+        reval("m_r <- gamm(y ~ s(x), random=list(site=~1, subject=~1), data=df_r)")
+        reval("vc <- VarCorr(m_r\$lme)")
+        reval("fitted_r <- fitted(m_r\$lme)")
+
+        fitted_r = rcopy(reval("fitted_r"))
+
+        # Fitted values should be well correlated
+        fit_jl = fitted(m_jl)
+        @test cor(fit_jl, fitted_r) > 0.90
+
+        # Both should have positive variance components
+        @test vc_jl[1].variance > 0.0  # site
+        @test vc_jl[2].variance > 0.0  # subject
+    end
+
+    # ========================================================================
+    # Variance component comparison (σ²_re)
+    # ========================================================================
+    @testset "Variance component magnitude comparison vs R" begin
+        rng = StableRNG(321)
+        n_groups = 12
+        n_per = 50
+        n = n_groups * n_per
+        group = repeat(1:n_groups, inner = n_per)
+        x = randn(rng, n)
+        σ_re_true = 0.6
+        true_re = randn(rng, n_groups) * σ_re_true
+        σ_eps_true = 0.25
+        y = sin.(x) .+ true_re[group] .+ σ_eps_true .* randn(rng, n)
+        group_str = string.(group)
+        df = DataFrame(x = x, y = y, group = group_str)
+
+        # Julia
+        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        vc_jl = VarCorr(m_jl)
+        σ_re_jl = vc_jl[1].std
+        σ_res_jl = vc_jl[end].std
+
+        # R
+        @rput x y group_str
+        reval("library(mgcv); library(nlme)")
+        reval("df_r <- data.frame(x=x, y=y, group=factor(group_str))")
+        reval("m_r <- gamm(y ~ s(x), random=list(group=~1), data=df_r)")
+        reval("vc <- VarCorr(m_r\$lme)")
+        reval("sigma_re_r <- as.numeric(vc[rownames(vc)=='(Intercept)', 'StdDev'])")
+        reval("sigma_res_r <- as.numeric(vc[rownames(vc)=='Residual', 'StdDev'])")
+
+        σ_re_r = rcopy(reval("sigma_re_r"))
+        σ_res_r = rcopy(reval("sigma_res_r"))
+
+        # Both should be in the right ballpark of truth
+        @test σ_re_jl > σ_re_true * 0.3  # not too small
+        @test σ_re_jl < σ_re_true * 2.5  # not too large
+        @test σ_re_r > σ_re_true * 0.3
+        @test σ_re_r < σ_re_true * 2.5
+
+        # Julia and R RE std dev should be in the same order of magnitude
+        ratio = σ_re_jl / σ_re_r
+        @test ratio > 0.3 && ratio < 3.0
+
+        # Residual std should also be comparable
+        ratio_res = σ_res_jl / σ_res_r
+        @test ratio_res > 0.3 && ratio_res < 3.0
+    end
 end

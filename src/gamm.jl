@@ -153,9 +153,19 @@ end
     predict_re_matrix(cre::ConstructedRandomEffect, newdata) → Matrix{Float64}
 
 Build Z matrix for new data. New levels get zero columns (no RE contribution).
+If the grouping column is missing from newdata, returns all zeros (population average).
 """
 function predict_re_matrix(cre::ConstructedRandomEffect, newdata)
     t = Tables.columntable(newdata)
+
+    # If the grouping column is missing entirely, return zeros (population average)
+    col_names = Tables.columnnames(t)
+    if !(cre.spec.grouping in col_names)
+        n_new = length(Tables.getcolumn(t, first(col_names)))
+        q = cre.constraint_basis !== nothing ? size(cre.constraint_basis, 2) : cre.n_levels * cre.n_terms
+        return zeros(n_new, q)
+    end
+
     group_col = Tables.getcolumn(t, cre.spec.grouping)
     n_new = length(group_col)
 
@@ -224,10 +234,33 @@ StatsAPI.dof(m::GammModel) = dof(m.gam_model) + sum(length.(m.random_coefs))
 StatsAPI.response(m::GammModel) = response(m.gam_model)
 
 function StatsAPI.predict(m::GammModel, newdata)
-    # Fixed + smooth prediction from underlying GAM
-    ŷ = predict(m.gam_model, newdata)
+    t = Tables.columntable(newdata)
+    n_new = length(Tables.getcolumn(t, first(Tables.columnnames(t))))
 
-    # Add random effect contributions
+    gm = m.gam_model
+    n_re = length(m.random_effects)
+    n_actual_smooths = gm.n_smooth - n_re
+
+    # Build parametric part (intercept)
+    X_para = ones(n_new, 1)
+
+    # Build smooth parts (actual smooths only, not RE-as-smooth)
+    X_smooth_parts = Matrix{Float64}[]
+    for idx in 1:n_actual_smooths
+        sm = gm.smooths[idx]
+        X_sm = predict_matrix(sm, t)
+        push!(X_smooth_parts, X_sm)
+    end
+
+    X_new = isempty(X_smooth_parts) ? X_para : hcat(X_para, X_smooth_parts...)
+
+    # Fixed + smooth coefficients (exclude RE coefficients)
+    n_fixed_smooth = size(X_new, 2)
+    β_fs = gm.coefficients[1:n_fixed_smooth]
+    ŷ = X_new * β_fs
+
+    # Add random effect contributions via predict_re_matrix
+    # (handles missing/unknown groups gracefully)
     for (i, cre) in enumerate(m.random_effects)
         Z_new = predict_re_matrix(cre, newdata)
         ŷ .+= Z_new * m.random_coefs[i]
@@ -276,9 +309,10 @@ function ranef(m::GammModel)
 end
 
 """
-    VarCorr(m::GammModel) → Vector{NamedTuple}
+    VarCorr(m::GammModel) → VarCorrResult
 
-Variance component estimates for random effects.
+Variance component estimates for random effects. The returned object prints
+a clean variance component table and supports indexing.
 """
 function VarCorr(m::GammModel)
     vc = NamedTuple[]
@@ -293,7 +327,48 @@ function VarCorr(m::GammModel)
             n_terms = cre.n_terms,
         ))
     end
-    return vc
+
+    # Add residual variance
+    scale = m.gam_model.scale
+    push!(vc, (
+        group = :Residual,
+        label = "Residual",
+        variance = scale,
+        std = sqrt(max(scale, 0.0)),
+        n_levels = Int(nobs(m)),
+        n_terms = 0,
+    ))
+    return VarCorrResult(vc)
+end
+
+"""
+    VarCorrResult
+
+Container for variance component estimates with pretty-printing.
+Supports indexing to access individual components.
+"""
+struct VarCorrResult
+    components::Vector{<:NamedTuple}
+end
+
+Base.length(v::VarCorrResult) = length(v.components)
+Base.getindex(v::VarCorrResult, i) = v.components[i]
+Base.iterate(v::VarCorrResult, args...) = iterate(v.components, args...)
+Base.lastindex(v::VarCorrResult) = lastindex(v.components)
+
+function Base.show(io::IO, vc::VarCorrResult)
+    println(io, "Variance Components:")
+    println(io, " ", rpad("Group", 20), "  ", rpad("Term", 20), "  ",
+        lpad("Variance", 12), "  ", lpad("Std.Dev.", 12), "  ",
+        lpad("Levels", 8))
+    println(io, " ", repeat("─", 78))
+    for c in vc.components
+        group_str = string(c.group)
+        label_str = c.group == :Residual ? "" : c.label
+        lev_str = c.group == :Residual ? "" : string(c.n_levels)
+        @printf(io, " %-20s  %-20s  %12.6f  %12.6f  %8s\n",
+            group_str, label_str, c.variance, c.std, lev_str)
+    end
 end
 
 # ============================================================================
@@ -488,6 +563,44 @@ function _is_random_effect_expr(ex)
     return true
 end
 
+"""
+    _is_nested_grouping(ex) → Bool
+
+Check if the RHS of a random effect uses the `/` (nesting) operator,
+e.g. `(1 | a / b)`.
+"""
+function _is_nested_grouping(ex)
+    ex isa Expr || return false
+    ex.head == :call || return false
+    ex.args[1] == :(/) || return false
+    return true
+end
+
+"""
+    _expand_nested_re(ex::Expr) → Vector{Expr}
+
+Expand a nested random effect `(lhs | a / b)` into two RE expressions:
+`(lhs | a)` and `(lhs | a_b)`, where `a_b` represents the interaction `a:b`.
+
+Following lme4 convention: `(1|a/b)` expands to `(1|a) + (1|a:b)`.
+"""
+function _expand_nested_re(ex::Expr)
+    lhs = ex.args[2]
+    rhs_nested = ex.args[3]  # Expr(:call, :/, :a, :b)
+    outer = rhs_nested.args[2]  # :a
+    inner = rhs_nested.args[3]  # :b
+
+    # Create interaction symbol a_b for the nested term
+    interaction_sym = Symbol(string(outer), "_", string(inner))
+
+    # (lhs | a)
+    re1 = Expr(:call, :(|), lhs, outer)
+    # (lhs | a_b)  — interaction grouping variable
+    re2 = Expr(:call, :(|), lhs, interaction_sym)
+
+    return [re1, re2]
+end
+
 # ─── Extend _parse_gam_rhs! to handle (1|group) ─────────────────────────────
 
 # We don't modify _parse_gam_rhs! directly; instead, the gamm pathway
@@ -495,7 +608,15 @@ end
 
 function _parse_gamm_rhs!(ex, parametric, smooth_calls, re_calls, has_intercept)
     if _is_random_effect_expr(ex)
-        push!(re_calls.args, _build_re_spec_call(ex))
+        rhs_expr = ex.args[3]
+        if _is_nested_grouping(rhs_expr)
+            # Expand (lhs | a/b) into (lhs|a) + (lhs|a_b)
+            for expanded in _expand_nested_re(ex)
+                push!(re_calls.args, _build_re_spec_call(expanded))
+            end
+        else
+            push!(re_calls.args, _build_re_spec_call(ex))
+        end
     elseif ex isa Expr && ex.head == :call && ex.args[1] == :+
         for i in 2:length(ex.args)
             _parse_gamm_rhs!(ex.args[i], parametric, smooth_calls, re_calls, has_intercept)
@@ -967,14 +1088,9 @@ function Base.show(io::IO, m::GammModel)
         println(io)
     end
 
-    # Random effects
-    println(io, "Random Effects:")
-    for (i, cre) in enumerate(m.random_effects)
-        v = max(m.random_vars[i], 0.0)
-        σ = sqrt(v)
-        @printf(io, "  %-20s  σ = %8.4f  (n_levels = %d)\n",
-            cre.spec.label, σ, cre.n_levels)
-    end
+    # Variance components table (Random Effects + Residual)
+    vc = VarCorr(m)
+    show(io, vc)
     println(io)
 
     # Summary stats
