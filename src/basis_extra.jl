@@ -696,6 +696,9 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
             S_int[a, b] * irng[k_bnd_cc + a] * irng[k_bnd_cc + b]
     end
 
+    # Symmetrize to fix floating-point round-off
+    S_bnd_full .= (S_bnd_full .+ S_bnd_full') ./ 2
+    S_int_full .= (S_int_full .+ S_int_full') ./ 2
     penalties = Matrix{Float64}[S_bnd_full, S_int_full]
 
     # ── Cache for prediction ─────────────────────────────────────────────

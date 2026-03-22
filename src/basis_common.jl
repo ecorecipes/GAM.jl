@@ -85,6 +85,15 @@ function absorb_constraints!(X::Matrix{Float64}, S::Vector{Matrix{Float64}};
 
     X_new = X * Z
     S_new = [Z' * Si * Z for Si in S]
+    # Ensure exact symmetry after QR rotation (floating-point round-off)
+    for i in eachindex(S_new)
+        Si = S_new[i]
+        for a in 1:size(Si, 1), b in (a + 1):size(Si, 2)
+            v = (Si[a, b] + Si[b, a]) / 2
+            Si[a, b] = v
+            Si[b, a] = v
+        end
+    end
 
     return X_new, S_new, Matrix(C), qr(X_new)
 end
