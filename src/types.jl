@@ -147,6 +147,12 @@ struct SmoothSpec{B<:AbstractBasisType}
     fx::Bool
     m::Union{Int, Nothing}
     label::String
+    xt::Dict{Symbol,Any}  # extra type-specific data (e.g., :nb for MRF)
+end
+
+# Convenience constructor with default empty xt for backward compatibility
+function SmoothSpec(term_vars, basis::B, k, by, id, sp, fx, m, label) where {B<:AbstractBasisType}
+    return SmoothSpec{B}(term_vars, basis, k, by, id, sp, fx, m, label, Dict{Symbol,Any}())
 end
 
 # ============================================================================
