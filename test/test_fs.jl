@@ -1,5 +1,7 @@
 @testset "Factor-smooth interactions (bs=:fs)" begin
-    using Random, DataFrames, Statistics, Distributions, LinearAlgebra
+    using Random, DataFrames, Statistics, Distributions, LinearAlgebra, StatsAPI
+
+    import StatsAPI: predict
 
     # ─── SmoothSpec defaults ──────────────────────────────────────────────
 
