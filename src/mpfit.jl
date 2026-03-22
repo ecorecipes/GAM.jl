@@ -756,9 +756,12 @@ function evgam(formulas, data, family::MultiParameterFamily;
         idpars[s:e] .= k
     end
 
+    # LAML for model comparison
+    laml = mp_laml(family, y, X_list, β_opt, S, Sl, log_sp, param_offsets; Mp=Mp)
+
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, y, n, conv, idpars, param_offsets
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, idpars, param_offsets
     )
 end
 
