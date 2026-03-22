@@ -288,6 +288,21 @@ function setup_gam(gf::GamFormula, data;
         p_start += k
     end
 
+    # Apply side constraints for identifiability (mgcv's gam.side)
+    if length(smooths) > 1
+        modified = side_constrain!(smooths, X_para)
+        if modified
+            # Reassign parameter indices after column removal
+            p_start = n_parametric + 1
+            for sm in smooths
+                k = size(sm.X, 2)
+                sm.first_para = p_start
+                sm.last_para = p_start + k - 1
+                p_start += k
+            end
+        end
+    end
+
     # Build full model matrix: [parametric | smooth1 | smooth2 | ...]
     X_smooth_parts = [sm.X for sm in smooths]
     X_full = isempty(X_smooth_parts) ? X_para :

@@ -160,6 +160,7 @@ function _construct_cr(spec::SmoothSpec, data, user_knots;
         spec, X_cons, S_cons, knots, null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
+        Int[],
     )
 end
 

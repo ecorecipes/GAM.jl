@@ -415,7 +415,8 @@ function _fit_gamm_lams(y, X_gam, smooths, n_parametric,
             cre.block_dim,                  # full rank penalty
             nothing, nothing,               # no constraints (already absorbed)
             0, 0,                           # first/last_para — set below
-            nothing, nothing, nothing)      # no SCAM metadata
+            nothing, nothing, nothing,
+            Int[])      # no SCAM metadata, no side constraints
         push!(re_smooths, re_sm)
     end
 

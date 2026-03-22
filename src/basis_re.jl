@@ -38,6 +38,7 @@ function _smooth_construct(::RandomEffect, spec::SmoothSpec, data, user_knots)
         null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
+        Int[],
     )
 end
 

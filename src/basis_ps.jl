@@ -135,6 +135,7 @@ function _smooth_construct(::PSpline, spec::SmoothSpec, data, user_knots)
         null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
+        Int[],
     )
 end
 
@@ -193,6 +194,7 @@ function _smooth_construct(::BSplineBasis, spec::SmoothSpec, data, user_knots)
         null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
+        Int[],
     )
 end
 
@@ -402,6 +404,7 @@ function _smooth_construct(::CyclicPSpline, spec::SmoothSpec, data, user_knots)
         null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
+        Int[],
     )
 end
 

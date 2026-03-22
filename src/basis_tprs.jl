@@ -372,6 +372,7 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
         nothing,
         0, 0,
         nothing, nothing, nothing,
+        Int[],
     )
 end
 
