@@ -115,6 +115,7 @@ function _smooth_construct(::MarkovRandomField, spec::SmoothSpec, data, user_kno
         null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
+        Int[],
     )
 
     # Store region labels for prediction
@@ -252,6 +253,7 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         null_dim, pen_rank,
         nothing, nothing, 0, 0,   # no additional constraint on the full fs smooth
         nothing, nothing, nothing,
+        Int[],
     )
 
     _FS_INFO[objectid(sm)] = FactorSmoothInfo(levels, marginal_sm, factor_var)
@@ -724,6 +726,7 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
         null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
+        Int[],
     )
 end
 

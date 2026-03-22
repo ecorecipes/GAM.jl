@@ -252,6 +252,7 @@ function _smooth_construct(basis::AbstractConstrainedBasis, spec::SmoothSpec, da
         null_dim, pen_rank,
         nothing, nothing, 0, 0,
         Sig, cmX, p_ident,
+        Int[],
     )
 end
 

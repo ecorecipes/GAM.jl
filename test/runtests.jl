@@ -773,3 +773,13 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         @warn "Skipping GAMM R comparison tests (nlme/RCall not available)" exception = e
     end
 end
+
+@eval include("test_side_constraints.jl")
+
+if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
+    try
+        @eval include("test_side_constraints_rcall.jl")
+    catch e
+        @warn "Skipping side constraint R comparison tests" exception = e
+    end
+end

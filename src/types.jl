@@ -199,6 +199,8 @@ mutable struct ConstructedSmooth{B<:AbstractBasisType}
     Sigma::Union{Matrix{Float64}, Nothing}
     cmX::Union{Vector{Float64}, Nothing}
     p_ident::Union{BitVector, Nothing}
+    # Side constraint tracking — columns removed by side_constrain!
+    del_index::Vector{Int}
 end
 
 # ============================================================================
