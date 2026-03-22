@@ -6,6 +6,7 @@
 using Test
 using GAM
 using Turing
+using MCMCChains
 using DataFrames
 using Random
 using Distributions
@@ -242,5 +243,48 @@ using Statistics: mean, std
             nsamples = 500, nchains = 1)
 
         @test m2 isa GAM.BayesGamModel
+    end
+
+    @testset "Convergence diagnostics — R-hat and ESS" begin
+        Random.seed!(42)
+        n = 200
+        x = sort(rand(n))
+        y_true = sin.(2π .* x)
+        y = y_true .+ 0.3 .* randn(n)
+        df = DataFrame(y = y, x = x)
+
+        m = gam(@gam_formula(y ~ s(x, k = 10)), df;
+            priors = PriorSpec(sds = Exponential(1.0)),
+            nsamples = 1000, nchains = 2)
+
+        @test m isa BayesGamModel
+
+        chains = m.chains
+        diag = MCMCChains.ess_rhat(chains)
+        ess_vals = diag[:, :ess]
+        rhat_vals = diag[:, :rhat]
+
+        # R-hat < 1.05 for all parameters (chains have converged)
+        @test all(rhat_vals .< 1.05)
+
+        # ESS > 100 for all parameters (sufficient effective samples)
+        @test all(ess_vals .> 100)
+    end
+
+    @testset "Bayesian performance" begin
+        Random.seed!(42)
+        n = 200
+        x = sort(rand(n))
+        y = sin.(2π .* x) .+ 0.3 .* randn(n)
+        df = DataFrame(y = y, x = x)
+
+        t = @elapsed begin
+            m = gam(@gam_formula(y ~ s(x, k = 10)), df;
+                priors = PriorSpec(sds = Exponential(1.0)),
+                nsamples = 500, nchains = 1)
+        end
+
+        @test m isa BayesGamModel
+        @test t < 120  # generous timeout for CI
     end
 end
