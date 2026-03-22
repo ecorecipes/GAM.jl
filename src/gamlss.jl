@@ -641,6 +641,8 @@ struct GamlssControl
     autostep::Bool
     gd_tol::Float64
     trace::Bool
+    sp_method::Symbol  # :efs, :local_ml, :local_gaic, :local_gcv
+    gaic_k::Float64    # penalty multiplier for GAIC (k=2 → AIC, k=log(n) → BIC)
 end
 
 function gamlss_control(; c_crit::Real=0.001, n_cyc::Int=20,
@@ -648,10 +650,14 @@ function gamlss_control(; c_crit::Real=0.001, n_cyc::Int=20,
                           mu_step::Real=1.0, sigma_step::Real=1.0,
                           nu_step::Real=1.0, tau_step::Real=1.0,
                           autostep::Bool=true, gd_tol::Real=Inf,
-                          trace::Bool=false)
+                          trace::Bool=false,
+                          sp_method::Symbol=:efs, gaic_k::Real=2.0)
+    sp_method in (:efs, :local_ml, :local_gaic, :local_gcv) ||
+        throw(ArgumentError("sp_method must be :efs, :local_ml, :local_gaic, or :local_gcv"))
     GamlssControl(Float64(c_crit), n_cyc, Float64(i_cc), i_cyc,
                   Float64(mu_step), Float64(sigma_step), Float64(nu_step),
-                  Float64(tau_step), autostep, Float64(gd_tol), trace)
+                  Float64(tau_step), autostep, Float64(gd_tol), trace,
+                  sp_method, Float64(gaic_k))
 end
 
 """Get step size for parameter k from GamlssControl."""

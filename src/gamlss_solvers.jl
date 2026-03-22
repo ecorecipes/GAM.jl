@@ -89,6 +89,59 @@ function _penalized_wls(Xk::Matrix{Float64}, wk::Vector{Float64},
     end
 end
 
+"""
+    _penalized_wls_with_edf(Xk, wk, zk, Sk) → (β_new, edf, rss)
+
+Like `_penalized_wls` but also returns effective degrees of freedom
+and weighted RSS = Σw(z - Xβ)².
+Uses SVD of augmented system [√W·X; √λ·D] like R gamlss pb().
+"""
+function _penalized_wls_with_edf(Xk::Matrix{Float64}, wk::Vector{Float64},
+                                  zk::Vector{Float64}, Sk::Matrix{Float64})
+    n = size(Xk, 1)
+    pk = size(Xk, 2)
+
+    # QR of √W·X
+    sqw = sqrt.(wk)
+    WX = sqw .* Xk
+    Wz = sqw .* zk
+    qrWX = qr(WX)
+    R = Matrix(qrWX.R)
+    Qy_full = qrWX.Q' * Wz
+    Qy = Qy_full[1:pk]  # only first pk elements (thin Q projection)
+
+    # Augmented system: [R; √S] via SVD
+    # Need square-root of Sk: use Cholesky or eigendecomposition
+    eig = eigen(Symmetric(Sk))
+    pos = eig.values .> 1e-10 * max(maximum(abs, eig.values), 1e-20)
+    if any(pos)
+        sqrtS = eig.vectors[:, pos] * Diagonal(sqrt.(eig.values[pos]))
+        RD = vcat(R, Matrix(sqrtS'))
+    else
+        RD = R
+    end
+
+    svdRD = svd(RD)
+    rank = count(s -> s > max(maximum(svdRD.S), 1e-20) * sqrt(eps()), svdRD.S)
+    U1 = svdRD.U[1:pk, 1:rank]
+    y1 = U1' * Qy
+    β_new = svdRD.V[:, 1:rank] * (y1 ./ svdRD.S[1:rank])
+
+    # edf = tr(H) where H is the hat matrix in the augmented system
+    HH = U1 * U1'
+    edf = tr(HH)
+
+    # Weighted RSS
+    fv = Xk * β_new
+    rss = 0.0
+    @inbounds for i in 1:n
+        r = zk[i] - fv[i]
+        rss += wk[i] * r * r
+    end
+
+    return β_new, edf, rss
+end
+
 # ============================================================================
 # Build per-parameter penalty matrices
 # ============================================================================
@@ -170,6 +223,211 @@ function _efs_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}}
             r = a / bSb
             log_sp[j] = clamp(log_sp[j] + log(max(r, 1e-15)), -15.0, 15.0)
         end
+    end
+end
+
+# ============================================================================
+# Local ML/GAIC/GCV smoothing parameter selection
+# ============================================================================
+
+"""
+    _local_ml_update_param!(log_sp, Sl, β_k, Xk, wk, zk, Sk, param_offsets, k, order)
+
+Local ML smoothing parameter update (R gamlss pb() style):
+  σ² = RSS / (n - edf)
+  τ² = β'D'Dβ / (edf - order)
+  λ_new = σ² / τ²
+"""
+function _local_ml_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}},
+                                  β_k::Vector{Float64}, Xk::Matrix{Float64},
+                                  wk::Vector{Float64}, zk::Vector{Float64},
+                                  param_offsets::Vector{Int}, k::Int;
+                                  max_iter::Int=50, tol::Float64=1e-7)
+    s = param_offsets[k] + 1
+    e = param_offsets[k + 1]
+    pk = e - s + 1
+    n = length(wk)
+
+    # Find smooth penalty indices for this parameter
+    sp_indices = Int[]
+    for (j, Sj) in enumerate(Sl)
+        Sj_block = @view Sj[s:e, s:e]
+        if any(!iszero, Sj_block)
+            push!(sp_indices, j)
+        end
+    end
+
+    isempty(sp_indices) && return
+
+    for idx in sp_indices
+        old_log_sp = log_sp[idx]
+
+        for _ in 1:max_iter
+            # Build current penalty for this parameter
+            Sk = zeros(pk, pk)
+            for (j, Sj) in enumerate(Sl)
+                Sj_block = @view Sj[s:e, s:e]
+                if any(!iszero, Sj_block)
+                    Sk .+= exp(log_sp[j]) .* Sj_block
+                end
+            end
+
+            # Solve with edf
+            β_new, edf, rss = _penalized_wls_with_edf(Xk, wk, zk, Sk)
+
+            # Penalty-specific D'D
+            Sj_block = Matrix(@view Sl[idx][s:e, s:e])
+            bDb = dot(β_new, Sj_block * β_new)
+
+            # Estimate penalty order from null space
+            eigs = eigvals(Symmetric(Sj_block))
+            order = count(ev -> ev < 1e-10 * maximum(abs, eigs), eigs)
+
+            # ML update: λ = σ²/τ²
+            sigma2 = rss / max(n - edf, 1.0)
+            tau2 = bDb / max(edf - order, 0.01)
+
+            if tau2 > eps() && sigma2 > eps()
+                new_log_sp = clamp(log(sigma2 / tau2), -15.0, 15.0)
+                if abs(new_log_sp - log_sp[idx]) < tol
+                    log_sp[idx] = new_log_sp
+                    break
+                end
+                log_sp[idx] = new_log_sp
+            else
+                break
+            end
+        end
+    end
+end
+
+"""
+    _local_gaic_update_param!(log_sp, Sl, Xk, wk, zk, param_offsets, k, gaic_k)
+
+Local GAIC smoothing parameter update: minimize RSS + gaic_k * edf
+over λ using golden section search (R gamlss pb() style).
+"""
+function _local_gaic_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}},
+                                    Xk::Matrix{Float64}, wk::Vector{Float64},
+                                    zk::Vector{Float64},
+                                    param_offsets::Vector{Int}, k::Int,
+                                    gaic_k::Float64)
+    s = param_offsets[k] + 1
+    e = param_offsets[k + 1]
+    pk = e - s + 1
+
+    sp_indices = Int[]
+    for (j, Sj) in enumerate(Sl)
+        Sj_block = @view Sj[s:e, s:e]
+        if any(!iszero, Sj_block)
+            push!(sp_indices, j)
+        end
+    end
+
+    isempty(sp_indices) && return
+
+    for idx in sp_indices
+        # GAIC objective as a function of log_lambda
+        function gaic_obj(log_lam)
+            Sk = zeros(pk, pk)
+            for (j, Sj) in enumerate(Sl)
+                Sj_block = @view Sj[s:e, s:e]
+                if any(!iszero, Sj_block)
+                    lsp_j = (j == idx) ? log_lam : log_sp[j]
+                    Sk .+= exp(lsp_j) .* Sj_block
+                end
+            end
+            _, edf, rss = _penalized_wls_with_edf(Xk, wk, zk, Sk)
+            return rss + gaic_k * edf
+        end
+
+        # Golden section search on [-7, 7] (log scale)
+        log_sp[idx] = _golden_section_min(gaic_obj, -7.0, 7.0, 1e-4)
+    end
+end
+
+"""
+    _local_gcv_update_param!(log_sp, Sl, Xk, wk, zk, param_offsets, k, gaic_k)
+
+Local GCV: minimize n*RSS/(n - gaic_k*edf)^2.
+"""
+function _local_gcv_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}},
+                                   Xk::Matrix{Float64}, wk::Vector{Float64},
+                                   zk::Vector{Float64},
+                                   param_offsets::Vector{Int}, k::Int,
+                                   gaic_k::Float64)
+    s = param_offsets[k] + 1
+    e = param_offsets[k + 1]
+    pk = e - s + 1
+    n = length(wk)
+
+    sp_indices = Int[]
+    for (j, Sj) in enumerate(Sl)
+        Sj_block = @view Sj[s:e, s:e]
+        if any(!iszero, Sj_block)
+            push!(sp_indices, j)
+        end
+    end
+
+    isempty(sp_indices) && return
+
+    for idx in sp_indices
+        function gcv_obj(log_lam)
+            Sk = zeros(pk, pk)
+            for (j, Sj) in enumerate(Sl)
+                Sj_block = @view Sj[s:e, s:e]
+                if any(!iszero, Sj_block)
+                    lsp_j = (j == idx) ? log_lam : log_sp[j]
+                    Sk .+= exp(lsp_j) .* Sj_block
+                end
+            end
+            _, edf, rss = _penalized_wls_with_edf(Xk, wk, zk, Sk)
+            denom = max(n - gaic_k * edf, 1.0)
+            return n * rss / (denom * denom)
+        end
+
+        log_sp[idx] = _golden_section_min(gcv_obj, -7.0, 7.0, 1e-4)
+    end
+end
+
+"""Golden section minimization on [a,b] with tolerance tol."""
+function _golden_section_min(f, a::Float64, b::Float64, tol::Float64)
+    gr = (sqrt(5.0) + 1.0) / 2.0
+    c = b - (b - a) / gr
+    d = a + (b - a) / gr
+    for _ in 1:100
+        if abs(b - a) < tol
+            break
+        end
+        if f(c) < f(d)
+            b = d
+        else
+            a = c
+        end
+        c = b - (b - a) / gr
+        d = a + (b - a) / gr
+    end
+    return (a + b) / 2.0
+end
+
+"""
+Dispatch SP update based on method in GamlssControl.
+"""
+function _sp_update_param!(gamlss_ctrl::GamlssControl,
+                            log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}},
+                            β_k::Vector{Float64}, Xk::Matrix{Float64},
+                            wk::Vector{Float64}, zk::Vector{Float64},
+                            Sk::Matrix{Float64},
+                            param_offsets::Vector{Int}, k::Int)
+    m = gamlss_ctrl.sp_method
+    if m == :efs
+        _efs_update_param!(log_sp, Sl, β_k, Xk, wk, Sk, param_offsets, k)
+    elseif m == :local_ml
+        _local_ml_update_param!(log_sp, Sl, β_k, Xk, wk, zk, param_offsets, k)
+    elseif m == :local_gaic
+        _local_gaic_update_param!(log_sp, Sl, Xk, wk, zk, param_offsets, k, gamlss_ctrl.gaic_k)
+    elseif m == :local_gcv
+        _local_gcv_update_param!(log_sp, Sl, Xk, wk, zk, param_offsets, k, gamlss_ctrl.gaic_k)
     end
 end
 
@@ -277,10 +535,10 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
             # Recover β from η: β = (X'X)^{-1} X'η  (or just use β_new scaled by step)
             β_list[k] .= step .* β_new .+ (1.0 - step) .* β_list[k]
 
-            # EFS update for this parameter's smoothing parameters
+            # EFS/local SP update for this parameter's smoothing parameters
             if !sp_fixed && nsp > 0
-                _efs_update_param!(log_sp, Sl, β_list[k], X_list[k], wk,
-                                   S_list[k], param_offsets, k)
+                _sp_update_param!(gamlss_ctrl, log_sp, Sl, β_list[k], X_list[k],
+                                   wk, zk, S_list[k], param_offsets, k)
                 S_list = _per_param_penalties(Sl, log_sp, param_offsets, K)
             end
         end
@@ -474,16 +732,19 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
             end
         end
 
-        # EFS update for smoothing parameters
+        # SP update for smoothing parameters
         if !sp_fixed && nsp > 0
             _param_derivs_eta!(family, y, η_list, derivs)
             for k in 1:K
+                gk_col = grad_col(k)
                 hk_col = hess_col(K, k, k)
                 @inbounds for i in 1:n
-                    wk[i] = clamp(derivs[i, hk_col], 1e-10, 1e10)
+                    h = clamp(derivs[i, hk_col], 1e-10, 1e10)
+                    wk[i] = h
+                    zk[i] = η_list[k][i] - derivs[i, gk_col] / h
                 end
-                _efs_update_param!(log_sp, Sl, β_list[k], X_list[k], wk,
-                                   S_list[k], param_offsets, k)
+                _sp_update_param!(gamlss_ctrl, log_sp, Sl, β_list[k], X_list[k],
+                                   wk, zk, S_list[k], param_offsets, k)
             end
             S_list = _per_param_penalties(Sl, log_sp, param_offsets, K)
         end
