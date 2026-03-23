@@ -283,6 +283,7 @@ function _should_side_constrain(sm::ConstructedSmooth)
     # Random effects and factor-smooth interactions handle identifiability differently
     b isa RandomEffect && return false
     b isa FactorSmooth && return false
+    b isa ConstrainedFactorSmooth && return false
     return true
 end
 

@@ -782,6 +782,12 @@ end
 
 @eval include("test_side_constraints.jl")
 
+# Spherical spline (sos) tests
+@eval include("test_sos.jl")
+
+# Constrained factor smooth (sz) tests
+@eval include("test_sz.jl")
+
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     try
         @eval include("test_side_constraints_rcall.jl")
@@ -789,3 +795,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         @warn "Skipping side constraint R comparison tests" exception = e
     end
 end
+
+@eval include("test_loess.jl")
+
+@eval include("test_fp.jl")

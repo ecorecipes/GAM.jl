@@ -94,10 +94,14 @@ export
     TensorInteraction,
     T2TensorProduct,
     GPSmooth,
+    LoessSmooth,
+    FractionalPolynomial,
     DuchonSpline,
     FactorSmooth,
     SoapFilm,
     MarkovRandomField,
+    SphericalSpline,
+    ConstrainedFactorSmooth,
 
     # Smooth construction
     smooth_construct,
@@ -266,7 +270,11 @@ include("basis_adaptive.jl")
 include("basis_re.jl")
 include("basis_tensor.jl")
 include("basis_gp.jl")
+include("basis_loess.jl")
+include("basis_fp.jl")
 include("basis_extra.jl")
+include("basis_sphere.jl")
+include("basis_sz.jl")
 include("basis_scam.jl")
 include("penalty.jl")
 include("smooth2random.jl")

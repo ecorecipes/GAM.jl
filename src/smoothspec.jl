@@ -43,10 +43,12 @@ function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
         d = length(vars)
         if basis isa Union{RandomEffect, MarkovRandomField}
             k = -1  # determined at construction time from data
-        elseif basis isa FactorSmooth
+        elseif basis isa Union{FactorSmooth, ConstrainedFactorSmooth}
             # k refers to the marginal basis dimension; last var is the factor
             d_cont = max(d - 1, 1)
             k = d_cont == 1 ? 10 : (d_cont == 2 ? 30 : 10 * d_cont)
+        elseif basis isa SphericalSpline
+            k = 50  # default for spherical splines (2D on sphere)
         elseif d == 1
             k = 10
         elseif d == 2
