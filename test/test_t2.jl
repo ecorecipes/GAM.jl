@@ -1,3 +1,11 @@
+using Test
+using GAM
+using StableRNGs
+using LinearAlgebra
+using Statistics
+using StatsAPI: coef, fitted, deviance, predict
+using DataFrames
+
 @testset "t2() tensor product smooth" begin
 
     t2_rng = StableRNG(123)
