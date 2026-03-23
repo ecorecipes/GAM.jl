@@ -746,6 +746,9 @@ end
 # SCAM unit tests (no R needed)
 @eval include("test_scam.jl")
 
+# Adaptive smooth tests
+@eval include("test_adaptive.jl")
+
 # General fit (WPS algorithm) tests
 @eval include("test_general_fit.jl")
 
