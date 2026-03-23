@@ -234,6 +234,10 @@ function _smooth_construct(::TensorInteraction, spec::SmoothSpec, data, user_kno
     return _construct_tensor(spec, data, user_knots, interaction_only=true)
 end
 
+function _smooth_construct(::T2TensorProduct, spec::SmoothSpec, data, user_knots)
+    return _construct_t2(spec, data, user_knots)
+end
+
 """
     _construct_tensor(spec, data, user_knots; interaction_only)
 
@@ -334,6 +338,120 @@ function _predict_matrix(::Union{TensorProduct, TensorInteraction},
             X_tensor = X_tensor[:, keep_cols]
         end
     end
+
+    if smooth.constraint !== nothing
+        C = smooth.constraint
+        Z = nullspace(C)
+        return X_tensor * Z
+    end
+    return X_tensor
+end
+
+# ============================================================================
+# t2() — alternative tensor product smooth (mgcv t2())
+# ============================================================================
+
+"""
+    _construct_t2(spec, data, user_knots)
+
+Construct a t2() tensor product smooth. The basis matrix is the same as te()
+(row-wise Kronecker product of marginals), but the penalties differ:
+
+For d marginals, each with penalties S_j^(m):
+- For each marginal m and each penalty j of that marginal:
+  P = I_1 ⊗ ... ⊗ S_j^(m) ⊗ ... ⊗ I_d  (penalty in position m, identity elsewhere)
+- Plus a "full interaction" penalty: S_1^(1) ⊗ S_1^(2) ⊗ ... ⊗ S_1^(d)
+
+For 2 marginals each with 1 penalty, this gives 3 penalties:
+  S^(1) ⊗ I_2, I_1 ⊗ S^(2), S^(1) ⊗ S^(2)
+"""
+function _construct_t2(spec::SmoothSpec, data, user_knots)
+    marginal_specs = _get_marginals(spec)
+    marginal_specs !== nothing ||
+        throw(ArgumentError("No marginal specs registered. Use t2()."))
+
+    d = length(marginal_specs)
+
+    # 1. Build unconstrained marginal bases
+    raw_marginals = RawMarginalBasis[]
+    for mspec in marginal_specs
+        push!(raw_marginals, _build_raw_marginal(mspec, data, user_knots))
+    end
+
+    marginal_Xs = [rm.X for rm in raw_marginals]
+    marginal_dims = [size(X, 2) for X in marginal_Xs]
+    marginal_null_dims = [rm.null_dim for rm in raw_marginals]
+
+    # 2. Row-wise Kronecker product (same as te())
+    X_tensor = _row_kronecker(marginal_Xs)
+
+    # 3. t2-style penalties:
+    #    For each marginal m and each penalty S_j of that marginal:
+    #      I_1 ⊗ ... ⊗ S_j ⊗ ... ⊗ I_d
+    #    Plus the full interaction: S_1^(1) ⊗ S_1^(2) ⊗ ...
+    penalties = Matrix{Float64}[]
+
+    for m in 1:d
+        for Sj in raw_marginals[m].S
+            P = _t2_single_penalty(Sj, m, marginal_dims, d)
+            push!(penalties, P)
+        end
+    end
+
+    # Full interaction penalty: kronecker of first penalty from each marginal
+    P_full = Matrix{Float64}(I, 1, 1)
+    for m in 1:d
+        Sm = raw_marginals[m].S[1]
+        P_full = kron(P_full, Sm)
+    end
+    push!(penalties, P_full)
+
+    total_k = size(X_tensor, 2)
+    null_dim = prod(marginal_null_dims)
+    pen_rank = max(total_k - null_dim, 0)
+
+    # 4. Absorb identifiability constraints
+    X_cons, S_cons, C, _ = absorb_constraints!(X_tensor, penalties)
+
+    sm = ConstructedSmooth(
+        spec, X_cons, S_cons,
+        Float64[],
+        null_dim, pen_rank,
+        C, nothing, 0, 0,
+        nothing, nothing, nothing,
+        Int[],
+    )
+
+    _TENSOR_MARGINALS[objectid(sm)] = raw_marginals
+    return sm
+end
+
+"""
+    _t2_single_penalty(Sj, pos, marginal_dims, d)
+
+Build a single t2 penalty: I_1 ⊗ ... ⊗ S_j ⊗ ... ⊗ I_d,
+where S_j is placed at position `pos`.
+"""
+function _t2_single_penalty(Sj::Matrix{Float64}, pos::Int,
+                            marginal_dims::Vector{Int}, d::Int)
+    P = Matrix{Float64}(I, 1, 1)
+    for i in 1:d
+        if i == pos
+            P = kron(P, Sj)
+        else
+            P = kron(P, Matrix{Float64}(I, marginal_dims[i], marginal_dims[i]))
+        end
+    end
+    return P
+end
+
+function _predict_matrix(::T2TensorProduct, smooth::ConstructedSmooth, newdata)
+    raw_marginals = get(_TENSOR_MARGINALS, objectid(smooth), nothing)
+    raw_marginals !== nothing ||
+        throw(ArgumentError("Cannot find marginal info for t2 tensor product prediction"))
+
+    marginal_Xs = [_raw_predict_marginal(rm, newdata) for rm in raw_marginals]
+    X_tensor = _row_kronecker(marginal_Xs)
 
     if smooth.constraint !== nothing
         C = smooth.constraint

@@ -12,6 +12,7 @@ function _is_smooth_function(f)
     f === s && return true
     f === te && return true
     f === ti && return true
+    f === t2 && return true
     f in _SMOOTH_ALIASES && return true
     return false
 end
@@ -184,7 +185,7 @@ function _parse_gam_rhs!(ex, parametric, smooth_calls, has_intercept)
                     _parse_gam_rhs!(ex.args[i], parametric, smooth_calls,
                         has_intercept)
                 end
-            elseif fname in (:s, :te, :ti)
+            elseif fname in (:s, :te, :ti, :t2)
                 # Extract s(x, k=15, bs=:cr) → s(:x; k=15, bs=:cr)
                 push!(smooth_calls.args, _build_smooth_call(ex))
             else

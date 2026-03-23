@@ -68,6 +68,7 @@ export
     s,
     te,
     ti,
+    t2,
     cr,
     tp,
     ts,
@@ -89,8 +90,10 @@ export
     CyclicPSpline,
     BSplineBasis,
     RandomEffect,
+    AdaptiveSmooth,
     TensorProduct,
     TensorInteraction,
+    T2TensorProduct,
     GPSmooth,
     DuchonSpline,
     FactorSmooth,
@@ -260,6 +263,7 @@ include("basis_common.jl")
 include("basis_tprs.jl")
 include("basis_cr.jl")
 include("basis_ps.jl")
+include("basis_adaptive.jl")
 include("basis_re.jl")
 include("basis_tensor.jl")
 include("basis_gp.jl")
