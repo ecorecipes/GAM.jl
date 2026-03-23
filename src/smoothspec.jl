@@ -220,6 +220,81 @@ function _te_label(vars, by, interaction_only::Bool)
     return "$fname($vstr$bstr)"
 end
 
+function _t2_label(vars, by)
+    vstr = join(string.(vars), ",")
+    bstr = by === nothing ? "" : ",by=$by"
+    return "t2($vstr$bstr)"
+end
+
+"""
+    t2(vars...; k=-1, bs=:cr, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
+
+Specify an alternative tensor product smooth (mgcv's `t2()`). Like `te()`, the basis
+matrix is the row-wise Kronecker product of marginal bases. The penalties differ:
+each marginal penalty acts independently in its own direction via
+`I ⊗ ... ⊗ S_j ⊗ ... ⊗ I`, plus a full interaction penalty `S_1 ⊗ S_2 ⊗ ...`.
+
+This gives more penalties than `te()` but each is "simpler", providing more separate
+control over penalization in each marginal direction.
+
+# Arguments
+- `vars`: two or more variable names (Symbols)
+- `k`: total basis dimension hint. Marginal dimensions are `round(Int, k^(1/d))`.
+       Default `-1` gives 5 per margin.
+- `bs`: marginal basis type — a single Symbol applied to all margins, or a Vector{Symbol}
+- `by`, `id`, `sp`, `fx`, `m`: as for `s()`
+
+# Examples
+```julia
+t2(:x1, :x2)              # t2 tensor product with CR margins
+t2(:x1, :x2, k=25)        # k^(1/2) ≈ 5 per margin
+t2(:x1, :x2, bs=:ps)      # P-spline margins
+```
+"""
+function t2(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
+            by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing)
+    length(vars) >= 2 || throw(ArgumentError("t2() requires at least 2 variables"))
+    d = length(vars)
+
+    bs_vec = bs isa Symbol ? fill(bs, d) : bs
+    length(bs_vec) == d || throw(ArgumentError("bs vector length must match number of variables"))
+
+    if k == -1
+        k_marginal = fill(5, d)
+    else
+        km = max(3, round(Int, k^(1/d)))
+        k_marginal = fill(km, d)
+    end
+
+    by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
+    id_sym = id isa Symbol ? id : nothing
+    sp_val = sp === nothing ? nothing : Float64(sp)
+    m_val = m === nothing ? nothing : Int(m)
+
+    marginals = SmoothSpec[]
+    for i in 1:d
+        basis_i = resolve_basis_type(bs_vec[i])
+        label_i = "s($(vars[i]),bs=$(bs_vec[i]))"
+        push!(marginals, SmoothSpec([vars[i]], basis_i, k_marginal[i],
+                                    nothing, id_sym, sp_val, fx, m_val, label_i))
+    end
+
+    label = _t2_label(vars, by_sym)
+    total_k = prod(k_marginal)
+    spec = SmoothSpec(collect(vars), T2TensorProduct(), total_k,
+                      by_sym, id_sym, sp_val, fx, m_val, label)
+    _register_marginals(spec, marginals)
+    return spec
+end
+
+# Accept Term objects from @formula context
+function t2(vars::Union{Symbol, StatsModels.AbstractTerm}...; kwargs...)
+    syms = map(vars) do v
+        v isa Symbol ? v : (v isa Term ? v.sym : throw(ArgumentError("expected Symbol or Term, got $(typeof(v))")))
+    end
+    return t2(syms...; kwargs...)
+end
+
 # ─── Basis-type convenience functions for @formula ─────────────────────────
 #
 # These let users write `@formula(y ~ cr(x, 20))` instead of needing

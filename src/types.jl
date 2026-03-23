@@ -64,6 +64,9 @@ struct TensorProduct <: AbstractBasisType end
 """Tensor product interaction basis (mgcv `ti()`)."""
 struct TensorInteraction <: AbstractBasisType end
 
+"""Alternative tensor product smooth basis (mgcv `t2()`)."""
+struct T2TensorProduct <: AbstractBasisType end
+
 # Shape-constrained smooth types (scam package)
 """Abstract base for shape-constrained spline basis types."""
 abstract type AbstractConstrainedBasis <: AbstractBasisType end

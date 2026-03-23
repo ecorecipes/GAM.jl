@@ -639,6 +639,9 @@ end
 # BAM tests
 include("test_bam.jl")
 
+# t2() tensor product smooth tests
+include("test_t2.jl")
+
 # GINLA tests
 include("test_ginla.jl")
 
