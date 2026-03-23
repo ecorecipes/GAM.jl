@@ -80,7 +80,6 @@ export
     SmoothTerm,
 
     # Smooth types
-    AbstractSmooth,
     ThinPlateSpline,
     ThinPlateShrink,
     CubicSpline,

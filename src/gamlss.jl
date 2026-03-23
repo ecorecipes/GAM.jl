@@ -645,6 +645,35 @@ struct GamlssControl
     gaic_k::Float64    # penalty multiplier for GAIC (k=2 → AIC, k=log(n) → BIC)
 end
 
+"""
+    gamlss_control(; c_crit=0.001, n_cyc=20, i_cc=0.001, i_cyc=50,
+                     mu_step=1.0, sigma_step=1.0, nu_step=1.0, tau_step=1.0,
+                     autostep=true, gd_tol=Inf, trace=false,
+                     sp_method=:efs, gaic_k=2.0)
+
+Construct a [`GamlssControl`](@ref) with default or custom fitting parameters.
+
+# Arguments
+- `c_crit`: global deviance convergence criterion
+- `n_cyc`: maximum outer iterations
+- `i_cc`: inner convergence criterion for RS/CG steps
+- `i_cyc`: maximum inner iterations for CG
+- `mu_step`, `sigma_step`, `nu_step`, `tau_step`: step sizes per distribution parameter
+- `autostep`: enable automatic step halving when deviance increases
+- `gd_tol`: global deviance tolerance
+- `trace`: print iteration progress
+- `sp_method`: smoothing parameter method — `:efs`, `:local_ml`, `:local_gaic`, or `:local_gcv`
+- `gaic_k`: penalty multiplier for GAIC (`2.0` = AIC, `log(n)` = BIC)
+
+# Returns
+- A `GamlssControl` instance.
+
+# Examples
+```julia
+ctrl = gamlss_control(n_cyc=50, trace=true)
+m = gamlss(formulas, data, family; gamlss_ctrl=ctrl)
+```
+"""
 function gamlss_control(; c_crit::Real=0.001, n_cyc::Int=20,
                           i_cc::Real=0.001, i_cyc::Int=50,
                           mu_step::Real=1.0, sigma_step::Real=1.0,
