@@ -95,7 +95,8 @@ import Distributions: Poisson
         reval("df_r <- data.frame(x=x, y=yf, group=factor(group_str))")
         reval("m_r <- gamm(y ~ s(x), random=list(group=~1), family=poisson(), data=df_r)")
         reval("re_r <- unlist(ranef(m_r\$lme)\$group)")
-        reval("fitted_r <- fitted(m_r\$gam)")
+        # Use full fitted values from lme (includes RE), on response scale
+        reval("fitted_r <- exp(as.numeric(fitted(m_r\$lme)))")
 
         re_r = rcopy(reval("re_r"))
         fitted_r = rcopy(reval("fitted_r"))
@@ -107,12 +108,10 @@ import Distributions: Poisson
         # Julia and R random effects should be correlated
         @test cor(est_jl, re_r) > 0.99
 
-        # Fitted values should be correlated (on response scale)
-        # Note: Julia uses PIRLS+REML while R uses PQL via nlme — different
-        # algorithms explain why fitted correlation is lower than RE correlation.
-        # The RE estimates match at >0.99 confirming correct implementation.
+        # Fitted values should be correlated (on response scale, including RE)
+        # Both Julia and R use PQL, so full fitted values should match closely.
         fit_jl = fitted(m_jl)
-        @test cor(fit_jl, fitted_r) > 0.90
+        @test cor(fit_jl, fitted_r) > 0.99
     end
 
     # ========================================================================
