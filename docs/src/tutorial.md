@@ -99,3 +99,80 @@ ctrl = gam_control(
 
 m = gam(@gam_formula(y ~ s(x)), df; control=ctrl)
 ```
+
+## GAMLSS: Location-Scale Models
+
+Model both the mean and variance as smooth functions of covariates. See
+[GAMLSS](@ref) for full details.
+
+```julia
+using GAM, DataFrames
+
+n = 500
+x = range(0, 2π; length=n) |> collect
+y = sin.(x) .+ (0.1 .+ 0.3 .* abs.(cos.(x))) .* randn(n)
+df = DataFrame(x=x, y=y)
+
+m = gamlss(
+    @gam_formula(y ~ s(x, k=15, bs=:cr)),        # location (μ)
+    @gam_formula(~ s(x, k=10, bs=:cr)),           # scale (σ)
+    df;
+    family=GaussianLS(),
+)
+```
+
+## SCAM: Shape-Constrained Models
+
+Enforce monotonicity or convexity constraints. See [Shape Constraints (SCAM)](@ref).
+
+```julia
+# Monotone increasing fit
+m = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), df)
+
+# Convex fit
+m = scam(@gam_formula(y ~ s(x, k=15, bs=:cx)), df)
+```
+
+## QGAM: Quantile Regression
+
+Estimate conditional quantiles. See [Quantile Regression (QGAM)](@ref).
+
+```julia
+# Fit median regression
+m50 = qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df; qu=0.5)
+
+# Fit multiple quantiles at once
+fits = mqgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df;
+    qu=[0.1, 0.25, 0.5, 0.75, 0.9])
+m10 = qdo(fits, 0.1)   # extract individual quantile model
+```
+
+## BAM: Large Datasets
+
+Memory-efficient fitting for large n. See [Large Data (BAM)](@ref).
+
+```julia
+n = 100_000
+x = rand(n)
+y = sin.(2π .* x) .+ 0.3 .* randn(n)
+big_df = DataFrame(x=x, y=y)
+
+m = bam(@gam_formula(y ~ s(x, k=20, bs=:cr)), big_df)
+```
+
+## Diagnostics
+
+GAM.jl provides gratia-style diagnostic functions. See [Diagnostics](@ref).
+
+```julia
+m = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+
+# Residual diagnostics
+gam_check(m)
+
+# Evaluate smooth on a grid
+se = smooth_estimates(m)
+
+# Derivatives of smooth functions
+d = derivatives(m)
+```
