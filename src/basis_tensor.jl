@@ -286,8 +286,12 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
     end
 
     # 4. For ti(): keep only interaction columns
+    #    R mgcv overrides marginal null_dim to 1 for ti() — only the constant is
+    #    treated as "null space" so that ti() removes main effects (constant-valued
+    #    in one marginal) but keeps linear×linear and higher interactions.
     if interaction_only
-        keep_cols = _ti_select_columns(marginal_dims, marginal_null_dims)
+        ti_null_dims = fill(1, d)
+        keep_cols = _ti_select_columns(marginal_dims, ti_null_dims)
         if !isempty(keep_cols)
             X_tensor = X_tensor[:, keep_cols]
             penalties = [S[keep_cols, keep_cols] for S in penalties]
@@ -331,9 +335,12 @@ function _predict_matrix(::Union{TensorProduct, TensorInteraction},
     X_tensor = _row_kronecker(marginal_Xs)
 
     if interaction_only
-        # Use original training dimensions for consistency
+        # Use null_dim=1 per marginal (matching R's ti() convention: only
+        # the constant is in the null space for interaction column selection)
+        d = length(raw_marginals)
+        ti_null_dims = fill(1, d)
         orig_dims = [size(rm.X, 2) for rm in raw_marginals]
-        keep_cols = _ti_select_columns(orig_dims, marginal_null_dims)
+        keep_cols = _ti_select_columns(orig_dims, ti_null_dims)
         if !isempty(keep_cols) && length(keep_cols) <= size(X_tensor, 2)
             X_tensor = X_tensor[:, keep_cols]
         end

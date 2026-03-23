@@ -86,7 +86,7 @@ R"library(scam)"
         fitted_r = rcopy(R"fitted_r")
 
         m_jl = scam(@gam_formula(y ~ s(x, bs = :cv, k = 10)), DataFrame(x = x, y = y))
-        @test cor(m_jl.fitted_values, fitted_r) > 0.98
+        @test cor(m_jl.fitted_values, fitted_r) > 0.99
     end
 
     @testset "MICX fitted values match R" begin
@@ -127,6 +127,6 @@ R"library(scam)"
 
         m_jl = scam(@gam_formula(y_f ~ s(x, bs = :mpi, k = 10)),
             DataFrame(x = x, y_f = y_f); family = Poisson())
-        @test cor(m_jl.fitted_values, fitted_r) > 0.95
+        @test cor(m_jl.fitted_values, fitted_r) > 0.99
     end
 end

@@ -52,8 +52,10 @@ using GLM: LogLink
         @test c > 0.99
         println("smooth_estimates correlation: $c")
 
-        # SE should be in similar range
-        @test cor(se_jl_vals, se_r) > 0.9
+        # SE should be highly correlated
+        # (Small differences due to smoothing parameter optimization converging
+        # to slightly different optima between Julia and R)
+        @test cor(se_jl_vals, se_r) > 0.98
     end
 
     # ─── derivatives comparison ──────────────────────────────────────────
@@ -117,7 +119,8 @@ using GLM: LogLink
         @test cor(mean_coef, m_jl.coefficients) > 0.99
 
         # Julia Vp should be close to R vcov
-        @test cor(vec(m_jl.Vp), vec(vcov_r)) > 0.95
+        # (Differences reflect slightly different smoothing parameter optima)
+        @test cor(vec(m_jl.Vp), vec(vcov_r)) > 0.96
     end
 
     # ─── fitted_samples on shared data ───────────────────────────────────

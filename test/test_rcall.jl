@@ -201,7 +201,7 @@ end
 
         @test abs(m.edf_total - rs[:edf]) < 2.0
         @test abs(m.deviance_val - rs[:deviance]) / rs[:deviance] < 0.1
-        @test cor(m.fitted_values, rs[:fitted]) > 0.98
+        @test cor(m.fitted_values, rs[:fitted]) > 0.99
     end
 
     # ──────────────────────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ end
 
         @test abs(m.edf_total - rs[:edf]) < 2.0
         @test abs(m.deviance_val - rs[:deviance]) / max(rs[:deviance], 1.0) < 0.1
-        @test cor(m.fitted_values, rs[:fitted]) > 0.98
+        @test cor(m.fitted_values, rs[:fitted]) > 0.99
     end
 
     # ──────────────────────────────────────────────────────────────────────

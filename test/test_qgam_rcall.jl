@@ -123,7 +123,7 @@ R"library(qgam); library(mgcv)"
         fit_jl = gam(@gam_formula(y ~ s(x, bs=:cr, k=10)), (y=y, x=x); family=elf)
 
         @test fit_jl.converged
-        @test cor(fit_jl.fitted_values, fitted_r) > 0.95
+        @test cor(fit_jl.fitted_values, fitted_r) > 0.99
     end
 
     @testset "pinball loss matches R" begin
