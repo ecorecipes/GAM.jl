@@ -1,5 +1,7 @@
 name = "GAM"
 uuid = "f5b95e24-6450-466f-92b1-fee0c65c0d6b"
+authors = ["Simon Frost <sdwfrost@gmail.com>"]
+repo = "https://github.com/ecorecipes/GAM.jl"
 version = "0.1.0-DEV"
 
 [deps]
