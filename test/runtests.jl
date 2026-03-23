@@ -799,3 +799,14 @@ end
 @eval include("test_loess.jl")
 
 @eval include("test_fp.jl")
+
+# SPDE Matérn smooth tests
+@eval include("test_spde.jl")
+
+# SPDE R comparison tests (uses pre-generated CSV data, not RCall)
+try
+    @eval using CSV
+    @eval include("test_spde_rcall.jl")
+catch e
+    @warn "Skipping SPDE R comparison tests (CSV not available)" exception = e
+end
