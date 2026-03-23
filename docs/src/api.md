@@ -32,7 +32,13 @@ CubicSpline
 CubicShrink
 CyclicCubic
 PSpline
+CyclicPSpline
 BSplineBasis
+GPSmooth
+DuchonSpline
+MarkovRandomField
+SoapFilm
+FactorSmooth
 RandomEffect
 TensorProduct
 TensorInteraction
@@ -47,12 +53,98 @@ TweedieFamily
 BetaFamily
 ```
 
+## BAM (Large Data)
+
+```@docs
+bam
+bam_control
+BamControl
+```
+
+## GAMLSS (Distributional Regression)
+
+```@docs
+gamlss
+GamlssControl
+GAM.GaussianLS
+GAM.GammaLocationScale
+GAM.BetaRegression
+GAM.NegativeBinomialLocationScale
+GAM.InverseGaussianLocationScale
+GAM.DistFamily
+```
+
+## SCAM (Shape Constraints)
+
+```@docs
+scam
+scam_control
+ScamControl
+```
+
+## QGAM (Quantile Regression)
+
+```@docs
+qgam
+mqgam
+qdo
+GAM.ELFFamily
+GAM.ELFLSSFamily
+```
+
+## evgam (Extreme Values)
+
+```@docs
+evgam
+GAM.GEVFamily
+GAM.GPDFamily
+GAM.MultiParameterFamily
+```
+
+## GAMM (Mixed Models)
+
+```@docs
+gamm
+GammModel
+GAM.@gamm_formula
+ranef
+VarCorr
+```
+
+## GINLA
+
+```@docs
+ginla
+GinlaResult
+```
+
+## Bayesian Inference
+
+```@docs
+BayesGamModel
+smooth2random
+PriorSpec
+```
+
 ## Diagnostics
 
 ```@docs
 gam_check
 k_check
 concurvity
+```
+
+## Gratia-Style Diagnostics
+
+```@docs
+smooth_estimates
+derivatives
+partial_residuals
+posterior_samples
+fitted_samples
+appraise
+rootogram
+data_slice
 ```
 
 ## Visualization
@@ -70,3 +162,9 @@ ML
 GCV
 UBRE
 ```
+
+## Side Constraints
+
+Side constraints (`gam.side`) are applied internally to enforce identifiability
+when smooth terms overlap with parametric terms or with each other. They are not
+typically called directly by users.

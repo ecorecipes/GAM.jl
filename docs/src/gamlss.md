@@ -1,0 +1,119 @@
+# GAMLSS
+
+Generalized Additive Models for Location, Scale, and Shape (GAMLSS) extend
+standard GAMs by modeling multiple distribution parameters as smooth functions
+of covariates. While a standard GAM models only the mean (location), GAMLSS
+simultaneously models the variance (scale) and potentially higher parameters (shape).
+
+## When to Use GAMLSS
+
+- **Heteroscedastic data**: variance changes with covariates
+- **Non-standard distributions**: where shape parameters vary
+- **Distributional regression**: full predictive distributions, not just means
+
+## Supported Families
+
+| Family | Parameters | Description |
+|--------|-----------|-------------|
+| `GaussianLS()` | μ, σ | Normal with varying mean and variance |
+| `GammaLocationScale()` | μ, σ | Gamma with varying location and scale |
+| `BetaRegression()` | μ, φ | Beta with varying mean and precision |
+| `NegativeBinomialLocationScale()` | μ, θ | Negative binomial with varying mean and shape |
+| `InverseGaussianLocationScale()` | μ, σ | Inverse Gaussian with varying location and scale |
+
+Custom families can be created using `DistFamily`.
+
+## Interface
+
+```julia
+gamlss(formula_location, formula_scale, data;
+    family = GaussianLS(),
+    control = GamlssControl(),
+    method = :REML,
+)
+```
+
+Each distribution parameter gets its own formula. The location formula includes
+the response variable; subsequent formulas specify only the right-hand side.
+
+## Solvers
+
+GAMLSS uses an outer iteration over distribution parameters with inner GAM fits:
+
+- **RS** (Rigby-Stasinopoulos): default algorithm, updates each parameter in turn
+- **CG** (Cole-Green): uses the full joint Hessian for faster convergence
+
+Set via `GamlssControl(solver=:RS)` or `GamlssControl(solver=:CG)`.
+
+## Smoothing Parameter Estimation
+
+| Method | Description |
+|--------|-------------|
+| `:efs` | Extended Fellner-Schall (default) — fast, usually robust |
+| `:local_ml` | Local ML estimation at each outer step |
+| `:local_gaic` | Local GAIC-based estimation |
+| `:local_gcv` | Local GCV-based estimation |
+
+## Examples
+
+### Gaussian Location-Scale
+
+```julia
+using GAM, DataFrames
+
+n = 500
+x = range(0, 2π; length=n) |> collect
+# Mean varies as sin(x), variance increases with |cos(x)|
+y = sin.(x) .+ (0.1 .+ 0.3 .* abs.(cos.(x))) .* randn(n)
+df = DataFrame(x=x, y=y)
+
+m = gamlss(
+    @gam_formula(y ~ s(x, k=15, bs=:cr)),    # μ model
+    @gam_formula(~ s(x, k=10, bs=:cr)),       # log(σ) model
+    df;
+    family=GaussianLS(),
+)
+```
+
+### Gamma Location-Scale
+
+```julia
+x = range(0.1, 3.0; length=500) |> collect
+mu = exp.(0.5 .* x)
+sigma = 0.2 .+ 0.1 .* x
+y = [rand(Gamma(mu[i]^2 / sigma[i]^2, sigma[i]^2 / mu[i])) for i in 1:500]
+df = DataFrame(x=x, y=y)
+
+m = gamlss(
+    @gam_formula(y ~ s(x, k=15, bs=:cr)),
+    @gam_formula(~ s(x, k=10, bs=:cr)),
+    df;
+    family=GammaLocationScale(),
+)
+```
+
+### Controlling the Fit
+
+```julia
+ctrl = GamlssControl(
+    solver = :RS,           # RS or CG algorithm
+    maxit = 50,             # max outer iterations
+    epsilon = 1e-7,         # convergence tolerance
+    sp_method = :efs,       # smoothing parameter method
+    trace = true,           # print progress
+)
+
+m = gamlss(
+    @gam_formula(y ~ s(x, k=15)),
+    @gam_formula(~ s(x, k=10)),
+    df;
+    family=GaussianLS(),
+    control=ctrl,
+)
+```
+
+## See Also
+
+- [Families & Models](@ref) for the full family list
+- [Getting Started](@ref) for a quick GAMLSS example
+- [API Reference](@ref) for `gamlss`, `GamlssControl`, and family types
