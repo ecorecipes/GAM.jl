@@ -481,6 +481,144 @@ function _fit_gamm_lams(y, X_gam, smooths, n_parametric,
     # Keep the full model for now but wrap it
     return GammModel(gam_model, random_effects, re_coefs, re_vars)
 end
+
+# ============================================================================
+# PQL backend — Penalized Quasi-Likelihood (matches R's gamm() for non-Gaussian)
+# ============================================================================
+
+"""
+    _fit_gamm_pql(y, X_gam, smooths, n_parametric, random_effects,
+                  f, data, family, link, method, weights, control) → GammModel
+
+Fit a non-Gaussian GAMM via Penalized Quasi-Likelihood (PQL), matching the
+algorithm used by R's `mgcv::gamm()` which calls `MASS::glmmPQL`.
+
+PQL iterates between:
+1. Computing GLM working response z and working weights W
+2. Fitting a Gaussian GAMM (via LAMS) to the working model
+
+This provides closer agreement with R's `gamm()` for non-Gaussian families
+than the direct PIRLS+REML approach used by `_fit_gamm_lams`.
+
+Reference: Breslow & Clayton (1993). JASA 88:9-25.
+"""
+function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
+    random_effects::Vector{ConstructedRandomEffect},
+    f, data, family, link, method, weights, control)
+
+    n = length(y)
+    w_prior = weights !== nothing ? Float64.(weights) : ones(n)
+
+    # Initialize from a GLM fit (ignoring random effects)
+    η = zeros(n)
+    μ = zeros(n)
+
+    # Start with intercept-only: μ = mean(y), η = g(μ)
+    y_mean = mean(y)
+    # Clamp for safety with link functions
+    if family isa Poisson
+        y_mean = max(y_mean, 0.1)
+    elseif family isa Binomial
+        y_mean = clamp(y_mean, 0.01, 0.99)
+    elseif family isa Gamma
+        y_mean = max(y_mean, 0.01)
+    end
+    fill!(μ, y_mean)
+    fill!(η, GLM.linkfun(link, y_mean))
+
+    # PQL iteration settings
+    max_pql_iter = 20
+    pql_tol = 1e-6
+
+    prev_coefs = Float64[]
+    gamm_result = nothing
+
+    for pql_iter in 1:max_pql_iter
+        # Step 1: Compute working response and weights
+        z = zeros(n)    # working response
+        w = zeros(n)    # working weights
+
+        @inbounds for i in 1:n
+            dm = GLM.mueta(link, η[i])        # dμ/dη = g'⁻¹(η)
+            dm = clamp(dm, 1e-10, 1e10)
+            vm = _variance_scalar(family, μ[i])
+            vm = max(vm, 1e-10)
+
+            # Working response: z = η + (y - μ) / (dμ/dη)
+            z[i] = η[i] + (y[i] - μ[i]) / dm
+
+            # Working weights: w = prior_w * (dμ/dη)² / V(μ)
+            w[i] = clamp(w_prior[i] * dm * dm / vm, 1e-10, 1e10)
+        end
+
+        # Step 2: Fit Gaussian GAMM to working response z with weights w
+        gamm_result = _fit_gamm_lams(z, X_gam, smooths, n_parametric,
+            random_effects, f, data, Normal(), IdentityLink(), method, w, control)
+
+        # Step 3: Extract updated linear predictor
+        gm = gamm_result.gam_model
+        β_all = StatsAPI.coef(gm)
+        p_gam = size(X_gam, 2)
+        β_gam = β_all[1:p_gam]
+        η_new = X_gam * β_gam
+
+        # Add random effect contributions
+        for (i, cre) in enumerate(random_effects)
+            η_new .+= cre.Z * gamm_result.random_coefs[i]
+        end
+
+        # Update μ from η
+        μ_new = GLM.linkinv.(Ref(link), η_new)
+
+        # Check convergence
+        current_coefs = β_all
+        if !isempty(prev_coefs) && length(prev_coefs) == length(current_coefs)
+            max_change = maximum(abs.(current_coefs .- prev_coefs) ./
+                                 max.(abs.(prev_coefs), 1e-8))
+            if max_change < pql_tol
+                η .= η_new
+                μ .= μ_new
+                break
+            end
+        end
+
+        prev_coefs = copy(current_coefs)
+        η .= η_new
+        μ .= μ_new
+    end
+
+    # Final result: update fitted values to response scale
+    if gamm_result !== nothing
+        gm = gamm_result.gam_model
+        # Recompute fitted values on response scale
+        β_all = StatsAPI.coef(gm)
+        p_gam = size(X_gam, 2)
+        η_final = X_gam * β_all[1:p_gam]
+        for (i, cre) in enumerate(random_effects)
+            η_final .+= cre.Z * gamm_result.random_coefs[i]
+        end
+        μ_final = GLM.linkinv.(Ref(link), η_final)
+
+        # Create a new GamModel with correct family, link, and fitted values
+        gm_pql = GamModel(
+            gm.formula, y, gm.X, gm.coefficients,
+            μ_final, η_final, gm.weights,
+            family, link,
+            gm.smooths, gm.penalty, gm.sp, gm.edf, gm.edf_total,
+            gm.scale, gm.deviance_val, gm.null_deviance, gm.reml,
+            gm.method, gm.Vp, gm.Ve, gm.hat_matrix_diag, gm.R,
+            gm.converged, gm.iterations, gm.n_smooth, gm.n_parametric,
+            gm.control, gm.data)
+
+        return GammModel(gm_pql, random_effects,
+                         gamm_result.random_coefs, gamm_result.random_vars)
+    end
+
+    # Fallback: return LAMS result
+    return _fit_gamm_lams(y, X_gam, smooths, n_parametric,
+        random_effects, f, data, family, link, method, weights, control)
+end
+
 # ============================================================================
 # Formula parsing for random effects
 # ============================================================================
@@ -1012,6 +1150,12 @@ function gamm(f::FormulaTerm, data;
     # MixedModels.jl backend dispatch
     if backend == :MixedModels
         return _fit_gamm_mm(y, X, smooths, n_parametric, random_effects,
+            f, data, family, link_eff, method, weights, control)
+    end
+
+    # PQL backend: use for non-Gaussian, or when explicitly requested
+    if backend == :PQL || (backend == :LAMS && !(family isa Normal))
+        return _fit_gamm_pql(y, X, smooths, n_parametric, random_effects,
             f, data, family, link_eff, method, weights, control)
     end
 
