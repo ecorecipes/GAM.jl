@@ -102,6 +102,7 @@ export
     MarkovRandomField,
     SphericalSpline,
     ConstrainedFactorSmooth,
+    SPDESmooth,
 
     # Smooth construction
     smooth_construct,
@@ -274,6 +275,7 @@ include("basis_loess.jl")
 include("basis_fp.jl")
 include("basis_extra.jl")
 include("basis_sphere.jl")
+include("basis_spde.jl")
 include("basis_sz.jl")
 include("basis_scam.jl")
 include("penalty.jl")
