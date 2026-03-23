@@ -64,7 +64,7 @@ import Distributions: Poisson
         # Fitted values should be highly correlated
         # (fitted includes both smooth + RE contributions)
         fit_jl = fitted(m_jl)
-        @test cor(fit_jl, fitted_r) > 0.95
+        @test cor(fit_jl, fitted_r) > 0.99
     end
 
     # ========================================================================
@@ -105,12 +105,14 @@ import Distributions: Poisson
         @test cor(re_r, true_re) > 0.7
 
         # Julia and R random effects should be correlated
-        @test cor(est_jl, re_r) > 0.7
+        @test cor(est_jl, re_r) > 0.99
 
         # Fitted values should be correlated (on response scale)
-        # Note: Julia uses PIRLS+REML, R uses PQL — different algorithms
+        # Note: Julia uses PIRLS+REML while R uses PQL via nlme — different
+        # algorithms explain why fitted correlation is lower than RE correlation.
+        # The RE estimates match at >0.99 confirming correct implementation.
         fit_jl = fitted(m_jl)
-        @test cor(fit_jl, fitted_r) > 0.85
+        @test cor(fit_jl, fitted_r) > 0.90
     end
 
     # ========================================================================
@@ -147,8 +149,8 @@ import Distributions: Poisson
         fit_gamm = fitted(m_gamm)
         fit_gam_re = fitted(m_gam_re)
 
-        @test cor(fit_gamm, fit_gam_re) > 0.95
-        @test cor(fit_gamm, fitted_r_vec) > 0.95
+        @test cor(fit_gamm, fit_gam_re) > 0.99
+        @test cor(fit_gamm, fitted_r_vec) > 0.99
         @test cor(fit_gam_re, fitted_r_vec) > 0.99
 
         # Scale estimates should be similar
@@ -196,7 +198,7 @@ import Distributions: Poisson
 
         # Fitted values should be well correlated
         fit_jl = fitted(m_jl)
-        @test cor(fit_jl, fitted_r) > 0.90
+        @test cor(fit_jl, fitted_r) > 0.99
 
         # Both Julia and R should recover reasonable variance components
         @test vc_jl[1].std > 0.0
@@ -248,7 +250,7 @@ import Distributions: Poisson
 
         # Fitted values should be well correlated
         fit_jl = fitted(m_jl)
-        @test cor(fit_jl, fitted_r) > 0.90
+        @test cor(fit_jl, fitted_r) > 0.99
 
         # Both should have positive variance components
         @test vc_jl[1].variance > 0.0  # site

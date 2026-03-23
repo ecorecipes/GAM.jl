@@ -221,7 +221,7 @@ library(egpd)
         # Fitted log-scale should be correlated with R
         lpsi_fitted_jl = GAM.param_eta(m, 1)
         corr = cor(lpsi_fitted_jl, Float64.(lpsi_fitted_r))
-        @test corr > 0.9
+        @test corr > 0.95
 
         # Shape and kappa intercepts should be similar
         @test abs(GAM.param_coef(m, 2)[1] - xi_fitted_r) < 0.15

@@ -76,6 +76,6 @@ using StatsAPI
 
         # Fitted values correlate reasonably with R despite different ti() dimensions
         # (Julia ti(k=25) → 8 cols vs R ti(k=c(5,5)) → 16 cols)
-        @test cor(m.fitted_values, ref_fit.fitted) > 0.85
+        @test cor(m.fitted_values, ref_fit.fitted) > 0.99
     end
 end
