@@ -160,6 +160,30 @@ function total_penalty(penalty::PenaltySetup, log_sp::AbstractVector, p::Int)
 end
 
 """
+    total_penalty!(S_total, penalty, log_sp, p) -> S_total
+
+In-place version of [`total_penalty`](@ref) for Float64 smoothing parameters.
+Zeroes `S_total` and accumulates Σ λ_j S_j into it, avoiding allocation.
+"""
+function total_penalty!(S_total::Matrix{Float64}, penalty::PenaltySetup,
+    log_sp::Vector{Float64}, p::Int)
+    fill!(S_total, 0.0)
+    sp_idx = 1
+
+    for block in penalty.blocks
+        idx = block.start:block.stop
+        for Si in block.S
+            λ = exp(log_sp[sp_idx])
+            @inbounds for j in eachindex(idx), k in eachindex(idx)
+                S_total[idx[j], idx[k]] += λ * Si[j, k]
+            end
+            sp_idx += 1
+        end
+    end
+    return S_total
+end
+
+"""
     penalty_edf(X, W, S_total; XtWX=nothing, A_chol=nothing) -> (edf_vec, hat_diag)
 
 Compute effective degrees of freedom and hat matrix diagonal.

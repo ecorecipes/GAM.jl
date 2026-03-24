@@ -62,11 +62,15 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     end
 
     A_buf = zeros(p, p)
+    A_buf_copy = zeros(p, p)
+    Ainv_buf = zeros(p, p)
+    S_total = zeros(p, p)
+    XtWX_cur_buf = zeros(p, p)
     efs_mult = 1.0  # Step multiplier for EFS (reduced on failed steps)
 
     for outer_iter in 1:(control.outer_maxit)
         # Inner: P-IRLS for current smoothing parameters
-        S_total = total_penalty(penalty, log_sp, p)
+        total_penalty!(S_total, penalty, log_sp, p)
 
         if is_gaussian_identity
             # Direct solve — no IRLS iteration, no O(np²) recompute
@@ -105,8 +109,14 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         else
             _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n, Xw_buf)
         end
-        A_chol = cholesky(Symmetric(copy(A_buf)))
-        Ainv = inv(A_chol)
+        copyto!(A_buf_copy, A_buf)
+        A_chol = cholesky!(Symmetric(A_buf_copy))
+        fill!(Ainv_buf, 0.0)
+        @inbounds for i in 1:p
+            Ainv_buf[i, i] = 1.0
+        end
+        ldiv!(A_chol, Ainv_buf)
+        Ainv = Ainv_buf
 
         log_sp_new = copy(log_sp)
         max_change = 0.0
@@ -128,13 +138,15 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             if outer_iter > 1 && max_change > control.epsilon
                 # Reuse A_buf which already contains XtWX + S_total;
                 # extract XtWX = A_buf - S_total
-                XtWX_cur = A_buf .- S_total
+                @inbounds for j in 1:p, k in 1:p
+                    XtWX_cur_buf[j, k] = A_buf[j, k] - S_total[j, k]
+                end
 
                 ls = _log_saturated_likelihood(family, y, weights, scale_est)
-                reml_old = _conditional_reml(log_sp, XtWX_cur, beta, dev,
+                reml_old = _conditional_reml(log_sp, XtWX_cur_buf, beta, dev,
                     penalty, scale_est, n, p, edf_total, method,
                     control.gamma, ls)
-                reml_new = _conditional_reml(log_sp_new, XtWX_cur, beta, dev,
+                reml_new = _conditional_reml(log_sp_new, XtWX_cur_buf, beta, dev,
                     penalty, scale_est, n, p, edf_total, method,
                     control.gamma, ls)
 
@@ -144,7 +156,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
                         efs_mult *= 0.5
                         log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
                             scale_est, efs_mult)
-                        reml_new = _conditional_reml(log_sp_new, XtWX_cur,
+                        reml_new = _conditional_reml(log_sp_new, XtWX_cur_buf,
                             beta, dev, penalty, scale_est, n, p, edf_total,
                             method, control.gamma, ls)
                         reml_new <= reml_old + control.epsilon * abs(reml_old) &&
@@ -179,7 +191,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
     # Final solve with converged parameters
     penalty.sp .= log_sp
-    S_total = total_penalty(penalty, log_sp, p)
+    total_penalty!(S_total, penalty, log_sp, p)
     if is_gaussian_identity
         final_result = pirls_gaussian(X, y, S_total, XtWX_cached, Xty_cached;
             weights = weights)
@@ -295,10 +307,14 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     prev_dev = Inf
     Xw_buf = similar(X)
     A_buf = zeros(p, p)
+    A_buf_copy = zeros(p, p)
+    Ainv_buf = zeros(p, p)
+    S_total = zeros(p, p)
+    penalty_buf = zeros(p)
     efs_mult = 1.0
 
     for outer_iter in 1:(control.outer_maxit)
-        S_total = total_penalty(penalty, log_sp, p)
+        total_penalty!(S_total, penalty, log_sp, p)
 
         pirls_start = prev_result === nothing ? start : prev_result.coefficients
         result = pirls_extended(X, y, S_total, family, link;
@@ -320,8 +336,14 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
         # Build A = X'WX + S and compute Ainv for EFS
         _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n, Xw_buf)
-        A_chol = cholesky(Symmetric(copy(A_buf)))
-        Ainv = inv(A_chol)
+        copyto!(A_buf_copy, A_buf)
+        A_chol = cholesky!(Symmetric(A_buf_copy))
+        fill!(Ainv_buf, 0.0)
+        @inbounds for i in 1:p
+            Ainv_buf[i, i] = 1.0
+        end
+        ldiv!(A_chol, Ainv_buf)
+        Ainv = Ainv_buf
 
         # EFS update
         log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
@@ -340,8 +362,10 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
                     sp_idx += 1
                 end
             end
-            pdev_old = prev_dev + dot(prev_result.coefficients,
-                total_penalty(penalty, log_sp, p) * prev_result.coefficients)
+            pdev_old = prev_dev + begin
+                mul!(penalty_buf, S_total, prev_result.coefficients)
+                dot(prev_result.coefficients, penalty_buf)
+            end
             pdev_new = dev + bSb
 
             if pdev_new > pdev_old + control.epsilon * abs(pdev_old)
@@ -387,7 +411,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
     # Final P-IRLS with converged parameters
     penalty.sp .= log_sp
-    S_total = total_penalty(penalty, log_sp, p)
+    total_penalty!(S_total, penalty, log_sp, p)
     final_result = pirls_extended(X, y, S_total, family, link;
         weights = weights, start = prev_result.coefficients,
         control = control)
