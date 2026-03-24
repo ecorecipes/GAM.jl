@@ -12,6 +12,16 @@ Construct a smooth basis from the specification and data. Returns a
 - `knots`: optional pre-specified knot locations
 """
 function smooth_construct(spec::SmoothSpec{B}, data, knots = nothing) where {B}
+    # Validate smooth term data before construction
+    t = Tables.columntable(data)
+    for var in spec.term_vars
+        if var in Tables.columnnames(t)
+            col = Tables.getcolumn(t, var)
+            if eltype(col) <: Real
+                _validate_smooth_data(Float64.(col), var)
+            end
+        end
+    end
     return _smooth_construct(spec.basis, spec, data, knots)
 end
 

@@ -775,6 +775,7 @@ function gamlss(formulas, data, family::UnivariateDistribution;
     nsamples::Int = 2000,
     nchains::Int = 4)
 
+    _validate_data_lengths(data)
     _validate_gamlss_family(family)
     K = _gamlss_nparams(family)
     actual_links = links === nothing ? _gamlss_default_links(family) : links
@@ -802,6 +803,9 @@ function gamlss(formulas, data, family::MultiParameterFamily;
     sampler::Any = nothing,
     nsamples::Int = 2000,
     nchains::Int = 4)
+
+    _validate_data_lengths(data)
+    _validate_gamlss_formulas(formulas, family)
 
     if priors !== nothing
         return _fit_gamlss_bayes(formulas, data, family, priors;

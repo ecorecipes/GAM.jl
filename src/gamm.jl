@@ -1020,6 +1020,11 @@ function gamm(gf::GammFormula, data;
     nsamples::Int = 2000,
     nchains::Int = 4)
 
+    # Input validation
+    _validate_data_lengths(data)
+    _validate_response_in_data(gf.gam_formula.response, data)
+    _validate_formula_smooths(gf.gam_formula.smooth_specs, data)
+    _validate_gamm_random_effects(gf.random_effects, data)
     _validate_gam_family(family)
     link_eff = link === nothing ? GLM.canonicallink(family) : link
     _validate_link(link_eff, family)
@@ -1033,6 +1038,7 @@ function gamm(gf::GammFormula, data;
 
     # Setup GAM part (smooths + parametric)
     y, X, X_para, smooths, n_parametric = setup_gam(gf.gam_formula, data; family = family)
+    _validate_response(y, family)
 
     # Build random effects
     random_effects = [construct_random_effect(re, data) for re in gf.random_effects]
@@ -1062,6 +1068,8 @@ function gamm(f::FormulaTerm, data;
     nsamples::Int = 2000,
     nchains::Int = 4)
 
+    # Input validation
+    _validate_data_lengths(data)
     _validate_gam_family(family)
     link_eff = link === nothing ? GLM.canonicallink(family) : link
     _validate_link(link_eff, family)
@@ -1069,6 +1077,7 @@ function gamm(f::FormulaTerm, data;
     t = Tables.columntable(data)
     resp_col = f.lhs isa Term ? f.lhs.sym : error("LHS must be a single term")
     y = Float64.(Tables.getcolumn(t, resp_col))
+    _validate_response(y, family)
     n = length(y)
 
     rhs_terms = _flatten_rhs(f.rhs)

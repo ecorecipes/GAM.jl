@@ -716,6 +716,12 @@ function scam(gf::GamFormula, data;
     nsamples::Int = 2000,
     nchains::Int = 4)
 
+    # Input validation
+    _validate_data_lengths(data)
+    _validate_response_in_data(gf.response, data)
+    _validate_has_smooths(gf.smooth_specs)
+    _validate_scam_has_constraints(gf.smooth_specs)
+    _validate_formula_smooths(gf.smooth_specs, data)
     _validate_gam_family(family)
     link_eff = link === nothing ? GLM.canonicallink(family) : link
     _validate_link(link_eff, family)
@@ -732,6 +738,7 @@ function scam(gf::GamFormula, data;
         throw(ArgumentError("method must be :GCV, :UBRE, or :REML, got :$method"))
 
     y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
+    _validate_response(y, family)
     f = term(gf.response) ~ term(1)
     n, p = size(X)
 
