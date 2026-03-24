@@ -309,4 +309,16 @@ function _extract_x(m::GAM.GamModel, sm::GAM.ConstructedSmooth)
     return X_s[:, col]
 end
 
+# ─── VisGamData recipe (2D surface / contour) ───────────────────────────────
+
+@recipe function f(vgd::GAM.VisGamData)
+    seriestype --> :contourf
+    xguide --> vgd.x1_label
+    yguide --> vgd.x2_label
+    title --> vgd.smooth_label
+    colorbar_title --> vgd.z_label
+    fillalpha --> 0.8
+    vgd.x1, vgd.x2, vgd.z'
+end
+
 end # module
