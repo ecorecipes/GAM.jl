@@ -666,7 +666,117 @@ function scam_outer_iteration(
 end
 
 # ============================================================================
-# Main scam() function
+# Internal SCAM fitting core (called by gam() auto-detection and scam())
+# ============================================================================
+
+"""
+    _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, weights, control)
+
+Internal SCAM fitting function. Builds the global `p_ident` vector,
+runs the SCAM outer iteration (EFS + constrained PIRLS), and assembles
+the `GamModel` result. Called by `gam()` when shape constraints are
+detected and by `scam()` directly.
+"""
+function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, weights, control)
+    n, p = size(X)
+
+    # Build global p_ident
+    p_ident = build_p_ident(smooths, n_parametric, p)
+
+    if !any(p_ident)
+        # No shape constraints — fall back to standard GAM
+        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link,
+            method == :GCV ? :GCV : method == :UBRE ? :GCV : :REML,
+            :pirls, weights,
+            gam_control(
+                epsilon = control.epsilon,
+                maxit = control.maxit,
+                outer_maxit = control.outer_maxit,
+                trace = control.trace,
+                gamma = control.gamma,
+            ))
+    end
+
+    wts = weights === nothing ? ones(n) : Float64.(weights)
+    length(wts) == n || throw(DimensionMismatch(
+        "weights length $(length(wts)) ≠ data length $n"))
+
+    penalty = setup_penalties(smooths, n_parametric)
+
+    # Outer iteration
+    log_sp, result = scam_outer_iteration(X, y, smooths, penalty, family, link, p_ident;
+        method = method, weights = wts, control = control)
+
+    # Post-processing
+    edf_per_smooth = smooth_edf(result.edf_vec, smooths)
+    edf_total_val = sum(result.edf_vec)
+
+    # Covariance matrices using the effective (chain-rule corrected) design
+    Cdiag = result.Cdiag
+    X_eff = X * Diagonal(Cdiag)
+    S_total = total_penalty(penalty, log_sp, p)
+    XtWX = X_eff' * Diagonal(result.working_weights) * X_eff
+    A = XtWX + S_total
+    A_chol = try
+        cholesky(Symmetric(A))
+    catch
+        cholesky(Symmetric(A + 1e-6 * I))
+    end
+    Vp = inv(A_chol)
+    F = Vp * XtWX
+    Ve = Symmetric(F * Vp * F') |> Matrix
+
+    if _needs_scale_estimate(family)
+        scale_est = result.pearson / (n - edf_total_val)
+        Vp .*= scale_est
+        Ve .*= scale_est
+    else
+        scale_est = 1.0
+    end
+
+    null_dev = _null_deviance(family, y, wts)
+
+    # REML/GCV score
+    gcv_score = n * result.deviance / (n - control.gamma * edf_total_val)^2
+
+    return GamModel(
+        f,
+        y, X,
+        result.coefficients_t,  # store transformed (actual) coefficients
+        result.fitted_values,
+        result.linear_predictor,
+        wts,
+        family, link,
+        smooths,
+        penalty,
+        log_sp,
+        edf_per_smooth,
+        edf_total_val,
+        scale_est,
+        result.deviance,
+        null_dev,
+        gcv_score,
+        method,
+        Vp, Ve,
+        result.hat_diag,
+        result.R,
+        result.converged,
+        0,
+        length(smooths),
+        n_parametric,
+        gam_control(
+            epsilon = control.epsilon,
+            maxit = control.maxit,
+            outer_maxit = control.outer_maxit,
+            trace = control.trace,
+            gamma = control.gamma,
+        ),
+        Tables.columntable(data),
+    )
+end
+
+# ============================================================================
+# Main scam() function — convenience wrapper around gam()
 # ============================================================================
 
 """
@@ -675,6 +785,10 @@ end
 
 Fit a shape-constrained additive model (SCAM). Uses SCOP-splines for
 smooth terms with shape constraints (monotonicity, convexity/concavity).
+
+This is a convenience wrapper around `gam()` with SCAM-specific defaults.
+Calling `gam()` with shape-constrained smooth terms will automatically
+use the SCAM fitting algorithm.
 
 # Shape-constrained smooth types
 - `s(x, bs=:mpi)` — monotone increasing
@@ -697,7 +811,10 @@ n = 200
 x = sort(rand(n))
 y = 2 .* x .+ 0.5 .* x.^2 .+ 0.1 .* randn(n)
 df = DataFrame(x=x, y=y)
+
+# These are equivalent:
 m = scam(@gam_formula(y ~ s(x, bs=:mpi, k=10)), df)
+m = gam(@gam_formula(y ~ s(x, bs=:mpi, k=10)), df)
 ```
 """
 function scam(f::FormulaTerm, data; kwargs...)
@@ -740,100 +857,7 @@ function scam(gf::GamFormula, data;
     y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
     _validate_response(y, family)
     f = term(gf.response) ~ term(1)
-    n, p = size(X)
 
-    # Build global p_ident
-    p_ident = build_p_ident(smooths, n_parametric, p)
-
-    if !any(p_ident)
-        # No shape constraints — fall back to standard GAM
-        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
-            method == :GCV ? :GCV : method == :UBRE ? :GCV : :REML,
-            :pirls,
-            weights === nothing ? nothing : Float64.(weights),
-            gam_control(
-                epsilon = control.epsilon,
-                maxit = control.maxit,
-                outer_maxit = control.outer_maxit,
-                trace = control.trace,
-                gamma = control.gamma,
-            ))
-    end
-
-    wts = weights === nothing ? ones(n) : Float64.(weights)
-    length(wts) == n || throw(DimensionMismatch(
-        "weights length $(length(wts)) ≠ data length $n"))
-
-    penalty = setup_penalties(smooths, n_parametric)
-
-    # Outer iteration
-    log_sp, result = scam_outer_iteration(X, y, smooths, penalty, family, link_eff, p_ident;
-        method = method, weights = wts, control = control)
-
-    # Post-processing
-    edf_per_smooth = smooth_edf(result.edf_vec, smooths)
-    edf_total_val = sum(result.edf_vec)
-
-    # Covariance matrices using the effective (chain-rule corrected) design
-    Cdiag = result.Cdiag
-    X_eff = X * Diagonal(Cdiag)
-    S_total = total_penalty(penalty, log_sp, p)
-    XtWX = X_eff' * Diagonal(result.working_weights) * X_eff
-    A = XtWX + S_total
-    A_chol = try
-        cholesky(Symmetric(A))
-    catch
-        cholesky(Symmetric(A + 1e-6 * I))
-    end
-    Vp = inv(A_chol)
-    F = Vp * XtWX
-    Ve = Symmetric(F * Vp * F') |> Matrix
-
-    if _needs_scale_estimate(family)
-        scale_est = result.pearson / (n - edf_total_val)
-        Vp .*= scale_est
-        Ve .*= scale_est
-    else
-        scale_est = 1.0
-    end
-
-    null_dev = _null_deviance(family, y, wts)
-
-    # REML/GCV score
-    gcv_score = n * result.deviance / (n - control.gamma * edf_total_val)^2
-
-    return GamModel(
-        f,
-        y, X,
-        result.coefficients_t,  # store transformed (actual) coefficients
-        result.fitted_values,
-        result.linear_predictor,
-        wts,
-        family, link_eff,
-        smooths,
-        penalty,
-        log_sp,
-        edf_per_smooth,
-        edf_total_val,
-        scale_est,
-        result.deviance,
-        null_dev,
-        gcv_score,
-        method,
-        Vp, Ve,
-        result.hat_diag,
-        result.R,
-        result.converged,
-        0,
-        length(smooths),
-        n_parametric,
-        gam_control(
-            epsilon = control.epsilon,
-            maxit = control.maxit,
-            outer_maxit = control.outer_maxit,
-            trace = control.trace,
-            gamma = control.gamma,
-        ),
-        Tables.columntable(data),
-    )
+    return _fit_scam(y, X, smooths, n_parametric, f, data, family, link_eff,
+        method, weights, control)
 end

@@ -746,6 +746,9 @@ end
 # SCAM unit tests (no R needed)
 @eval include("test_scam.jl")
 
+# Unified gam() API dispatch tests
+@eval include("test_unified_api.jl")
+
 # Adaptive smooth tests
 @eval include("test_adaptive.jl")
 
