@@ -13,7 +13,7 @@ using DataFrames
 using Statistics
 using StatsAPI: fitted, coef, deviance, nobs
 using StableRNGs
-import Distributions: Poisson
+import Distributions: Poisson, Binomial, Gamma
 
 @testset "GAMM R Integration Tests (mgcv::gamm)" begin
 
@@ -304,5 +304,96 @@ import Distributions: Poisson
         # Residual std should also be comparable
         ratio_res = σ_res_jl / σ_res_r
         @test ratio_res > 0.3 && ratio_res < 3.0
+    end
+
+    # ========================================================================
+    # Binomial GAMM: random intercept
+    # ========================================================================
+    @testset "Binomial GAMM: random intercept vs R gamm()" begin
+        rng = StableRNG(456)
+        n_groups = 8
+        n_per = 100
+        n = n_groups * n_per
+        group = repeat(1:n_groups, inner = n_per)
+        x = randn(rng, n)
+        true_re = randn(rng, n_groups) * 0.4
+        η = 0.8 .* x .+ true_re[group]
+        p = 1.0 ./ (1.0 .+ exp.(-η))
+        y = Float64.([rand(rng) < p[i] ? 1.0 : 0.0 for i in 1:n])
+        group_str = string.(group)
+        df = DataFrame(x = x, y = y, group = group_str)
+
+        # Julia fit (default link for Binomial is LogitLink)
+        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df, Binomial())
+        re_jl = ranef(m_jl)
+        est_jl = vec(re_jl.group.effects)
+
+        # R fit
+        @rput x y group_str
+        reval("library(mgcv); library(MASS)")
+        reval("df_r <- data.frame(x=x, y=y, group=factor(group_str))")
+        reval("m_r <- gamm(y ~ s(x), random=list(group=~1), family=binomial(), data=df_r)")
+        reval("re_r <- unlist(ranef(m_r\$lme)\$group)")
+        reval("fitted_r <- 1/(1+exp(-as.numeric(fitted(m_r\$lme))))")
+
+        re_r = rcopy(reval("re_r"))
+        fitted_r = rcopy(reval("fitted_r"))
+
+        # RE should correlate with truth
+        @test cor(est_jl, true_re) > 0.7
+        @test cor(re_r, true_re) > 0.7
+
+        # Julia and R RE should match closely
+        @test cor(est_jl, re_r) > 0.99
+
+        # Full fitted values (response scale, including RE)
+        fit_jl = fitted(m_jl)
+        @test cor(fit_jl, fitted_r) > 0.99
+    end
+
+    # ========================================================================
+    # Gamma GAMM: random intercept
+    # ========================================================================
+    @testset "Gamma GAMM: random intercept vs R gamm()" begin
+        rng = StableRNG(789)
+        n_groups = 8
+        n_per = 80
+        n = n_groups * n_per
+        group = repeat(1:n_groups, inner = n_per)
+        x = randn(rng, n)
+        true_re = randn(rng, n_groups) * 0.2
+        η = 1.0 .+ 0.5 .* x .+ true_re[group]  # positive mean on log scale
+        μ = exp.(η)
+        shape = 5.0
+        y = [rand(rng, Gamma(shape, μ[i] / shape)) for i in 1:n]
+        group_str = string.(group)
+        df = DataFrame(x = x, y = y, group = group_str)
+
+        # Julia fit (use LogLink for Gamma to match R)
+        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df, Gamma(); link = LogLink())
+        re_jl = ranef(m_jl)
+        est_jl = vec(re_jl.group.effects)
+
+        # R fit
+        @rput x y group_str
+        reval("library(mgcv); library(MASS)")
+        reval("df_r <- data.frame(x=x, y=y, group=factor(group_str))")
+        reval("m_r <- gamm(y ~ s(x), random=list(group=~1), family=Gamma(link='log'), data=df_r)")
+        reval("re_r <- unlist(ranef(m_r\$lme)\$group)")
+        reval("fitted_r <- exp(as.numeric(fitted(m_r\$lme)))")
+
+        re_r = rcopy(reval("re_r"))
+        fitted_r = rcopy(reval("fitted_r"))
+
+        # RE should correlate with truth
+        @test cor(est_jl, true_re) > 0.7
+        @test cor(re_r, true_re) > 0.7
+
+        # Julia and R RE should match closely
+        @test cor(est_jl, re_r) > 0.99
+
+        # Full fitted values (response scale, including RE)
+        fit_jl = fitted(m_jl)
+        @test cor(fit_jl, fitted_r) > 0.99
     end
 end
