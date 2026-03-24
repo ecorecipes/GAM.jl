@@ -758,6 +758,9 @@ end
 # Gratia diagnostics unit tests (no R needed)
 @eval include("test_gratia.jl")
 
+# ANOVA / smooth significance tests
+@eval include("test_diagnostics.jl")
+
 # Bayesian GAM infrastructure tests (smooth2random, PriorSpec, dispatch)
 @eval include("test_bayes.jl")
 

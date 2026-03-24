@@ -115,6 +115,8 @@ export
     edf,
     k_check,
     concurvity,
+    anova_gam,
+    AnovaGamResult,
 
     # Visualization
     gamplot,
