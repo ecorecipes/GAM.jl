@@ -80,6 +80,34 @@
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
     end
 
+    @testset "ti() in @formula" begin
+        m = gam(@formula(y ~ ti(x, x2)), df)
+        m_g = gam(@gam_formula(y ~ ti(x, x2)), df)
+        @test isapprox(coef(m), coef(m_g), atol = 1e-10)
+    end
+
+    @testset "t2() in @formula" begin
+        m = gam(@formula(y ~ t2(x, x2)), df)
+        m_g = gam(@gam_formula(y ~ t2(x, x2)), df)
+        @test isapprox(coef(m), coef(m_g), atol = 1e-10)
+    end
+
+    @testset "te() with positional k" begin
+        m = gam(@formula(y ~ te(x, x2, 8)), df)
+        m_g = gam(@gam_formula(y ~ te(x, x2, k = 8)), df)
+        @test isapprox(coef(m), coef(m_g), atol = 1e-10)
+    end
+
+    @testset "Smooth + tensor product" begin
+        m = gam(@formula(y ~ s(x) + s(x2)), df)
+        @test length(coef(m)) == 19  # intercept + 9 + 9
+        @test deviance(m) < sum((y .- mean(y)) .^ 2)
+
+        # te with separate variable set
+        m2 = gam(@formula(y ~ te(x, x2)), df)
+        @test length(coef(m2)) > 1
+    end
+
     @testset "Mixed aliases + smooths" begin
         m = gam(@formula(y ~ cr(x) + s(x2)), df)
         @test length(coef(m)) == 19  # 1 + 9 + 9
@@ -91,6 +119,90 @@
         m = gam(@formula(count ~ s(x)), df; family = Poisson())
         m_g = gam(@gam_formula(count ~ s(x)), df; family = Poisson())
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
+    end
+
+    @testset "apply_schema pipeline" begin
+        # FunctionTerm{typeof(s)} is converted to AppliedSmoothTerm via apply_schema
+        f = @formula(y ~ s(x))
+        sch = schema(f, df)
+        af = apply_schema(f, sch)
+        @test af.rhs isa StatsModels.MatrixTerm
+        inner = af.rhs.terms[1]
+        @test inner isa GAM.AppliedSmoothTerm
+        @test inner.spec.term_vars == [:x]
+
+        # modelcols works through the standard pipeline
+        y_cols, X_cols = modelcols(af, df)
+        @test length(y_cols) == n
+        @test size(X_cols) == (n, 9)  # 9 basis functions (k=10 minus constraint)
+
+        # te() also converts
+        f_te = @formula(y ~ te(x, x2))
+        af_te = apply_schema(f_te, schema(f_te, df))
+        @test af_te.rhs.terms[1] isa GAM.AppliedSmoothTerm
+
+        # ti() converts
+        f_ti = @formula(y ~ ti(x, x2))
+        af_ti = apply_schema(f_ti, schema(f_ti, df))
+        @test af_ti.rhs.terms[1] isa GAM.AppliedSmoothTerm
+
+        # t2() converts
+        f_t2 = @formula(y ~ t2(x, x2))
+        af_t2 = apply_schema(f_t2, schema(f_t2, df))
+        @test af_t2.rhs.terms[1] isa GAM.AppliedSmoothTerm
+
+        # cr() alias converts
+        f_cr = @formula(y ~ cr(x))
+        af_cr = apply_schema(f_cr, schema(f_cr, df))
+        @test af_cr.rhs.terms[1] isa GAM.AppliedSmoothTerm
+        @test af_cr.rhs.terms[1].spec.basis isa CubicSpline
+
+        # Mixed parametric + smooth
+        f_mix = @formula(y ~ x2 + s(x))
+        af_mix = apply_schema(f_mix, schema(f_mix, df))
+        terms_mix = af_mix.rhs.terms
+        @test terms_mix[1] isa ContinuousTerm
+        @test terms_mix[2] isa GAM.AppliedSmoothTerm
+        _, X_mix = modelcols(af_mix, df)
+        @test size(X_mix, 2) == 10  # 1 parametric + 9 basis
+
+        # Multiple smooths
+        f_multi = @formula(y ~ s(x) + s(x2))
+        af_multi = apply_schema(f_multi, schema(f_multi, df))
+        @test all(t -> t isa GAM.AppliedSmoothTerm, af_multi.rhs.terms)
+        _, X_multi = modelcols(af_multi, df)
+        @test size(X_multi, 2) == 18  # 9 + 9
+
+        # coefnames are generated
+        cn = coefnames(af.rhs)
+        @test length(cn) == 9
+        @test all(c -> startswith(c, "s(x,bs=tp)"), cn)
+    end
+
+    @testset "@formula vs @gam_formula fitted values" begin
+        m1 = gam(@formula(y ~ s(x)), df)
+        m2 = gam(@gam_formula(y ~ s(x)), df)
+        @test cor(fitted(m1), fitted(m2)) > 0.999
+
+        m3 = gam(@formula(y ~ s(x, 15)), df)
+        m4 = gam(@gam_formula(y ~ s(x, k = 15)), df)
+        @test cor(fitted(m3), fitted(m4)) > 0.999
+
+        m5 = gam(@formula(y ~ te(x, x2)), df)
+        m6 = gam(@gam_formula(y ~ te(x, x2)), df)
+        @test cor(fitted(m5), fitted(m6)) > 0.999
+
+        m7 = gam(@formula(y ~ s(x) + s(x2)), df)
+        m8 = gam(@gam_formula(y ~ s(x) + s(x2)), df)
+        @test cor(fitted(m7), fitted(m8)) > 0.999
+    end
+
+    @testset "GAMM with @formula" begin
+        df.group = repeat(1:5, 20)
+        m = gamm(@formula(y ~ s(x) + (1 | group)), df)
+        @test m isa GammModel
+        @test length(m.random_effects) == 1
+        @test m.random_effects[1].spec.grouping == :group
     end
 
     @testset "_functionterm_to_smoothspec" begin
@@ -107,18 +219,33 @@
         ft3 = @formula(y ~ cr(x)).rhs
         spec3 = GAM._functionterm_to_smoothspec(ft3)
         @test spec3.basis isa CubicSpline
+
+        ft4 = @formula(y ~ te(x, x2)).rhs
+        spec4 = GAM._functionterm_to_smoothspec(ft4)
+        @test spec4.term_vars == [:x, :x2]
+        @test spec4.basis isa TensorProduct
+
+        ft5 = @formula(y ~ ti(x, x2)).rhs
+        spec5 = GAM._functionterm_to_smoothspec(ft5)
+        @test spec5.basis isa TensorInteraction
+
+        ft6 = @formula(y ~ t2(x, x2)).rhs
+        spec6 = GAM._functionterm_to_smoothspec(ft6)
+        @test spec6.basis isa T2TensorProduct
     end
 
     @testset "_is_smooth_function" begin
         @test GAM._is_smooth_function(s)
         @test GAM._is_smooth_function(te)
         @test GAM._is_smooth_function(ti)
+        @test GAM._is_smooth_function(t2)
         @test GAM._is_smooth_function(cr)
         @test GAM._is_smooth_function(tp)
         @test GAM._is_smooth_function(ps)
         @test GAM._is_smooth_function(ts)
         @test GAM._is_smooth_function(cs)
         @test GAM._is_smooth_function(cc)
+        @test GAM._is_smooth_function(cps)
         @test !GAM._is_smooth_function(sin)
         @test !GAM._is_smooth_function(log)
     end
