@@ -167,6 +167,8 @@ function gam(f::FormulaTerm, data;
     nsamples::Int = 2000,
     nchains::Int = 4)
 
+    # Input validation
+    _validate_data_lengths(data)
     _validate_gam_family(family)
     link_eff = if family isa ExtendedFamily
         link === nothing ? _default_link(family) : link
@@ -189,10 +191,12 @@ function gam(f::FormulaTerm, data;
 
     if family isa ExtendedFamily
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
+        _validate_response(y, Normal())
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control; start = start)
     else
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
+        _validate_response(y, family)
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, optimizer, weights, control)
     end
@@ -211,6 +215,11 @@ function gam(gf::GamFormula, data;
     nsamples::Int = 2000,
     nchains::Int = 4)
 
+    # Input validation
+    _validate_data_lengths(data)
+    _validate_response_in_data(gf.response, data)
+    _validate_has_smooths(gf.smooth_specs)
+    _validate_formula_smooths(gf.smooth_specs, data)
     _validate_gam_family(family)
     link_eff = if family isa ExtendedFamily
         link === nothing ? _default_link(family) : link
@@ -234,11 +243,13 @@ function gam(gf::GamFormula, data;
 
     if family isa ExtendedFamily
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
+        _validate_response(y, Normal())
         f = term(gf.response) ~ term(1)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control; start = start)
     else
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
+        _validate_response(y, family)
         f = term(gf.response) ~ term(1)
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, optimizer, weights, control)

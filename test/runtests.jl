@@ -813,3 +813,6 @@ try
 catch e
     @warn "Skipping SPDE R comparison tests (CSV not available)" exception = e
 end
+
+# Input validation tests
+@eval include("test_validation.jl")
