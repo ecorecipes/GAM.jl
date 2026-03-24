@@ -1,4 +1,4 @@
-# API Reference
+# [API Reference](@id api-reference)
 
 ## Main Interface
 
@@ -17,6 +17,7 @@ GAM.@gam_formula
 s
 te
 ti
+t2
 SmoothSpec
 ConstructedSmooth
 smooth_construct
@@ -35,13 +36,20 @@ PSpline
 CyclicPSpline
 BSplineBasis
 GPSmooth
+LoessSmooth
+FractionalPolynomial
 DuchonSpline
+AdaptiveSmooth
+SphericalSpline
+SPDESmooth
+ConstrainedFactorSmooth
 MarkovRandomField
 SoapFilm
 FactorSmooth
 RandomEffect
 TensorProduct
 TensorInteraction
+T2TensorProduct
 ```
 
 ## Extended Families
@@ -132,6 +140,8 @@ PriorSpec
 gam_check
 k_check
 concurvity
+anova_gam
+AnovaGamResult
 ```
 
 ## Gratia-Style Diagnostics

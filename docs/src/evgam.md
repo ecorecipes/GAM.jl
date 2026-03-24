@@ -1,4 +1,4 @@
-# Extreme Values (evgam)
+# [Extreme Values (evgam)](@id evgam)
 
 GAM.jl includes extreme value GAM functionality following Youngman (2022).
 This allows modeling the tails of distributions — useful in hydrology,
@@ -111,5 +111,5 @@ m = evgam(
 
 ## See Also
 
-- [Families & Models](@ref) for evgam family types
-- [API Reference](@ref) for `evgam`, `GEVFamily`, `GPDFamily`, `MultiParameterFamily`
+- [Families & Models](@ref families) for evgam family types
+- [API Reference](@ref api-reference) for `evgam`, `GEVFamily`, `GPDFamily`, `MultiParameterFamily`

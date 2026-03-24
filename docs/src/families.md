@@ -1,4 +1,4 @@
-# Families & Models
+# [Families & Models](@id families)
 
 GAM.jl supports a wide range of distribution families for different model types.
 
@@ -105,18 +105,4 @@ m = evgam(@gam_formula(y ~ s(x)), @gam_formula(~ s(x)), @gam_formula(~ 1), df;
 
 ## API Reference
 
-```@docs
-GAM.NegBinFamily
-GAM.TweedieFamily
-GAM.BetaFamily
-GAM.GaussianLS
-GAM.GammaLocationScale
-GAM.BetaRegression
-GAM.NegativeBinomialLocationScale
-GAM.InverseGaussianLocationScale
-GAM.ELFFamily
-GAM.ELFLSSFamily
-GAM.GEVFamily
-GAM.GPDFamily
-GAM.MultiParameterFamily
-```
+See [API Reference](@ref api-reference) for full documentation of all family types.

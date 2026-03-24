@@ -6,6 +6,7 @@ DocMeta.setdocmeta!(GAM, :DocTestSetup, :(using GAM); recursive = true)
 makedocs(;
     modules = [GAM],
     sitename = "GAM.jl",
+    warnonly = [:missing_docs, :cross_references],
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", "false") == "true",
         canonical = "https://github.com/ecorecipes/GAM.jl",

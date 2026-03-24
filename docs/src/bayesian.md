@@ -1,4 +1,4 @@
-# Bayesian Inference
+# [Bayesian Inference](@id bayesian)
 
 GAM.jl supports Bayesian GAM fitting via integration with
 [Turing.jl](https://turing.ml). The key idea is to convert smooth terms
@@ -94,5 +94,5 @@ smoothing parameter uncertainty — unlike the frequentist intervals from `gam()
 
 ## See Also
 
-- [Diagnostics](@ref) for `posterior_samples` and `fitted_samples`
-- [API Reference](@ref) for `BayesGamModel`, `smooth2random`, `PriorSpec`
+- [Diagnostics](@ref diagnostics) for `posterior_samples` and `fitted_samples`
+- [API Reference](@ref api-reference) for `BayesGamModel`, `smooth2random`, `PriorSpec`

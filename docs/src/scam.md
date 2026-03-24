@@ -1,4 +1,4 @@
-# Shape Constraints (SCAM)
+# [Shape Constraints (SCAM)](@id scam)
 
 Shape-Constrained Additive Models (SCAM) extend GAMs by enforcing
 monotonicity and/or convexity constraints on smooth terms. This is useful when
@@ -94,6 +94,6 @@ m = scam(@gam_formula(y ~ s(x, bs=:mpi)), df; control=ctrl)
 
 ## See Also
 
-- [Smooth Terms](@ref) for the full list of basis types including SCAM bases
-- [Comparison with mgcv](@ref) for how SCAM compares to R's scam package
-- [API Reference](@ref) for `scam`, `scam_control`, `ScamControl`
+- [Smooth Terms](@ref smooth-terms) for the full list of basis types including SCAM bases
+- [Comparison with mgcv](@ref mgcv-comparison) for how SCAM compares to R's scam package
+- [API Reference](@ref api-reference) for `scam`, `scam_control`, `ScamControl`

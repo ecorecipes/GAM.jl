@@ -1,4 +1,4 @@
-# Quantile Regression (QGAM)
+# [Quantile Regression (QGAM)](@id qgam)
 
 Quantile GAMs estimate conditional quantile functions rather than conditional
 means. This is useful when you want to understand how the entire conditional
@@ -100,6 +100,6 @@ has the correct nominal coverage probability.
 
 ## See Also
 
-- [Families & Models](@ref) for ELF family details
-- [Getting Started](@ref) for a quick QGAM example
-- [API Reference](@ref) for `qgam`, `mqgam`, `qdo`
+- [Families & Models](@ref families) for ELF family details
+- [Getting Started](@ref getting-started) for a quick QGAM example
+- [API Reference](@ref api-reference) for `qgam`, `mqgam`, `qdo`
