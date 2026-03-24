@@ -121,6 +121,8 @@ export
     # Visualization
     gamplot,
     gamcontour,
+    vis_gam,
+    VisGamData,
 
     # Smoothing methods
     REML,
