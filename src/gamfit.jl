@@ -116,22 +116,36 @@ function _validate_gamlss_family(family::UnivariateDistribution)
 end
 
 """
-    gam(formula::FormulaTerm, data; family=Normal(), link=nothing,
+    gam(formula, data; family=Normal(), link=nothing,
         method=:REML, weights=nothing, control=gam_control())
 
-Fit a Generalized Additive Model.
+Fit a Generalized Additive Model. This is the primary entry point for all
+GAM-family models — the fitting algorithm is selected automatically based
+on the model specification.
+
+If the model contains shape-constrained smooth terms (e.g., `mpi`, `cx`),
+the SCAM fitting algorithm is used automatically. You can also call
+[`scam`](@ref) explicitly.
+
+If `family` is a [`MultiParameterFamily`](@ref) or [`DistFamily`](@ref),
+the model is fit using the GAMLSS framework. You can also call
+[`gamlss`](@ref) explicitly.
 
 # Arguments
 - `formula`: a StatsModels formula with smooth terms, e.g., `@formula(y ~ s(x))`
+  or a `GamFormula` from `@gam_formula`.
 - `data`: a table (DataFrame, NamedTuple of vectors, etc.)
-- `family`: distribution family (default: `Normal()`)
+- `family`: distribution family (default: `Normal()`).
+  Accepts `UnivariateDistribution`, `ExtendedFamily`, `MultiParameterFamily`,
+  or `DistFamily`.
 - `link`: link function (default: canonical link for family)
 - `method`: smoothing parameter estimation method (`:REML`, `:ML`, `:GCV`, `:UBRE`)
 - `weights`: optional observation weights
 - `control`: fitting control parameters (see [`gam_control`](@ref))
 
 # Returns
-A [`GamModel`](@ref) object implementing the StatsBase interface.
+A [`GamModel`](@ref) for standard/SCAM models, or a
+[`MultiParameterModel`](@ref) for GAMLSS/multi-parameter models.
 
 # Examples
 ```julia
@@ -149,9 +163,15 @@ counts = rand(Poisson(5), n)
 df.count = counts
 m2 = gam(@formula(count ~ s(x)), df; family=Poisson(), link=LogLink())
 
+# Shape-constrained (auto-SCAM): monotone increasing
+m3 = gam(@gam_formula(y ~ s(x, bs=:mpi)), df)
+
+# Multi-parameter GAMLSS (auto-dispatch)
+m4 = gam(@gam_formula(y ~ s(x)), df, GammaLocationScale())
+
 # Multiple smooths
 df.x2 = randn(n)
-m3 = gam(@formula(y ~ s(x) + s(x2)), df)
+m5 = gam(@formula(y ~ s(x) + s(x2)), df)
 ```
 """
 function gam(f::FormulaTerm, data;
@@ -197,6 +217,19 @@ function gam(f::FormulaTerm, data;
     else
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
         _validate_response(y, family)
+
+        # Auto-detect shape constraints → use SCAM fitting
+        if has_shape_constraints(smooths)
+            return _fit_scam(y, X, smooths, n_parametric, f, data, family, link_eff,
+                method, weights, scam_control(
+                    epsilon = control.epsilon,
+                    maxit = control.maxit,
+                    outer_maxit = control.outer_maxit,
+                    trace = control.trace,
+                    gamma = control.gamma,
+                ))
+        end
+
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, optimizer, weights, control)
     end
@@ -251,9 +284,48 @@ function gam(gf::GamFormula, data;
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
         _validate_response(y, family)
         f = term(gf.response) ~ term(1)
+
+        # Auto-detect shape constraints → use SCAM fitting
+        if has_shape_constraints(smooths)
+            return _fit_scam(y, X, smooths, n_parametric, f, data, family, link_eff,
+                method, weights, scam_control(
+                    epsilon = control.epsilon,
+                    maxit = control.maxit,
+                    outer_maxit = control.outer_maxit,
+                    trace = control.trace,
+                    gamma = control.gamma,
+                ))
+        end
+
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, optimizer, weights, control)
     end
+end
+
+# ============================================================================
+# gam() dispatch for multi-parameter families (GAMLSS)
+# ============================================================================
+
+"""
+    gam(formula, data, family::MultiParameterFamily; kwargs...)
+
+Fit a GAMLSS model via `gam()`. When a single formula is provided, it is
+replicated for all distribution parameters. Delegates to [`gamlss`](@ref).
+
+# Examples
+```julia
+m = gam(@gam_formula(y ~ s(x)), df, GammaLocationScale())
+m = gam([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)], df, BetaRegression())
+```
+"""
+function gam(f::Union{FormulaTerm, GamFormula}, data, family::MultiParameterFamily; kwargs...)
+    K = nparams(family)
+    formulas = fill(f, K)
+    return gamlss(formulas, data, family; kwargs...)
+end
+
+function gam(formulas::AbstractVector, data, family::MultiParameterFamily; kwargs...)
+    return gamlss(formulas, data, family; kwargs...)
 end
 
 function _fit_gam(y, X, smooths, n_parametric, f, data,
