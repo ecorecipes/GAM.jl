@@ -1,4 +1,4 @@
-# Large Data (BAM)
+# [Large Data (BAM)](@id bam)
 
 `bam()` is the large-dataset counterpart to `gam()`. It uses discretization
 and efficient matrix operations to handle datasets with hundreds of thousands
@@ -93,5 +93,5 @@ m = bam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df;
 
 ## See Also
 
-- [Getting Started](@ref) for a quick BAM example
-- [API Reference](@ref) for `bam`, `bam_control`, `BamControl`
+- [Getting Started](@ref getting-started) for a quick BAM example
+- [API Reference](@ref api-reference) for `bam`, `bam_control`, `BamControl`

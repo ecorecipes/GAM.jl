@@ -9,10 +9,12 @@ over R on typical benchmarks.
 
 ## Features
 
-- **18 smooth basis types**: thin plate (`:tp`, `:ts`), cubic (`:cr`, `:cs`, `:cc`),
+- **28 smooth basis types**: thin plate (`:tp`, `:ts`), cubic (`:cr`, `:cs`, `:cc`),
   P-splines (`:ps`), cyclic P-splines (`:cps`), B-splines (`:bs`), Gaussian process (`:gp`),
-  Duchon splines (`:ds`), Markov random fields (`:mrf`), soap film (`:so`),
-  factor-smooth interactions (`:fs`), random effects (`:re`), tensor products (`te`/`ti`),
+  loess (`:lo`), fractional polynomial (`:fp`), Duchon splines (`:ds`), adaptive (`:ad`),
+  spherical splines (`:sos`), SPDE Matérn (`:spde`), Markov random fields (`:mrf`),
+  soap film (`:so`), factor-smooth interactions (`:fs`), constrained factor smooth (`:sz`),
+  random effects (`:re`), tensor products (`te`/`ti`/`t2`),
   and 8 SCAM shape-constrained bases (`:mpi`, `:mpd`, `:cx`, `:cv`, `:micx`, `:micv`, `:mdcx`, `:mdcv`)
 - **Automatic smoothing**: REML, ML, and GCV smoothing parameter estimation via
   Extended Fellner-Schall (EFS) method
@@ -24,7 +26,10 @@ over R on typical benchmarks.
 - **QGAM**: quantile regression GAMs via extended log-F likelihood
 - **evgam**: extreme value GAMs (GEV, GPD, EGPD families)
 - **BAM**: `bam()` for memory-efficient fitting of large datasets with discretization
-- **GAMM**: `gamm()` for mixed-effects GAMs with `@gamm_formula` syntax
+- **GAMM**: `gamm()` for mixed-effects GAMs with `@gamm_formula` syntax, including
+  PQL estimation for non-Gaussian families (Poisson, Binomial, Gamma)
+- **ANOVA for GAMs**: `anova_gam()` for smooth significance testing and nested
+  model comparison (F-test and χ² test)
 - **GINLA**: integrated nested Laplace approximation for posterior inference
 - **Bayesian inference**: Turing.jl integration via `smooth2random` conversion
 - **Side constraints**: `gam.side` identifiability constraints for overlapping smooths

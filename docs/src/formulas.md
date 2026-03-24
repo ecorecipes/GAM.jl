@@ -1,4 +1,4 @@
-# Formula Syntax
+# [Formula Syntax](@id formula-syntax)
 
 GAM.jl uses the `@gam_formula` macro to specify models. This extends
 StatsModels.jl's formula syntax with smooth term support.
@@ -62,7 +62,5 @@ Key differences:
 
 ## API Reference
 
-```@docs
-GAM.GamFormula
-GAM.@gam_formula
-```
+See [API Reference](@ref api-reference) for full documentation of `GamFormula`
+and `@gam_formula`.

@@ -1,4 +1,4 @@
-# GAMLSS
+# [GAMLSS](@id gamlss)
 
 Generalized Additive Models for Location, Scale, and Shape (GAMLSS) extend
 standard GAMs by modeling multiple distribution parameters as smooth functions
@@ -114,6 +114,6 @@ m = gamlss(
 
 ## See Also
 
-- [Families & Models](@ref) for the full family list
-- [Getting Started](@ref) for a quick GAMLSS example
-- [API Reference](@ref) for `gamlss`, `GamlssControl`, and family types
+- [Families & Models](@ref families) for the full family list
+- [Getting Started](@ref getting-started) for a quick GAMLSS example
+- [API Reference](@ref api-reference) for `gamlss`, `GamlssControl`, and family types

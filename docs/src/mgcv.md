@@ -1,4 +1,4 @@
-# Comparison with R's mgcv
+# [Comparison with R's mgcv](@id mgcv-comparison)
 
 GAM.jl aims to reproduce the results of R's mgcv package (and the broader
 mgcv ecosystem: gamlss, scam, qgam, evgam) while following Julia and JuliaStats
