@@ -87,6 +87,19 @@ function StatsModels.apply_schema(t::SmoothTerm, sch, ::Type{<:Any})
     return AppliedSmoothTerm(t.spec, nothing)
 end
 
+# Schema application: FunctionTerm{typeof(smooth_f)} → AppliedSmoothTerm
+# This makes the standard StatsModels pipeline (apply_schema → modelcols)
+# work seamlessly for smooth terms created by @formula(y ~ s(x, 10)).
+for _smooth_f in (s, te, ti, t2, cr, tp, ts, cs, cc, ps, cps)
+    @eval function StatsModels.apply_schema(
+        ft::StatsModels.FunctionTerm{typeof($_smooth_f)},
+        sch::StatsModels.Schema,
+        Mod::Type)
+        spec = _functionterm_to_smoothspec(ft)
+        return AppliedSmoothTerm(spec, nothing)
+    end
+end
+
 # Model columns: construct basis and return matrix columns
 function StatsModels.modelcols(t::AppliedSmoothTerm, d)
     if t.smooth === nothing
@@ -398,4 +411,8 @@ end
 
 function _flatten_rhs(t::FormulaTerm)
     return _flatten_rhs(t.rhs)
+end
+
+function _flatten_rhs(t::StatsModels.MatrixTerm)
+    return _flatten_rhs(t.terms)
 end
