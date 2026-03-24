@@ -84,6 +84,7 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
     A = zeros(p, p)
     Xw = similar(X)  # buffer for sqrt(W)*X
     wz_buf = zeros(n) # buffer for w.*z
+    penalty_buf = zeros(p) # buffer for S_total * beta
 
     # Initialize
     if start !== nothing
@@ -107,7 +108,7 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
     null_coef = zeros(p)
     null_eta = X * null_coef .+ offset
     null_mu = [_clamp_mu_scalar(family, GLM.linkinv(link, e)) for e in null_eta]
-    pdev_old = _deviance(family, y, null_mu, weights) + dot(null_coef, S_total * null_coef)
+    pdev_old = _deviance(family, y, null_mu, weights)
 
     converged = false
     n_iter = 0
@@ -142,7 +143,8 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
             mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
         end
         dev_new = _deviance(family, y, mu_new, weights)
-        penalty_new = dot(beta_new, S_total * beta_new)
+        mul!(penalty_buf, S_total, beta_new)
+        penalty_new = dot(beta_new, penalty_buf)
         pdev_new = dev_new + penalty_new
 
         # Step halving if penalized deviance increased (matches R's gam.fit3)
@@ -157,7 +159,8 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
                     mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
                 end
                 dev_new = _deviance(family, y, mu_new, weights)
-                penalty_new = dot(beta_new, S_total * beta_new)
+                mul!(penalty_buf, S_total, beta_new)
+                penalty_new = dot(beta_new, penalty_buf)
                 pdev_new = dev_new + penalty_new
                 if pdev_new - pdev_old <= div_thresh
                     break
