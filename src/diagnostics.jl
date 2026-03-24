@@ -155,3 +155,216 @@ function concurvity(m::GamModel; full::Bool = true)
         return conc_mat
     end
 end
+
+# ============================================================================
+# ANOVA for GAMs — Wood (2013) smooth significance & deviance tests
+# ============================================================================
+
+"""
+    AnovaGamResult
+
+Result of `anova_gam`. Contains either a single-model smooth significance
+table or a multi-model deviance comparison table.
+
+# Fields
+- `smooth_table`: named tuple of vectors (label, edf, ref_df, statistic, p_value) for smooth terms
+- `parametric_table`: named tuple of vectors (term, df, statistic, p_value) for parametric terms
+- `test_type`: `:F` or `:Chisq`
+- `model_table`: named tuple of vectors for multi-model comparison
+"""
+struct AnovaGamResult
+    smooth_table::Union{Nothing, NamedTuple{(:label, :edf, :ref_df, :statistic, :p_value),
+        Tuple{Vector{String}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}}}
+    parametric_table::Union{Nothing, NamedTuple{(:term, :df, :statistic, :p_value),
+        Tuple{Vector{String}, Vector{Float64}, Vector{Float64}, Vector{Float64}}}}
+    test_type::Symbol
+    model_table::Union{Nothing, NamedTuple{(:resid_df, :resid_dev, :df, :deviance, :statistic, :p_value),
+        Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}}}
+end
+
+"""
+    anova_gam(m::GamModel)
+
+Approximate significance of smooth terms using the Bayesian test from
+Wood (2013, Biometrika). For each smooth, computes a Wald-type test
+statistic on the Bayesian posterior covariance, with reference degrees
+of freedom based on the effective degrees of freedom.
+
+Returns an `AnovaGamResult` with the smooth significance table.
+"""
+function anova_gam(m::GamModel)
+    use_f = _needs_scale_estimate(m.family) ||
+            (m.family isa ExtendedFamily && _estimates_scale(m.family))
+    test_type = use_f ? :F : :Chisq
+    resid_df = dof_residual(m)
+
+    labels = String[]
+    edfs = Float64[]
+    ref_dfs = Float64[]
+    stats = Float64[]
+    p_vals = Float64[]
+
+    β = coef(m)
+    Vp = m.Vp
+
+    for (i, sm) in enumerate(m.smooths)
+        idx = sm.first_para:sm.last_para
+        β_i = β[idx]
+        V_i = Symmetric(Vp[idx, idx])
+
+        edf_i = m.edf[i]
+
+        # Rank of the covariance sub-block
+        r = rank(V_i; atol=1e-10)
+        ref_df = min(Float64(r), edf_i)
+        ref_df = max(ref_df, 1.0)  # ensure at least 1
+
+        # Wald-type test statistic: β' * V⁻¹ * β using pseudoinverse
+        T_stat = dot(β_i, pinv(Matrix(V_i)) * β_i)
+
+        if use_f
+            F_stat = T_stat / ref_df
+            p_val = ccdf(FDist(ref_df, resid_df), F_stat)
+            push!(stats, F_stat)
+        else
+            push!(stats, T_stat)
+            p_val = ccdf(Chisq(ref_df), T_stat)
+        end
+
+        push!(labels, sm.spec.label)
+        push!(edfs, edf_i)
+        push!(ref_dfs, ref_df)
+        push!(p_vals, p_val)
+    end
+
+    smooth_table = (label=labels, edf=edfs, ref_df=ref_dfs,
+                    statistic=stats, p_value=p_vals)
+
+    return AnovaGamResult(smooth_table, nothing, test_type, nothing)
+end
+
+"""
+    anova_gam(m1::GamModel, m2::GamModel, models::GamModel...; test=:auto)
+
+Sequential deviance comparison of two or more nested GAM models.
+Models are sorted by increasing total EDF. For scale-estimated
+families an F-test is used; for known-scale families a χ² test is used.
+
+`test` may be `:F`, `:Chisq`, or `:auto` (default).
+"""
+function anova_gam(m1::GamModel, m2::GamModel, models::GamModel...; test::Symbol=:auto)
+    all_models = [m1, m2, models...]
+
+    # Sort by total EDF (ascending = simplest first)
+    perm = sortperm([m.edf_total for m in all_models])
+    all_models = all_models[perm]
+
+    n_models = length(all_models)
+
+    # Determine test type from largest model
+    ref_model = all_models[end]
+    if test == :auto
+        use_f = _needs_scale_estimate(ref_model.family) ||
+                (ref_model.family isa ExtendedFamily && _estimates_scale(ref_model.family))
+        test_type = use_f ? :F : :Chisq
+    else
+        test_type = test
+        use_f = (test == :F)
+    end
+
+    # Scale from the largest model
+    scale = ref_model.scale
+    resid_df_ref = dof_residual(ref_model)
+
+    resid_dfs = Float64[dof_residual(m) for m in all_models]
+    resid_devs = Float64[deviance(m) for m in all_models]
+
+    df_diff = fill(NaN, n_models)
+    dev_diff = fill(NaN, n_models)
+    stat_vals = fill(NaN, n_models)
+    p_vals = fill(NaN, n_models)
+
+    for i in 2:n_models
+        Δdf = all_models[i].edf_total - all_models[i-1].edf_total
+        Δdev = deviance(all_models[i-1]) - deviance(all_models[i])
+        df_diff[i] = Δdf
+        dev_diff[i] = Δdev
+
+        if Δdf > 0
+            if use_f
+                F_stat = (Δdev / Δdf) / scale
+                stat_vals[i] = F_stat
+                p_vals[i] = ccdf(FDist(Δdf, resid_df_ref), F_stat)
+            else
+                stat_vals[i] = Δdev
+                p_vals[i] = ccdf(Chisq(Δdf), Δdev)
+            end
+        end
+    end
+
+    model_table = (resid_df=resid_dfs, resid_dev=resid_devs,
+                   df=df_diff, deviance=dev_diff,
+                   statistic=stat_vals, p_value=p_vals)
+
+    return AnovaGamResult(nothing, nothing, test_type, model_table)
+end
+
+function Base.show(io::IO, r::AnovaGamResult)
+    if r.smooth_table !== nothing
+        _show_smooth_table(io, r)
+    end
+    if r.model_table !== nothing
+        _show_model_table(io, r)
+    end
+end
+
+function _show_smooth_table(io::IO, r::AnovaGamResult)
+    st = r.smooth_table
+    stat_name = r.test_type == :F ? "F" : "Chi.sq"
+
+    println(io, "Approximate significance of smooth terms:")
+    println(io, "─" ^ 70)
+    @printf(io, "%-20s %8s %8s %10s %12s\n",
+            "", "edf", "Ref.df", stat_name, "p-value")
+    println(io, "─" ^ 70)
+
+    for i in eachindex(st.label)
+        p_str = st.p_value[i] < 2e-16 ? "< 2e-16" :
+                st.p_value[i] < 0.001 ? @sprintf("%.2e", st.p_value[i]) :
+                @sprintf("%.4f", st.p_value[i])
+        @printf(io, "%-20s %8.3f %8.3f %10.3f %12s\n",
+                st.label[i], st.edf[i], st.ref_df[i], st.statistic[i], p_str)
+    end
+    println(io, "─" ^ 70)
+end
+
+function _show_model_table(io::IO, r::AnovaGamResult)
+    mt = r.model_table
+    stat_name = r.test_type == :F ? "F" : "Chi.sq"
+    n = length(mt.resid_df)
+
+    println(io, "Analysis of Deviance Table")
+    println(io)
+    println(io, "Model comparison (sequential):")
+    println(io, "─" ^ 80)
+    @printf(io, "%-8s %10s %12s %8s %12s %10s %12s\n",
+            "Model", "Resid.Df", "Resid.Dev", "Df", "Deviance", stat_name, "p-value")
+    println(io, "─" ^ 80)
+
+    for i in 1:n
+        if i == 1
+            @printf(io, "%-8s %10.2f %12.3f\n",
+                    "$(i)", mt.resid_df[i], mt.resid_dev[i])
+        else
+            p_str = isnan(mt.p_value[i]) ? "" :
+                    mt.p_value[i] < 2e-16 ? "< 2e-16" :
+                    mt.p_value[i] < 0.001 ? @sprintf("%.2e", mt.p_value[i]) :
+                    @sprintf("%.4f", mt.p_value[i])
+            stat_str = isnan(mt.statistic[i]) ? "" : @sprintf("%.3f", mt.statistic[i])
+            @printf(io, "%-8s %10.2f %12.3f %8.2f %12.3f %10s %12s\n",
+                    "$(i)", mt.resid_df[i], mt.resid_dev[i],
+                    mt.df[i], mt.deviance[i], stat_str, p_str)
+        end
+    end
+    println(io, "─" ^ 80)
+end
