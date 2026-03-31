@@ -61,7 +61,7 @@ function _predict_matrix(::RandomEffect, smooth::ConstructedSmooth, newdata)
 
     if smooth.constraint !== nothing
         C = smooth.constraint
-        Z = nullspace(C)
+        Z = _constraint_basis(C, size(X, 2))
         return X * Z
     end
     return X

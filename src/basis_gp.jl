@@ -136,7 +136,7 @@ function _predict_matrix(::GPSmooth, smooth::ConstructedSmooth, newdata)
 
     if smooth.constraint !== nothing
         C = smooth.constraint
-        Z = nullspace(C)
+        Z = _constraint_basis(C, size(X_new, 2))
         return X_new * Z
     end
     return X_new

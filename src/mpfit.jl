@@ -41,7 +41,11 @@ Minimizes NLL(β) + 0.5 β'Sβ.
 """
 function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
                          X_list::Vector{Matrix{Float64}}, β::Vector{Float64},
-                         S::Matrix{Float64}, control::MPFitControl)
+                         S::Matrix{Float64}, control::MPFitControl;
+                         Ain = nothing,
+                         bin = nothing,
+                         Aeq = nothing,
+                         beq = nothing)
     K = nparams(family)
     n = length(y)
     p = length(β)
@@ -78,9 +82,12 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
         g .+= Sβ
         H .+= S
 
+        has_constraints = (Ain !== nothing && size(Ain, 1) > 0) || (Aeq !== nothing && size(Aeq, 1) > 0)
+
         # Check convergence: gradient norm
         grad_max = maximum(abs, g)
-        if grad_max < control.inner_tol
+        if grad_max < control.inner_tol &&
+           (!has_constraints || _is_feasible(β, Ain, bin, Aeq, beq))
             nll_pen = nll_pen_new
             converged = true
             break
@@ -89,36 +96,45 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
         # Check convergence: objective change (relative)
         if iter > 1 && isfinite(nll_pen_prev)
             obj_rel = abs(nll_pen_new - nll_pen_prev) / (abs(nll_pen_new) + 1.0)
-            if obj_rel < 1e-8
+            if obj_rel < 1e-8 &&
+               (!has_constraints || _is_feasible(β, Ain, bin, Aeq, beq))
                 nll_pen = nll_pen_new
                 converged = true
                 break
             end
         end
 
-        # Newton step with Cholesky
-        H_sym = Symmetric(H)
-        F = _safe_cholesky(H_sym)
-        if F === nothing
-            # Escalating diagonal perturbation
-            diag_base = max(1e-6 * maximum(abs, diag(H)), 1e-8)
-            for attempt in 0:5
-                diag_add = diag_base * 10.0^attempt
-                H_pert = copy(H)
-                for i in 1:p
-                    H_pert[i, i] += diag_add
-                end
-                F = _safe_cholesky(Symmetric(H_pert))
-                F !== nothing && break
-            end
+        if has_constraints
+            β_target = _solve_constrained_qp(H, -g + H * β, Ain, bin, Aeq, beq;
+                warm_start = β,
+                eps_abs = max(control.inner_tol, 1e-8),
+                eps_rel = max(control.inner_tol, 1e-8))
+            δ = β - β_target
+        else
+            # Newton step with Cholesky
+            H_sym = Symmetric(H)
+            F = _safe_cholesky(H_sym)
             if F === nothing
-                # Last resort: use identity-scaled step
-                δ = g ./ max(1.0, maximum(abs, g))
+                # Escalating diagonal perturbation
+                diag_base = max(1e-6 * maximum(abs, diag(H)), 1e-8)
+                for attempt in 0:5
+                    diag_add = diag_base * 10.0^attempt
+                    H_pert = copy(H)
+                    for i in 1:p
+                        H_pert[i, i] += diag_add
+                    end
+                    F = _safe_cholesky(Symmetric(H_pert))
+                    F !== nothing && break
+                end
+                if F === nothing
+                    # Last resort: use identity-scaled step
+                    δ = g ./ max(1.0, maximum(abs, g))
+                else
+                    δ = F \ g
+                end
             else
                 δ = F \ g
             end
-        else
-            δ = F \ g
         end
 
         # Step halving with simple decrease (matching evgam's approach)
@@ -274,7 +290,11 @@ function mp_reml(log_sp::Vector{Float64}, family::MultiParameterFamily,
                  y::AbstractVector, X_list::Vector{Matrix{Float64}},
                  Sl::Vector{Matrix{Float64}}, β_init::Vector{Float64},
                  param_offsets::Vector{Int}, control::MPFitControl;
-                 Mp::Int=0)
+                 Mp::Int=0,
+                 Ain = nothing,
+                 bin = nothing,
+                 Aeq = nothing,
+                 beq = nothing)
     p = length(β_init)
     K = nparams(family)
 
@@ -285,7 +305,8 @@ function mp_reml(log_sp::Vector{Float64}, family::MultiParameterFamily,
     end
 
     # Inner Newton
-    β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control)
+    β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control;
+        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
     # log|H| — penalized Hessian determinant
     F_H = _safe_cholesky(Symmetric(H))
@@ -385,12 +406,17 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
                       log_sp_init::Vector{Float64},
                       param_offsets::Vector{Int},
                       control::MPFitControl;
-                      Mp::Int=0)
+                      Mp::Int=0,
+                      Ain = nothing,
+                      bin = nothing,
+                      Aeq = nothing,
+                      beq = nothing)
     nsp = length(log_sp_init)
     if nsp == 0
         p = length(β_init)
         S = zeros(p, p)
-        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control)
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control;
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         return Float64[], β_opt, nll_pen
     end
 
@@ -413,7 +439,8 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
         end
 
         # Inner Newton solve
-        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_current, S, control)
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_current, S, control;
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
         # H is the penalized Hessian = H0 + S
         # For EFS we need A⁻¹ where A = H (the penalized Hessian)
@@ -471,7 +498,8 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
         S_final .+= exp(log_sp[j]) .* Sj
     end
     β_final, nll_pen_final, _, H_final, _ = mp_newton_inner(
-        family, y, X_list, β_current, S_final, control)
+        family, y, X_list, β_current, S_final, control;
+        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
     F_final = _safe_cholesky(Symmetric(H_final))
     logdetH = F_final !== nothing ? 2.0 * sum(log.(diag(F_final.L))) : 0.0
@@ -690,6 +718,7 @@ function evgam(formulas, data, family::MultiParameterFamily;
     # Build penalty matrices
     Sl = build_penalty_matrices(smooths_list, param_offsets)
     nsp = length(Sl)
+    Ain, bin, Aeq, beq = _global_linear_constraints(smooths_list, p)
 
     # Count null space dimension for REML constant
     Mp = sum(1 + sum(sm.null_dim for sm in smooths; init=0) for smooths in smooths_list)
@@ -719,12 +748,14 @@ function evgam(formulas, data, family::MultiParameterFamily;
         for (j, Sj) in enumerate(Sl)
             S .+= exp(log_sp[j]) .* Sj
         end
-        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl)
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl;
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         reml_val = nll_pen
     else
         # Estimate smoothing parameters via EFS
         log_sp, β_opt, reml_val = mp_efs_outer(family, y, X_list, Sl, β_init,
-                                                log_sp, param_offsets, ctrl; Mp=Mp)
+                                                log_sp, param_offsets, ctrl;
+                                                Mp=Mp, Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         conv = true
     end
 

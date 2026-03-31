@@ -65,6 +65,24 @@ using StatsAPI
     end
 
     # ----------------------------------------------------------------
+    @testset "side-constrained tensor keeps linear constraints aligned" begin
+        df = DataFrame(y = y, x = x, z = z)
+        gf = @gam_formula(y ~ s(x, k = 8, bs = :cr) +
+                              s(z, k = 8, bs = :cr) +
+                              te(x, z, k = 25, bs = [:sc, :cr], xt = Any[["m+"], nothing]))
+        _, _, _, smooths, _ = GAM.setup_gam(gf, df; family = Normal())
+
+        sm_te = smooths[3]
+        @test !isempty(sm_te.del_index)
+        @test GAM.has_linear_constraints(sm_te)
+        @test sm_te.Ain !== nothing
+        @test size(sm_te.Ain, 2) == size(sm_te.X, 2)
+
+        Xp = predict_matrix(sm_te, df[1:10, [:x, :z]])
+        @test size(Xp) == (10, size(sm_te.X, 2))
+    end
+
+    # ----------------------------------------------------------------
     @testset "ti() with marginals — s(x) + s(z) + ti(x, z)" begin
         m = gam(@gam_formula(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 25)), data)
         @test m.converged

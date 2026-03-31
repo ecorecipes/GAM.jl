@@ -218,6 +218,12 @@ function gam(f::FormulaTerm, data;
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
         _validate_response(y, family)
 
+        if has_linear_constraints(smooths)
+            return _fit_scasm(y, X, smooths, n_parametric, f, data, family, link_eff,
+                method, weights, control;
+                start = start)
+        end
+
         # Auto-detect shape constraints → use SCAM fitting
         if has_shape_constraints(smooths)
             return _fit_scam(y, X, smooths, n_parametric, f, data, family, link_eff,
@@ -284,6 +290,12 @@ function gam(gf::GamFormula, data;
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
         _validate_response(y, family)
         f = term(gf.response) ~ term(1)
+
+        if has_linear_constraints(smooths)
+            return _fit_scasm(y, X, smooths, n_parametric, f, data, family, link_eff,
+                method, weights, control;
+                start = start)
+        end
 
         # Auto-detect shape constraints → use SCAM fitting
         if has_shape_constraints(smooths)
@@ -458,10 +470,12 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
 
     penalty = setup_penalties(smooths, n_parametric)
     _initial_sp(X, penalty)
+    Ain, bin, Aeq, beq = _global_linear_constraints(smooths, p)
 
     log_sp, result = outer_iteration(X, y, smooths, penalty, family, link;
         method = method, weights = wts, control = control,
-        start = start === nothing ? nothing : Float64.(start))
+        start = start === nothing ? nothing : Float64.(start),
+        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
     edf_per_smooth = smooth_edf(result.edf_vec, smooths)
     edf_total_val = sum(result.edf_vec)
@@ -469,7 +483,15 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
     S_total = total_penalty(penalty, log_sp, p)
     XtWX = X' * Diagonal(result.working_weights) * X
     A = XtWX + S_total
-    A_chol = cholesky(Symmetric(A))
+    A_chol = try
+        cholesky(Symmetric(A))
+    catch
+        A_reg = copy(A)
+        @inbounds for i in 1:p
+            A_reg[i, i] += 1e-8
+        end
+        cholesky(Symmetric(A_reg))
+    end
     Vp = inv(A_chol)
     F = Vp * XtWX
     Ve = Symmetric(F * Vp * F') |> Matrix

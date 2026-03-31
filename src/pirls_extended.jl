@@ -18,7 +18,11 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
     weights::Vector{Float64} = ones(length(y)),
     offset::Vector{Float64} = zeros(length(y)),
     start::Union{Vector{Float64}, Nothing} = nothing,
-    control::GamControl = gam_control())
+    control::GamControl = gam_control(),
+    Ain = nothing,
+    bin = nothing,
+    Aeq = nothing,
+    beq = nothing)
 
     n, p = size(X)
 
@@ -40,6 +44,7 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
 
     converged = false
     n_iter = 0
+    feasible_old = _is_feasible(beta, Ain, bin, Aeq, beq)
 
     # Pre-allocate working buffers
     dmu_deta = Vector{Float64}(undef, n)
@@ -47,6 +52,7 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
     w = Vector{Float64}(undef, n)
     z = Vector{Float64}(undef, n)
     Xw = similar(X)           # n×p buffer for √w-scaled X
+    wz_buf = similar(z)       # n-vector buffer for √w-scaled z
     XtWX = Matrix{Float64}(undef, p, p)
     A = Matrix{Float64}(undef, p, p)
     beta_new = Vector{Float64}(undef, p)
@@ -91,29 +97,16 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
             end
         end
 
-        # Build X'WX via scaled X: Xw = √w .* X, then XtWX = Xw'Xw
-        @inbounds for j in 1:p, i in 1:n
-            Xw[i, j] = sqrt(w[i]) * X[i, j]
+        _build_penalized_system!(A, rhs, X, w, z, S_total, p, n, Xw, wz_buf)
+        if (Ain === nothing || size(Ain, 1) == 0) && (Aeq === nothing || size(Aeq, 1) == 0)
+            A_chol = cholesky(Symmetric(A))
+            ldiv!(beta_new, A_chol, rhs)
+        else
+            beta_new .= _solve_constrained_qp(A, rhs, Ain, bin, Aeq, beq;
+                warm_start = iter == 1 ? start : beta,
+                eps_abs = max(control.epsilon, 1e-8),
+                eps_rel = max(control.epsilon, 1e-8))
         end
-        mul!(XtWX, Xw', Xw)
-
-        # A = X'WX + S_total
-        @inbounds for j in 1:p, k in 1:p
-            A[k, j] = XtWX[k, j] + S_total[k, j]
-        end
-
-        # RHS = X'Wz
-        @inbounds for j in 1:p
-            s = 0.0
-            for i in 1:n
-                s += X[i, j] * w[i] * z[i]
-            end
-            rhs[j] = s
-        end
-
-        # Solve: beta_new = A \ rhs
-        A_chol = cholesky(Symmetric(A))
-        ldiv!(beta_new, A_chol, rhs)
 
         # Update: eta_new = X * beta_new + offset
         mul!(eta_new, X, beta_new)
@@ -125,40 +118,54 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
 
         # Step halving if deviance increased
         step_factor = 1.0
-        for _ in 1:25
-            if isfinite(dev_new) && dev_new <= dev_old + control.epsilon * abs(dev_old)
-                break
+        accepted_step = isfinite(dev_new) &&
+                        dev_new <= dev_old + control.epsilon * abs(dev_old) &&
+                        _is_feasible(beta_new, Ain, bin, Aeq, beq)
+        if !((Ain !== nothing && size(Ain, 1) > 0) || (Aeq !== nothing && size(Aeq, 1) > 0)) || feasible_old
+            for _ in 1:25
+                accepted_step && break
+                step_factor *= 0.5
+                if step_factor < 1e-8
+                    break
+                end
+                @inbounds for j in 1:p
+                    beta_step[j] = beta[j] + step_factor * (beta_new[j] - beta[j])
+                end
+                if !_is_feasible(beta_step, Ain, bin, Aeq, beq)
+                    continue
+                end
+                mul!(eta_new, X, beta_step)
+                eta_new .+= offset
+                @inbounds for i in 1:n
+                    mu_new[i] = _clamp_mu(family, GLM.linkinv(link, eta_new[i]))
+                end
+                dev_new = _deviance(family, y, mu_new, weights)
+                accepted_step = isfinite(dev_new) &&
+                                dev_new <= dev_old + control.epsilon * abs(dev_old)
             end
-            step_factor *= 0.5
-            if step_factor < 1e-8
-                break
-            end
-            @inbounds for j in 1:p
-                beta_step[j] = beta[j] + step_factor * (beta_new[j] - beta[j])
-            end
-            mul!(eta_new, X, beta_step)
-            eta_new .+= offset
-            @inbounds for i in 1:n
-                mu_new[i] = _clamp_mu(family, GLM.linkinv(link, eta_new[i]))
-            end
-            dev_new = _deviance(family, y, mu_new, weights)
-        end
 
-        if step_factor < 1.0
-            @inbounds for j in 1:p
-                beta_new[j] = beta[j] + step_factor * (beta_new[j] - beta[j])
+            if accepted_step && step_factor < 1.0
+                @inbounds for j in 1:p
+                    beta_new[j] = beta[j] + step_factor * (beta_new[j] - beta[j])
+                end
+                mul!(eta_new, X, beta_new)
+                eta_new .+= offset
+                @inbounds for i in 1:n
+                    mu_new[i] = _clamp_mu(family, GLM.linkinv(link, eta_new[i]))
+                end
+                dev_new = _deviance(family, y, mu_new, weights)
+            elseif !accepted_step
+                copyto!(beta_new, beta)
+                copyto!(eta_new, eta)
+                copyto!(mu_new, mu)
+                dev_new = dev_old
             end
-            mul!(eta_new, X, beta_new)
-            eta_new .+= offset
-            @inbounds for i in 1:n
-                mu_new[i] = _clamp_mu(family, GLM.linkinv(link, eta_new[i]))
-            end
-            dev_new = _deviance(family, y, mu_new, weights)
         end
 
         beta .= beta_new
         eta .= eta_new
         mu .= mu_new
+        feasible_old = _is_feasible(beta, Ain, bin, Aeq, beq)
 
         # Estimate extra parameter periodically (every 3 iterations after burn-in)
         if iter >= 3 && iter % 3 == 0 && _has_extra_param(family)
@@ -171,7 +178,7 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
         crit = abs(dev_new - dev_old) / (abs(dev_new) + 0.1)
         dev_old = dev_new
 
-        if crit < control.epsilon
+        if crit < control.epsilon && feasible_old
             converged = true
             break
         end
@@ -209,14 +216,22 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
         end
     end
 
-    # EDF and hat matrix
-    edf_vec, hat_diag = penalty_edf(X, w, S_total)
-
-    # R factor — reuse A buffer (already has XtWX + S_total from last iteration)
-    @inbounds for j in 1:p, k in 1:p
-        A[k, j] = XtWX[k, j] + S_total[k, j]
+    _build_XtWX_plus_S!(A, X, w, S_total, p, n, Xw)
+    A_chol_final = try
+        cholesky(Symmetric(A))
+    catch
+        A_reg = copy(A)
+        @inbounds for i in 1:p
+            A_reg[i, i] += 1e-8
+        end
+        cholesky(Symmetric(A_reg))
     end
-    R = Matrix(cholesky(Symmetric(A)).U)
+    XtWX = similar(A)
+    @inbounds for j in 1:p, k in 1:p
+        XtWX[j, k] = A[j, k] - S_total[j, k]
+    end
+    edf_vec, hat_diag = penalty_edf(X, w, S_total; XtWX = XtWX, A_chol = A_chol_final)
+    R = Matrix(A_chol_final.U)
 
     return PirlsResult(
         beta, mu, eta, w, dev_old, pearson,

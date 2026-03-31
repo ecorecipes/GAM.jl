@@ -317,6 +317,32 @@ t2(:x, :y, k=8)
 full interaction penalty), but each penalty is simpler. This can give finer
 control over smoothing in each marginal direction.
 
+### Linear-Constraint Bases (`bs=:sc`, `bs=:scad`)
+
+These bases impose general linear inequality or equality constraints on spline
+coefficients. Use them through [`gam()`](@ref), [`gamm()`](@ref), or
+[`gamlss()`](@ref); they dispatch automatically to the constrained fitting
+backend.
+
+- `:sc` — single-penalty constrained spline
+- `:scad` — adaptive constrained spline with multiple penalties
+- `pc=...` — additional point or weighted-average linear constraints appended to
+  a smooth
+
+```julia
+# Monotone increasing via explicit linear constraints
+gam(@gam_formula(y ~ s(x, bs=:sc, xt=["m+"], k=12)), df)
+
+# Positive smooth with no intercept
+gam(@gam_formula(y ~ 0 + s(x, bs=:sc, xt=["+"], k=12)), df)
+```
+
+These smooths are the closest analogue to `mgcv::scasm()`, but GAM.jl does not
+currently mirror mgcv's `pcls()` optimizer line-for-line. Instead, it uses a
+Julia-native constrained PIRLS / quadratic-programming backend that preserves
+the `gam(...)`-centric API and supports the same linear-constraint basis
+families across GAM, GAMLSS, and GAMM workflows.
+
 ### SCAM Shape-Constrained Bases
 
 These basis types impose monotonicity and/or convexity constraints on the

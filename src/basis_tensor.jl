@@ -19,10 +19,76 @@ struct RawMarginalBasis
     null_dim::Int
     knots::Vector{Float64}
     spec::SmoothSpec
+    Ain::Union{Matrix{Float64}, Nothing}
+    bin::Union{Vector{Float64}, Nothing}
+    Aeq::Union{Matrix{Float64}, Nothing}
+    beq::Union{Vector{Float64}, Nothing}
+    template::ConstructedSmooth
+end
+
+function RawMarginalBasis(X::Matrix{Float64}, S::Vector{Matrix{Float64}},
+                          null_dim::Int, knots::Vector{Float64}, spec::SmoothSpec;
+                          Ain = nothing,
+                          bin = nothing,
+                          Aeq = nothing,
+                          beq = nothing,
+                          constraint = nothing,
+                          Sigma = nothing,
+                          cmX = nothing,
+                          p_ident = nothing,
+                          rank::Union{Int, Nothing} = nothing,
+                          template::Union{ConstructedSmooth, Nothing} = nothing)
+    if template === nothing
+        rank_val = rank === nothing ? max(size(X, 2) - null_dim, 0) : rank
+        template = ConstructedSmooth(
+            spec, X, S, knots, null_dim, rank_val,
+            constraint, nothing, 0, 0,
+            Sigma, cmX, p_ident,
+            Int[],
+            Ain, bin, Aeq, beq,
+        )
+    end
+    return RawMarginalBasis(X, S, null_dim, knots, spec, Ain, bin, Aeq, beq, template)
 end
 
 # Module-level storage for marginal info (keyed by objectid of ConstructedSmooth)
 const _TENSOR_MARGINALS = Dict{UInt, Vector{RawMarginalBasis}}()
+
+function _embed_tensor_constraint(A::Matrix{Float64}, pos::Int, marginal_dims::Vector{Int})
+    P = Matrix{Float64}(I, 1, 1)
+    for i in 1:length(marginal_dims)
+        if i == pos
+            P = kron(P, A)
+        else
+            P = kron(P, Matrix{Float64}(I, marginal_dims[i], marginal_dims[i]))
+        end
+    end
+    return P
+end
+
+function _repeat_tensor_rhs(b::Vector{Float64}, pos::Int, marginal_dims::Vector{Int})
+    inner = pos < length(marginal_dims) ? prod(marginal_dims[(pos + 1):end]) : 1
+    outer = pos > 1 ? prod(marginal_dims[1:(pos - 1)]) : 1
+    return repeat(b; inner = inner, outer = outer)
+end
+
+function _merge_tensor_constraint_blocks(raw_marginals::Vector{RawMarginalBasis},
+                                         marginal_dims::Vector{Int},
+                                         which::Symbol)
+    A_merged = nothing
+    b_merged = nothing
+    rhs_field = which === :Ain ? :bin : :beq
+    for (i, rm) in enumerate(raw_marginals)
+        A = getfield(rm, which)
+        b = getfield(rm, rhs_field)
+        if A !== nothing && b !== nothing && size(A, 1) > 0
+            A_full = _embed_tensor_constraint(A, i, marginal_dims)
+            b_full = _repeat_tensor_rhs(b, i, marginal_dims)
+            A_merged, b_merged = _append_constraint_block(A_merged, b_merged, A_full, b_full)
+        end
+    end
+    return A_merged, b_merged
+end
 
 """
     _row_kronecker(matrices::Vector{Matrix{Float64}}) -> Matrix{Float64}
@@ -178,7 +244,11 @@ end
 # Fallback: build via the normal path (uses constraint absorption, less ideal)
 function _build_raw_marginal(::AbstractBasisType, spec::SmoothSpec, data, user_knots)
     sm = _smooth_construct(spec.basis, spec, data, user_knots)
-    return RawMarginalBasis(sm.X, sm.S, sm.null_dim, sm.knots, spec)
+    return RawMarginalBasis(sm.X, sm.S, sm.null_dim, sm.knots, spec;
+        Ain = sm.Ain, bin = sm.bin, Aeq = sm.Aeq, beq = sm.beq,
+        constraint = sm.constraint,
+        Sigma = sm.Sigma, cmX = sm.cmX, p_ident = sm.p_ident,
+        rank = sm.rank, template = sm)
 end
 
 """
@@ -187,7 +257,7 @@ end
 Build the unconstrained prediction matrix for a raw marginal at new data.
 """
 function _raw_predict_marginal(raw::RawMarginalBasis, newdata)
-    return _build_raw_marginal(raw.spec, newdata, nothing).X
+    return predict_matrix(raw.template, newdata)
 end
 
 """
@@ -285,6 +355,9 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
         end
     end
 
+    Ain, bin = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Ain)
+    Aeq, beq = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Aeq)
+
     # 4. For ti(): keep only interaction columns
     #    R mgcv overrides marginal null_dim to 1 for ti() — only the constant is
     #    treated as "null space" so that ti() removes main effects (constant-valued
@@ -295,6 +368,12 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
         if !isempty(keep_cols)
             X_tensor = X_tensor[:, keep_cols]
             penalties = [S[keep_cols, keep_cols] for S in penalties]
+            if Ain !== nothing
+                Ain = Ain[:, keep_cols]
+            end
+            if Aeq !== nothing
+                Aeq = Aeq[:, keep_cols]
+            end
         end
     end
 
@@ -306,6 +385,9 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
 
     # 5. Absorb identifiability constraints
     X_cons, S_cons, C, _ = absorb_constraints!(X_tensor, penalties)
+    Z = _constraint_basis(C, size(X_tensor, 2))
+    Ain_cons = Ain === nothing ? nothing : Ain * Z
+    Aeq_cons = Aeq === nothing ? nothing : Aeq * Z
 
     sm = ConstructedSmooth(
         spec, X_cons, S_cons,
@@ -314,6 +396,7 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        Ain_cons, bin, Aeq_cons, beq,
     )
 
     _TENSOR_MARGINALS[objectid(sm)] = raw_marginals
@@ -348,7 +431,7 @@ function _predict_matrix(::Union{TensorProduct, TensorInteraction},
 
     if smooth.constraint !== nothing
         C = smooth.constraint
-        Z = nullspace(C)
+        Z = _constraint_basis(C, size(X_tensor, 2))
         return X_tensor * Z
     end
     return X_tensor
@@ -405,6 +488,9 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
         end
     end
 
+    Ain, bin = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Ain)
+    Aeq, beq = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Aeq)
+
     # Full interaction penalty: kronecker of first penalty from each marginal
     P_full = Matrix{Float64}(I, 1, 1)
     for m in 1:d
@@ -419,6 +505,9 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
 
     # 4. Absorb identifiability constraints
     X_cons, S_cons, C, _ = absorb_constraints!(X_tensor, penalties)
+    Z = _constraint_basis(C, size(X_tensor, 2))
+    Ain_cons = Ain === nothing ? nothing : Ain * Z
+    Aeq_cons = Aeq === nothing ? nothing : Aeq * Z
 
     sm = ConstructedSmooth(
         spec, X_cons, S_cons,
@@ -427,6 +516,7 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        Ain_cons, bin, Aeq_cons, beq,
     )
 
     _TENSOR_MARGINALS[objectid(sm)] = raw_marginals
@@ -462,7 +552,7 @@ function _predict_matrix(::T2TensorProduct, smooth::ConstructedSmooth, newdata)
 
     if smooth.constraint !== nothing
         C = smooth.constraint
-        Z = nullspace(C)
+        Z = _constraint_basis(C, size(X_tensor, 2))
         return X_tensor * Z
     end
     return X_tensor

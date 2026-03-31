@@ -719,8 +719,24 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
             false
         end
 
-        if _scam_available
-            @eval include("test_scam_rcall.jl")
+     if _scam_available
+         @eval include("test_scam_rcall.jl")
+     end
+    end
+
+    # mgcv::scasm R comparison tests
+    if _rcall_available
+        _scasm_available = try
+            Bool(RCall.rcopy(RCall.reval(
+                "library(mgcv); exists('scasm', where = asNamespace('mgcv'), inherits = FALSE)"
+            )))
+        catch e
+            @warn "Skipping scasm R comparison tests (mgcv/scasm not available)" exception = e
+            false
+        end
+
+        if _scasm_available
+            @eval include("test_scasm_rcall.jl")
         end
     end
 
@@ -745,6 +761,9 @@ end
 
 # SCAM unit tests (no R needed)
 @eval include("test_scam.jl")
+
+# SCASM unit tests (no R needed)
+@eval include("test_scasm.jl")
 
 # Unified gam() API dispatch tests
 @eval include("test_unified_api.jl")
