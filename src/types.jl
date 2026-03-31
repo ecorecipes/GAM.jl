@@ -67,6 +67,13 @@ struct TensorInteraction <: AbstractBasisType end
 """Alternative tensor product smooth basis (mgcv `t2()`)."""
 struct T2TensorProduct <: AbstractBasisType end
 
+# mgcv::scasm basis types
+"""Shape-constrained B-spline smooth (mgcv `bs="sc"`)."""
+struct ShapeConstrainedBSpline <: AbstractBasisType end
+
+"""Shape-constrained adaptive smooth (mgcv `bs="scad"`)."""
+struct ShapeConstrainedAdaptive <: AbstractBasisType end
+
 # Shape-constrained smooth types (scam package)
 """Abstract base for shape-constrained spline basis types."""
 abstract type AbstractConstrainedBasis <: AbstractBasisType end
@@ -106,6 +113,8 @@ const BASIS_TYPES = Dict{Symbol, AbstractBasisType}(
     :cps => CyclicPSpline(),
     :bs => BSplineBasis(),
     :re => RandomEffect(),
+    :sc => ShapeConstrainedBSpline(),
+    :scad => ShapeConstrainedAdaptive(),
     :mpi => MonoIncBasis(),
     :mpd => MonoDecBasis(),
     :cv => ConcaveBasis(),
@@ -204,6 +213,34 @@ mutable struct ConstructedSmooth{B<:AbstractBasisType}
     p_ident::Union{BitVector, Nothing}
     # Side constraint tracking — columns removed by side_constrain!
     del_index::Vector{Int}
+    # General linear constraints (mgcv::scasm / pc constraints)
+    Ain::Union{Matrix{Float64}, Nothing}
+    bin::Union{Vector{Float64}, Nothing}
+    Aeq::Union{Matrix{Float64}, Nothing}
+    beq::Union{Vector{Float64}, Nothing}
+end
+
+function ConstructedSmooth(
+    spec::SmoothSpec{B},
+    X::Matrix{Float64},
+    S::Vector{Matrix{Float64}},
+    knots::Vector{Float64},
+    null_dim::Int,
+    rank::Int,
+    constraint::Union{Matrix{Float64}, Nothing},
+    qrc::Union{LinearAlgebra.QRCompactWY{Float64, Matrix{Float64}}, Nothing},
+    first_para::Int,
+    last_para::Int,
+    Sigma::Union{Matrix{Float64}, Nothing},
+    cmX::Union{Vector{Float64}, Nothing},
+    p_ident::Union{BitVector, Nothing},
+    del_index::Vector{Int},
+) where {B<:AbstractBasisType}
+    return ConstructedSmooth{B}(
+        spec, X, S, knots, null_dim, rank, constraint, qrc,
+        first_para, last_para, Sigma, cmX, p_ident, del_index,
+        nothing, nothing, nothing, nothing,
+    )
 end
 
 # ============================================================================
