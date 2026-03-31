@@ -437,9 +437,13 @@ function _fit_gamm_lams(y, X_gam, smooths, n_parametric,
     X_re_parts = [re_sm.X for re_sm in re_smooths]
     X_aug = isempty(X_re_parts) ? X_gam : hcat(X_gam, X_re_parts...)
 
-    # Delegate to existing _fit_gam
-    gam_model = _fit_gam(y, X_aug, all_smooths, n_parametric,
-        f, data, family, link, method, :pirls, weights, control)
+    gam_model = if has_linear_constraints(all_smooths)
+        _fit_scasm(y, X_aug, all_smooths, n_parametric,
+            f, data, family, link, method, weights, control)
+    else
+        _fit_gam(y, X_aug, all_smooths, n_parametric,
+            f, data, family, link, method, :pirls, weights, control)
+    end
 
     # Extract RE information from the fitted model
     re_coefs = Vector{Float64}[]

@@ -33,6 +33,7 @@ using Distributions
 using GLM
 using LinearAlgebra
 using LinearAlgebra: BLAS
+using OSQP
 using Printf: @sprintf, @printf
 using Reexport
 using SparseArrays
@@ -103,6 +104,8 @@ export
     SphericalSpline,
     ConstrainedFactorSmooth,
     SPDESmooth,
+    ShapeConstrainedBSpline,
+    ShapeConstrainedAdaptive,
 
     # Smooth construction
     smooth_construct,
@@ -282,6 +285,7 @@ include("basis_sphere.jl")
 include("basis_spde.jl")
 include("basis_sz.jl")
 include("basis_scam.jl")
+include("basis_scasm.jl")
 include("penalty.jl")
 include("smooth2random.jl")
 include("formula.jl")
@@ -305,6 +309,7 @@ include("bam.jl")
 include("ginla.jl")
 include("qgam.jl")
 include("scam.jl")
+include("scasm.jl")
 include("validation.jl")
 include("statsbase.jl")
 include("diagnostics.jl")

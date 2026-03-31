@@ -7,6 +7,11 @@ increasing or convex.
 
 GAM.jl's SCAM implementation follows Pya & Wood (2015).
 
+For explicit linear-constraint smooths (`bs=:sc`, `bs=:scad`, or `pc`
+constraints), use `gam(...)` instead. Those terms go through GAM.jl's separate
+constrained-QP backend, whereas SCAM basis types use reparameterized
+SCOP-splines.
+
 ## Constraint Types
 
 | Basis | Constraint | Description |

@@ -853,6 +853,8 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
 
     Sl = build_penalty_matrices(smooths_list, param_offsets)
     nsp = length(Sl)
+    Ain, bin, Aeq, beq = _global_linear_constraints(smooths_list, p)
+    Ain_list, bin_list, Aeq_list, beq_list = _per_param_linear_constraints(smooths_list, param_offsets)
     Mp = sum(1 + sum(sm.null_dim for sm in smooths; init = 0) for smooths in smooths_list)
 
     η_init = initial_eta(family, y)
@@ -872,7 +874,8 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
     if method == :rs || method == :cg
         return _gamlss_fit_rscg(method, family, y, X_list, smooths_list, Sl,
                                 β_init, log_sp, param_offsets, ctrl, gamlss_ctrl,
-                                nsp, Mp, p, n, sp)
+                                nsp, Mp, p, n, sp,
+                                Ain_list, bin_list, Aeq_list, beq_list)
     end
 
     # Default: EFS solver
@@ -881,11 +884,13 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
         for (j, Sj) in enumerate(Sl)
             S .+= exp(log_sp[j]) .* Sj
         end
-        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl)
+        β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl;
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         reml_val = nll_pen
     else
         log_sp, β_opt, reml_val = mp_efs_outer(family, y, X_list, Sl, β_init,
-            log_sp, param_offsets, ctrl; Mp = Mp)
+            log_sp, param_offsets, ctrl; Mp = Mp,
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         conv = true
     end
 

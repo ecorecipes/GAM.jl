@@ -1,5 +1,44 @@
 # Smooth specification constructors — user-facing s(), te(), ti()
 
+function _normalize_xt(xt; pc=nothing)
+    xt_norm = Dict{Symbol,Any}()
+    if xt === nothing
+        # no-op
+    elseif xt isa AbstractDict
+        for (k, v) in pairs(xt)
+            xt_norm[Symbol(k)] = v
+        end
+    elseif xt isa AbstractString
+        xt_norm[:constraints] = [String(xt)]
+    elseif xt isa Symbol
+        xt_norm[:constraints] = [String(xt)]
+    elseif xt isa AbstractVector
+        if all(v -> v isa AbstractString || v isa Symbol, xt)
+            xt_norm[:constraints] = String[string(v) for v in xt]
+        else
+            xt_norm[:raw] = xt
+        end
+    else
+        xt_norm[:raw] = xt
+    end
+
+    if pc !== nothing
+        xt_norm[:pc] = pc
+    end
+    return xt_norm
+end
+
+function _normalize_tensor_xt(xt, d::Int)
+    if xt === nothing
+        return [Dict{Symbol,Any}() for _ in 1:d]
+    elseif xt isa AbstractVector && length(xt) == d
+        return [_normalize_xt(xti) for xti in xt]
+    else
+        xt_one = _normalize_xt(xt)
+        return [copy(xt_one) for _ in 1:d]
+    end
+end
+
 """
     s(vars...; bs=:tp, k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing,
       xt=Dict{Symbol,Any}())
@@ -33,7 +72,7 @@ s(:x, fx=true, k=5)        # unpenalized with 5 basis functions
 """
 function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
     id = nothing, sp = nothing, fx::Bool = false, m = nothing,
-    xt::Dict{Symbol,Any} = Dict{Symbol,Any}())
+    xt = nothing, pc = nothing)
     length(vars) >= 1 || throw(ArgumentError("s() requires at least one variable"))
 
     basis = resolve_basis_type(bs)
@@ -62,11 +101,12 @@ function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
     id_sym = id isa Symbol ? id : nothing
     sp_val = sp === nothing ? nothing : Float64(sp)
     m_val = m === nothing ? nothing : Int(m)
+    xt_norm = _normalize_xt(xt; pc = pc)
 
     label = _smooth_label(vars, by_sym, bs)
 
     return SmoothSpec{typeof(basis)}(collect(vars), basis, k, by_sym, id_sym, sp_val,
-        fx, m_val, label, xt)
+        fx, m_val, label, xt_norm)
 end
 
 # Overload to accept Term objects from @formula context
@@ -99,7 +139,8 @@ te(:x1, :x2, bs=:ps)      # P-spline margins
 ```
 """
 function te(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
-            by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing)
+            by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
+            xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("te() requires at least 2 variables"))
     d = length(vars)
 
@@ -119,20 +160,22 @@ function te(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
     id_sym = id isa Symbol ? id : nothing
     sp_val = sp === nothing ? nothing : Float64(sp)
     m_val = m === nothing ? nothing : Int(m)
+    xt_vec = _normalize_tensor_xt(xt, d)
 
     marginals = SmoothSpec[]
     for i in 1:d
         basis_i = resolve_basis_type(bs_vec[i])
         label_i = "s($(vars[i]),bs=$(bs_vec[i]))"
         push!(marginals, SmoothSpec([vars[i]], basis_i, k_marginal[i],
-                                    nothing, id_sym, sp_val, fx, m_val, label_i))
+                                    nothing, id_sym, sp_val, fx, m_val, label_i, xt_vec[i]))
     end
 
     label = _te_label(vars, by_sym, false)
     total_k = prod(k_marginal)
     # Store as SmoothSpec{TensorProduct} with marginals accessible via _tensor_marginals
     spec = SmoothSpec(collect(vars), TensorProduct(), total_k,
-                      by_sym, id_sym, sp_val, fx, m_val, label)
+                      by_sym, id_sym, sp_val, fx, m_val, label,
+                      _normalize_xt(nothing; pc = pc))
     _register_marginals(spec, marginals)
     return spec
 end
@@ -144,7 +187,8 @@ Specify a tensor product interaction smooth (main effects removed).
 Like `te()` but only includes interaction terms, useful in ANOVA-like decompositions.
 """
 function ti(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
-            by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing)
+            by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
+            xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("ti() requires at least 2 variables"))
     d = length(vars)
 
@@ -162,19 +206,21 @@ function ti(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
     id_sym = id isa Symbol ? id : nothing
     sp_val = sp === nothing ? nothing : Float64(sp)
     m_val = m === nothing ? nothing : Int(m)
+    xt_vec = _normalize_tensor_xt(xt, d)
 
     marginals = SmoothSpec[]
     for i in 1:d
         basis_i = resolve_basis_type(bs_vec[i])
         label_i = "s($(vars[i]),bs=$(bs_vec[i]))"
         push!(marginals, SmoothSpec([vars[i]], basis_i, k_marginal[i],
-                                    nothing, id_sym, sp_val, fx, m_val, label_i))
+                                    nothing, id_sym, sp_val, fx, m_val, label_i, xt_vec[i]))
     end
 
     label = _te_label(vars, by_sym, true)
     total_k = prod(k_marginal)
     spec = SmoothSpec(collect(vars), TensorInteraction(), total_k,
-                      by_sym, id_sym, sp_val, fx, m_val, label)
+                      by_sym, id_sym, sp_val, fx, m_val, label,
+                      _normalize_xt(nothing; pc = pc))
     _register_marginals(spec, marginals)
     return spec
 end
@@ -254,7 +300,8 @@ t2(:x1, :x2, bs=:ps)      # P-spline margins
 ```
 """
 function t2(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
-            by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing)
+            by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
+            xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("t2() requires at least 2 variables"))
     d = length(vars)
 
@@ -272,19 +319,21 @@ function t2(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
     id_sym = id isa Symbol ? id : nothing
     sp_val = sp === nothing ? nothing : Float64(sp)
     m_val = m === nothing ? nothing : Int(m)
+    xt_vec = _normalize_tensor_xt(xt, d)
 
     marginals = SmoothSpec[]
     for i in 1:d
         basis_i = resolve_basis_type(bs_vec[i])
         label_i = "s($(vars[i]),bs=$(bs_vec[i]))"
         push!(marginals, SmoothSpec([vars[i]], basis_i, k_marginal[i],
-                                    nothing, id_sym, sp_val, fx, m_val, label_i))
+                                    nothing, id_sym, sp_val, fx, m_val, label_i, xt_vec[i]))
     end
 
     label = _t2_label(vars, by_sym)
     total_k = prod(k_marginal)
     spec = SmoothSpec(collect(vars), T2TensorProduct(), total_k,
-                      by_sym, id_sym, sp_val, fx, m_val, label)
+                      by_sym, id_sym, sp_val, fx, m_val, label,
+                      _normalize_xt(nothing; pc = pc))
     _register_marginals(spec, marginals)
     return spec
 end

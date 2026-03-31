@@ -22,7 +22,9 @@ function smooth_construct(spec::SmoothSpec{B}, data, knots = nothing) where {B}
             end
         end
     end
-    return _smooth_construct(spec.basis, spec, data, knots)
+    sm = _smooth_construct(spec.basis, spec, data, knots)
+    _append_pc_constraints!(sm, data)
+    return sm
 end
 
 """
@@ -55,6 +57,14 @@ Return the dimension of the penalty null space.
 null_space_dim(smooth::ConstructedSmooth) = smooth.null_dim
 
 # Internal dispatch — each basis_*.jl file implements _smooth_construct and _predict_matrix
+
+function _constraint_basis(C::Union{Matrix{Float64}, Nothing}, p::Int)
+    if C === nothing || size(C, 1) == 0
+        return Matrix{Float64}(I, p, p)
+    end
+    qr_C = qr(Matrix(C)')
+    return (qr_C.Q * Matrix{Float64}(I, p, p))[:, (size(C, 1) + 1):p]
+end
 
 """
     absorb_constraints!(X, S; constraint=:sum_to_zero)
@@ -255,6 +265,16 @@ function side_constrain!(smooths::Vector{<:ConstructedSmooth}, X_para::Matrix{Fl
             # Stage 6: Remove dependent columns
             keep = setdiff(1:size(smooths[i].X, 2), ind)
             smooths[i].X = smooths[i].X[:, keep]
+
+            if smooths[i].Ain !== nothing
+                smooths[i].Ain = smooths[i].Ain[:, keep]
+            end
+            if smooths[i].Aeq !== nothing
+                smooths[i].Aeq = smooths[i].Aeq[:, keep]
+            end
+            if smooths[i].p_ident !== nothing
+                smooths[i].p_ident = smooths[i].p_ident[keep]
+            end
 
             # Update penalty matrices
             j_pen = length(smooths[i].S)

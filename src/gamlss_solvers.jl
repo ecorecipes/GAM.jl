@@ -47,7 +47,12 @@ Solve penalized weighted least squares: (X'WX + S)β = X'Wz
 where W = diag(wk).
 """
 function _penalized_wls(Xk::Matrix{Float64}, wk::Vector{Float64},
-                        zk::Vector{Float64}, Sk::Matrix{Float64})
+                        zk::Vector{Float64}, Sk::Matrix{Float64};
+                        Ain = nothing,
+                        bin = nothing,
+                        Aeq = nothing,
+                        beq = nothing,
+                        warm_start = nothing)
     pk = size(Xk, 2)
 
     # X'WX: form (sqrt(w) .* X)' * (sqrt(w) .* X) + S
@@ -76,7 +81,13 @@ function _penalized_wls(Xk::Matrix{Float64}, wk::Vector{Float64},
         XtWz[j] = s
     end
 
-    # Solve
+    has_constraints = (Ain !== nothing && size(Ain, 1) > 0) || (Aeq !== nothing && size(Aeq, 1) > 0)
+    if has_constraints
+        return _solve_constrained_qp(XtWX, XtWz, Ain, bin, Aeq, beq;
+            warm_start = warm_start,
+            eps_abs = 1e-8, eps_rel = 1e-8)
+    end
+
     F = _safe_cholesky(Symmetric(XtWX))
     if F !== nothing
         return F \ XtWz
@@ -86,6 +97,32 @@ function _penalized_wls(Xk::Matrix{Float64}, wk::Vector{Float64},
             XtWX[i, i] += 1e-6
         end
         return Symmetric(XtWX) \ XtWz
+    end
+end
+
+function _accept_gamlss_param_step!(family::MultiParameterFamily, y::AbstractVector,
+                                    η_list::Vector{<:AbstractVector}, β_k::Vector{Float64},
+                                    k::Int, η_target::Vector{Float64}, β_target::Vector{Float64},
+                                    base_dev::Float64, step::Float64,
+                                    gamlss_ctrl::GamlssControl)
+    η_old_k = copy(η_list[k])
+    β_old_k = copy(β_k)
+    dev_cand = base_dev
+
+    while true
+        @. η_list[k] = step * η_target + (1.0 - step) * η_old_k
+        dev_cand = _global_deviance(family, y, η_list)
+        if isfinite(dev_cand) && dev_cand <= base_dev + gamlss_ctrl.gd_tol
+            @. β_k = step * β_target + (1.0 - step) * β_old_k
+            return step, dev_cand, true
+        end
+
+        step *= 0.5
+        if step < 1e-10
+            copyto!(η_list[k], η_old_k)
+            copyto!(β_k, β_old_k)
+            return 0.0, base_dev, false
+        end
     end
 end
 
@@ -456,6 +493,7 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
                     param_offsets::Vector{Int},
                     ctrl::MPFitControl, gamlss_ctrl::GamlssControl,
                     nsp::Int, Mp::Int, p::Int, n::Int;
+                    Ain_list, bin_list, Aeq_list, beq_list,
                     sp_fixed::Bool=false)
     K = nparams(family)
     ncols = deriv_ncols(K)
@@ -505,35 +543,29 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
             end
 
             # Penalized WLS solve
-            β_new = _penalized_wls(X_list[k], wk, zk, S_list[k])
+            Ain_k = Ain_list[k]
+            bin_k = bin_list[k]
+            Aeq_k = Aeq_list[k]
+            beq_k = beq_list[k]
+            feasible_k = _is_feasible(β_list[k], Ain_k, bin_k, Aeq_k, beq_k)
+            β_new = _penalized_wls(X_list[k], wk, zk, S_list[k];
+                Ain = Ain_k, bin = bin_k, Aeq = Aeq_k, beq = beq_k,
+                warm_start = β_list[k])
             η_new = X_list[k] * β_new
 
             # Step halving
             step = _get_step(gamlss_ctrl, k)
-            η_candidate = step .* η_new .+ (1.0 - step) .* η_list[k]
-            η_old_k = copy(η_list[k])
-            η_list[k] = η_candidate
-
-            if gamlss_ctrl.autostep
-                dev_cand = _global_deviance(family, y, η_list)
-                for _ in 1:5
-                    if isfinite(dev_cand) && dev_cand <= dev + gamlss_ctrl.gd_tol
-                        break
-                    end
-                    step *= 0.5
-                    if step < 1e-10
-                        η_list[k] = η_old_k
-                        break
-                    end
-                    η_candidate = step .* η_new .+ (1.0 - step) .* η_old_k
-                    η_list[k] = η_candidate
-                    dev_cand = _global_deviance(family, y, η_list)
-                end
+            dev_base = dev
+            if gamlss_ctrl.autostep && feasible_k
+                step, dev, _ = _accept_gamlss_param_step!(
+                    family, y, η_list, β_list[k], k, η_new, β_new, dev_base, step, gamlss_ctrl)
+            else
+                η_old_k = copy(η_list[k])
+                β_old_k = copy(β_list[k])
+                @. η_list[k] = step * η_new + (1.0 - step) * η_old_k
+                @. β_list[k] = step * β_new + (1.0 - step) * β_old_k
+                dev = _global_deviance(family, y, η_list)
             end
-
-            # Update β for this parameter
-            # Recover β from η: β = (X'X)^{-1} X'η  (or just use β_new scaled by step)
-            β_list[k] .= step .* β_new .+ (1.0 - step) .* β_list[k]
 
             # EFS/local SP update for this parameter's smoothing parameters
             if !sp_fixed && nsp > 0
@@ -586,6 +618,7 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                     param_offsets::Vector{Int},
                     ctrl::MPFitControl, gamlss_ctrl::GamlssControl,
                     nsp::Int, Mp::Int, p::Int, n::Int;
+                    Ain_list, bin_list, Aeq_list, beq_list,
                     sp_fixed::Bool=false)
     K = nparams(family)
     ncols = deriv_ncols(K)
@@ -625,6 +658,7 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
 
             for inner in 1:gamlss_ctrl.i_cyc
                 dev_inner_old = _global_deviance(family, y, η_list)
+                dev_inner_cur = dev_inner_old
 
                 for k in 1:K
                     gk_col = grad_col(k)
@@ -654,7 +688,14 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                         continue
                     end
 
-                    β_new = _penalized_wls(X_list[k], wk, zk, S_list[k])
+                    Ain_k = Ain_list[k]
+                    bin_k = bin_list[k]
+                    Aeq_k = Aeq_list[k]
+                    beq_k = beq_list[k]
+                    feasible_k = _is_feasible(β_list[k], Ain_k, bin_k, Aeq_k, beq_k)
+                    β_new = _penalized_wls(X_list[k], wk, zk, S_list[k];
+                        Ain = Ain_k, bin = bin_k, Aeq = Aeq_k, beq = beq_k,
+                        warm_start = β_list[k])
                     if any(!isfinite, β_new)
                         continue
                     end
@@ -662,30 +703,21 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
 
                     # Step with step-halving
                     step = _get_step(gamlss_ctrl, k)
-                    η_old_k = copy(η_list[k])
-                    η_list[k] = step .* η_new .+ (1.0 - step) .* η_list[k]
-
-                    if gamlss_ctrl.autostep
-                        dev_cand = _global_deviance(family, y, η_list)
-                        for _ in 1:5
-                            if isfinite(dev_cand) && dev_cand <= dev_inner_old + gamlss_ctrl.gd_tol
-                                break
-                            end
-                            step *= 0.5
-                            if step < 1e-10
-                                η_list[k] = η_old_k
-                                step = 0.0
-                                break
-                            end
-                            η_list[k] = step .* η_new .+ (1.0 - step) .* η_old_k
-                            dev_cand = _global_deviance(family, y, η_list)
-                        end
+                    dev_base = dev_inner_cur
+                    if gamlss_ctrl.autostep && feasible_k
+                        step, dev_inner_cur, _ = _accept_gamlss_param_step!(
+                            family, y, η_list, β_list[k], k, η_new, β_new,
+                            dev_base, step, gamlss_ctrl)
+                    else
+                        η_old_k = copy(η_list[k])
+                        β_old_k = copy(β_list[k])
+                        @. η_list[k] = step * η_new + (1.0 - step) * η_old_k
+                        @. β_list[k] = step * β_new + (1.0 - step) * β_old_k
+                        dev_inner_cur = _global_deviance(family, y, η_list)
                     end
-
-                    β_list[k] .= step .* β_new .+ (1.0 - step) .* β_list[k]
                 end
 
-                dev_inner = _global_deviance(family, y, η_list)
+                dev_inner = dev_inner_cur
                 if !isfinite(dev_inner) || abs(dev_inner_old - dev_inner) < gamlss_ctrl.i_cc
                     break
                 end
@@ -704,31 +736,29 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                     zk[i] = η_list[k][i] - g / h
                 end
 
-                β_new = _penalized_wls(X_list[k], wk, zk, S_list[k])
+                Ain_k = Ain_list[k]
+                bin_k = bin_list[k]
+                Aeq_k = Aeq_list[k]
+                beq_k = beq_list[k]
+                feasible_k = _is_feasible(β_list[k], Ain_k, bin_k, Aeq_k, beq_k)
+                β_new = _penalized_wls(X_list[k], wk, zk, S_list[k];
+                    Ain = Ain_k, bin = bin_k, Aeq = Aeq_k, beq = beq_k,
+                    warm_start = β_list[k])
                 η_new = X_list[k] * β_new
 
                 step = _get_step(gamlss_ctrl, k)
-                η_old_k = copy(η_list[k])
-                η_list[k] = step .* η_new .+ (1.0 - step) .* η_list[k]
-
-                if gamlss_ctrl.autostep
-                    dev_cand = _global_deviance(family, y, η_list)
-                    for _ in 1:5
-                        if isfinite(dev_cand) && dev_cand <= dev + gamlss_ctrl.gd_tol
-                            break
-                        end
-                        step *= 0.5
-                        if step < 1e-10
-                            η_list[k] = η_old_k
-                            step = 0.0
-                            break
-                        end
-                        η_list[k] = step .* η_new .+ (1.0 - step) .* η_old_k
-                        dev_cand = _global_deviance(family, y, η_list)
-                    end
+                dev_base = dev
+                if gamlss_ctrl.autostep && feasible_k
+                    step, dev, _ = _accept_gamlss_param_step!(
+                        family, y, η_list, β_list[k], k, η_new, β_new,
+                        dev_base, step, gamlss_ctrl)
+                else
+                    η_old_k = copy(η_list[k])
+                    β_old_k = copy(β_list[k])
+                    @. η_list[k] = step * η_new + (1.0 - step) * η_old_k
+                    @. β_list[k] = step * β_new + (1.0 - step) * β_old_k
+                    dev = _global_deviance(family, y, η_list)
                 end
-
-                β_list[k] .= step .* β_new .+ (1.0 - step) .* β_list[k]
             end
         end
 
@@ -792,7 +822,8 @@ function _gamlss_fit_rscg(method::Symbol, family::MultiParameterFamily,
                           param_offsets::Vector{Int},
                           ctrl::MPFitControl, gamlss_ctrl::GamlssControl,
                           nsp::Int, Mp::Int, p::Int, n::Int,
-                          sp_fixed_input)
+                          sp_fixed_input,
+                          Ain_list, bin_list, Aeq_list, beq_list)
     K = nparams(family)
     sp_fixed = sp_fixed_input !== nothing || nsp == 0
 
@@ -801,11 +832,13 @@ function _gamlss_fit_rscg(method::Symbol, family::MultiParameterFamily,
         β_opt, log_sp, η_fit, dev, conv = gamlss_rs!(
             family, y, X_list, smooths_list, Sl, β_init, log_sp,
             param_offsets, ctrl, gamlss_ctrl, nsp, Mp, p, n;
+            Ain_list = Ain_list, bin_list = bin_list, Aeq_list = Aeq_list, beq_list = beq_list,
             sp_fixed=sp_fixed)
     else  # :cg
         β_opt, log_sp, η_fit, dev, conv = gamlss_cg!(
             family, y, X_list, smooths_list, Sl, β_init, log_sp,
             param_offsets, ctrl, gamlss_ctrl, nsp, Mp, p, n;
+            Ain_list = Ain_list, bin_list = bin_list, Aeq_list = Aeq_list, beq_list = beq_list,
             sp_fixed=sp_fixed)
     end
 

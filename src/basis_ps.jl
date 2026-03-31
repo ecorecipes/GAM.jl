@@ -236,65 +236,21 @@ Uses the recursive derivative formula for B-splines.
 function _bspline_deriv_at(x::Float64, knots::Vector{Float64},
     order::Int, deriv_order::Int, n_basis::Int)
     if deriv_order == 0
-        # Just evaluate the basis
-        row = zeros(1, n_basis)
-        B = _bspline_basis([x], knots, order)
-        return vec(B)
+        return vec(_bspline_basis([x], knots, order))
     end
 
     if deriv_order >= order
         return zeros(n_basis)
     end
 
-    # Derivative of order-p B-spline: (p-1) * [B_{i,p-1}/(knots[i+p-1]-knots[i]) - ...]
-    # Use finite differences on B-spline basis of lower order
-    reduced_order = order - deriv_order
-    if reduced_order < 1
-        return zeros(n_basis)
-    end
-
-    # For the d-th derivative, we need B-splines of order (order-d)
-    # evaluated at x, then scaled by factorial terms
-    nk = length(knots)
-    n_reduced = nk - reduced_order
-
-    B_low = _bspline_basis([x], knots, reduced_order)
-    b_low = vec(B_low)
-
-    # d-th derivative involves a linear combination of lower-order splines
-    # Use the standard recurrence: B_i^(d) = (p-1)/(t_{i+p-1} - t_i) B_{i,p-1}^(d-1)
-    #                                       - (p-1)/(t_{i+p} - t_{i+1}) B_{i+1,p-1}^(d-1)
-    # Applying d times gives a scaled differencing of order-d splines
-    coeffs = ones(n_reduced)
-    col_indices = collect(1:n_reduced)
-
-    for dd in 1:deriv_order
-        p = order - dd + 1  # current spline order
-        new_coeffs = Float64[]
-        new_indices = Int[]
-        for (c, j) in zip(coeffs, col_indices)
-            denom = knots[j + p - 1] - knots[j]
-            if denom > 0
-                push!(new_coeffs, c * (p - 1) / denom)
-                push!(new_indices, j)
-            end
-            if j + 1 <= nk - (p - 1)
-                denom2 = knots[j + p] - knots[j + 1]
-                if denom2 > 0
-                    push!(new_coeffs, -c * (p - 1) / denom2)
-                    push!(new_indices, j + 1)
-                end
-            end
-        end
-        coeffs = new_coeffs
-        col_indices = new_indices
-    end
-
     result = zeros(n_basis)
-    for (c, j) in zip(coeffs, col_indices)
-        if 1 <= j <= length(b_low)
-            result[min(j, n_basis)] += c * b_low[j]
-        end
+    lower = _bspline_deriv_at(x, knots, order - 1, deriv_order - 1, n_basis + 1)
+    @inbounds for i in 1:n_basis
+        denom1 = knots[i + order - 1] - knots[i]
+        denom2 = knots[i + order] - knots[i + 1]
+        term1 = denom1 > 0 ? (order - 1) * lower[i] / denom1 : 0.0
+        term2 = denom2 > 0 ? (order - 1) * lower[i + 1] / denom2 : 0.0
+        result[i] = term1 - term2
     end
 
     return result
@@ -312,7 +268,7 @@ function _predict_matrix(::Union{PSpline, BSplineBasis},
 
     if smooth.constraint !== nothing
         C = smooth.constraint
-        Z = nullspace(C)
+        Z = _constraint_basis(C, size(X_new, 2))
         return X_new * Z
     end
     return X_new
@@ -436,7 +392,7 @@ function _predict_matrix(::CyclicPSpline, smooth::ConstructedSmooth, newdata)
 
     if smooth.constraint !== nothing
         C = smooth.constraint
-        Z = nullspace(C)
+        Z = _constraint_basis(C, size(X, 2))
         return X * Z
     end
     return X

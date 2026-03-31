@@ -290,7 +290,11 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     method::Symbol = :REML,
     weights::Vector{Float64} = ones(length(y)),
     control::GamControl = gam_control(),
-    start::Union{Vector{Float64}, Nothing} = nothing)
+    start::Union{Vector{Float64}, Nothing} = nothing,
+    Ain = nothing,
+    bin = nothing,
+    Aeq = nothing,
+    beq = nothing)
 
     n, p = size(X)
     n_sp = length(penalty.sp)
@@ -298,7 +302,8 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     if n_sp == 0
         S_total = zeros(p, p)
         result = pirls_extended(X, y, S_total, family, link;
-            weights = weights, start = start, control = control)
+            weights = weights, start = start, control = control,
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         return penalty.sp, result
     end
 
@@ -318,7 +323,8 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
         pirls_start = prev_result === nothing ? start : prev_result.coefficients
         result = pirls_extended(X, y, S_total, family, link;
-            weights = weights, start = pirls_start, control = control)
+            weights = weights, start = pirls_start, control = control,
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
         if !result.converged && control.trace
             @warn "P-IRLS did not converge at outer iteration $outer_iter"
@@ -414,7 +420,8 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     total_penalty!(S_total, penalty, log_sp, p)
     final_result = pirls_extended(X, y, S_total, family, link;
         weights = weights, start = prev_result.coefficients,
-        control = control)
+        control = control,
+        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
     return log_sp, final_result
 end

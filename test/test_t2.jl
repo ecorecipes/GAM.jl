@@ -100,6 +100,14 @@ using DataFrames
         @test size(Xp) == size(sm.X)
         @test Xp ≈ sm.X atol=1e-10
 
+        # Predicting on a tiny subset of the training rows must still use the
+        # fitted marginal basis, not rebuild a smaller one from newdata.
+        subset_idx = [1, 50, 120, 200]
+        subset_data = data[subset_idx, :]
+        Xp_subset = predict_matrix(sm, subset_data)
+        @test size(Xp_subset) == (length(subset_idx), size(sm.X, 2))
+        @test Xp_subset ≈ sm.X[subset_idx, :] atol=1e-10
+
         # Predict on new data
         n_new = 50
         new_data = DataFrame(

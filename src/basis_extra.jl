@@ -153,7 +153,7 @@ function _predict_matrix(::MarkovRandomField, smooth::ConstructedSmooth, newdata
     # Apply same constraint as training
     if smooth.constraint !== nothing
         C = smooth.constraint
-        Z = nullspace(C)
+        Z = _constraint_basis(C, size(X, 2))
         return X * Z
     end
     return X
@@ -770,7 +770,7 @@ function _predict_matrix(::SoapFilm, smooth::ConstructedSmooth, newdata)
 
     # Apply constraint
     if smooth.constraint !== nothing
-        Z = nullspace(smooth.constraint)
+        Z = _constraint_basis(smooth.constraint, size(X, 2))
         return X * Z
     end
     return X
