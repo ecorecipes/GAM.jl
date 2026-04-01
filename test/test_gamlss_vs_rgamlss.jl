@@ -13,9 +13,9 @@
 #     match (cor > 0.999 for both μ and σ).
 #   - local_gaic vs R pb(method="GAIC"):  both use AIC-based grid search;
 #     typically matches well.
-#   - local_ml vs R pb(method="ML"):  GAM.jl's local ML can over-smooth
-#     the σ parameter due to boundary effects in the SP update; μ still
-#     matches closely but σ thresholds are relaxed.
+#   - local_ml vs R pb(method="ML"):  now uses the same parameter-scale
+#     working responses/weights as R gamlss for the local smoother update,
+#     so it should match closely as well.
 #
 # To regenerate:
 #   cd GAM.jl && Rscript test/r_comparison/gamlss_vs_rgamlss.R
@@ -102,18 +102,17 @@ end
 
     @testset "RS + local_ml vs pb(method=ML)" begin
         ref_fit = CSV.read(joinpath(REFDIR_RG, "gamlss_rgamlss_no_fitted.csv"), DataFrame)
+        ref_sum = read_summary_rg(joinpath(REFDIR_RG, "gamlss_rgamlss_no_summary.csv"))
 
         ctrl = GAM.gamlss_control(sp_method = :local_ml, n_cyc = 50, trace = false)
         m = gamlss([f_mu, f_sigma], data, GaussianLS();
                    method = :rs, gamlss_ctrl = ctrl)
 
         @test m.converged
-        # μ matches well; σ SP can over-smooth (known local_ml boundary effect)
-        μ_julia = m.fitted_eta[1]
-        @test cor(μ_julia, ref_fit.mu_fitted) > 0.99
-        # σ over-smoothed — documented known limitation
-        σ_julia = exp.(m.fitted_eta[2])
-        @test_broken cor(σ_julia, ref_fit.sigma_fitted) > 0.90
+        check_gamlss_vs_rgamlss(m, ref_fit, ref_sum;
+                                 mu_link_inv = identity, sigma_link_inv = exp,
+                                 cor_mu_thresh = 0.999, cor_sigma_thresh = 0.999,
+                                 nll_reltol = 0.01)
     end
 
     @testset "RS + local_gaic vs pb(method=GAIC)" begin
@@ -161,15 +160,17 @@ end
 
     @testset "RS + local_ml vs pb(method=ML)" begin
         ref_fit = CSV.read(joinpath(REFDIR_RG, "gamlss_rgamlss_ga_fitted.csv"), DataFrame)
+        ref_sum = read_summary_rg(joinpath(REFDIR_RG, "gamlss_rgamlss_ga_summary.csv"))
 
         ctrl = GAM.gamlss_control(sp_method = :local_ml, n_cyc = 50, trace = false)
         m = gamlss([f_mu, f_sigma], data, GammaLS();
                    method = :rs, gamlss_ctrl = ctrl)
 
         @test m.converged
-        # local_ml SP can over-smooth both μ and σ for Gamma — known limitation
-        μ_julia = exp.(m.fitted_eta[1])
-        @test_broken cor(μ_julia, ref_fit.mu_fitted) > 0.95
+        check_gamlss_vs_rgamlss(m, ref_fit, ref_sum;
+                                 mu_link_inv = exp, sigma_link_inv = exp,
+                                 cor_mu_thresh = 0.999, cor_sigma_thresh = 0.999,
+                                 nll_reltol = 0.01)
     end
 
     @testset "RS + local_gaic vs pb(method=GAIC)" begin

@@ -205,7 +205,71 @@ end
     end
 
     # ──────────────────────────────────────────────────────────────────────
-    # 7. Gamma GAM — CR smooth with log link
+    # 7. Quasi-Poisson GAM — overdispersed count data
+    # ──────────────────────────────────────────────────────────────────────
+    @testset "QuasiPoisson CR — overdispersed count data" begin
+        R"""
+        set.seed(199)
+        n <- 350
+        x <- seq(0, 2*pi, length.out=n)
+        mu <- exp(0.6 + 0.5*sin(x))
+        theta <- 1.7
+        y <- rnbinom(n, size=theta, mu=mu)
+        r_qpois <- gam(y ~ s(x, k=15, bs="cr"), data=data.frame(x=x, y=y),
+                      family=quasipoisson(), method="REML")
+        """
+        rs = r_gam_summary("r_qpois")
+        r_x = rcopy(R"x")
+        r_y = rcopy(R"as.numeric(y)")
+
+        df = DataFrame(x = r_x, y = r_y)
+        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+            family = QuasiPoissonFamily(), link = LogLink(), method = :REML)
+
+        @test abs(m.edf_total - rs[:edf]) < 4.0
+        @test abs(m.deviance_val - rs[:deviance]) / max(rs[:deviance], 1.0) < 0.1
+        @test abs(m.scale - rs[:scale]) / rs[:scale] < 0.25
+        @test cor(m.fitted_values, rs[:fitted]) > 0.94
+        @test m.scale > 1.0
+    end
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 8. Quasi-Binomial GAM — overdispersed grouped proportions
+    # ──────────────────────────────────────────────────────────────────────
+    @testset "QuasiBinomial CR — grouped proportions" begin
+        R"""
+        set.seed(299)
+        n <- 320
+        x <- seq(-3, 3, length.out=n)
+        eta <- -0.3 + 1.2*sin(x)
+        mu <- plogis(eta)
+        w <- rep(20, n)
+        phi <- 12
+        p_latent <- rbeta(n, mu*phi, (1-mu)*phi)
+        success <- rbinom(n, size=w, prob=p_latent)
+        y <- success / w
+        r_qbin <- gam(y ~ s(x, k=15, bs="cr"), data=data.frame(x=x, y=y, w=w),
+                     weights=w, family=quasibinomial(), method="REML")
+        """
+        rs = r_gam_summary("r_qbin")
+        r_x = rcopy(R"x")
+        r_y = rcopy(R"y")
+        r_w = rcopy(R"as.numeric(w)")
+
+        df = DataFrame(x = r_x, y = r_y)
+        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+            family = QuasiBinomialFamily(), link = LogitLink(),
+            weights = r_w, method = :REML)
+
+        @test abs(m.edf_total - rs[:edf]) < 3.0
+        @test abs(m.deviance_val - rs[:deviance]) / max(rs[:deviance], 1.0) < 0.1
+        @test abs(m.scale - rs[:scale]) / rs[:scale] < 0.25
+        @test cor(m.fitted_values, rs[:fitted]) > 0.995
+        @test m.scale > 1.0
+    end
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 9. Gamma GAM — CR smooth with log link
     # ──────────────────────────────────────────────────────────────────────
     @testset "Gamma CR — positive response" begin
         R"""

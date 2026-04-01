@@ -9,6 +9,29 @@ using StatsAPI: fitted, nobs, deviance, dof_residual, loglikelihood, coef, resid
 
 const rng = StableRNG(42)
 
+function simulate_tweedie(rng, mu::AbstractVector{<:Real}, p::Real, phi::Real)
+    1.0 < p < 2.0 || throw(ArgumentError("simulate_tweedie requires 1 < p < 2"))
+    phi > 0 || throw(ArgumentError("simulate_tweedie requires phi > 0"))
+
+    alpha = (2.0 - p) / (p - 1.0)
+    y = Vector{Float64}(undef, length(mu))
+    @inbounds for i in eachindex(mu)
+        mui = Float64(mu[i])
+        lambda = mui^(2.0 - p) / (phi * (2.0 - p))
+        gamma_scale = phi * (p - 1.0) * mui^(p - 1.0)
+        n_terms = rand(rng, Poisson(lambda))
+        total = 0.0
+        if n_terms > 0
+            dist = Gamma(alpha, gamma_scale)
+            for _ in 1:n_terms
+                total += rand(rng, dist)
+            end
+        end
+        y[i] = total
+    end
+    return y
+end
+
 @testset "GAM.jl" begin
     @testset "SmoothSpec construction" begin
         sp = s(:x)
@@ -64,6 +87,36 @@ const rng = StableRNG(42)
         @test size(sm.S[1]) == (9, 9)
         @test sm.null_dim == 2  # linear + constant for m=2
         @test issymmetric(sm.S[1]) || norm(sm.S[1] - sm.S[1]') < 1e-10
+
+        Xp = predict_matrix(sm, data)
+        @test size(Xp) == size(sm.X)
+        @test Xp ≈ sm.X atol = 1e-10
+    end
+
+    @testset "Multi-D TPRS prediction" begin
+        n = 120
+        x = randn(rng, n)
+        z = randn(rng, n)
+        y_true = sin.(x) .* cos.(z)
+        y = y_true .+ 0.1 .* randn(rng, n)
+        data = (x = x, z = z)
+
+        spec = s(:x, :z, bs = :tp, k = 20)
+        sm = smooth_construct(spec, data)
+        Xp = predict_matrix(sm, data)
+        @test size(Xp) == size(sm.X)
+        @test Xp ≈ sm.X atol = 1e-10
+
+        newdata = (x = randn(rng, 25), z = randn(rng, 25))
+        Xp_new = predict_matrix(sm, newdata)
+        @test size(Xp_new) == (25, size(sm.X, 2))
+        @test all(isfinite, Xp_new)
+
+        df = DataFrame(x = x, z = z, y = y)
+        m = gam(@gam_formula(y ~ s(x, z, bs = :tp, k = 20)), df)
+        @test m.converged
+        pred = predict(m, df; type = :response)
+        @test pred ≈ m.fitted_values atol = 1e-8
     end
 
     @testset "CR basis construction" begin
@@ -364,6 +417,18 @@ end
         @test f2.estimate_theta == false
     end
 
+    @testset "Quasi family type construction" begin
+        f = QuasiPoissonFamily()
+        @test f isa ExtendedFamily
+        @test GAM._default_link(f) isa LogLink
+        @test GAM._has_extra_param(f) == false
+
+        f2 = QuasiBinomialFamily()
+        @test f2 isa ExtendedFamily
+        @test GAM._default_link(f2) isa LogitLink
+        @test GAM._has_extra_param(f2) == false
+    end
+
     @testset "TweedieFamily type construction" begin
         f = TweedieFamily()
         @test f isa ExtendedFamily
@@ -373,6 +438,10 @@ end
 
         f2 = TweedieFamily(p=1.8)
         @test f2.p == 1.8
+
+        f3 = TweedieFamily(p=1.3, estimate_p=true)
+        @test f3.p == 1.3
+        @test f3.estimate_p == true
     end
 
     @testset "BetaFamily type construction" begin
@@ -406,6 +475,28 @@ end
         @test dev_sat ≈ 0.0 atol = 1e-10
     end
 
+    @testset "Quasi variance and deviance" begin
+        wt = ones(3)
+
+        mu_count = [1.0, 2.0, 5.0]
+        y_count = [1.0, 3.0, 4.0]
+        f_count = QuasiPoissonFamily()
+        @test GAM._variance(f_count, mu_count) ≈ mu_count
+        dev_count = GAM._deviance(f_count, y_count, mu_count, wt)
+        @test dev_count >= 0
+        @test isfinite(dev_count)
+        @test GAM._deviance(f_count, mu_count, mu_count, wt) ≈ 0.0 atol = 1e-10
+
+        mu_bin = [0.2, 0.4, 0.8]
+        y_bin = [0.0, 0.5, 1.0]
+        f_bin = QuasiBinomialFamily()
+        @test GAM._variance(f_bin, mu_bin) ≈ mu_bin .* (1.0 .- mu_bin)
+        dev_bin = GAM._deviance(f_bin, y_bin, mu_bin, wt)
+        @test dev_bin >= 0
+        @test isfinite(dev_bin)
+        @test GAM._deviance(f_bin, mu_bin, mu_bin, wt) ≈ 0.0 atol = 1e-10
+    end
+
     @testset "Tweedie variance and deviance" begin
         mu = [1.0, 2.0, 5.0]
         f = TweedieFamily(p=1.5)
@@ -421,6 +512,26 @@ end
         # Deviance at y=mu should be approximately 0
         dev_sat = GAM._deviance(f, mu, mu, wt)
         @test abs(dev_sat) < 1e-10
+    end
+
+    @testset "Tweedie power estimation" begin
+        rng_ext = StableRNG(505)
+        n = 1500
+        x = range(-1.0, 1.0; length = n) |> collect
+        mu_vals = exp.(0.3 .+ 0.7 .* x)
+        true_p = 1.35
+        true_phi = 0.8
+        y_tw = simulate_tweedie(rng_ext, mu_vals, true_p, true_phi)
+
+        f = TweedieFamily(p=1.8, estimate_p=true)
+        initial_error = abs(f.p - true_p)
+        for _ in 1:4
+            GAM.estimate_theta!(f, y_tw, mu_vals, ones(n), true_phi)
+        end
+
+        @test 1.01 < f.p < 1.99
+        @test abs(f.p - true_p) < initial_error
+        @test abs(f.p - true_p) < 0.3
     end
 
     @testset "Beta variance and deviance" begin
@@ -572,6 +683,53 @@ end
         @test all(0 .< fitted(m) .< 1)
     end
 
+    @testset "Quasi family response validation" begin
+        bad_count = DataFrame(x=1:6, y=[0.0, 1.0, -1.0, 2.0, 3.0, 1.0])
+        @test_throws ArgumentError gam(@gam_formula(y ~ s(x, k = 4)), bad_count;
+            family=QuasiPoissonFamily())
+
+        bad_prop = DataFrame(x=1:6, y=[0.1, 0.2, 1.2, 0.4, 0.5, 0.6])
+        @test_throws ArgumentError gam(@gam_formula(y ~ s(x, k = 4)), bad_prop;
+            family=QuasiBinomialFamily())
+    end
+
+    @testset "GAM fit QuasiPoisson with smooth" begin
+        rng_ext = StableRNG(304)
+        n = 180
+        x = range(0, 2π; length=n) |> collect
+        mu_true = exp.(0.4 .+ 0.7 .* sin.(x))
+        true_theta = 1.5
+        y = Float64[rand(rng_ext, NegativeBinomial(true_theta, true_theta / (true_theta + m))) for m in mu_true]
+        df = DataFrame(x=x, y=y)
+
+        m = gam(@gam_formula(y ~ s(x, k = 10)), df; family=QuasiPoissonFamily())
+        @test m isa GamModel
+        @test m.family isa QuasiPoissonFamily
+        @test m.converged
+        @test m.scale > 1.0
+        @test all(fitted(m) .> 0)
+        @test isfinite(loglikelihood(m))
+        @test length(residuals(m; type=:pearson)) == n
+    end
+
+    @testset "GAM fit QuasiBinomial with smooth" begin
+        rng_ext = StableRNG(305)
+        n = 220
+        x = range(-2, 2; length=n) |> collect
+        eta_true = -0.3 .+ 1.1 .* sin.(x)
+        p_true = 1.0 ./ (1.0 .+ exp.(-(eta_true .+ 1.2 .* randn(rng_ext, n))))
+        y = Float64.(rand(rng_ext, n) .< p_true)
+        df = DataFrame(x=x, y=y)
+
+        m = gam(@gam_formula(y ~ s(x, k = 12)), df; family=QuasiBinomialFamily())
+        @test m isa GamModel
+        @test m.family isa QuasiBinomialFamily
+        @test m.converged
+        @test m.scale > 1.0
+        @test all(0 .< fitted(m) .< 1)
+        @test length(residuals(m; type=:deviance)) == n
+    end
+
     @testset "GAM fit Tweedie with smooth" begin
         rng_ext = StableRNG(404)
         n = 150
@@ -585,6 +743,27 @@ end
         @test m isa GamModel
         @test m.family isa TweedieFamily
         @test m.deviance_val >= 0
+        @test all(fitted(m) .> 0)
+    end
+
+    @testset "GAM fit Tweedie with estimated power" begin
+        rng_ext = StableRNG(405)
+        n = 220
+        x = range(0, 1; length = n) |> collect
+        mu_true = exp.(0.2 .+ 0.6 .* sin.(2π .* x))
+        true_p = 1.4
+        true_phi = 0.7
+        y = simulate_tweedie(rng_ext, mu_true, true_p, true_phi)
+        df = DataFrame(x = x, y = y)
+
+        family = TweedieFamily(p = 1.8, estimate_p = true)
+        m = gam(@gam_formula(y ~ s(x, k = 12)), df; family = family)
+
+        @test m isa GamModel
+        @test m.family isa TweedieFamily
+        @test m.converged
+        @test 1.01 < m.family.p < 1.99
+        @test abs(m.family.p - true_p) < abs(1.8 - true_p)
         @test all(fitted(m) .> 0)
     end
 
@@ -609,6 +788,13 @@ end
         out_str = String(take!(buf))
         @test occursin("NegativeBinomial", out_str)
         @test occursin("Theta est.", out_str)
+
+        m_q = gam(@gam_formula(y ~ s(x, k = 8)), df; family=QuasiPoissonFamily())
+        buf_q = IOBuffer()
+        show(buf_q, MIME"text/plain"(), m_q)
+        out_quasi = String(take!(buf_q))
+        @test occursin("QuasiPoisson", out_quasi)
+        @test occursin("Scale est.", out_quasi)
     end
 
     @testset "Extended family predict" begin
@@ -777,6 +963,10 @@ end
 # GAMLSS tests
 @eval include("test_gamlss.jl")
 
+# GAMLSS comparison tests against mgcv and R gamlss reference outputs
+@eval include("test_gamlss_vs_mgcv.jl")
+@eval include("test_gamlss_vs_rgamlss.jl")
+
 # Gratia diagnostics unit tests (no R needed)
 @eval include("test_gratia.jl")
 
@@ -813,6 +1003,15 @@ end
 # Constrained factor smooth (sz) tests
 @eval include("test_sz.jl")
 
+# Factor-smooth interaction (fs) tests
+@eval include("test_fs.jl")
+
+# Markov random field (mrf) tests
+@eval include("test_mrf.jl")
+
+# Soap film (so) tests
+@eval include("test_soap.jl")
+
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     try
         @eval include("test_side_constraints_rcall.jl")
@@ -824,6 +1023,9 @@ end
 @eval include("test_loess.jl")
 
 @eval include("test_fp.jl")
+
+# Cyclic P-spline (cps) tests
+@eval include("test_cyclic_ps.jl")
 
 # SPDE Matérn smooth tests
 @eval include("test_spde.jl")

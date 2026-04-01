@@ -356,7 +356,7 @@ function nll_total(family::GammaLocationScale, y::AbstractVector,
     @inbounds for i in 1:n
         α = exp(-2.0 * η₂[i])
         θ = exp(η₁[i] + 2.0 * η₂[i])
-        total += α * log(θ) + lgamma(α) - (α - 1.0) * log(max(y[i], 1e-300)) + y[i] / θ
+        total += α * log(θ) + logabsgamma(α)[1] - (α - 1.0) * log(max(y[i], 1e-300)) + y[i] / θ
     end
     return total
 end
@@ -513,7 +513,7 @@ function nll_total(family::NegativeBinomialLocationScale, y::AbstractVector,
         μ = exp(η₁[i])
         r = exp(-2.0 * η₂[i])
         rmu = r + μ
-        total += -lgamma(yi + r) + lgamma(yi + 1.0) + lgamma(r) -
+        total += -logabsgamma(yi + r)[1] + logabsgamma(yi + 1.0)[1] + logabsgamma(r)[1] -
                  r * log(r / rmu) - yi * log(μ / rmu)
     end
     return total
@@ -866,6 +866,8 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
 
     if sp !== nothing
         log_sp = Float64.(sp)
+    elseif gamlss_ctrl.sp_method == :local_ml
+        log_sp = fill(log(10.0), nsp)
     else
         log_sp = _init_log_sp_hessian(family, y, X_list, Sl, β_init, param_offsets, nsp)
     end
@@ -887,8 +889,9 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl;
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         reml_val = nll_pen
+        iterations = 0
     else
-        log_sp, β_opt, reml_val = mp_efs_outer(family, y, X_list, Sl, β_init,
+        log_sp, β_opt, reml_val, iterations = mp_efs_outer(family, y, X_list, Sl, β_init,
             log_sp, param_offsets, ctrl; Mp = Mp,
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         conv = true
@@ -919,5 +922,5 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, idpars, param_offsets)
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets)
 end

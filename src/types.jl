@@ -195,7 +195,10 @@ penalty matrix/matrices, and all metadata needed for fitting and prediction.
 - `Sigma`: constraint matrix for shape-constrained smooths (scam)
 - `cmX`: column means for centering (scam)
 - `p_ident`: boolean mask — which coefficients must be positive (scam)
+- `predict_cache`: optional fitted metadata needed for prediction
 """
+abstract type AbstractSmoothPredictCache end
+
 mutable struct ConstructedSmooth{B<:AbstractBasisType}
     spec::SmoothSpec{B}
     X::Matrix{Float64}
@@ -218,6 +221,7 @@ mutable struct ConstructedSmooth{B<:AbstractBasisType}
     bin::Union{Vector{Float64}, Nothing}
     Aeq::Union{Matrix{Float64}, Nothing}
     beq::Union{Vector{Float64}, Nothing}
+    predict_cache::Union{AbstractSmoothPredictCache, Nothing}
 end
 
 function ConstructedSmooth(
@@ -235,11 +239,41 @@ function ConstructedSmooth(
     cmX::Union{Vector{Float64}, Nothing},
     p_ident::Union{BitVector, Nothing},
     del_index::Vector{Int},
+    ;
+    predict_cache::Union{AbstractSmoothPredictCache, Nothing} = nothing,
 ) where {B<:AbstractBasisType}
     return ConstructedSmooth{B}(
         spec, X, S, knots, null_dim, rank, constraint, qrc,
         first_para, last_para, Sigma, cmX, p_ident, del_index,
-        nothing, nothing, nothing, nothing,
+        nothing, nothing, nothing, nothing, predict_cache,
+    )
+end
+
+function ConstructedSmooth(
+    spec::SmoothSpec{B},
+    X::Matrix{Float64},
+    S::Vector{Matrix{Float64}},
+    knots::Vector{Float64},
+    null_dim::Int,
+    rank::Int,
+    constraint::Union{Matrix{Float64}, Nothing},
+    qrc::Union{LinearAlgebra.QRCompactWY{Float64, Matrix{Float64}}, Nothing},
+    first_para::Int,
+    last_para::Int,
+    Sigma::Union{Matrix{Float64}, Nothing},
+    cmX::Union{Vector{Float64}, Nothing},
+    p_ident::Union{BitVector, Nothing},
+    del_index::Vector{Int},
+    Ain::Union{Matrix{Float64}, Nothing},
+    bin::Union{Vector{Float64}, Nothing},
+    Aeq::Union{Matrix{Float64}, Nothing},
+    beq::Union{Vector{Float64}, Nothing};
+    predict_cache::Union{AbstractSmoothPredictCache, Nothing} = nothing,
+) where {B<:AbstractBasisType}
+    return ConstructedSmooth{B}(
+        spec, X, S, knots, null_dim, rank, constraint, qrc,
+        first_para, last_para, Sigma, cmX, p_ident, del_index,
+        Ain, bin, Aeq, beq, predict_cache,
     )
 end
 

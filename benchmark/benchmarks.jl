@@ -12,6 +12,8 @@ using StatsAPI: predict
 
 R"library(mgcv)"
 
+const BYTES_PER_MIB = 1024.0^2
+
 function benchmark_one(label, julia_fn, r_code; n_reps=5)
     # Julia timing — two warmups to ensure full JIT compilation
     julia_fn()
@@ -41,6 +43,165 @@ function benchmark_one(label, julia_fn, r_code; n_reps=5)
 
     return (label=label, julia_time=j_med, r_time=r_med, speedup=speedup,
         julia_result=j_result)
+end
+
+_extract_iterations(result) = hasproperty(result, :iterations) ? getproperty(result, :iterations) : missing
+
+function _median_iter(values)
+    vals = collect(skipmissing(values))
+    return isempty(vals) ? missing : Int(round(median(vals)))
+end
+
+_fmt_iter(iter) = ismissing(iter) ? "NA" : string(iter)
+
+function _r_bench_once(r_code::AbstractString, r_iter_expr::AbstractString)
+    reval("""
+    local({
+        gc(reset = TRUE)
+        tmp <- tempfile()
+        fit <- NULL
+        Rprofmem(tmp)
+        t <- system.time({
+            fit <- $r_code
+        })[['elapsed']]
+        Rprofmem(NULL)
+        mem_lines <- if (file.exists(tmp)) readLines(tmp, warn = FALSE) else character()
+        unlink(tmp)
+        mem_bytes <- suppressWarnings(sum(as.numeric(sub(" .*", "", mem_lines)), na.rm = TRUE))
+        iter <- tryCatch({ $r_iter_expr }, error = function(e) NA_integer_)
+        if (is.null(iter) || length(iter) == 0 || is.na(iter[[1]])) {
+            iter <- NA_integer_
+        } else {
+            iter <- as.integer(iter[[1]])
+        }
+        assign(".bench_time", as.numeric(t), envir = .GlobalEnv)
+        assign(".bench_mem_bytes", as.numeric(mem_bytes), envir = .GlobalEnv)
+        assign(".bench_iter", iter, envir = .GlobalEnv)
+        invisible(NULL)
+    })
+    """)
+
+    iter_val = rcopy(R".bench_iter")
+    iter = ismissing(iter_val) ? missing : Int(iter_val)
+    return (
+        time = Float64(rcopy(R".bench_time")),
+        mem_mib = Float64(rcopy(R".bench_mem_bytes")) / BYTES_PER_MIB,
+        iter = iter,
+    )
+end
+
+function benchmark_one_detailed(label, julia_fn, r_code, r_iter_expr;
+                                n_reps=3, r_label="R")
+    julia_fn()
+    julia_fn()
+
+    j_times = Float64[]
+    j_mems = Float64[]
+    j_iters = Union{Missing, Int}[]
+    j_result = nothing
+    for _ in 1:n_reps
+        GC.gc(false)
+        elapsed = Ref(0.0)
+        bytes = @allocated begin
+            elapsed[] = @elapsed j_result = julia_fn()
+        end
+        push!(j_times, elapsed[])
+        push!(j_mems, bytes / BYTES_PER_MIB)
+        push!(j_iters, _extract_iterations(j_result))
+    end
+
+    _r_bench_once(r_code, r_iter_expr)  # warmup
+    r_times = Float64[]
+    r_mems = Float64[]
+    r_iters = Union{Missing, Int}[]
+    for _ in 1:n_reps
+        bench = _r_bench_once(r_code, r_iter_expr)
+        push!(r_times, bench.time)
+        push!(r_mems, bench.mem_mib)
+        push!(r_iters, bench.iter)
+    end
+
+    j_med = median(j_times)
+    r_med = max(median(r_times), 1e-4)
+    speedup = r_med / max(j_med, 1e-6)
+    j_mem_med = median(j_mems)
+    r_mem_med = median(r_mems)
+    j_iter_med = _median_iter(j_iters)
+    r_iter_med = _median_iter(r_iters)
+
+    @printf("  %-32s  Julia: %7.4fs %7.1f MiB %4s it  %-9s %7.4fs %7.1f MiB %4s it  Speedup: %6.2fx\n",
+        label, j_med, j_mem_med, _fmt_iter(j_iter_med),
+        r_label * ":", r_med, r_mem_med, _fmt_iter(r_iter_med), speedup)
+
+    return (
+        label = label,
+        julia_time = j_med,
+        r_time = r_med,
+        speedup = speedup,
+        julia_mem_mib = j_mem_med,
+        r_mem_mib = r_mem_med,
+        julia_iter = j_iter_med,
+        r_iter = r_iter_med,
+        julia_result = j_result,
+    )
+end
+
+function _run_gamlss_section!(all_results::Vector{NamedTuple})
+    println("\n── GAMLSS (Multi-Parameter) ────────────────────────────────────")
+
+    R"""
+    suppressPackageStartupMessages(library(gamlss))
+    """
+
+    f_mu_cr = @gam_formula(y ~ s(x, k = 20, bs = :cr))
+    f_sigma_cr = @gam_formula(y ~ s(x, k = 10, bs = :cr))
+    f_mu_ps = @gam_formula(y ~ s(x, k = 23, bs = :ps))
+    f_sigma_ps = @gam_formula(y ~ s(x, k = 11, bs = :ps))
+    ctrl_local_ml = GAM.gamlss_control(sp_method = :local_ml, n_cyc = 50, trace = false)
+
+    for n in (500, 2000, 10000)
+        R"""
+        set.seed(42)
+        bm_xl <- runif($n, 0, 2 * pi)
+        bm_mu_l <- sin(bm_xl)
+        bm_sig_l <- exp(0.5 * cos(bm_xl))
+        bm_yl <- rnorm($n, bm_mu_l, bm_sig_l)
+        bm_dfl <- data.frame(x = bm_xl, y = bm_yl)
+        """
+        xl = rcopy(R"bm_xl")
+        yl = rcopy(R"bm_yl")
+        dfl = DataFrame(x = xl, y = yl)
+
+        push!(all_results, benchmark_one_detailed("GAMLSS Normal LS n=$n  (EFS)",
+            () -> gamlss([f_mu_cr, f_sigma_cr], dfl, GaussianLS()),
+            """gam(list(y ~ s(x, k = 20, bs = "cr"), ~ s(x, k = 10, bs = "cr")),
+                    family = gaulss(), data = bm_dfl, method = "REML")""",
+            "if (!is.null(fit\$outer.info\$iter)) fit\$outer.info\$iter else NA_integer_";
+            n_reps = 3, r_label = "R(mgcv)"))
+
+        push!(all_results, benchmark_one_detailed("GAMLSS Normal LS n=$n (RS+ML)",
+            () -> gamlss([f_mu_ps, f_sigma_ps], dfl, GaussianLS();
+                method = :rs, gamlss_ctrl = ctrl_local_ml),
+            """gamlss(y ~ pb(x, inter = 20, degree = 3, order = 2, method = "ML"),
+                      sigma.formula = ~ pb(x, inter = 8, degree = 3, order = 2, method = "ML"),
+                      family = NO(), data = bm_dfl,
+                      control = gamlss.control(n.cyc = 50, trace = FALSE))""",
+            "if (!is.null(fit\$iter)) fit\$iter else NA_integer_";
+            n_reps = 3, r_label = "R(gamlss)"))
+    end
+end
+
+function run_gamlss_benchmarks()
+    println("=" ^ 80)
+    println("GAM.jl vs R GAMLSS Benchmarks")
+    println("=" ^ 80)
+    all_results = NamedTuple[]
+    _run_gamlss_section!(all_results)
+    println()
+    @printf("  %-25s  Geometric mean speedup: %6.2fx\n",
+        "GAMLSS", exp(mean(log.(getfield.(all_results, :speedup)))))
+    println("=" ^ 80)
+    return all_results
 end
 
 function run_benchmarks()
@@ -287,41 +448,8 @@ function run_benchmarks()
 
     # ═══════════════════════════════════════════════════════════════════════
     # Section 7: GAMLSS (multi-parameter)
-    # Uses mgcv::gam via gamlss.add::ga() for comparable smooth terms
     # ═══════════════════════════════════════════════════════════════════════
-    println("\n── GAMLSS (Multi-Parameter) ────────────────────────────────────")
-
-    R"""
-    suppressPackageStartupMessages(library(gamlss))
-    suppressPackageStartupMessages(library(gamlss.add))
-    set.seed(42)
-    bm_xl <- rnorm(1000)
-    bm_mu_l <- sin(bm_xl)
-    bm_sig_l <- exp(0.3 + 0.2*bm_xl)
-    bm_yl <- rnorm(1000, bm_mu_l, bm_sig_l)
-    bm_dfl <- data.frame(x=bm_xl, y=bm_yl)
-    """
-    xl = rcopy(R"bm_xl"); yl = rcopy(R"bm_yl")
-    dfl = DataFrame(x=xl, y=yl)
-
-    # Compare GAM.jl gamlss (Newton/general_fit) vs R gamlss with pb() (RS algorithm)
-    push!(all_results, benchmark_one("GAMLSS Normal LS n=1000 (pb)",
-        () -> gamlss(
-            [@gam_formula(y ~ s(x, k=10, bs=:cr)),
-             @gam_formula(y ~ s(x, k=8, bs=:cr))],
-            dfl, Normal()),
-        "gamlss(y ~ pb(x), sigma.formula=~pb(x), data=bm_dfl, family=NO(), trace=FALSE)";
-        n_reps=3))
-
-    # Also compare using gamlss.add::ga() which wraps mgcv's s() — closer apples-to-apples
-    push!(all_results, benchmark_one("GAMLSS Normal LS n=1000 (ga)",
-        () -> gamlss(
-            [@gam_formula(y ~ s(x, k=10, bs=:cr)),
-             @gam_formula(y ~ s(x, k=8, bs=:cr))],
-            dfl, Normal()),
-        """gamlss(y ~ ga(~s(x, k=10, bs='cr')), sigma.formula=~ga(~s(x, k=8, bs='cr')),
-                data=bm_dfl, family=NO(), trace=FALSE)""";
-        n_reps=3))
+    _run_gamlss_section!(all_results)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Summary
@@ -339,7 +467,7 @@ function run_benchmarks()
         ("Basis Construction", 12:14),
         ("SCAM", 15:15),
         ("QGAM", 16:17),
-        ("GAMLSS", 18:19),
+        ("GAMLSS", 18:23),
     ]
 
     for (name, range) in sections
@@ -357,4 +485,6 @@ function run_benchmarks()
     return all_results
 end
 
-results = run_benchmarks()
+if abspath(PROGRAM_FILE) == @__FILE__
+    run_benchmarks()
+end
