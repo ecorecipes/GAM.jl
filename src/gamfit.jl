@@ -46,6 +46,8 @@ _check_link_family(::LogitLink, ::Normal) =
     "LogitLink constrains μ ∈ (0,1) — did you mean IdentityLink() or LogLink()?"
 _check_link_family(::LogitLink, ::Poisson) =
     "LogitLink constrains μ ∈ (0,1) — did you mean LogLink()?"
+_check_link_family(::LogitLink, ::QuasiPoissonFamily) =
+    "LogitLink constrains μ ∈ (0,1) — did you mean LogLink()?"
 _check_link_family(::LogitLink, ::Gamma) =
     "LogitLink constrains μ ∈ (0,1) — did you mean LogLink() or InverseLink()?"
 _check_link_family(::LogitLink, ::InverseGaussian) =
@@ -54,6 +56,8 @@ _check_link_family(::InverseLink, ::Bernoulli) =
     "InverseLink is not appropriate for binary data — did you mean LogitLink()?"
 _check_link_family(::InverseLink, ::Binomial) =
     "InverseLink is not appropriate for binary data — did you mean LogitLink()?"
+_check_link_family(::InverseLink, ::QuasiBinomialFamily) =
+    "InverseLink is not appropriate for binary/proportion data — did you mean LogitLink()?"
 
 """
     _validate_gam_family(family)
@@ -69,7 +73,7 @@ function _validate_gam_family(family::UnivariateDistribution)
     hint = get(_FAMILY_HINTS, fname, "")
     msg = "Unsupported family for gam(): $(typeof(family)).\n" *
           "Supported families: Normal(), Poisson(), Binomial(), Bernoulli(), Gamma(), InverseGaussian().\n" *
-          "Extended families: NegBinFamily(), TweedieFamily(), BetaFamily()."
+          "Extended families: NegBinFamily(), QuasiPoissonFamily(), QuasiBinomialFamily(), TweedieFamily(), BetaFamily()."
     if !isempty(hint)
         msg *= "\nHint: $hint"
     end
@@ -211,7 +215,7 @@ function gam(f::FormulaTerm, data;
 
     if family isa ExtendedFamily
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
-        _validate_response(y, Normal())
+        _validate_response(y, family)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control; start = start)
     else
@@ -282,7 +286,7 @@ function gam(gf::GamFormula, data;
 
     if family isa ExtendedFamily
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
-        _validate_response(y, Normal())
+        _validate_response(y, family)
         f = term(gf.response) ~ term(1)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control; start = start)

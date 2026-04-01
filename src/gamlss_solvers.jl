@@ -37,6 +37,125 @@ function _param_derivs_eta!(family::MultiParameterFamily, y::AbstractVector,
 end
 
 # ============================================================================
+# Helper: parameter-scale working responses for local smooth updates
+# ============================================================================
+
+@inline function _set_param_working_pair!(wk::Vector{Float64}, zk::Vector{Float64},
+                                          i::Int, η::Float64, score::Float64,
+                                          d2ldp2::Float64, dpdη::Float64)
+    w = clamp(-d2ldp2 * dpdη^2, 1e-10, 1e10)
+    wk[i] = w
+    zk[i] = η + score * dpdη / w
+    return nothing
+end
+
+@inline _link_dinv(::IdentityLink, η::Float64) = 1.0
+@inline _link_dinv(::LogLink, η::Float64) = exp(η)
+@inline function _link_dinv(::LogitLink, η::Float64)
+    p = inv(1.0 + exp(-η))
+    return p * (1.0 - p)
+end
+@inline _link_dinv(::InverseLink, η::Float64) = -inv(η^2)
+@inline _link_dinv(link::GLM.Link, η::Float64) =
+    ForwardDiff.derivative(t -> _apply_link_inv(link, t), η)
+
+function _local_ml_working_response!(wk::Vector{Float64}, zk::Vector{Float64},
+                                     family::DistFamily{<:Normal},
+                                     y::AbstractVector,
+                                     η_list::Vector{<:AbstractVector},
+                                     k::Int)
+    if !(family.links[1] isa IdentityLink && family.links[2] isa LogLink)
+        return _local_ml_working_response_ad!(wk, zk, family, y, η_list, k)
+    end
+
+    η_mu = η_list[1]
+    η_sigma = η_list[2]
+    @inbounds for i in eachindex(y)
+        μ = η_mu[i]
+        σ = exp(η_sigma[i])
+        if k == 1
+            score = (y[i] - μ) / σ^2
+            d2ldp2 = -inv(σ^2)
+            _set_param_working_pair!(wk, zk, i, η_mu[i], score, d2ldp2, 1.0)
+        else
+            r = y[i] - μ
+            score = (r^2 - σ^2) / σ^3
+            d2ldp2 = -2.0 / σ^2
+            _set_param_working_pair!(wk, zk, i, η_sigma[i], score, d2ldp2, σ)
+        end
+    end
+    return nothing
+end
+
+function _local_ml_working_response!(wk::Vector{Float64}, zk::Vector{Float64},
+                                     family::GammaLocationScale,
+                                     y::AbstractVector,
+                                     η_list::Vector{<:AbstractVector},
+                                     k::Int)
+    if !(family.links[1] isa LogLink && family.links[2] isa LogLink)
+        return _local_ml_working_response_ad!(wk, zk, family, y, η_list, k)
+    end
+
+    η_mu = η_list[1]
+    η_sigma = η_list[2]
+    @inbounds for i in eachindex(y)
+        yi = max(y[i], 1e-300)
+        μ = exp(η_mu[i])
+        σ = exp(η_sigma[i])
+        if k == 1
+            score = (yi - μ) / (σ^2 * μ^2)
+            d2ldp2 = -inv(σ^2 * μ^2)
+            _set_param_working_pair!(wk, zk, i, η_mu[i], score, d2ldp2, μ)
+        else
+            invσ2 = inv(σ^2)
+            score = (2.0 / σ^3) *
+                    ((yi / μ) - log(yi) + log(μ) + log(σ^2) - 1.0 + digamma(invσ2))
+            d2ldp2 = (4.0 / σ^4) - (4.0 / σ^6) * trigamma(invσ2)
+            _set_param_working_pair!(wk, zk, i, η_sigma[i], score, d2ldp2, σ)
+        end
+    end
+    return nothing
+end
+
+function _local_ml_working_response_ad!(wk::Vector{Float64}, zk::Vector{Float64},
+                                        family::MultiParameterFamily,
+                                        y::AbstractVector,
+                                        η_list::Vector{<:AbstractVector},
+                                        k::Int)
+    links = getfield(family, :links)
+    K = length(η_list)
+
+    @inbounds for i in eachindex(y)
+        η0 = [η_list[j][i] for j in 1:K]
+        ηk = η0[k]
+        linkk = links[k]
+        pk = _apply_link_inv(linkk, ηk)
+        dpdη = _link_dinv(linkk, ηk)
+
+        function nll_of_pk(pval)
+            ηtmp = copy(η0)
+            ηtmp[k] = GLM.linkfun(linkk, pval)
+            return nll_obs(family, y[i], ηtmp)
+        end
+
+        grad_p = ForwardDiff.derivative(nll_of_pk, pk)
+        hess_p = ForwardDiff.derivative(x -> ForwardDiff.derivative(nll_of_pk, x), pk)
+        w = clamp(hess_p * dpdη^2, 1e-10, 1e10)
+        wk[i] = w
+        zk[i] = ηk - grad_p * dpdη / w
+    end
+    return nothing
+end
+
+function _local_ml_working_response!(wk::Vector{Float64}, zk::Vector{Float64},
+                                     family::MultiParameterFamily,
+                                     y::AbstractVector,
+                                     η_list::Vector{<:AbstractVector},
+                                     k::Int)
+    return _local_ml_working_response_ad!(wk, zk, family, y, η_list, k)
+end
+
+# ============================================================================
 # Helper: per-parameter penalized WLS solve
 # ============================================================================
 
@@ -275,9 +394,13 @@ Local ML smoothing parameter update (R gamlss pb() style):
   τ² = β'D'Dβ / (edf - order)
   λ_new = σ² / τ²
 """
+_local_ml_penalty_order(sm::ConstructedSmooth) =
+    max(sm.spec.m === nothing ? sm.null_dim : sm.spec.m, 0)
+
 function _local_ml_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}},
                                   β_k::Vector{Float64}, Xk::Matrix{Float64},
                                   wk::Vector{Float64}, zk::Vector{Float64},
+                                  smooths_k::Vector{ConstructedSmooth},
                                   param_offsets::Vector{Int}, k::Int;
                                   max_iter::Int=50, tol::Float64=1e-7)
     s = param_offsets[k] + 1
@@ -296,8 +419,16 @@ function _local_ml_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Floa
 
     isempty(sp_indices) && return
 
-    for idx in sp_indices
-        old_log_sp = log_sp[idx]
+    sp_orders = Int[]
+    for sm in smooths_k
+        order = _local_ml_penalty_order(sm)
+        for _ in sm.S
+            push!(sp_orders, order)
+        end
+    end
+
+    for (local_idx, idx) in enumerate(sp_indices)
+        order = local_idx <= length(sp_orders) ? sp_orders[local_idx] : 0
 
         for _ in 1:max_iter
             # Build current penalty for this parameter
@@ -316,16 +447,16 @@ function _local_ml_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Floa
             Sj_block = Matrix(@view Sl[idx][s:e, s:e])
             bDb = dot(β_new, Sj_block * β_new)
 
-            # Estimate penalty order from null space
-            eigs = eigvals(Symmetric(Sj_block))
-            order = count(ev -> ev < 1e-10 * maximum(abs, eigs), eigs)
-
             # ML update: λ = σ²/τ²
             sigma2 = rss / max(n - edf, 1.0)
             tau2 = bDb / max(edf - order, 0.01)
 
             if tau2 > eps() && sigma2 > eps()
-                new_log_sp = clamp(log(sigma2 / tau2), -15.0, 15.0)
+                target_log_sp = clamp(log(sigma2 / tau2), -15.0, 15.0)
+                # Damped log-scale update: Julia's η-space RS pseudo-data can make the
+                # raw ML fixed-point jump straight to the boundary, so move part-way
+                # toward the target each inner iteration.
+                new_log_sp = 0.5 * (log_sp[idx] + target_log_sp)
                 if abs(new_log_sp - log_sp[idx]) < tol
                     log_sp[idx] = new_log_sp
                     break
@@ -454,13 +585,14 @@ function _sp_update_param!(gamlss_ctrl::GamlssControl,
                             log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}},
                             β_k::Vector{Float64}, Xk::Matrix{Float64},
                             wk::Vector{Float64}, zk::Vector{Float64},
-                            Sk::Matrix{Float64},
+                            Sk::Matrix{Float64}, smooths_k::Vector{ConstructedSmooth},
                             param_offsets::Vector{Int}, k::Int)
     m = gamlss_ctrl.sp_method
     if m == :efs
         _efs_update_param!(log_sp, Sl, β_k, Xk, wk, Sk, param_offsets, k)
     elseif m == :local_ml
-        _local_ml_update_param!(log_sp, Sl, β_k, Xk, wk, zk, param_offsets, k)
+        _local_ml_update_param!(log_sp, Sl, β_k, Xk, wk, zk, smooths_k, param_offsets, k;
+            max_iter = 1)
     elseif m == :local_gaic
         _local_gaic_update_param!(log_sp, Sl, Xk, wk, zk, param_offsets, k, gamlss_ctrl.gaic_k)
     elseif m == :local_gcv
@@ -474,7 +606,7 @@ end
 
 """
     gamlss_rs!(family, y, X_list, smooths_list, Sl, β_init, log_sp, param_offsets,
-               ctrl, gamlss_ctrl, nsp, Mp, p, n) → (β, log_sp, η_list, dev, converged)
+               ctrl, gamlss_ctrl, nsp, Mp, p, n) → (β, log_sp, η_list, dev, converged, iterations)
 
 RS algorithm for GAMLSS: cyclic penalized IRLS in η-space.
 
@@ -517,8 +649,10 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
 
     dev = _global_deviance(family, y, η_list)
     converged = false
+    iterations = 0
 
     for outer in 1:gamlss_ctrl.n_cyc
+        iterations = outer
         dev_old = dev
 
         # Build per-parameter penalties from current log_sp
@@ -569,8 +703,11 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
 
             # EFS/local SP update for this parameter's smoothing parameters
             if !sp_fixed && nsp > 0
+                if gamlss_ctrl.sp_method == :local_ml
+                    _local_ml_working_response!(wk, zk, family, y, η_list, k)
+                end
                 _sp_update_param!(gamlss_ctrl, log_sp, Sl, β_list[k], X_list[k],
-                                   wk, zk, S_list[k], param_offsets, k)
+                                   wk, zk, S_list[k], smooths_list[k], param_offsets, k)
                 S_list = _per_param_penalties(Sl, log_sp, param_offsets, K)
             end
         end
@@ -594,7 +731,7 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
         β[s:e] .= β_list[k]
     end
 
-    return β, log_sp, η_list, dev, converged
+    return β, log_sp, η_list, dev, converged, iterations
 end
 
 # ============================================================================
@@ -603,7 +740,7 @@ end
 
 """
     gamlss_cg!(family, y, X_list, smooths_list, Sl, β_init, log_sp, param_offsets,
-               ctrl, gamlss_ctrl, nsp, Mp, p, n) → (β, log_sp, η_list, dev, converged)
+               ctrl, gamlss_ctrl, nsp, Mp, p, n) → (β, log_sp, η_list, dev, converged, iterations)
 
 CG algorithm for GAMLSS: like RS but with cross-derivative corrections.
 
@@ -640,11 +777,13 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
 
     dev = _global_deviance(family, y, η_list)
     converged = false
+    iterations = 0
 
     # Number of initial RS-only warm-up iterations
     n_rs_warmup = 2
 
     for outer in 1:gamlss_ctrl.n_cyc
+        iterations = outer
         dev_old = dev
         use_cross = outer > n_rs_warmup && K > 1
 
@@ -766,15 +905,19 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
         if !sp_fixed && nsp > 0
             _param_derivs_eta!(family, y, η_list, derivs)
             for k in 1:K
-                gk_col = grad_col(k)
-                hk_col = hess_col(K, k, k)
-                @inbounds for i in 1:n
-                    h = clamp(derivs[i, hk_col], 1e-10, 1e10)
-                    wk[i] = h
-                    zk[i] = η_list[k][i] - derivs[i, gk_col] / h
+                if gamlss_ctrl.sp_method == :local_ml
+                    _local_ml_working_response!(wk, zk, family, y, η_list, k)
+                else
+                    gk_col = grad_col(k)
+                    hk_col = hess_col(K, k, k)
+                    @inbounds for i in 1:n
+                        h = clamp(derivs[i, hk_col], 1e-10, 1e10)
+                        wk[i] = h
+                        zk[i] = η_list[k][i] - derivs[i, gk_col] / h
+                    end
                 end
                 _sp_update_param!(gamlss_ctrl, log_sp, Sl, β_list[k], X_list[k],
-                                   wk, zk, S_list[k], param_offsets, k)
+                                   wk, zk, S_list[k], smooths_list[k], param_offsets, k)
             end
             S_list = _per_param_penalties(Sl, log_sp, param_offsets, K)
         end
@@ -803,7 +946,7 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
         β[s:e] .= β_list[k]
     end
 
-    return β, log_sp, η_list, dev, converged
+    return β, log_sp, η_list, dev, converged, iterations
 end
 
 # ============================================================================
@@ -829,13 +972,13 @@ function _gamlss_fit_rscg(method::Symbol, family::MultiParameterFamily,
 
     # Run the chosen solver
     if method == :rs
-        β_opt, log_sp, η_fit, dev, conv = gamlss_rs!(
+        β_opt, log_sp, η_fit, dev, conv, iterations = gamlss_rs!(
             family, y, X_list, smooths_list, Sl, β_init, log_sp,
             param_offsets, ctrl, gamlss_ctrl, nsp, Mp, p, n;
             Ain_list = Ain_list, bin_list = bin_list, Aeq_list = Aeq_list, beq_list = beq_list,
             sp_fixed=sp_fixed)
     else  # :cg
-        β_opt, log_sp, η_fit, dev, conv = gamlss_cg!(
+        β_opt, log_sp, η_fit, dev, conv, iterations = gamlss_cg!(
             family, y, X_list, smooths_list, Sl, β_init, log_sp,
             param_offsets, ctrl, gamlss_ctrl, nsp, Mp, p, n;
             Ain_list = Ain_list, bin_list = bin_list, Aeq_list = Aeq_list, beq_list = beq_list,
@@ -867,5 +1010,5 @@ function _gamlss_fit_rscg(method::Symbol, family::MultiParameterFamily,
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, idpars, param_offsets)
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets)
 end

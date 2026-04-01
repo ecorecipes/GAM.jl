@@ -9,9 +9,10 @@ using SpecialFunctions: digamma, trigamma, logabsgamma
 """
     ExtendedFamily
 
-Abstract supertype for extended GAM families that require estimation of
+Abstract supertype for extended GAM families that either require estimation of
 additional parameters beyond the mean (e.g., NB shape, Tweedie power,
-Beta precision).
+Beta precision) or use quasi-likelihood variance functions outside the
+standard distribution types.
 """
 abstract type ExtendedFamily end
 
@@ -35,6 +36,30 @@ NegBinFamily(; theta::Real=1.0, estimate_theta::Bool=true) =
     NegBinFamily(Float64(theta), estimate_theta)
 
 # ============================================================================
+# Quasi-likelihood families
+# ============================================================================
+
+"""
+    QuasiPoissonFamily()
+
+Quasi-Poisson family for overdispersed count data.
+Variance function: `V(μ) = μ`, with dispersion estimated separately and stored
+on the fitted model as `scale`.
+Default link: `LogLink()`.
+"""
+struct QuasiPoissonFamily <: ExtendedFamily end
+
+"""
+    QuasiBinomialFamily()
+
+Quasi-binomial family for overdispersed binary or proportion data.
+Variance function: `V(μ) = μ(1-μ)`, with dispersion estimated separately and
+stored on the fitted model as `scale`.
+Default link: `LogitLink()`.
+"""
+struct QuasiBinomialFamily <: ExtendedFamily end
+
+# ============================================================================
 # Tweedie family
 # ============================================================================
 
@@ -44,7 +69,10 @@ NegBinFamily(; theta::Real=1.0, estimate_theta::Bool=true) =
 Tweedie family with power parameter p ∈ (1, 2).
 Variance function: V(μ) = μ^p.
 Default link: `LogLink()`.
-Currently supports fixed p only.
+If `estimate_p=true`, GAM.jl updates `p` with a bounded profile step based on
+the current mean-variance relationship. This is lighter-weight than mgcv's
+`ldTweedie` likelihood-based `tw()` family, but avoids leaving `estimate_p`
+as a no-op.
 """
 mutable struct TweedieFamily <: ExtendedFamily
     p::Float64
@@ -79,11 +107,15 @@ BetaFamily(; phi::Real=1.0, estimate_phi::Bool=true) =
 
 """Return the default link function for an extended family."""
 _default_link(::NegBinFamily) = LogLink()
+_default_link(::QuasiPoissonFamily) = LogLink()
+_default_link(::QuasiBinomialFamily) = LogitLink()
 _default_link(::TweedieFamily) = LogLink()
 _default_link(::BetaFamily) = LogitLink()
 
 """Whether the family has an extra parameter to estimate."""
 _has_extra_param(f::NegBinFamily) = f.estimate_theta
+_has_extra_param(::QuasiPoissonFamily) = false
+_has_extra_param(::QuasiBinomialFamily) = false
 _has_extra_param(f::TweedieFamily) = f.estimate_p
 _has_extra_param(f::BetaFamily) = f.estimate_phi
 
@@ -95,6 +127,8 @@ _family_Dd(f::ExtendedFamily, y, mu, wt; level=0) = error("Dd not implemented fo
 
 """Name string for display."""
 _family_name(::NegBinFamily) = "NegativeBinomial"
+_family_name(::QuasiPoissonFamily) = "QuasiPoisson"
+_family_name(::QuasiBinomialFamily) = "QuasiBinomial"
 _family_name(::TweedieFamily) = "Tweedie"
 _family_name(::BetaFamily) = "Beta"
 
@@ -105,6 +139,14 @@ _family_name(::BetaFamily) = "Beta"
 function _variance(f::NegBinFamily, mu)
     θ = f.theta
     return mu .+ mu .^ 2 ./ θ
+end
+
+function _variance(::QuasiPoissonFamily, mu)
+    return mu
+end
+
+function _variance(::QuasiBinomialFamily, mu)
+    return mu .* (1.0 .- mu)
 end
 
 function _variance(f::TweedieFamily, mu)
@@ -118,6 +160,24 @@ end
 # ============================================================================
 # Deviance functions
 # ============================================================================
+
+@inline function _poisson_unit_deviance(yi, mui)
+    if yi > 0
+        return 2.0 * (yi * log(yi / mui) - (yi - mui))
+    end
+    return 2.0 * mui
+end
+
+@inline function _binomial_unit_deviance(yi, mui)
+    di = 0.0
+    if yi > 0
+        di += yi * log(yi / mui)
+    end
+    if yi < 1
+        di += (1 - yi) * log((1 - yi) / (1 - mui))
+    end
+    return 2.0 * di
+end
 
 function _deviance(f::NegBinFamily, y, mu, wt)
     θ = f.theta
@@ -133,6 +193,24 @@ function _deviance(f::NegBinFamily, y, mu, wt)
         dev += wt[i] * d
     end
     return 2.0 * dev
+end
+
+function _deviance(::QuasiPoissonFamily, y, mu, wt)
+    dev = 0.0
+    @inbounds for i in eachindex(y, mu, wt)
+        mui = max(mu[i], eps())
+        dev += wt[i] * _poisson_unit_deviance(y[i], mui)
+    end
+    return dev
+end
+
+function _deviance(::QuasiBinomialFamily, y, mu, wt)
+    dev = 0.0
+    @inbounds for i in eachindex(y, mu, wt)
+        mui = clamp(mu[i], eps(), 1.0 - eps())
+        dev += wt[i] * _binomial_unit_deviance(y[i], mui)
+    end
+    return dev
 end
 
 function _deviance(f::TweedieFamily, y, mu, wt)
@@ -216,6 +294,26 @@ function _deviance_residuals(f::NegBinFamily, y, mu, wt)
     return r
 end
 
+function _deviance_residuals(::QuasiPoissonFamily, y, mu, wt)
+    r = similar(y)
+    @inbounds for i in eachindex(y, mu, wt)
+        mui = max(mu[i], eps())
+        di = wt[i] * _poisson_unit_deviance(y[i], mui)
+        r[i] = sign(y[i] - mui) * sqrt(max(di, 0.0))
+    end
+    return r
+end
+
+function _deviance_residuals(::QuasiBinomialFamily, y, mu, wt)
+    r = similar(y)
+    @inbounds for i in eachindex(y, mu, wt)
+        mui = clamp(mu[i], eps(), 1.0 - eps())
+        di = wt[i] * _binomial_unit_deviance(y[i], mui)
+        r[i] = sign(y[i] - mui) * sqrt(max(di, 0.0))
+    end
+    return r
+end
+
 function _deviance_residuals(f::TweedieFamily, y, mu, wt)
     r = similar(y)
     dev_total = _deviance(f, y, mu, wt)
@@ -249,6 +347,14 @@ function _clamp_mu(::NegBinFamily, mu)
     return max.(mu, eps())
 end
 
+function _clamp_mu(::QuasiPoissonFamily, mu)
+    return max.(mu, eps())
+end
+
+function _clamp_mu(::QuasiBinomialFamily, mu)
+    return clamp.(mu, eps(), 1.0 - eps())
+end
+
 function _clamp_mu(::TweedieFamily, mu)
     return max.(mu, eps())
 end
@@ -263,6 +369,16 @@ end
 
 function _null_deviance(f::NegBinFamily, y, wt)
     mu = max(mean(y), eps())
+    return _deviance(f, y, fill(mu, length(y)), wt)
+end
+
+function _null_deviance(f::QuasiPoissonFamily, y, wt)
+    mu = max(mean(y), eps())
+    return _deviance(f, y, fill(mu, length(y)), wt)
+end
+
+function _null_deviance(f::QuasiBinomialFamily, y, wt)
+    mu = clamp(mean(y), eps(), 1.0 - eps())
     return _deviance(f, y, fill(mu, length(y)), wt)
 end
 
@@ -282,6 +398,14 @@ end
 
 function _initialize_mu(::NegBinFamily, y)
     return max.(y, eps()) .+ 0.1
+end
+
+function _initialize_mu(::QuasiPoissonFamily, y)
+    return max.(y, eps()) .+ 0.1
+end
+
+function _initialize_mu(::QuasiBinomialFamily, y)
+    return clamp.(y, 0.01, 0.99)
 end
 
 function _initialize_mu(::TweedieFamily, y)
@@ -429,10 +553,67 @@ end
 """
     estimate_theta!(family::TweedieFamily, y, mu, wt, scale)
 
-Placeholder for Tweedie power parameter estimation (not yet implemented).
+Estimate Tweedie power parameter `p` in `(1, 2)` using a bounded profile update
+on the residual variance relationship. This is an approximate moment-based
+update compatible with the current extended-family PIRLS loop.
 """
+const _TWEEDIE_P_LOWER = 1.01
+const _TWEEDIE_P_UPPER = 1.99
+
+function _tweedie_profile_scale(y, mu, wt, p::Float64, fallback_scale::Float64)
+    numer = 0.0
+    denom = 0.0
+    @inbounds for i in eachindex(y, mu, wt)
+        v_i = max(mu[i]^p, eps())
+        numer += wt[i] * (y[i] - mu[i])^2 / v_i
+        denom += wt[i]
+    end
+    if !(denom > 0.0) || !isfinite(numer)
+        return clamp(fallback_scale, 1e-8, 1e8)
+    end
+    φ = numer / denom
+    return clamp(isfinite(φ) ? φ : fallback_scale, 1e-8, 1e8)
+end
+
+function _tweedie_power_objective(y, mu, wt, p::Float64, fallback_scale::Float64)
+    φ = _tweedie_profile_scale(y, mu, wt, p, fallback_scale)
+    obj = 0.0
+    @inbounds for i in eachindex(y, mu, wt)
+        v_i = max(φ * mu[i]^p, eps())
+        obj += wt[i] * (log(v_i) + (y[i] - mu[i])^2 / v_i)
+    end
+    return obj
+end
+
 function estimate_theta!(family::TweedieFamily, y, mu, wt, scale)
-    # Power parameter estimation requires ldTweedie; skip for now
+    !family.estimate_p && return
+
+    μmin, μmax = extrema(mu)
+    if !(μmin > 0.0) || !isfinite(μmin) || !isfinite(μmax)
+        return
+    end
+    if log(μmax) - log(μmin) < 1e-6
+        return
+    end
+
+    p_old = clamp(family.p, _TWEEDIE_P_LOWER, _TWEEDIE_P_UPPER)
+    fallback_scale = clamp(isfinite(scale) ? scale : 1.0, 1e-8, 1e8)
+    objective(p) = _tweedie_power_objective(y, mu, wt, Float64(p), fallback_scale)
+
+    obj_old = objective(p_old)
+    p_opt, obj_opt = _brent_minimize(objective, _TWEEDIE_P_LOWER, _TWEEDIE_P_UPPER;
+        tol = 1e-3, maxiter = 50)
+    if !isfinite(obj_opt)
+        return
+    end
+
+    p_target = clamp(Float64(p_opt), _TWEEDIE_P_LOWER, _TWEEDIE_P_UPPER)
+    if isfinite(obj_old) && obj_opt > obj_old + 1e-8
+        p_target = p_old
+    end
+
+    step = clamp(p_target - p_old, -0.25, 0.25)
+    family.p = clamp(p_old + step, _TWEEDIE_P_LOWER, _TWEEDIE_P_UPPER)
     return nothing
 end
 
@@ -442,5 +623,7 @@ end
 
 """Whether the family estimates scale (like Gaussian) or has fixed scale=1."""
 _estimates_scale(::NegBinFamily) = false
+_estimates_scale(::QuasiPoissonFamily) = true
+_estimates_scale(::QuasiBinomialFamily) = true
 _estimates_scale(::TweedieFamily) = true
 _estimates_scale(::BetaFamily) = false

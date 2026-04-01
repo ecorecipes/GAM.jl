@@ -1,66 +1,69 @@
 ================================================================================
-GAM.jl vs R Benchmark Suite  (2026-03-22, Julia 1.12.5, R 4.5.2, macOS ARM64)
+GAM.jl vs R Benchmark Suite  (2026-04-01, Julia 1.12.5, R 4.5.2, macOS ARM64)
 ================================================================================
 
 ── GAM Fitting ─────────────────────────────────────────────────
-  Gaussian CR n=500 k=15                        Julia:  0.0075s  R:  0.0100s  Speedup:   1.33x
-  Gaussian CR n=5000 k=20                       Julia:  0.0141s  R:  0.0860s  Speedup:   6.10x
-  Gaussian CR n=50000 k=20                      Julia:  0.1448s  R:  1.1410s  Speedup:   7.88x
-  Gaussian TP n=5000 k=20                       Julia:  0.0380s  R:  0.5400s  Speedup:  14.22x
-  Gaussian 2 smooths n=2000                     Julia:  0.0156s  R:  0.0650s  Speedup:   4.16x
-  Gaussian 3 smooths n=3000                     Julia:  0.0107s  R:  0.1320s  Speedup:  12.36x
-  Poisson CR n=2000 k=15                        Julia:  0.0108s  R:  0.0560s  Speedup:   5.18x
-  Gamma CR n=2000 k=15                          Julia:  0.0107s  R:  0.0560s  Speedup:   5.26x
+  Gaussian CR n=500 k=15                        Julia:  0.0014s  R:  0.0120s  Speedup:   8.31x
+  Gaussian CR n=5000 k=20                       Julia:  0.0144s  R:  0.0850s  Speedup:   5.90x
+  Gaussian CR n=50000 k=20                      Julia:  0.1638s  R:  1.1060s  Speedup:   6.75x
+  Gaussian TP n=5000 k=20                       Julia:  0.0447s  R:  0.5190s  Speedup:  11.60x
+  Gaussian 2 smooths n=2000                     Julia:  0.0038s  R:  0.0740s  Speedup:  19.29x
+  Gaussian 3 smooths n=3000                     Julia:  0.0082s  R:  0.1350s  Speedup:  16.43x
+  Poisson CR n=2000 k=15                        Julia:  0.0072s  R:  0.0540s  Speedup:   7.52x
+  Gamma CR n=2000 k=15                          Julia:  0.0063s  R:  0.0610s  Speedup:   9.65x
 
 ── BAM (Large-Scale) ───────────────────────────────────────────
-  BAM Gaussian n=100000 k=20                    Julia:  0.0518s  R:  0.2000s  Speedup:   3.86x
+  BAM Gaussian n=100000 k=20                    Julia:  0.0481s  R:  0.2240s  Speedup:   4.66x
 
 ── Prediction ──────────────────────────────────────────────────
-  predict(m, new) n=10000                       Julia:  0.0010s  R:  0.0100s  Speedup:  10.17x
-  predict(m, new, se) n=10000                   Julia:  0.0016s  R:  0.0120s  Speedup:   7.57x
+  predict(m, new) n=10000                       Julia:  0.0016s  R:  0.0400s  Speedup:  24.59x
+  predict(m, new, se) n=10000                   Julia:  0.0016s  R:  0.0260s  Speedup:  16.54x
 
 ── Basis Construction ──────────────────────────────────────────
-  CR basis n=5000 k=20                          Julia:  0.0016s  R:  0.0030s  Speedup:   1.88x
-  TPRS basis n=5000 k=20                        Julia:  0.0256s  R:  0.4050s  Speedup:  15.82x
-  TPRS basis n=50000 k=30                       Julia:  0.5278s  R:  4.1630s  Speedup:   7.89x
+  CR basis n=5000 k=20                          Julia:  0.0012s  R:  0.0060s  Speedup:   4.87x
+  TPRS basis n=5000 k=20                        Julia:  0.0386s  R:  0.3910s  Speedup:  10.14x
+  TPRS basis n=50000 k=30                       Julia:  0.6647s  R:  4.0850s  Speedup:   6.15x
 
 ── SCAM (Shape-Constrained) ────────────────────────────────────
-  SCAM monotone incr n=1000 k=15                Julia:  0.0332s  R:  0.0660s  Speedup:   1.99x
+  SCAM monotone incr n=1000 k=15                Julia:  0.0095s  R:  0.0650s  Speedup:   6.81x
 
 ── QGAM (Quantile Regression) ──────────────────────────────────
-  QGAM ELF fit n=5000 k=15                      Julia:  0.0556s  R:  0.1460s  Speedup:   2.63x
-  QGAM full calib n=1000 k=10                   Julia:  0.0997s  R:  0.1260s  Speedup:   1.26x
+  QGAM ELF fit n=5000 k=15                      Julia:  0.0202s  R:  0.1450s  Speedup:   7.17x
+  QGAM full calib n=1000 k=10                   Julia:  0.0368s  R:  0.1150s  Speedup:   3.13x
 
 ── GAMLSS (Multi-Parameter) ────────────────────────────────────
-  GAMLSS Normal LS n=500  (EFS)                 Julia:  0.0032s  R(mgcv):  0.0944s  Speedup:  29.50x
-  GAMLSS Normal LS n=500  (RS+ML)               Julia:  0.0130s  R(gamlss): 0.0588s  Speedup:   4.52x
-  GAMLSS Normal LS n=2000 (EFS)                 Julia:  0.0092s  R(mgcv):  0.2442s  Speedup:  26.54x
-  GAMLSS Normal LS n=2000 (RS+ML)               Julia:  0.0373s  R(gamlss): 0.1398s  Speedup:   3.75x
-  GAMLSS Normal LS n=5000 (EFS)                 Julia:  0.0470s  R(mgcv):  0.7490s  Speedup:  15.94x
-  GAMLSS Normal LS n=5000 (RS+ML)               Julia:  0.0664s  R(gamlss): 0.3758s  Speedup:   5.66x
+  GAMLSS Normal LS n=500  (EFS)                 Julia:  0.0040s     6.5 MiB    8 it  R(mgcv):   0.1450s   136.7 MiB    5 it  Speedup:  36.13x
+  GAMLSS Normal LS n=500 (RS+ML)                Julia:  0.0110s    12.5 MiB   19 it  R(gamlss):  0.0800s    48.4 MiB    4 it  Speedup:   7.27x
+  GAMLSS Normal LS n=2000  (EFS)                Julia:  0.0089s    18.3 MiB    8 it  R(mgcv):   0.2980s   367.6 MiB    5 it  Speedup:  33.45x
+  GAMLSS Normal LS n=2000 (RS+ML)               Julia:  0.0342s    36.0 MiB   19 it  R(gamlss):  0.1570s   139.2 MiB    3 it  Speedup:   4.60x
+  GAMLSS Normal LS n=10000  (EFS)               Julia:  0.0371s    67.3 MiB    5 it  R(mgcv):   2.0020s  2883.6 MiB    7 it  Speedup:  53.90x
+  GAMLSS Normal LS n=10000 (RS+ML)              Julia:  0.1461s   147.8 MiB   17 it  R(gamlss):  0.5510s   624.2 MiB    3 it  Speedup:   3.77x
 
 ================================================================================
 Summary
 ================================================================================
-  GAM Fitting                Geometric mean speedup:   5.80x
-  BAM                        Geometric mean speedup:   3.86x
-  Prediction                 Geometric mean speedup:   8.77x
-  Basis Construction         Geometric mean speedup:   6.16x
-  SCAM                       Geometric mean speedup:   1.99x
-  QGAM                       Geometric mean speedup:   1.82x
-  GAMLSS                     Geometric mean speedup:  10.66x
+  GAM Fitting                Geometric mean speedup:   9.84x
+  BAM                        Geometric mean speedup:   4.66x
+  Prediction                 Geometric mean speedup:  20.17x
+  Basis Construction         Geometric mean speedup:   6.72x
+  SCAM                       Geometric mean speedup:   6.81x
+  QGAM                       Geometric mean speedup:   4.74x
+  GAMLSS                     Geometric mean speedup:  14.20x
 
-  OVERALL                    Geometric mean speedup:   5.55x
+  OVERALL                    Geometric mean speedup:   9.81x
 ================================================================================
 
 Notes:
-- GAMLSS EFS solver is 15-30x faster than mgcv gaulss (REML outer loop).
-  RS+local_ml is 4-6x faster than R gamlss with pb(method="ML").
+- GAMLSS detailed benchmarks now track wall time, allocated memory, and outer
+  iterations. EFS Normal-LS fits are 33-54x faster than mgcv gaulss while
+  using 20-43x less memory; RS+local_ml fits are 3.8-7.3x faster than
+  R gamlss with about 4x lower memory use despite taking more outer iterations.
   Previous 0.64x bottleneck was ForwardDiff per-obs overhead; hand-coded
   derivatives for all 5 families (Normal, Gamma, Beta, NegBin, InvGauss)
   and pre-allocated buffers resolved this.
-- QGAM full calibration improved from 0.04x to 1.26x via three optimizations:
+- QGAM full calibration improved from 0.04x to 3.13x via three optimizations:
   (1) pre-build X/smooths/penalty once, (2) fix SP from Gaussian fit + PIRLS-only
   bootstrap (no outer loop), (3) thread-ready parallel bootstrap evaluation.
-- GAM.jl excels at TPRS (14-16x), large n (7.9x), prediction with SE (7.6x).
-- Overall geometric mean speedup: ~5.5x across all benchmarks.
+- GAM.jl excels at prediction with SE (16.5x), GAM fitting (9.8x geometric mean),
+  and TPRS / large-n workloads (6-10x).
+- Overall geometric mean speedup: ~9.8x across all benchmarks.

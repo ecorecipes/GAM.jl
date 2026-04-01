@@ -393,7 +393,7 @@ end
 
 """
     mp_efs_outer(family, y, X_list, Sl, β_init, log_sp_init, param_offsets, control)
-    → (log_sp_opt, β_opt, reml_val)
+    → (log_sp_opt, β_opt, reml_val, iterations)
 
 EFS optimization of smoothing parameters for multi-parameter models.
 Each outer iteration: 1 inner Newton solve + closed-form SP update.
@@ -417,12 +417,13 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
         S = zeros(p, p)
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control;
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
-        return Float64[], β_opt, nll_pen
+        return Float64[], β_opt, nll_pen, 0
     end
 
     p = length(β_init)
     log_sp = copy(log_sp_init)
     β_current = copy(β_init)
+    iterations = 0
 
     # Precompute penalty ranks
     pen_ranks = Float64[]
@@ -432,6 +433,7 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
     end
 
     for outer_iter in 1:control.outer_maxit
+        iterations = outer_iter
         # Build total penalty
         S = zeros(p, p)
         for (j, Sj) in enumerate(Sl)
@@ -506,7 +508,7 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
     logdetS = _logdet_penalty(Sl, log_sp, p)
     reml_val = nll_pen_final + 0.5 * logdetH - 0.5 * logdetS + 0.5 * Mp * log(2π)
 
-    return log_sp, β_final, reml_val
+    return log_sp, β_final, reml_val, iterations
 end
 
 # Keep BFGS as fallback (legacy, not used by default)
@@ -751,11 +753,12 @@ function evgam(formulas, data, family::MultiParameterFamily;
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl;
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         reml_val = nll_pen
+        iterations = 0
     else
         # Estimate smoothing parameters via EFS
-        log_sp, β_opt, reml_val = mp_efs_outer(family, y, X_list, Sl, β_init,
-                                                log_sp, param_offsets, ctrl;
-                                                Mp=Mp, Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+        log_sp, β_opt, reml_val, iterations = mp_efs_outer(family, y, X_list, Sl, β_init,
+            log_sp, param_offsets, ctrl;
+            Mp=Mp, Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
         conv = true
     end
 
@@ -792,7 +795,7 @@ function evgam(formulas, data, family::MultiParameterFamily;
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, idpars, param_offsets
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets
     )
 end
 

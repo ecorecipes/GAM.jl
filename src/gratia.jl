@@ -854,10 +854,10 @@ end
 function _random_from_family(rng::AbstractRNG, family, mu, scale)
     if family isa Normal
         return mu + randn(rng) * sqrt(scale)
-    elseif family isa Poisson
+    elseif family isa Poisson || family isa QuasiPoissonFamily
         lam = max(mu, 1e-10)
         return Float64(rand(rng, DPoisson(lam)))
-    elseif family isa Binomial
+    elseif family isa Binomial || family isa QuasiBinomialFamily
         p = clamp(mu, 1e-10, 1 - 1e-10)
         return Float64(rand(rng) < p)
     elseif family isa Gamma
@@ -872,7 +872,7 @@ end
 
 """Probability of count c under the fitted model."""
 function _count_prob(family, mu, scale, c::Int)
-    if family isa Poisson
+    if family isa Poisson || family isa QuasiPoissonFamily
         lam = max(mu, 1e-10)
         return pdf(DPoisson(lam), c)
     elseif family isa NegBinFamily

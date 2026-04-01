@@ -19,7 +19,7 @@ over R on typical benchmarks.
 - **Automatic smoothing**: REML, ML, and GCV smoothing parameter estimation via
   Extended Fellner-Schall (EFS) method
 - **Multiple families**: Gaussian, Poisson, Binomial, Gamma, Inverse Gaussian,
-  plus extended families (Negative Binomial, Tweedie, Beta)
+  plus extended families (Negative Binomial, quasi-Poisson, quasi-Binomial, Tweedie, Beta)
 - **GAMLSS**: distributional regression for location, scale, and shape parameters
   with RS and CG solvers (GaussianLS, GammaLocationScale, BetaRegression, and more)
 - **SCAM**: shape-constrained additive models (monotonicity, convexity)

@@ -11,6 +11,12 @@
 # 5. Penalty S = Z'·diag(v)·Z  (penalty has eigenvalues, not inverses)
 # 6. Column-wise RMS rescaling of X, S, UZ
 
+struct TPRSPredictCache <: AbstractSmoothPredictCache
+    centers::Matrix{Float64}
+    UZ::Matrix{Float64}
+    col_scales::Vector{Float64}
+end
+
 """
     _eta_const(m::Int, d::Int) -> Float64
 
@@ -173,6 +179,32 @@ function _tps_multi_null_basis(X_data::Matrix{Float64}, m::Int)
         end
     end
     return T
+end
+
+function _tps_cross_matrix(X_new::Matrix{Float64}, centers::Matrix{Float64}, m::Int)
+    n_new, d = size(X_new)
+    nk = size(centers, 1)
+    E = zeros(n_new, nk)
+    if d == 1
+        @inbounds for j in 1:nk, i in 1:n_new
+            E[i, j] = _tps_eta(abs(X_new[i, 1] - centers[j, 1]), m, 1)
+        end
+    else
+        @inbounds for j in 1:nk, i in 1:n_new
+            E[i, j] = _tps_eta(norm(view(X_new, i, :) .- view(centers, j, :)), m, d)
+        end
+    end
+    return E
+end
+
+function _scale_columns!(X::Matrix{Float64}, scales::Vector{Float64})
+    @inbounds for j in 1:size(X, 2)
+        scale = scales[j]
+        if scale > 0
+            X[:, j] ./= scale
+        end
+    end
+    return X
 end
 
 function _smooth_construct(::ThinPlateSpline, spec::SmoothSpec, data, knots)
@@ -359,6 +391,8 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
     null_dim = M
     pen_rank = n_basis
 
+    centers = d == 1 ? reshape(copy(xk), :, 1) : copy(X_data)
+    predict_cache = TPRSPredictCache(centers, U * Z, copy(col_scales))
     knots_out = d == 1 ? (length(xk) > 0 ? xk : Float64[]) : Float64[]
 
     return ConstructedSmooth(
@@ -373,6 +407,7 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
         0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = predict_cache,
     )
 end
 
@@ -383,69 +418,19 @@ function _predict_matrix(::Union{ThinPlateSpline, ThinPlateShrink},
     d = length(vars)
     m_order = spec.m === nothing ? 2 : spec.m
 
-    if d == 1
-        x_new = Float64.(Tables.getcolumn(newdata, vars[1]))
-        n_new = length(x_new)
-        knots = smooth.knots
-        k = spec.k
-        M = m_order  # null space dim for 1d
+    cache = smooth.predict_cache
+    cache isa TPRSPredictCache || throw(ArgumentError("Missing fitted TPRS prediction cache"))
 
-        if !isempty(knots)
-            nk = length(knots)
+    X_new = hcat([Float64.(Tables.getcolumn(newdata, v)) for v in vars]...)
+    E_new = _tps_cross_matrix(X_new, cache.centers, m_order)
+    X_eig = E_new * cache.UZ
+    T_new = d == 1 ? _tps_null_space_basis(view(X_new, :, 1), m_order) :
+                     _tps_multi_null_basis(X_new, m_order)
+    X_full = hcat(X_eig, T_new)
+    _scale_columns!(X_full, cache.col_scales)
 
-            # Reconstruct the knot-based E and eigen-decomp
-            E_kk = _tps_penalty_matrix(knots, m_order)
-            T_kk = _tps_null_space_basis(knots, m_order)
-            eig = eigen(Symmetric(E_kk))
-            idx = sortperm(abs.(eig.values); rev = true)
-            U = eig.vectors[:, idx[1:k]]
-            v = eig.values[idx[1:k]]
-
-            # Constraint: TU = T'U, Z = null space of TU
-            TU = T_kk' * U
-            qr_TU = qr(TU')
-            Q_full = qr_TU.Q * Matrix(I, k, k)
-            Z = Q_full[:, (M + 1):k]
-
-            # Nystrom extension for new data: E_new * U * Z
-            E_new = zeros(n_new, nk)
-            for j in 1:nk, i in 1:n_new
-                E_new[i, j] = _tps_eta(abs(x_new[i] - knots[j]), m_order, 1)
-            end
-            X_eig = E_new * (U * Z)
-
-            T_new = _tps_null_space_basis(x_new, m_order)
-            X_full = hcat(X_eig, T_new)
-        else
-            # Data was used as knots — need full reconstruction
-            # This shouldn't normally happen for prediction at new points
-            E_new = _tps_penalty_matrix(x_new, m_order)
-            T_new = _tps_null_space_basis(x_new, m_order)
-            eig = eigen(Symmetric(E_new))
-            idx = sortperm(abs.(eig.values); rev = true)
-            U = eig.vectors[:, idx[1:k]]
-            v = eig.values[idx[1:k]]
-
-            TU = T_new' * U
-            qr_TU = qr(TU')
-            Q_full = qr_TU.Q * Matrix(I, k, k)
-            Z = Q_full[:, (M + 1):k]
-
-            X_eig = U * Diagonal(v) * Z
-            X_full = hcat(X_eig, T_new)
-        end
-
-        # Apply same column rescaling and constraint as training
-        # Use QR-based constraint absorption matching R's absorb.cons
-        if smooth.constraint !== nothing
-            C = smooth.constraint
-            k_pred = size(X_full, 2)
-            qr_C = qr(C')
-            Z_cons = (qr_C.Q * Matrix(I, k_pred, k_pred))[:, 2:k_pred]
-            return X_full * Z_cons
-        end
-        return X_full
-    else
-        throw(ArgumentError("Multi-dimensional TPRS prediction not yet implemented"))
+    if smooth.constraint !== nothing
+        return X_full * _constraint_basis(smooth.constraint, size(X_full, 2))
     end
+    return X_full
 end
