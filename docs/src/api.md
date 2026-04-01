@@ -57,6 +57,8 @@ T2TensorProduct
 ```@docs
 GAM.ExtendedFamily
 NegBinFamily
+QuasiPoissonFamily
+QuasiBinomialFamily
 TweedieFamily
 BetaFamily
 ```

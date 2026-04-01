@@ -275,6 +275,7 @@ struct MultiParameterModel{F<:MultiParameterFamily}
     y::Vector{Float64}               # response
     nobs::Int
     converged::Bool
+    iterations::Int                  # outer iterations used by the fitting backend
     idpars::Vector{Int}              # maps each coefficient to its parameter index
     param_offsets::Vector{Int}       # cumulative column counts [0, p1, p1+p2, ...]
 end

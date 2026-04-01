@@ -64,7 +64,7 @@ in basis construction.
 | Random effects (`:re`) | ✅ | ✅ |
 | Tensor products (`te`/`ti`) | ✅ | ✅ |
 | REML / ML / GCV | ✅ | ✅ |
-| Extended families (NB, Tweedie, Beta) | ✅ | ✅ |
+| Extended families (NB, quasi, Tweedie, Beta) | ✅ | ✅ |
 | Side constraints (`gam.side`) | ✅ | ✅ |
 | `gam.check` diagnostics | ✅ | ✅ |
 | Adaptive smooths | ✅ | ❌ |

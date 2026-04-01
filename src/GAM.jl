@@ -136,6 +136,8 @@ export
     # Extended families
     ExtendedFamily,
     NegBinFamily,
+    QuasiPoissonFamily,
+    QuasiBinomialFamily,
     TweedieFamily,
     BetaFamily,
 

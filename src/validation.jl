@@ -72,6 +72,16 @@ function _validate_response_family(y, ::Poisson)
     return nothing
 end
 
+function _validate_response_family(y, ::QuasiPoissonFamily)
+    ymin = minimum(y)
+    if ymin < 0
+        throw(ArgumentError(
+            "Response must be non-negative for QuasiPoisson family, but got " *
+            "minimum value $(ymin). Use a different family or check your data."))
+    end
+    return nothing
+end
+
 function _validate_response_family(y, ::Union{Gamma, InverseGaussian})
     ymin = minimum(y)
     if ymin <= 0
@@ -113,6 +123,17 @@ function _validate_response_family(y, ::BinomialLike)
             "Response must be in [0, 1] for Binomial/Bernoulli family, " *
             "but got range [$ymin, $ymax]. " *
             "For count data use Poisson(); for proportions ensure y ∈ [0,1]."))
+    end
+    return nothing
+end
+
+function _validate_response_family(y, ::QuasiBinomialFamily)
+    ymin, ymax = extrema(y)
+    if ymin < 0 || ymax > 1
+        throw(ArgumentError(
+            "Response must be in [0, 1] for QuasiBinomial family, " *
+            "but got range [$ymin, $ymax]. " *
+            "For count data use QuasiPoissonFamily(); for proportions ensure y ∈ [0,1]."))
     end
     return nothing
 end
