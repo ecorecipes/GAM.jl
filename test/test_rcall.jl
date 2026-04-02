@@ -11,8 +11,10 @@ using Test
 using GAM
 using RCall
 using DataFrames
+using Distributions
 using LinearAlgebra
 using Statistics
+using StatsAPI: loglikelihood, dof, aic
 using StatsBase: coef
 using StableRNGs
 
@@ -42,6 +44,29 @@ function r_gam_summary(model_name::String)
     """)
     out = rcopy(reval(".out"))
     return out
+end
+
+function simulate_tweedie_rcall(rng, mu::AbstractVector{<:Real}, p::Real, phi::Real)
+    1.0 < p < 2.0 || throw(ArgumentError("simulate_tweedie_rcall requires 1 < p < 2"))
+    phi > 0 || throw(ArgumentError("simulate_tweedie_rcall requires phi > 0"))
+
+    alpha = (2.0 - p) / (p - 1.0)
+    y = Vector{Float64}(undef, length(mu))
+    @inbounds for i in eachindex(mu)
+        mui = Float64(mu[i])
+        lambda = mui^(2.0 - p) / (phi * (2.0 - p))
+        gamma_scale = phi * (p - 1.0) * mui^(p - 1.0)
+        n_terms = rand(rng, Poisson(lambda))
+        total = 0.0
+        if n_terms > 0
+            dist = Gamma(alpha, gamma_scale)
+            for _ in 1:n_terms
+                total += rand(rng, dist)
+            end
+        end
+        y[i] = total
+    end
+    return y
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -292,6 +317,102 @@ end
         @test abs(m.edf_total - rs[:edf]) < 2.0
         @test abs(m.deviance_val - rs[:deviance]) / max(rs[:deviance], 1.0) < 0.1
         @test cor(m.fitted_values, rs[:fitted]) > 0.99
+    end
+
+    @testset "Tweedie log density vs mgcv" begin
+        R"""
+        y_tw <- c(0, 0.35, 1.1, 2.4, 4.2)
+        mu_tw <- c(0.4, 0.8, 1.3, 2.0, 3.1)
+        p_tw <- 1.4
+        phi_tw <- 0.7
+        ld_tw <- mgcv:::ldTweedie(y_tw, mu=mu_tw, p=p_tw, phi=phi_tw)[,1]
+        """
+        y_tw = rcopy(R"y_tw")
+        mu_tw = rcopy(R"mu_tw")
+        p_tw = Float64(rcopy(R"p_tw"))
+        phi_tw = Float64(rcopy(R"phi_tw"))
+        ld_tw = rcopy(R"as.numeric(ld_tw)")
+
+        jl_ld = [GAM._tweedie_logdensity(yi, mui, p_tw, phi_tw) for (yi, mui) in zip(y_tw, mu_tw)]
+
+        @test maximum(abs.(jl_ld .- ld_tw)) < 1e-8
+    end
+
+    @testset "Tweedie Dd vs mgcv tw()" begin
+        y_tw = [0.0, 0.35, 1.1, 2.4, 4.2]
+        mu_tw = [0.4, 0.8, 1.3, 2.0, 3.1]
+        wt_tw = [1.0, 0.7, 1.2, 0.9, 1.5]
+        p_tw = 1.4
+
+        dd_jl = GAM.tweedie_Dd(TweedieFamily(p = p_tw), y_tw, mu_tw, wt_tw; level=0)
+
+        R"""
+        y_dd <- $y_tw
+        mu_dd <- $mu_tw
+        wt_dd <- $wt_tw
+        p_dd <- $p_tw
+        fam_dd <- tw(theta = p_dd)
+        dd_tw <- fam_dd$Dd(y_dd, mu_dd, fam_dd$getTheta(), wt_dd, level = 0)
+        """
+
+        @test maximum(abs.(dd_jl[:Dmu] .- rcopy(R"dd_tw$Dmu"))) < 1e-12
+        @test maximum(abs.(dd_jl[:Dmu2] .- rcopy(R"dd_tw$Dmu2"))) < 1e-12
+        @test maximum(abs.(dd_jl[:EDmu2] .- rcopy(R"dd_tw$EDmu2"))) < 1e-12
+    end
+
+    @testset "Tweedie model loglikelihood vs mgcv density" begin
+        rng_tw = StableRNG(778)
+        n = 240
+        x = range(0, 1; length = n) |> collect
+        mu_true = exp.(0.3 .+ 0.5 .* cos.(2π .* x))
+        true_p = 1.35
+        true_phi = 0.7
+        y = simulate_tweedie_rcall(rng_tw, mu_true, true_p, true_phi)
+
+        df = DataFrame(x = x, y = y)
+        m = gam(@gam_formula(y ~ s(x, k = 12, bs = :cr)), df;
+            family = TweedieFamily(p = true_p), method = :REML)
+
+        R"""
+        y_ll <- $y
+        mu_ll <- $(m.fitted_values)
+        wt_ll <- $(m.weights)
+        p_ll <- $(m.family.p)
+        phi_ll <- $(m.scale)
+        ll_tw_model <- sum(mgcv:::ldTweedie(y_ll, mu=mu_ll, p=p_ll, phi=phi_ll)[,1] * wt_ll)
+        """
+        r_ll = Float64(rcopy(R"ll_tw_model"))
+
+        @test loglikelihood(m) ≈ r_ll atol = 1e-8
+        @test aic(m) ≈ -2 * r_ll + 2 * dof(m) atol = 1e-8
+    end
+
+    @testset "Tweedie CR — estimated power" begin
+        rng_tw = StableRNG(777)
+        n = 320
+        x = range(0, 1; length=n) |> collect
+        mu_true = exp.(0.35 .+ 0.6 .* sin.(2π .* x))
+        true_p = 1.45
+        true_phi = 0.8
+        y = simulate_tweedie_rcall(rng_tw, mu_true, true_p, true_phi)
+
+        R"""
+        df_tw <- data.frame(x = $x, y = $y)
+        r_tw <- gam(y ~ s(x, k=12, bs="cr"), data=df_tw,
+                    family=tw(theta=-1.8), method="REML")
+        r_tw_p <- r_tw$family$getTheta(TRUE)
+        r_tw_fit <- fitted(r_tw)
+        """
+        r_tw_p = Float64(rcopy(R"r_tw_p"))
+        r_tw_fit = rcopy(R"as.numeric(r_tw_fit)")
+
+        df = DataFrame(x=x, y=y)
+        m = gam(@gam_formula(y ~ s(x, k = 12, bs = :cr)), df;
+            family = TweedieFamily(p = 1.8, estimate_p = true), method = :REML)
+
+        @test m.converged
+        @test abs(m.family.p - r_tw_p) < 0.15
+        @test cor(m.fitted_values, r_tw_fit) > 0.995
     end
 
     # ──────────────────────────────────────────────────────────────────────

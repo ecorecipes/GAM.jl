@@ -34,6 +34,7 @@ using GLM
 using LinearAlgebra
 using LinearAlgebra: BLAS
 using OSQP
+import PSIS
 using Printf: @sprintf, @printf
 using Reexport
 using SparseArrays
@@ -51,7 +52,7 @@ using Tables
 
 import Base: show, size
 import StatsAPI: coef, coeftable, coefnames, confint, deviance, nulldeviance,
-    dof, dof_residual, loglikelihood, nobs, stderror, vcov, residuals,
+    aic, aicc, bic, dof, dof_residual, loglikelihood, nobs, stderror, vcov, residuals,
     predict, fitted, fit, response, r2, adjr2
 import StatsModels: apply_schema, modelcols, schema, hasintercept
 
@@ -257,13 +258,21 @@ export
     get_prior,
     default_priors,
     BayesGamModel,
+    PSISKDiagnostic,
+    LOOResult,
+    WAICResult,
     smooth2random,
     SmoothMixedModel,
     gam_matrices,
     gam_smooth,
     smooth_prior,
     smooth_predictive,
-    s2r_predict
+    s2r_predict,
+    pointwise_loglikelihood,
+    psis_loo,
+    pareto_k_diagnostic,
+    loo,
+    waic
 
 # Type aliases matching GLM.jl convention
 const FP = AbstractFloat

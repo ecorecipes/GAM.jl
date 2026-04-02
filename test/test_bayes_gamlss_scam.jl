@@ -1,3 +1,15 @@
+using Test
+using GAM
+using DataFrames
+using Distributions
+using LinearAlgebra: diag
+using StatsAPI: nobs, coef, coeftable, confint, vcov
+
+# Bayesian GAMLSS and SCAM tests via Turing.jl
+#
+# Run standalone: julia --project -e 'include("test/test_bayes_gamlss_scam.jl")'
+# Requires Turing.jl to be installed.
+
 @testset "Bayesian GAMLSS and SCAM" begin
     using StableRNGs
     using Turing
@@ -38,6 +50,27 @@
         V = vcov(m)
         @test size(V) == (length(c), length(c))
         @test all(diag(V) .>= 0)
+
+        ll = pointwise_loglikelihood(m)
+        l = loo(m)
+        l_is = loo(m; method = :is)
+        d = pareto_k_diagnostic(l)
+        w = waic(m)
+        @test size(ll, 2) == n
+        @test length(l.pointwise_elpd) == n
+        @test length(l.pareto_k) == n
+        @test length(l.n_eff) == n
+        @test isfinite(l.elpd_loo)
+        @test isfinite(l.looic)
+        @test l.method == :psis
+        @test all(isfinite, l.pareto_k)
+        @test l_is.method == :is
+        @test all(isnan, l_is.pareto_k)
+        @test d isa PSISKDiagnostic
+        @test d.pareto_k == l.pareto_k
+        @test length(w.pointwise_elpd) == n
+        @test isfinite(w.elpd_waic)
+        @test isfinite(w.waic)
     end
 
     @testset "Bayesian GAMLSS single formula replicated" begin
@@ -111,6 +144,16 @@
         # Compare with frequentist — intercepts should be reasonably close
         m_freq = scam(@gam_formula(y ~ s(x, bs = :mpi, k = 8)), df)
         @test abs(c[1] - coef(m_freq)[1]) < 0.5
+
+        l = loo(m)
+        w = waic(m)
+        @test length(l.pointwise_elpd) == n
+        @test length(l.pareto_k) == n
+        @test isfinite(l.elpd_loo)
+        @test isfinite(l.looic)
+        @test length(w.pointwise_elpd) == n
+        @test isfinite(w.elpd_waic)
+        @test isfinite(w.waic)
     end
 
     @testset "Bayesian SCAM monotone decreasing" begin

@@ -75,6 +75,19 @@ m = gam(@gam_formula(y ~ s(x)), df;
     family=TweedieFamily(p=1.3, estimate_p=true))
 ```
 
+This uses a bounded profile-likelihood update based on the Tweedie log density
+for `1 < p < 2`.
+
+For fitted Tweedie GAMs, `loglikelihood(m)` and `StatsAPI.aic(m)` / `StatsAPI.bic(m)`
+paths use that exact Tweedie series likelihood instead of the generic
+`-deviance/2` approximation.
+
+`TweedieFamily` also provides level-0 deviance derivatives for PIRLS. With the
+default `LogLink()`, the inner iteration therefore uses Tweedie-specific
+working responses and bounded Newton weights derived from the deviance itself.
+Higher-order power-parameter derivatives are still handled separately by the
+bounded profile-likelihood update.
+
 ### Beta Regression
 
 For response data in (0, 1), such as proportions.
@@ -112,10 +125,10 @@ Used with [`qgam()`](@ref). See [Quantile Regression (QGAM)](@ref) for details.
 | Family | Description |
 |--------|-------------|
 | `ELFFamily(qu)` | Extended log-F for a single quantile `qu` |
-| `ELFLSSFamily(qu)` | ELF with location-scale-shape for flexible tails |
+| `ELFLSSFamily(qu)` | ELF with covariate-dependent scale for location-scale quantile fits |
 
 ```julia
-m = qgam(@gam_formula(y ~ s(x)), df; qu=0.5)
+m = qgam(@gam_formula(y ~ s(x)), df, 0.5)
 ```
 
 ## evgam Families

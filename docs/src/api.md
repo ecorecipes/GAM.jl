@@ -132,8 +132,16 @@ GinlaResult
 
 ```@docs
 BayesGamModel
+PSISKDiagnostic
+LOOResult
+WAICResult
 smooth2random
 PriorSpec
+pointwise_loglikelihood
+psis_loo
+pareto_k_diagnostic
+loo
+waic
 ```
 
 ## Diagnostics

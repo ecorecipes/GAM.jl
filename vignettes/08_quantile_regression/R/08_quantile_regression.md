@@ -374,8 +374,8 @@ barplot(losses, names.arg = paste("τ =", quantiles), col = "steelblue",
 
 | Feature | R qgam | Julia GAM.jl |
 |----|----|----|
-| Single quantile | `qgam(formula, data=dat, qu=τ)` | `qgam(formula, data; qu=τ)` |
-| Multiple quantiles | `mqgam(formula, data=dat, qu=c(...))` | `mqgam(formula, data; qu=[...])` |
+| Single quantile | `qgam(formula, data=dat, qu=τ)` | `qgam(formula, data, τ)` |
+| Multiple quantiles | `mqgam(formula, data=dat, qu=c(...))` | `mqgam(formula, data, [...])` |
 | Access fits | `mq$fit[["0.5"]]` | `mq.fits[0.5]` |
 | Loss function | ELF | ELF |
 | Smoothing | Automatic | Automatic |

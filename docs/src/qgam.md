@@ -18,15 +18,25 @@ log-F (ELF) likelihood for smooth, calibrated quantile estimation.
 ### Single Quantile
 
 ```julia
-qgam(formula, data; qu=0.5, control=gam_control())
+qgam(formula, data, 0.5; control=gam_control())
 ```
 
 Fits a GAM for a single quantile level `qu ∈ (0, 1)`.
 
+### Location-Scale Quantile Model
+
+```julia
+qgam([mu_formula, sigma_formula], data, 0.9)
+```
+
+Fits a two-formula `ELFLSSFamily` model where the first formula controls the
+quantile location and the second controls the covariate-dependent scale.
+Returns a `MultiParameterModel`.
+
 ### Multiple Quantiles
 
 ```julia
-mqgam(formula, data; qu=[0.1, 0.25, 0.5, 0.75, 0.9])
+mqgam(formula, data, [0.1, 0.25, 0.5, 0.75, 0.9])
 ```
 
 Fits all specified quantiles efficiently, sharing basis construction.
@@ -45,7 +55,7 @@ Extracts a fitted model for a single quantile from an `mqgam` result.
 | Family | Description |
 |--------|-------------|
 | `ELFFamily(qu)` | Extended log-F for quantile `qu` |
-| `ELFLSSFamily(qu)` | ELF with location-scale-shape for flexible tails |
+| `ELFLSSFamily(qu)` | ELF with covariate-dependent scale for location-scale quantile fits |
 
 In most cases you do not need to construct these directly — `qgam()` and
 `mqgam()` handle family construction internally.
@@ -62,14 +72,14 @@ x = range(0, 2π; length=n) |> collect
 y = sin.(x) .+ (0.1 .+ 0.3 .* x ./ (2π)) .* randn(n)
 df = DataFrame(x=x, y=y)
 
-m = qgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df; qu=0.5)
+m = qgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df, 0.5)
 ```
 
 ### Multiple Quantiles
 
 ```julia
-fits = mqgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df;
-    qu=[0.1, 0.25, 0.5, 0.75, 0.9])
+fits = mqgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df,
+    [0.1, 0.25, 0.5, 0.75, 0.9])
 
 # Extract individual quantile models
 m10 = qdo(fits, 0.1)
@@ -87,9 +97,40 @@ y = Float64.([rand(Poisson(m)) for m in mu])
 df = DataFrame(x=x, y=y)
 
 # Quantile regression on count data
-m = qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df;
-    qu=0.75, family=Poisson(), link=LogLink())
+m = qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df, 0.75;
+    family=Poisson(), link=LogLink())
 ```
+
+### Location-Scale Quantile Regression
+
+```julia
+fit = qgam([
+    @gam_formula(y ~ s(x, k=20, bs=:cr)),
+    @gam_formula(y ~ 0 + s(x, k=10, bs=:cr))
+], df, 0.9)
+
+chk = check_qgam(fit)
+```
+
+This path uses `ELFLSSFamily` and lets the ELF scale vary with covariates.
+`cqcheck`, `check_qgam`, and `quantile_residuals` all work on these fits too.
+
+You can also predict both fitted parameters at new data:
+
+```julia
+newdf = DataFrame(x=range(minimum(x), maximum(x); length=50))
+
+fit_mat, se_mat = predict(fit, newdf; type=:response, se=true)
+
+# columns follow param_names(fit.family) == ["mu", "sigma"]
+mu_hat = fit_mat[:, 1]
+sigma_hat = fit_mat[:, 2]
+```
+
+`type=:link` returns the linear predictors for each parameter; `type=:response`
+applies the corresponding inverse links (for `ELFLSSFamily`, `μ` and `σ`).
+When `se=true`, `predict` returns a tuple `(fit, se_fit)` of matrices with the
+same shape.
 
 ## Calibration
 

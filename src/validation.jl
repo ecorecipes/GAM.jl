@@ -82,6 +82,16 @@ function _validate_response_family(y, ::QuasiPoissonFamily)
     return nothing
 end
 
+function _validate_response_family(y, ::TweedieFamily)
+    ymin = minimum(y)
+    if ymin < 0
+        throw(ArgumentError(
+            "Response must be non-negative for Tweedie family, but got " *
+            "minimum value $(ymin). Use a different family or check your data."))
+    end
+    return nothing
+end
+
 function _validate_response_family(y, ::Union{Gamma, InverseGaussian})
     ymin = minimum(y)
     if ymin <= 0

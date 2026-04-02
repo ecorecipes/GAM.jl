@@ -62,6 +62,55 @@ using Statistics: mean, std
         @test size(V, 1) == size(V, 2)
         @test all(eigvals(Symmetric(V)) .> -1e-10)  # positive semi-definite
 
+        ll = pointwise_loglikelihood(m_bayes)
+        l = loo(m_bayes)
+        l_is = loo(m_bayes; method = :is)
+        l_psis = psis_loo(m_bayes)
+        diag_l = pareto_k_diagnostic(l)
+        w = waic(m_bayes)
+        @test l isa LOOResult
+        @test w isa WAICResult
+        @test size(ll, 2) == n
+        @test size(ll, 1) > 0
+        @test length(l.pointwise_elpd) == n
+        @test length(l.pointwise_p) == n
+        @test length(l.pareto_k) == n
+        @test length(l.n_eff) == n
+        @test isfinite(l.elpd_loo)
+        @test isfinite(l.p_loo)
+        @test isfinite(l.looic)
+        @test l.looic ≈ -2 * l.elpd_loo
+        @test l.method == :psis
+        @test all(isfinite, l.pareto_k)
+        @test all(x -> isnan(x) || x > 0, l.n_eff)
+        @test l_psis.looic ≈ l.looic atol = 1e-10
+        @test l_psis.method == :psis
+        @test l_is.method == :is
+        @test length(l_is.pareto_k) == n
+        @test all(isnan, l_is.pareto_k)
+        @test isfinite(l_is.elpd_loo)
+        @test abs(l.elpd_loo - l_is.elpd_loo) < 10
+        @test diag_l isa PSISKDiagnostic
+        @test diag_l.pareto_k == l.pareto_k
+        @test diag_l.n_eff == l.n_eff
+        @test all(i -> l.pareto_k[i] > 0.7, diag_l.warning_indices)
+        @test all(i -> l.pareto_k[i] > 1.0, diag_l.danger_indices)
+        @test length(w.pointwise_elpd) == n
+        @test length(w.pointwise_p) == n
+        @test isfinite(w.elpd_waic)
+        @test isfinite(w.p_waic)
+        @test isfinite(w.waic)
+        @test w.waic ≈ -2 * w.elpd_waic
+        @test w.p_waic >= 0
+
+        io_w = IOBuffer()
+        show(io_w, MIME("text/plain"), w)
+        @test occursin("WAIC", String(take!(io_w)))
+
+        io_l = IOBuffer()
+        show(io_l, MIME("text/plain"), l)
+        @test occursin("PSIS-LOO", String(take!(io_l)))
+
         # show() should not error
         io = IOBuffer()
         show(io, MIME("text/plain"), m_bayes)

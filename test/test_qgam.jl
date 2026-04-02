@@ -1,4 +1,4 @@
-using Test, GAM, Random, Statistics, StatsBase
+using Test, GAM, GLM, Random, Statistics, StatsBase
 
 @testset "Quantile GAM (qgam)" begin
 
@@ -297,5 +297,122 @@ using Test, GAM, Random, Statistics, StatsBase
         @test length(η0) == 2
         @test length(η0[1]) == n
         @test length(η0[2]) == n
+    end
+
+    @testset "ELFLSS qgam high-level API and diagnostics" begin
+        Random.seed!(202)
+        n = 250
+        x = collect(range(-2.5, 2.5; length=n))
+        sigma = 0.15 .+ 0.25 .* abs.(x)
+        y = sin.(x) .+ sigma .* randn(n)
+        df = (y=y, x=x)
+
+        formulas = [
+            @gam_formula(y ~ s(x, k=12, bs=:cr)),
+            @gam_formula(y ~ 0 + s(x, k=10, bs=:cr)),
+        ]
+
+        fit = qgam(formulas, df, 0.75)
+        @test fit isa GAM.MultiParameterModel
+        @test fit.family isa ELFLSSFamily
+        @test fit.converged
+        @test nparams(fit) == 2
+
+        mu_hat = GAM._elflss_location(fit)
+        sig_hat = GAM._apply_link_inv.(Ref(fit.family.links[2]), fit.fitted_eta[2])
+        @test length(mu_hat) == n
+        @test all(sig_hat .> 0)
+        @test cor(mu_hat, sin.(x)) > 0.9
+        @test cor(sig_hat, sigma) > 0.5
+
+        fit_fixed = qgam(formulas, df, 0.75; co=0.2)
+        fit_direct = gam(formulas, df, ELFLSSFamily(qu=0.75, co=0.2))
+        @test fit_fixed.converged
+        @test fit_fixed.nll ≈ fit_direct.nll atol=1e-6
+
+        cal = cqcheck(fit, x; nbin=8)
+        @test cal isa GAM.CQCheckResult
+        @test cal.target_qu == 0.75
+        @test all(0.0 .<= cal.proportions .<= 1.0)
+
+        chk = check_qgam(fit; nbin=8)
+        @test chk isa GAM.QGamCheck
+        @test chk.target_qu == 0.75
+        @test 0.0 < chk.actual_proportion < 1.0
+        @test chk.integrated_abs_bias >= 0.0
+
+        qr = quantile_residuals(fit)
+        @test length(qr) == n
+        @test all(isfinite.(qr))
+    end
+
+    @testset "ELFLSS prediction with uncertainty" begin
+        Random.seed!(303)
+        n = 220
+        x = collect(range(-2.2, 2.2; length=n))
+        sigma = 0.18 .+ 0.2 .* abs.(x)
+        y = sin.(x) .+ sigma .* randn(n)
+        df = (y=y, x=x)
+
+        formulas = [
+            @gam_formula(y ~ s(x, k=12, bs=:cr)),
+            @gam_formula(y ~ 0 + s(x, k=10, bs=:cr)),
+        ]
+
+        fit = qgam(formulas, df, 0.75; co=0.2)
+        @test fit.converged
+        @test param_names(fit.family) == ["mu", "sigma"]
+
+        pred_link = predict(fit; type=:link)
+        pred_resp = predict(fit; type=:response)
+        @test size(pred_link) == (n, 2)
+        @test size(pred_resp) == (n, 2)
+        @test pred_link[:, 1] ≈ fit.fitted_eta[1] atol=1e-8
+        @test pred_link[:, 2] ≈ fit.fitted_eta[2] atol=1e-8
+        @test pred_resp[:, 1] ≈ GAM._apply_link_inv.(Ref(fit.family.links[1]), fit.fitted_eta[1]) atol=1e-8
+        @test pred_resp[:, 2] ≈ GAM._apply_link_inv.(Ref(fit.family.links[2]), fit.fitted_eta[2]) atol=1e-8
+
+        newx = collect(range(-1.4, 1.4; length=9))
+        newdf = (x=newx,)
+
+        pred_link_new, se_link_new = predict(fit, newdf; type=:link, se=true)
+        pred_resp_new, se_resp_new = predict(fit, newdf; type=:response, se=true)
+
+        @test size(pred_link_new) == (length(newx), 2)
+        @test size(se_link_new) == size(pred_link_new)
+        @test size(pred_resp_new) == size(pred_link_new)
+        @test size(se_resp_new) == size(pred_link_new)
+        @test all(se_link_new .>= 0)
+        @test all(se_resp_new .>= 0)
+        @test all(pred_resp_new[:, 2] .> 0)
+
+        X_mu = hcat(ones(length(newx)), predict_matrix(fit.smooths[1][1], newdf))
+        X_sigma = hcat(ones(length(newx)), predict_matrix(fit.smooths[2][1], newdf))
+
+        β_mu = param_coef(fit, 1)
+        β_sigma = param_coef(fit, 2)
+        V_mu = @view fit.Vp[(fit.param_offsets[1] + 1):fit.param_offsets[2],
+                            (fit.param_offsets[1] + 1):fit.param_offsets[2]]
+        V_sigma = @view fit.Vp[(fit.param_offsets[2] + 1):fit.param_offsets[3],
+                               (fit.param_offsets[2] + 1):fit.param_offsets[3]]
+
+        manual_link = hcat(X_mu * β_mu, X_sigma * β_sigma)
+        manual_se_link = hcat(
+            sqrt.(max.(vec(sum((X_mu * V_mu) .* X_mu; dims=2)), 0.0)),
+            sqrt.(max.(vec(sum((X_sigma * V_sigma) .* X_sigma; dims=2)), 0.0)),
+        )
+        manual_resp = hcat(
+            GLM.linkinv.(Ref(fit.family.links[1]), manual_link[:, 1]),
+            GLM.linkinv.(Ref(fit.family.links[2]), manual_link[:, 2]),
+        )
+        manual_se_resp = hcat(
+            abs.(GLM.mueta.(Ref(fit.family.links[1]), manual_link[:, 1])) .* manual_se_link[:, 1],
+            abs.(GLM.mueta.(Ref(fit.family.links[2]), manual_link[:, 2])) .* manual_se_link[:, 2],
+        )
+
+        @test pred_link_new ≈ manual_link atol=1e-8
+        @test se_link_new ≈ manual_se_link atol=1e-8
+        @test pred_resp_new ≈ manual_resp atol=1e-8
+        @test se_resp_new ≈ manual_se_resp atol=1e-8
     end
 end

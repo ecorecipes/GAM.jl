@@ -414,11 +414,11 @@ Estimate conditional quantiles. See [Quantile Regression (QGAM)](@ref).
 
 ```julia
 # Fit median regression
-m50 = qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df; qu=0.5)
+m50 = qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df, 0.5)
 
 # Fit multiple quantiles at once
-fits = mqgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df;
-    qu=[0.1, 0.25, 0.5, 0.75, 0.9])
+fits = mqgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df,
+    [0.1, 0.25, 0.5, 0.75, 0.9])
 m10 = qdo(fits, 0.1)   # extract individual quantile model
 ```
 

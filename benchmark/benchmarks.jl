@@ -1,7 +1,9 @@
 # GAM.jl vs mgcv benchmark suite
 #
 # Compares fitting time and accuracy between GAM.jl and R equivalents.
-# Usage: julia --project benchmark/benchmarks.jl
+# Usage:
+#   julia --project=. benchmark/benchmarks.jl
+#   julia --project=. benchmark/refresh_results.jl   # overwrite benchmark/results.txt
 
 using GAM
 using DataFrames
