@@ -5,7 +5,8 @@ using Distributions
 using StableRNGs
 using LinearAlgebra
 using Statistics
-using StatsAPI: fitted, nobs, deviance, dof_residual, loglikelihood, coef, residuals, predict
+using StatsAPI: fitted, nobs, deviance, dof, dof_residual, loglikelihood, aic, bic,
+    coef, residuals, predict
 
 const rng = StableRNG(42)
 
@@ -514,6 +515,61 @@ end
         @test abs(dev_sat) < 1e-10
     end
 
+    @testset "Tweedie Dd derivatives" begin
+        y = [0.0, 0.35, 1.1, 2.4, 4.2]
+        mu = [0.4, 0.8, 1.3, 2.0, 3.1]
+        wt = [1.0, 0.7, 1.2, 0.9, 1.5]
+        f = TweedieFamily(p=1.4)
+
+        @test GAM._has_Dd(f)
+
+        dd = GAM.tweedie_Dd(f, y, mu, wt; level=0)
+        @test haskey(dd, :Dmu)
+        @test haskey(dd, :Dmu2)
+        @test haskey(dd, :EDmu2)
+        @test dd[:EDmu2] ≈ 2 .* wt ./ mu .^ f.p atol = 1e-12
+        @test all(dd[:EDmu2] .> 0)
+
+        dev0 = GAM._deviance(f, y, mu, wt)
+        @inbounds for i in eachindex(mu)
+            h = 1e-5 * max(mu[i], 1.0)
+
+            mu_p = copy(mu)
+            mu_m = copy(mu)
+            mu_p[i] += h
+            mu_m[i] -= h
+
+            dev_p = GAM._deviance(f, y, mu_p, wt)
+            dev_m = GAM._deviance(f, y, mu_m, wt)
+
+            Dmu_fd = (dev_p - dev_m) / (2h)
+            Dmu2_fd = (dev_p - 2dev0 + dev_m) / (h^2)
+
+            @test dd[:Dmu][i] ≈ Dmu_fd rtol = 1e-7 atol = 1e-8
+            @test dd[:Dmu2][i] ≈ Dmu2_fd rtol = 3e-4 atol = 1e-4
+
+            Deta2_i = dd[:Dmu2][i] * mu[i]^2 + dd[:Dmu][i] * mu[i]
+            @test Deta2_i > 0
+        end
+    end
+
+    @testset "Tweedie log density helpers" begin
+        y = [0.0, 0.4, 1.2, 2.8]
+        mu = [0.5, 0.8, 1.5, 2.2]
+        p = 1.4
+        phi = 0.7
+        wt = ones(length(y))
+
+        ll = [GAM._tweedie_logdensity(yi, mui, p, phi) for (yi, mui) in zip(y, mu)]
+        @test all(isfinite, ll)
+        @test ll[1] ≈ -mu[1]^(2 - p) / (phi * (2 - p)) atol = 1e-12
+
+        total_ll = GAM._tweedie_total_loglik(y, mu, wt, p, phi)
+        @test total_ll ≈ sum(ll) atol = 1e-10
+        @test isfinite(GAM._tweedie_total_loglik(y, mu, wt, 1.01, phi))
+        @test isfinite(GAM._tweedie_total_loglik(y, mu, wt, 1.99, phi))
+    end
+
     @testset "Tweedie power estimation" begin
         rng_ext = StableRNG(505)
         n = 1500
@@ -531,7 +587,7 @@ end
 
         @test 1.01 < f.p < 1.99
         @test abs(f.p - true_p) < initial_error
-        @test abs(f.p - true_p) < 0.3
+        @test abs(f.p - true_p) < 0.2
     end
 
     @testset "Beta variance and deviance" begin
@@ -691,6 +747,10 @@ end
         bad_prop = DataFrame(x=1:6, y=[0.1, 0.2, 1.2, 0.4, 0.5, 0.6])
         @test_throws ArgumentError gam(@gam_formula(y ~ s(x, k = 4)), bad_prop;
             family=QuasiBinomialFamily())
+
+        bad_tw = DataFrame(x=1:6, y=[0.0, 0.2, -0.1, 0.5, 1.0, 0.3])
+        @test_throws ArgumentError gam(@gam_formula(y ~ s(x, k = 4)), bad_tw;
+            family=TweedieFamily(p=1.4))
     end
 
     @testset "GAM fit QuasiPoisson with smooth" begin
@@ -744,6 +804,10 @@ end
         @test m.family isa TweedieFamily
         @test m.deviance_val >= 0
         @test all(fitted(m) .> 0)
+        @test isfinite(loglikelihood(m))
+        @test dof(m) ≈ m.edf_total + 1
+        @test isfinite(aic(m))
+        @test isfinite(bic(m))
     end
 
     @testset "GAM fit Tweedie with estimated power" begin
@@ -765,6 +829,10 @@ end
         @test 1.01 < m.family.p < 1.99
         @test abs(m.family.p - true_p) < abs(1.8 - true_p)
         @test all(fitted(m) .> 0)
+        @test isfinite(loglikelihood(m))
+        @test dof(m) ≈ m.edf_total + 2
+        @test isfinite(aic(m))
+        @test isfinite(bic(m))
     end
 
     @testset "Extended family show and StatsBase" begin

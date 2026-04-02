@@ -2,7 +2,8 @@
 
 GAM.jl aims to reproduce the results of R's mgcv package (and the broader
 mgcv ecosystem: gamlss, scam, qgam, evgam) while following Julia and JuliaStats
-conventions. On typical benchmarks GAM.jl achieves a **5.5× speedup** over R.
+conventions. In the latest checked-in benchmark snapshot, GAM.jl achieves a
+**9.81x geometric-mean speedup** over R.
 
 ## Key Differences
 
@@ -21,7 +22,7 @@ conventions. On typical benchmarks GAM.jl achieves a **5.5× speedup** over R.
 | Predict | `predict(m, newdata)` | manual via `predict_matrix` |
 | GAMLSS | `gaulss()` family | `gamlss(..., family=GaussianLS())` |
 | SCAM | `scam(y ~ s(x, bs="mpi"))` | `scam(@gam_formula(y ~ s(x, bs=:mpi)), df)` |
-| QGAM | `qgam(y ~ s(x), qu=0.5)` | `qgam(@gam_formula(y ~ s(x)), df; qu=0.5)` |
+| QGAM | `qgam(y ~ s(x), qu=0.5)` | `qgam(@gam_formula(y ~ s(x)), df, 0.5)` |
 | BAM | `bam(y ~ s(x))` | `bam(@gam_formula(y ~ s(x)), df)` |
 | GAMM | `gamm(y ~ s(x))` | `gamm(@gamm_formula(y ~ s(x) + (1\|group)), df)` |
 

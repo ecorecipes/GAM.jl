@@ -4,8 +4,8 @@
 
 GAM.jl is a comprehensive Julia port of R's [mgcv](https://cran.r-project.org/package=mgcv) ecosystem, providing
 penalized regression spline GAMs with automatic smoothness estimation. It also implements
-functionality from gamlss, scam, qgam, and evgam — all in pure Julia with a **5.5× speedup**
-over R on typical benchmarks.
+functionality from gamlss, scam, qgam, and evgam — all in pure Julia with a **9.81x**
+geometric-mean speedup over R in the latest checked-in benchmark snapshot.
 
 ## Features
 

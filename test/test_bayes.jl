@@ -180,6 +180,15 @@ end
     @test isdefined(GAM, :_fit_scam_bayes)
 end
 
+@testset "LOOResult compatibility constructor" begin
+    l = LOOResult(1.0, 0.5, -2.0, 0.1, [0.2, 0.3], [0.01, 0.02])
+    @test l.method == :is
+    @test length(l.pareto_k) == 2
+    @test all(isnan, l.pareto_k)
+    @test length(l.n_eff) == 2
+    @test all(isnan, l.n_eff)
+end
+
 @testset "smooth2random vs R mgcv" begin
     r_available = try
         @eval using RCall

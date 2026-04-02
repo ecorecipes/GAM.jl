@@ -204,6 +204,299 @@ _family_tag(::Gamma) = :gamma
 _family_tag(::InverseGaussian) = :invgaussian
 _family_tag(f) = error("Bayesian fitting not yet supported for $(typeof(f))")
 
+_vector_parameter_symbols(base::AbstractString, n::Integer) =
+    [Symbol("$(base)[$i]") for i in 1:n]
+
+function _infer_n_draws(chains, symbol_groups...)
+    for group in symbol_groups
+        if !isempty(group)
+            return length(vec(chains[first(group)].data))
+        end
+    end
+    throw(ArgumentError("Could not infer posterior draw count from chain parameters"))
+end
+
+function _draw_vector(chains, sym::Symbol)
+    return Float64.(vec(chains[sym].data))
+end
+
+function _draw_matrix(chains, syms::Vector{Symbol}, n_draws::Union{Int, Nothing} = nothing)
+    if isempty(syms)
+        n = n_draws === nothing ? 0 : n_draws
+        return zeros(Float64, n, 0)
+    end
+
+    n = n_draws === nothing ? length(vec(chains[syms[1]].data)) : n_draws
+    draws = Matrix{Float64}(undef, n, length(syms))
+    for (j, sym) in enumerate(syms)
+        draws[:, j] = _draw_vector(chains, sym)
+    end
+    return draws
+end
+
+function _block_scale_vector(sds::AbstractVector, dims::AbstractVector{<:Integer})
+    total = sum(dims; init = 0)
+    total == 0 && return zeros(Float64, 0)
+
+    scale = Vector{Float64}(undef, total)
+    pos = 1
+    @inbounds for (sd, dim) in zip(sds, dims)
+        scale[pos:(pos + dim - 1)] .= sd
+        pos += dim
+    end
+    return scale
+end
+
+function _obs_loglik_vector(y, family_tag::Symbol, link, η::AbstractVector, scale, wts)
+    n = length(y)
+    ll = Vector{Float64}(undef, n)
+
+    if family_tag == :gaussian
+        μ = link isa IdentityLink ? η : _linkinv_vec(link, η)
+        σ = max(scale, 1e-10)
+        @inbounds for i in 1:n
+            σi = σ / sqrt(max(wts[i], eps()))
+            ll[i] = logpdf(Normal(μ[i], max(σi, 1e-10)), y[i])
+        end
+    elseif family_tag == :poisson
+        μ = _linkinv_vec(link, η)
+        @inbounds for i in 1:n
+            ll[i] = logpdf(Poisson(max(μ[i], 1e-10)), round(Int, y[i]))
+        end
+    elseif family_tag == :bernoulli
+        μ = _linkinv_vec(link, η)
+        @inbounds for i in 1:n
+            ll[i] = logpdf(Bernoulli(clamp(μ[i], 1e-10, 1 - 1e-10)), round(Int, y[i]))
+        end
+    elseif family_tag == :binomial
+        μ = _linkinv_vec(link, η)
+        @inbounds for i in 1:n
+            ll[i] = logpdf(Binomial(1, clamp(μ[i], 1e-10, 1 - 1e-10)), round(Int, y[i]))
+        end
+    elseif family_tag == :gamma
+        μ = _linkinv_vec(link, η)
+        α_shape = max(scale, 1e-10)
+        @inbounds for i in 1:n
+            θ = max(μ[i] / α_shape, 1e-10)
+            ll[i] = logpdf(Distributions.Gamma(α_shape, θ), y[i])
+        end
+    elseif family_tag == :invgaussian
+        μ = _linkinv_vec(link, η)
+        λ = max(scale, 1e-10)
+        @inbounds for i in 1:n
+            ll[i] = logpdf(Distributions.InverseGaussian(max(μ[i], 1e-10), λ), y[i])
+        end
+    else
+        error("Pointwise log-likelihood not implemented for $family_tag")
+    end
+
+    return ll
+end
+
+function _gamlss_obs_loglik_vector(y, family, pv)
+    n = length(y)
+    ll = Vector{Float64}(undef, n)
+
+    if family isa GAM.DistFamily{<:Normal}
+        @inbounds for i in 1:n
+            ll[i] = logpdf(Normal(pv[1][i], max(pv[2][i], 1e-10)), y[i])
+        end
+    elseif family isa GAM.GammaLocationScale
+        @inbounds for i in 1:n
+            μi = max(pv[1][i], 1e-6)
+            σi = max(pv[2][i], 1e-6)
+            α = 1 / (σi^2)
+            θ = max(μi * σi^2, 1e-10)
+            ll[i] = logpdf(Distributions.Gamma(max(α, 1e-6), θ), y[i])
+        end
+    elseif family isa GAM.BetaRegression
+        @inbounds for i in 1:n
+            μi = clamp(pv[1][i], 1e-6, 1 - 1e-6)
+            φi = max(pv[2][i], 1e-6)
+            ll[i] = logpdf(Beta(μi * φi, (1 - μi) * φi), y[i])
+        end
+    elseif family isa GAM.NegativeBinomialLocationScale
+        @inbounds for i in 1:n
+            μi = max(pv[1][i], 1e-10)
+            σi = max(pv[2][i], 1e-10)
+            r = 1 / (σi^2)
+            p = r / (r + μi)
+            ll[i] = logpdf(NegativeBinomial(r, p), round(Int, y[i]))
+        end
+    elseif family isa GAM.InverseGaussianLocationScale
+        @inbounds for i in 1:n
+            μi = max(pv[1][i], 1e-10)
+            σi = max(pv[2][i], 1e-10)
+            λ = μi / (σi^2)
+            ll[i] = logpdf(Distributions.InverseGaussian(μi, λ), y[i])
+        end
+    else
+        error("Pointwise log-likelihood not implemented for $(typeof(family))")
+    end
+
+    return ll
+end
+
+function _gam_loglik_matrix(chains, y, family, link, X_fixed, Z_blocks; weights = nothing)
+    beta_syms = _vector_parameter_symbols("β", size(X_fixed, 2))
+    sd_syms = _vector_parameter_symbols("σ_s", length(Z_blocks))
+    z_syms = _vector_parameter_symbols("z", sum(size(Z, 2) for Z in Z_blocks; init = 0))
+    scale_syms = _family_tag(family) in (:gaussian, :gamma, :invgaussian) ? [:σ_obs] : Symbol[]
+    n_draws = _infer_n_draws(chains, beta_syms, sd_syms, z_syms, scale_syms)
+
+    beta_draws = _draw_matrix(chains, beta_syms, n_draws)
+    sd_draws = _draw_matrix(chains, sd_syms, n_draws)
+    z_draws = _draw_matrix(chains, z_syms, n_draws)
+    scale_draws = isempty(scale_syms) ? nothing : _draw_vector(chains, first(scale_syms))
+
+    Z_combined = isempty(Z_blocks) ? zeros(length(y), 0) : hcat(Z_blocks...)
+    block_dims = [size(Z, 2) for Z in Z_blocks]
+    wts = weights === nothing ? ones(length(y)) : Float64.(weights)
+    family_tag = _family_tag(family)
+
+    loglik = Matrix{Float64}(undef, n_draws, length(y))
+    for d in 1:n_draws
+        η = size(X_fixed, 2) > 0 ? X_fixed * view(beta_draws, d, :) : zeros(length(y))
+        if !isempty(Z_blocks)
+            scale_vec = _block_scale_vector(view(sd_draws, d, :), block_dims)
+            η = η .+ Z_combined * (scale_vec .* view(z_draws, d, :))
+        end
+        scale = scale_draws === nothing ? nothing : scale_draws[d]
+        loglik[d, :] = _obs_loglik_vector(y, family_tag, link, η, scale, wts)
+    end
+
+    return loglik
+end
+
+function _gamlss_random_blocks(param_smooths, param_block_dims, n)
+    param_Z = Matrix{Float64}[]
+    param_n_blocks = Int[]
+    param_total_random = Int[]
+
+    for k in eachindex(param_smooths)
+        Zs_flat = Matrix{Float64}[]
+        for smm in param_smooths[k]
+            append!(Zs_flat, smm.Zs)
+        end
+        total_random = sum(param_block_dims[k]; init = 0)
+        push!(param_Z, total_random > 0 ? hcat(Zs_flat...) : zeros(n, 0))
+        push!(param_n_blocks, length(Zs_flat))
+        push!(param_total_random, total_random)
+    end
+
+    return param_Z, param_n_blocks, param_total_random
+end
+
+function _gamlss_loglik_matrix(chains, y, family, param_X, param_smooths, param_block_dims)
+    K = length(param_X)
+    n = length(y)
+    links = family.links
+    param_Z, param_n_blocks, param_total_random = _gamlss_random_blocks(param_smooths, param_block_dims, n)
+
+    beta_syms = [_vector_parameter_symbols("β_$(k)", size(param_X[k], 2)) for k in 1:K]
+    sd_syms = [_vector_parameter_symbols("σ_s_$(k)", param_n_blocks[k]) for k in 1:K]
+    z_syms = [_vector_parameter_symbols("z_$(k)", param_total_random[k]) for k in 1:K]
+    n_draws = _infer_n_draws(chains, beta_syms..., sd_syms..., z_syms...)
+
+    beta_draws = [_draw_matrix(chains, beta_syms[k], n_draws) for k in 1:K]
+    sd_draws = [_draw_matrix(chains, sd_syms[k], n_draws) for k in 1:K]
+    z_draws = [_draw_matrix(chains, z_syms[k], n_draws) for k in 1:K]
+
+    loglik = Matrix{Float64}(undef, n_draws, n)
+    for d in 1:n_draws
+        pv = Vector{Vector{Float64}}(undef, K)
+        for k in 1:K
+            η = param_X[k] * view(beta_draws[k], d, :)
+            if param_total_random[k] > 0
+                scale_vec = _block_scale_vector(view(sd_draws[k], d, :), param_block_dims[k])
+                η = η .+ param_Z[k] * (scale_vec .* view(z_draws[k], d, :))
+            end
+            pv[k] = _linkinv_vec(links[k], η)
+        end
+        loglik[d, :] = _gamlss_obs_loglik_vector(y, family, pv)
+    end
+
+    return loglik
+end
+
+function _scam_loglik_matrix(chains, y, family, link, X_fixed, Z_uc, uc_block_dims, X_con, con_dims;
+    weights = nothing)
+    beta_syms = _vector_parameter_symbols("β", size(X_fixed, 2))
+    uc_sd_syms = _vector_parameter_symbols("σ_uc", length(uc_block_dims))
+    uc_z_syms = _vector_parameter_symbols("z_uc", size(Z_uc, 2))
+    con_sd_syms = _vector_parameter_symbols("σ_con", length(con_dims))
+    con_alpha_syms = _vector_parameter_symbols("α_con", size(X_con, 2))
+    scale_syms = _family_tag(family) in (:gaussian, :gamma, :invgaussian) ? [:σ_obs] : Symbol[]
+    n_draws = _infer_n_draws(
+        chains, beta_syms, uc_sd_syms, uc_z_syms, con_sd_syms, con_alpha_syms, scale_syms)
+
+    beta_draws = _draw_matrix(chains, beta_syms, n_draws)
+    uc_sd_draws = _draw_matrix(chains, uc_sd_syms, n_draws)
+    uc_z_draws = _draw_matrix(chains, uc_z_syms, n_draws)
+    con_sd_draws = _draw_matrix(chains, con_sd_syms, n_draws)
+    con_alpha_draws = _draw_matrix(chains, con_alpha_syms, n_draws)
+    scale_draws = isempty(scale_syms) ? nothing : _draw_vector(chains, first(scale_syms))
+
+    family_tag = _family_tag(family)
+    wts = weights === nothing ? ones(length(y)) : Float64.(weights)
+    loglik = Matrix{Float64}(undef, n_draws, length(y))
+
+    for d in 1:n_draws
+        η = size(X_fixed, 2) > 0 ? X_fixed * view(beta_draws, d, :) : zeros(length(y))
+        if size(Z_uc, 2) > 0
+            uc_scale = _block_scale_vector(view(uc_sd_draws, d, :), uc_block_dims)
+            η = η .+ Z_uc * (uc_scale .* view(uc_z_draws, d, :))
+        end
+        if size(X_con, 2) > 0
+            con_scale = _block_scale_vector(view(con_sd_draws, d, :), con_dims)
+            η = η .+ X_con * exp.(con_scale .* view(con_alpha_draws, d, :))
+        end
+        scale = scale_draws === nothing ? nothing : scale_draws[d]
+        loglik[d, :] = _obs_loglik_vector(y, family_tag, link, η, scale, wts)
+    end
+
+    return loglik
+end
+
+function _gamm_loglik_matrix(chains, y, family, link, X_fixed, Z_smooth, smooth_block_dims, Z_re,
+    re_block_dims; weights = nothing)
+    beta_syms = _vector_parameter_symbols("β", size(X_fixed, 2))
+    smooth_sd_syms = _vector_parameter_symbols("σ_s", length(smooth_block_dims))
+    z_sm_syms = _vector_parameter_symbols("z_sm", size(Z_smooth, 2))
+    re_sd_syms = _vector_parameter_symbols("σ_re", length(re_block_dims))
+    z_re_syms = _vector_parameter_symbols("z_re", size(Z_re, 2))
+    scale_syms = _family_tag(family) in (:gaussian, :gamma, :invgaussian) ? [:σ_obs] : Symbol[]
+    n_draws = _infer_n_draws(
+        chains, beta_syms, smooth_sd_syms, z_sm_syms, re_sd_syms, z_re_syms, scale_syms)
+
+    beta_draws = _draw_matrix(chains, beta_syms, n_draws)
+    smooth_sd_draws = _draw_matrix(chains, smooth_sd_syms, n_draws)
+    z_sm_draws = _draw_matrix(chains, z_sm_syms, n_draws)
+    re_sd_draws = _draw_matrix(chains, re_sd_syms, n_draws)
+    z_re_draws = _draw_matrix(chains, z_re_syms, n_draws)
+    scale_draws = isempty(scale_syms) ? nothing : _draw_vector(chains, first(scale_syms))
+
+    family_tag = _family_tag(family)
+    wts = weights === nothing ? ones(length(y)) : Float64.(weights)
+    loglik = Matrix{Float64}(undef, n_draws, length(y))
+
+    for d in 1:n_draws
+        η = size(X_fixed, 2) > 0 ? X_fixed * view(beta_draws, d, :) : zeros(length(y))
+        if size(Z_smooth, 2) > 0
+            smooth_scale = _block_scale_vector(view(smooth_sd_draws, d, :), smooth_block_dims)
+            η = η .+ Z_smooth * (smooth_scale .* view(z_sm_draws, d, :))
+        end
+        if size(Z_re, 2) > 0
+            re_scale = _block_scale_vector(view(re_sd_draws, d, :), re_block_dims)
+            η = η .+ Z_re * (re_scale .* view(z_re_draws, d, :))
+        end
+        scale = scale_draws === nothing ? nothing : scale_draws[d]
+        loglik[d, :] = _obs_loglik_vector(y, family_tag, link, η, scale, wts)
+    end
+
+    return loglik
+end
+
 # ============================================================================
 # Main Bayesian fitting entry point
 # ============================================================================
@@ -252,6 +545,8 @@ function GAM._fit_gam_bayes(formula, data, family, link, priors::GAM.PriorSpec;
         sample(model, turing_sampler, nsamples)
     end
 
+    loglik_obs = _gam_loglik_matrix(chains, y, family, link, X_fixed, Zs_flat; weights = weights)
+
     # Build coefficient names
     coef_names = String[]
     # Fixed effects
@@ -283,7 +578,8 @@ function GAM._fit_gam_bayes(formula, data, family, link, priors::GAM.PriorSpec;
         smooths, chains,
         coef_names, labels,
         size(X_para, 2), length(smooths),
-        length(y), priors, sampler_desc, data
+        length(y), priors, sampler_desc, data,
+        loglik_obs,
     )
 end
 
@@ -713,6 +1009,8 @@ function GAM._fit_gamlss_bayes(formulas, data, family, priors::GAM.PriorSpec;
         sample(model, turing_sampler, nsamples)
     end
 
+    loglik_obs = _gamlss_loglik_matrix(chains, y, fam, param_X, param_smooths, param_block_dims)
+
     # Build coefficient names
     coef_names = String[]
     all_labels = String[]
@@ -744,7 +1042,8 @@ function GAM._fit_gamlss_bayes(formulas, data, family, priors::GAM.PriorSpec;
         coef_names, all_labels,
         sum(size(X, 2) for X in param_X),
         total_smooths,
-        length(y), priors, sampler_desc, data
+        length(y), priors, sampler_desc, data,
+        loglik_obs,
     )
 end
 
@@ -931,6 +1230,11 @@ function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
         sample(model, turing_sampler, nsamples)
     end
 
+    loglik_obs = _scam_loglik_matrix(
+        chains, y, family, link, X_fixed, Z_uc, uc_block_dims, X_con, con_dims;
+        weights = weights,
+    )
+
     # Build coefficient names
     coef_names = String["(Intercept)"]
     for smm in uc_mmods
@@ -958,7 +1262,8 @@ function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
         all_smooths, chains,
         coef_names, all_labels,
         n_fixed, length(smooths),
-        n, priors, sampler_desc, data
+        n, priors, sampler_desc, data,
+        loglik_obs,
     )
 end
 
@@ -1239,6 +1544,16 @@ function _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
         sample(model, turing_sampler, nsamples)
     end
 
+    Z_smooth = isempty(Zs_smooth) ? zeros(length(y), 0) : hcat(Zs_smooth...)
+    smooth_block_dims = [size(Z, 2) for Z in Zs_smooth]
+    Z_re_list = [re.Z for re in random_effects]
+    Z_re = isempty(Z_re_list) ? zeros(length(y), 0) : hcat(Z_re_list...)
+    re_block_dims = [size(Z, 2) for Z in Z_re_list]
+    loglik_obs = _gamm_loglik_matrix(
+        chains, y, family, link, X_fixed, Z_smooth, smooth_block_dims, Z_re, re_block_dims;
+        weights = weights,
+    )
+
     # Build coefficient names
     coef_names = String[]
     # Parametric fixed effects
@@ -1266,7 +1581,8 @@ function _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
         smooths, chains,
         coef_names, all_labels,
         size(X_para, 2), length(smooths),
-        length(y), priors, sampler_desc, data
+        length(y), priors, sampler_desc, data,
+        loglik_obs,
     )
 end
 
