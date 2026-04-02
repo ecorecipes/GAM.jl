@@ -198,13 +198,23 @@ m = gamm(
 Posterior sampling via Turing.jl extension:
 
 ```julia
-using Turing
+using GAM, Turing, Distributions
 
-# Convert GAM to Bayesian model
-bm = BayesGamModel(m)
+m_bayes = gam(@gam_formula(y ~ s(x, k=10)), df;
+    priors = PriorSpec(sds = Exponential(1.0)),
+    nsamples = 1000,
+    nchains = 2)
 
-# Sample
-chain = sample(bm, NUTS(), 1000)
+# Posterior summaries
+coef(m_bayes)
+coeftable(m_bayes)
+
+# Bayesian model scoring
+l = loo(m_bayes)
+l.looic
+
+w = waic(m_bayes)
+w.waic
 ```
 
 ## Diagnostics
@@ -229,50 +239,25 @@ overview(m)
 
 ## Performance
 
-GAM.jl is consistently faster than R's mgcv across all model types, with a geometric mean speedup of **5.5×** (Julia 1.12.5 vs R 4.5.2, macOS ARM64):
+The latest checked-in benchmark snapshot (`benchmark/results.txt`, 2026-04-01) shows an overall geometric mean speedup of **9.81x** over R on Julia 1.12.5 / R 4.5.2 / macOS ARM64:
 
-| Benchmark | Speedup |
+| Benchmark family | Speedup |
 |-----------|---------|
-| GAM fitting (Gaussian, Poisson, Gamma) | 1.3–14× |
-| TPRS basis construction | 8–16× |
-| Prediction with standard errors | 7.6× |
-| BAM large-scale (n=100K) | 3.9× |
-| SCAM shape-constrained | 2.0× |
-| QGAM quantile regression | 1.3–2.6× |
-| GAMLSS (EFS solver vs mgcv) | 16–30× |
-| GAMLSS (RS+ML vs R gamlss) | 3.8–5.7× |
+| GAM fitting | 9.84x |
+| BAM | 4.66x |
+| Prediction | 20.17x |
+| Basis construction | 6.72x |
+| SCAM | 6.81x |
+| QGAM | 4.74x |
+| GAMLSS | 14.20x |
 
-<details>
-<summary>Full benchmark table</summary>
+Regenerate the checked-in benchmark snapshot with:
 
-```
-GAM Fitting
-  Gaussian CR n=500 k=15                 Julia: 0.008s  R: 0.010s   1.3×
-  Gaussian CR n=5000 k=20                Julia: 0.014s  R: 0.086s   6.1×
-  Gaussian CR n=50000 k=20               Julia: 0.145s  R: 1.141s   7.9×
-  Gaussian TP n=5000 k=20                Julia: 0.038s  R: 0.540s  14.2×
-  Poisson CR n=2000 k=15                 Julia: 0.011s  R: 0.056s   5.2×
-  Gamma CR n=2000 k=15                   Julia: 0.011s  R: 0.056s   5.3×
-
-BAM
-  Gaussian n=100000 k=20                 Julia: 0.052s  R: 0.200s   3.9×
-
-Prediction
-  predict n=10000                        Julia: 0.001s  R: 0.010s  10.2×
-  predict+SE n=10000                     Julia: 0.002s  R: 0.012s   7.6×
-
-Basis Construction
-  CR n=5000 k=20                         Julia: 0.002s  R: 0.003s   1.9×
-  TPRS n=5000 k=20                       Julia: 0.026s  R: 0.405s  15.8×
-  TPRS n=50000 k=30                      Julia: 0.528s  R: 4.163s   7.9×
-
-GAMLSS (Multi-Parameter)
-  Normal LS n=500 (EFS)                  Julia: 0.003s  R(mgcv): 0.094s  29.5×
-  Normal LS n=2000 (EFS)                 Julia: 0.009s  R(mgcv): 0.244s  26.5×
-  Normal LS n=5000 (EFS)                 Julia: 0.047s  R(mgcv): 0.749s  15.9×
+```bash
+julia --project=. benchmark/refresh_results.jl
 ```
 
-</details>
+For the full per-benchmark table, see `benchmark/results.txt`.
 
 ## How It Works
 

@@ -1,4 +1,5 @@
 using Test, GAM, RCall, Random, Statistics
+using StatsAPI: predict
 
 R"library(qgam); library(mgcv)"
 
@@ -139,5 +140,71 @@ R"library(qgam); library(mgcv)"
             pin_jl = pinball_loss(y, mu, qu)
             @test abs(pin_jl - pin_r) < 1e-10
         end
+    end
+
+    @testset "ELFLSS NLL matches R expression" begin
+        for (y_i, η1, η2, qu, co) in [
+            (1.2, 0.8, log(0.4), 0.5, 0.2),
+            (-0.3, -0.1, log(0.7), 0.8, 0.35),
+            (2.0, 1.4, log(0.25), 0.2, 0.15),
+        ]
+            @rput y_i η1 η2 qu co
+            R"""
+            mu <- η1
+            sig <- exp(η2)
+            z <- (y_i - mu) / sig
+            nll_r <- -((1 - qu) * z -
+                       co * log1p(exp((y_i - mu) / co)) / sig -
+                       log(co * beta(co * (1 - qu) / sig, co * qu / sig)))
+            """
+
+            fam = ELFLSSFamily(qu=qu, co=co)
+            nll_jl = GAM.nll_obs(fam, y_i, [η1, η2])
+            @test abs(nll_jl - rcopy(R"nll_r")) < 1e-10
+        end
+    end
+
+    @testset "ELFLSS predictions match mgcv/qgam family for intercept-only fit" begin
+        Random.seed!(404)
+        n = 200
+        y = 1.5 .+ 0.4 .* randn(n)
+        qu = 0.75
+        co = 0.2
+
+        formulas = [
+            @gam_formula(y ~ 1),
+            @gam_formula(y ~ 1),
+        ]
+        fit_jl = qgam(formulas, (y=y,), qu; co=co)
+
+        newdata_jl = (dummy=ones(5),)
+        pred_link_jl = predict(fit_jl, newdata_jl; type=:link)
+        pred_resp_jl, se_resp_jl = predict(fit_jl, newdata_jl; type=:response, se=true)
+
+        @rput y qu co
+        R"""
+        df_r <- data.frame(y=y)
+        nd_r <- data.frame(dummy=rep(1, 5))
+        fit_r <- mgcv::gam(
+            list(y ~ 1, ~ 1),
+            family=qgam::elflss(qu=qu, co=co, theta=0, remInter=FALSE),
+            data=df_r
+        )
+        pred_link_r <- predict(fit_r, newdata=nd_r, type="link")
+        pred_resp_r <- predict(fit_r, newdata=nd_r, type="response")
+        pred_resp_se_r <- predict(fit_r, newdata=nd_r, type="response", se.fit=TRUE)
+        """
+
+        pred_link_r = rcopy(R"pred_link_r")
+        pred_resp_r = rcopy(R"pred_resp_r")
+        se_resp_r = rcopy(R"pred_resp_se_r$se.fit")
+
+        @test size(pred_link_jl) == size(pred_link_r)
+        @test size(pred_resp_jl) == size(pred_resp_r)
+        @test size(se_resp_jl) == size(se_resp_r)
+
+        @test pred_link_jl ≈ pred_link_r atol=1e-10
+        @test pred_resp_jl ≈ pred_resp_r atol=1e-10
+        @test se_resp_jl ≈ se_resp_r atol=1e-10
     end
 end

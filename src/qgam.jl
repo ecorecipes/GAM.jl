@@ -480,27 +480,38 @@ end
 
 """
     qgam(formula, data, qu; lsig=nothing, err=nothing, control=gam_control(), kwargs...)
+    qgam(formulas, data, qu; co=nothing, err=nothing, links=[IdentityLink(), LogLink()],
+         method=:efs, control=mp_control(), gamlss_ctrl=gamlss_control(), kwargs...)
 
 Fit a smooth additive quantile regression model for a single quantile.
 
+With a single formula, `qgam` fits the standard fixed-scale `ELFFamily` model
+and returns a `GamModel`.
+
+With a vector of two formulas, `qgam` fits a location-scale quantile model using
+`ELFLSSFamily` and returns a `MultiParameterModel`. The first formula models the
+target quantile location `μ`, and the second models the covariate-dependent scale
+`σ`.
+
 Uses the Extended Log-F (ELF) density as a smooth surrogate for the pinball loss,
-following Fasiolo et al. (2020). The model is fit using the standard GAM machinery
-(penalized IRLS with REML smoothing parameter selection).
+following Fasiolo et al. (2020).
 
 # Arguments
-- `formula`: GAM formula (e.g., `@gam_formula(y ~ s(x, k=20))`)
+- `formula` / `formulas`: GAM formula, or two formulas for `μ` and `σ`
 - `data`: data table
 - `qu`: target quantile ∈ (0, 1)
-- `lsig`: log learning rate. If `nothing`, it is calibrated automatically.
+- `lsig`: log learning rate for single-formula ELF fits. If `nothing`, it is calibrated automatically.
+- `co`: ELF smoothness constant for two-formula ELFLSS fits. If `nothing`, it is initialized from the response variance.
 - `err`: error bound for quantile curve. If `nothing`, estimated from data.
-- `control`: `GamControl` for fitting
-
-# Returns
-A `GamModel` with the ELF family fit.
 
 # Examples
 ```julia
 fit = qgam(@gam_formula(y ~ s(x, k=20)), data, 0.5)
+
+fit_lss = qgam([
+    @gam_formula(y ~ s(x, k=20)),
+    @gam_formula(y ~ 0 + s(x, k=10))
+], data, 0.9)
 ```
 """
 function qgam(formula, data, qu::Real;
@@ -537,6 +548,36 @@ function qgam(formula, data, qu::Real;
               control=control, kwargs...)
 
     return fit
+end
+
+function _qgam_default_co(y::AbstractVector, qu::Real; err::Union{Nothing, Real}=nothing)
+    y_float = Float64.(y)
+    n = length(y_float)
+    var_hat = max(var(y_float; corrected=false), eps(Float64))
+    err_val = err === nothing ? _get_err_param(qu, var_hat, n) : Float64(err)
+    return err_val * sqrt(2π * var_hat) / (2 * log(2))
+end
+
+function qgam(formulas::AbstractVector, data, qu::Real;
+              co::Union{Nothing, Real}=nothing,
+              err::Union{Nothing, Real}=nothing,
+              links::Vector{<:GLM.Link}=[IdentityLink(), LogLink()],
+              method::Symbol=:efs,
+              control::MPFitControl=mp_control(),
+              gamlss_ctrl::GamlssControl=gamlss_control(),
+              kwargs...)
+    0.0 < qu < 1.0 || throw(ArgumentError("qu must be in (0, 1)"))
+    length(formulas) == 2 || throw(ArgumentError(
+        "ELFLSS qgam expects exactly 2 formulas (mu and sigma), got $(length(formulas))."))
+    length(links) == 2 || throw(ArgumentError(
+        "ELFLSS qgam expects exactly 2 links (mu and sigma), got $(length(links))."))
+
+    y = _extract_response(formulas[1], Tables.columntable(data))
+    co_val = co === nothing ? _qgam_default_co(y, qu; err=err) : Float64(co)
+
+    fam = ELFLSSFamily(qu=qu, co=co_val, links=links)
+    return gam(formulas, data, fam; method=method, control=control,
+               gamlss_ctrl=gamlss_ctrl, kwargs...)
 end
 
 """
@@ -921,23 +962,11 @@ res = cqcheck(fit, data.x; nbin=10)
 res.flagged  # which bins have miscalibration
 ```
 """
-function cqcheck(model::GamModel, v::AbstractVector;
-                 nbin::Int=10, lev::Real=0.05,
-                 y::Union{Nothing, AbstractVector}=nothing)
-    mu = model.fitted_values
-    y_obs = y === nothing ? model.y : y
+function _cqcheck(mu::AbstractVector, y_obs::AbstractVector, v::AbstractVector, qu::Real;
+                  nbin::Int=10, lev::Real=0.05)
     n = length(y_obs)
     length(mu) == n || throw(DimensionMismatch("fitted values and y must have same length"))
     length(v) == n || throw(DimensionMismatch("conditioning variable v must have length $n"))
-
-    # Get target quantile from family
-    fam = model.family
-    qu = if fam isa ELFFamily
-        fam.qu
-    else
-        @warn "Model does not use ELFFamily; assuming qu=0.5"
-        0.5
-    end
 
     # Binary indicator: y < μ̂
     below = [y_obs[i] < mu[i] ? 1.0 : 0.0 for i in 1:n]
@@ -994,6 +1023,38 @@ function cqcheck(model::GamModel, v::AbstractVector;
 
     return CQCheckResult(bin_mid, bin_lo, bin_hi, proportions, ci_lower, ci_upper,
                          bin_sizes, qu, lev, flagged)
+end
+
+function cqcheck(model::GamModel, v::AbstractVector;
+                 nbin::Int=10, lev::Real=0.05,
+                 y::Union{Nothing, AbstractVector}=nothing)
+    mu = model.fitted_values
+    y_obs = y === nothing ? model.y : y
+    fam = model.family
+    qu = if fam isa ELFFamily
+        fam.qu
+    else
+        @warn "Model does not use ELFFamily; assuming qu=0.5"
+        0.5
+    end
+    return _cqcheck(mu, y_obs, v, qu; nbin=nbin, lev=lev)
+end
+
+function _elflss_location(model::MultiParameterModel)
+    model.family isa ELFLSSFamily || throw(ArgumentError(
+        "_elflss_location requires a MultiParameterModel with ELFLSSFamily, got $(typeof(model.family))."))
+    fam = model.family
+    return _apply_link_inv.(Ref(fam.links[1]), model.fitted_eta[1])
+end
+
+function cqcheck(model::MultiParameterModel, v::AbstractVector;
+                 nbin::Int=10, lev::Real=0.05,
+                 y::Union{Nothing, AbstractVector}=nothing)
+    model.family isa ELFLSSFamily || throw(ArgumentError(
+        "cqcheck is only defined for MultiParameterModel fits using ELFLSSFamily, got $(typeof(model.family))."))
+    mu = _elflss_location(model)
+    y_obs = y === nothing ? model.y : y
+    return _cqcheck(mu, y_obs, v, model.family.qu; nbin=nbin, lev=lev)
 end
 
 function Base.show(io::IO, r::CQCheckResult)
@@ -1056,17 +1117,10 @@ chk.actual_proportion   # should be ≈ 0.5
 chk.integrated_abs_bias # should be small (< 0.05)
 ```
 """
-function check_qgam(model::GamModel; nbin::Int=10, lev::Real=0.05)
-    mu = model.fitted_values
-    y = model.y
+function _check_qgam(mu::AbstractVector, y::AbstractVector, qu::Real, lam::Real;
+                     nbin::Int=10, lev::Real=0.05)
     n = length(y)
     res = y .- mu
-
-    # Get family params
-    fam = model.family
-    qu = fam isa ELFFamily ? fam.qu : 0.5
-    co = fam isa ELFFamily ? (length(fam.co) == 1 ? fam.co[1] : mean(fam.co)) : 0.1
-    lam = co
 
     # Actual proportion of negative residuals
     actual_prop = mean(res .< 0)
@@ -1081,9 +1135,23 @@ function check_qgam(model::GamModel; nbin::Int=10, lev::Real=0.05)
     iab = mean(abs.(bias))
 
     # Calibration check on fitted values
-    cal = cqcheck(model, mu; nbin=nbin, lev=lev)
+    cal = _cqcheck(mu, y, mu, qu; nbin=nbin, lev=lev)
 
     return QGamCheck(qu, actual_prop, iab, bias, cal)
+end
+
+function check_qgam(model::GamModel; nbin::Int=10, lev::Real=0.05)
+    fam = model.family
+    qu = fam isa ELFFamily ? fam.qu : 0.5
+    lam = fam isa ELFFamily ? (length(fam.co) == 1 ? fam.co[1] : mean(fam.co)) : 0.1
+    return _check_qgam(model.fitted_values, model.y, qu, lam; nbin=nbin, lev=lev)
+end
+
+function check_qgam(model::MultiParameterModel; nbin::Int=10, lev::Real=0.05)
+    model.family isa ELFLSSFamily || throw(ArgumentError(
+        "check_qgam is only defined for MultiParameterModel fits using ELFLSSFamily, got $(typeof(model.family))."))
+    mu = _elflss_location(model)
+    return _check_qgam(mu, model.y, model.family.qu, model.family.co; nbin=nbin, lev=lev)
 end
 
 function Base.show(io::IO, chk::QGamCheck)
@@ -1143,6 +1211,21 @@ function quantile_residuals(model::GamModel)
     return qres
 end
 
+function quantile_residuals(model::MultiParameterModel)
+    model.family isa ELFLSSFamily || throw(ArgumentError(
+        "quantile_residuals is only defined for MultiParameterModel fits using ELFLSSFamily, got $(typeof(model.family))."))
+    fam = model.family
+    y = model.y
+    mu = _elflss_location(model)
+    qres = similar(y)
+    for i in eachindex(y, mu)
+        p = 1.0 / (1.0 + exp(-(y[i] - mu[i]) / fam.co))
+        p = clamp(p, 1e-10, 1 - 1e-10)
+        qres[i] = quantile(Normal(), p)
+    end
+    return qres
+end
+
 # ============================================================================
 # ELFLSS Family — Extended Log-F Location-Scale (2-parameter quantile model)
 # ============================================================================
@@ -1169,11 +1252,11 @@ where z = (y - μ)/σ and B is the beta function.
 - `qu`: target quantile ∈ (0, 1)
 - `co`: smoothness constant (typically data-dependent)
 
-Use with `gamlss()`:
+Use directly with `gam()` / `gamlss()`, or via `qgam([mu_formula, sigma_formula], ...)`:
 ```julia
 fam = ELFLSSFamily(qu=0.5, co=0.2)
-m = gamlss([@gam_formula(y ~ s(x, k=20)), @gam_formula(~ s(x, k=10))],
-           data, fam)
+m = gam([@gam_formula(y ~ s(x, k=20)), @gam_formula(y ~ 0 + s(x, k=10))],
+        data, fam)
 ```
 """
 struct ELFLSSFamily <: MultiParameterFamily

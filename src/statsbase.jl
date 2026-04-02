@@ -8,12 +8,25 @@ response(m::GamModel) = m.y
 fitted(m::GamModel) = m.fitted_values
 weights(m::GamModel) = m.weights
 
+function _likelihood_extra_dof(family)
+    extra = _needs_scale_estimate(family) ? 1.0 : 0.0
+    if family isa NegBinFamily
+        extra += family.estimate_theta ? 1.0 : 0.0
+    elseif family isa BetaFamily
+        extra += family.estimate_phi ? 1.0 : 0.0
+    elseif family isa TweedieFamily
+        extra += family.estimate_p ? 1.0 : 0.0
+    end
+    return extra
+end
+
 """
     dof(m::GamModel)
 
-Effective degrees of freedom for the model (sum of parametric dof + smooth edf).
+Effective degrees of freedom for the model, including estimated nuisance
+parameters such as scale or family-specific hyperparameters.
 """
-dof(m::GamModel) = m.edf_total + 1  # +1 for scale parameter if estimated
+dof(m::GamModel) = m.edf_total + _likelihood_extra_dof(m.family)
 
 """
     dof_residual(m::GamModel)
@@ -38,7 +51,10 @@ function loglikelihood(m::GamModel)
     n = nobs(m)
     dev = deviance(m)
     scale = m.scale
-    if _needs_scale_estimate(m.family)
+    if m.family isa TweedieFamily
+        return _tweedie_total_loglik(m.y, m.fitted_values, m.weights, m.family.p,
+            clamp(scale, 1e-8, 1e8))
+    elseif _needs_scale_estimate(m.family)
         return -n / 2 * (log(2π * scale) + dev / (n * scale))
     elseif m.family isa ExtendedFamily
         return -dev / 2
@@ -47,6 +63,16 @@ function loglikelihood(m::GamModel)
         return -dev / 2
     end
 end
+
+aic(m::GamModel) = -2loglikelihood(m) + 2dof(m)
+
+function aicc(m::GamModel)
+    k = dof(m)
+    n = nobs(m)
+    return -2loglikelihood(m) + 2k + 2k * (k + 1) / (n - k - 1)
+end
+
+bic(m::GamModel) = -2loglikelihood(m) + dof(m) * log(nobs(m))
 
 """
     vcov(m::GamModel)
@@ -184,6 +210,124 @@ function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false)
         return eta
     end
 end
+
+function _mp_link(link::Symbol)
+    if link === :identity
+        return IdentityLink()
+    elseif link === :log
+        return LogLink()
+    elseif link === :logit
+        return LogitLink()
+    elseif link === :inverse
+        return InverseLink()
+    elseif link === :sqrt
+        return SqrtLink()
+    end
+    throw(ArgumentError("Unsupported MultiParameterModel link $link in prediction"))
+end
+
+function _mp_num_parametric(m::MultiParameterModel, k::Int)
+    n_smooth_cols = sum(size(sm.X, 2) for sm in m.smooths[k]; init = 0)
+    n_parametric = size(m.X_list[k], 2) - n_smooth_cols
+    n_parametric >= 0 || throw(ArgumentError(
+        "Invalid MultiParameterModel design for parameter $k: parametric column count is negative"))
+    return n_parametric
+end
+
+function _mp_prediction_matrix(m::MultiParameterModel, k::Int, t)
+    n_new = length(Tables.getcolumn(t, first(Tables.columnnames(t))))
+    n_parametric = _mp_num_parametric(m, k)
+    n_parametric <= 1 || throw(ArgumentError(
+        "Prediction for MultiParameterModel currently supports at most an intercept-only parametric block per parameter; parameter $k has $n_parametric parametric columns"))
+
+    X_parts = Matrix{Float64}[]
+    if n_parametric == 1
+        push!(X_parts, ones(n_new, 1))
+    end
+    for sm in m.smooths[k]
+        push!(X_parts, predict_matrix(sm, t))
+    end
+
+    if isempty(X_parts)
+        return Matrix{Float64}(undef, n_new, 0)
+    end
+    return hcat(X_parts...)
+end
+
+function _predict_multiparameter(m::MultiParameterModel, X_list::Vector{Matrix{Float64}};
+                                 type::Symbol = :link, se::Bool = false)
+    type in (:link, :response) || throw(ArgumentError("type must be :link or :response"))
+
+    K = nparams(m)
+    n = size(X_list[1], 1)
+    fit = Matrix{Float64}(undef, n, K)
+    se_fit = se ? Matrix{Float64}(undef, n, K) : nothing
+    links = param_links(m.family)
+
+    length(links) == K || throw(ArgumentError(
+        "Expected $K parameter links for $(typeof(m.family)), got $(length(links))"))
+
+    for k in 1:K
+        Xk = X_list[k]
+        s = m.param_offsets[k] + 1
+        e = m.param_offsets[k + 1]
+        pk = e - s + 1
+        size(Xk, 2) == pk || throw(DimensionMismatch(
+            "Prediction matrix for parameter $k has $(size(Xk, 2)) columns, expected $pk"))
+
+        βk = @view m.coefficients[s:e]
+        ηk = Xk * βk
+
+        if se
+            Vk = @view m.Vp[s:e, s:e]
+            se_eta = sqrt.(max.(vec(sum((Xk * Vk) .* Xk; dims = 2)), 0.0))
+            if type == :response
+                link = _mp_link(links[k])
+                fit[:, k] = GLM.linkinv.(Ref(link), ηk)
+                dmu = GLM.mueta.(Ref(link), ηk)
+                se_fit[:, k] = abs.(dmu) .* se_eta
+            else
+                fit[:, k] = ηk
+                se_fit[:, k] = se_eta
+            end
+        elseif type == :response
+            link = _mp_link(links[k])
+            fit[:, k] = GLM.linkinv.(Ref(link), ηk)
+        else
+            fit[:, k] = ηk
+        end
+    end
+
+    return se ? (fit, se_fit) : fit
+end
+
+"""
+    predict(m::MultiParameterModel; type=:link, se=false)
+    predict(m::MultiParameterModel, newdata; type=:link, se=false)
+
+Predict each parameter of a fitted multi-parameter model. The returned matrix has
+one column per parameter, ordered as `param_names(m.family)`.
+
+- `type=:link`: linear predictors for each parameter
+- `type=:response`: parameter values on the response scale
+
+With `se=true`, returns `(fit, se_fit)` where `se_fit` contains pointwise
+standard errors derived from `m.Vp`.
+"""
+function predict(m::MultiParameterModel; type::Symbol = :link, se::Bool = false)
+    return _predict_multiparameter(m, m.X_list; type = type, se = se)
+end
+
+function predict(m::MultiParameterModel, newdata; type::Symbol = :link, se::Bool = false)
+    t = Tables.columntable(newdata)
+    X_list = Matrix{Float64}[]
+    for k in 1:nparams(m)
+        push!(X_list, _mp_prediction_matrix(m, k, t))
+    end
+    return _predict_multiparameter(m, X_list; type = type, se = se)
+end
+
+fitted(m::MultiParameterModel) = predict(m; type = :response)
 
 """
     residuals(m::GamModel; type=:deviance)

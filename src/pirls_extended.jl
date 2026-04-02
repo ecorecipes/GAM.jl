@@ -69,22 +69,27 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
 
         # Working weights and working response
         if has_Dd
-            # Use family's Dd derivatives for proper working weights
-            # (matches R's gam.fit3 for extended families)
+            # Use the extended-family deviance derivatives to form the
+            # working response/weights from a second-order expansion in η.
             dd = _family_Dd(family, y, mu, weights; level=0)
             Dmu = dd[:Dmu]    # gradient of deviance w.r.t. mu
-            Dmu2 = dd[:Dmu2]  # 2nd deriv of deviance w.r.t. mu (working weight basis)
+            Dmu2 = dd[:Dmu2]  # observed curvature of deviance w.r.t. mu
 
             dmu_deta .= GLM.mueta.(Ref(link), eta)
 
             @inbounds for i in 1:n
-                # Convert mu-derivatives to eta-derivatives via chain rule
-                Deta2_i = Dmu2[i] * dmu_deta[i]^2
-                w[i] = clamp(Deta2_i, eps(), 1e10)
-                # Working response: z = eta + Deta / Deta2, clamped to prevent instability
                 Deta_i = Dmu[i] * dmu_deta[i]
-                delta = Deta_i / max(Deta2_i, eps())
-                z[i] = eta[i] - offset[i] + clamp(delta, -40.0, 40.0)
+                Deta2_i = Dmu2[i] * dmu_deta[i]^2 + Dmu[i] * _d2mu_deta2(link, mu[i], eta[i])
+
+                if !(isfinite(Deta_i) && isfinite(Deta2_i))
+                    w[i] = eps()
+                    z[i] = eta[i] - offset[i]
+                    continue
+                end
+
+                denom = abs(Deta2_i) > eps() ? Deta2_i : copysign(eps(), Deta2_i == 0.0 ? 1.0 : Deta2_i)
+                w[i] = clamp(0.5 * Deta2_i, eps(), 1e10)
+                z[i] = eta[i] - offset[i] - clamp(Deta_i / denom, -40.0, 40.0)
             end
         else
             # Fallback: standard IRLS working weights
@@ -195,14 +200,14 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
     if has_Dd
         dd_final = _family_Dd(family, y, mu, weights; level=0)
         dmu_deta .= GLM.mueta.(Ref(link), eta)
+        curv_mu = haskey(dd_final, :EDmu2) ? dd_final[:EDmu2] : dd_final[:Dmu2]
         @inbounds for i in 1:n
-            w[i] = clamp(dd_final[:Dmu2][i] * dmu_deta[i]^2, eps(), 1e10)
+            w[i] = clamp(0.5 * curv_mu[i] * dmu_deta[i]^2, eps(), 1e10)
         end
-        # Pearson using Dd-based variance
         pearson = 0.0
+        var_mu .= _variance(family, mu)
         @inbounds for i in 1:n
-            v_i = max(dd_final[:Dmu2][i] > 0 ? 1.0 / dd_final[:Dmu2][i] : 1.0, eps())
-            pearson += weights[i] * (y[i] - mu[i])^2 * v_i
+            pearson += weights[i] * (y[i] - mu[i])^2 / max(var_mu[i], eps())
         end
     else
         dmu_deta .= GLM.mueta.(Ref(link), eta)
