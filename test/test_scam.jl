@@ -197,6 +197,34 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         @test m_mdcv.deviance_val < 10.0
     end
 
+    @testset "SCAM supports parametric terms with constrained smooths" begin
+        Random.seed!(20260408)
+        n = 240
+        x = sort(rand(n))
+        z = randn(n)
+        y = 1.5 .+ 2.0 .* z .+ log1p.(4 .* x) .+ 0.05 .* randn(n)
+        df = DataFrame(x = x, z = z, y = y)
+
+        f = @gam_formula(y ~ z + s(x, bs = :mpi, k = 12))
+        m_scam = scam(f, df)
+        m_gam = gam(f, df)
+
+        @test m_scam.converged
+        @test m_gam.converged
+        @test coefnames(m_scam) == coefnames(m_gam)
+        @test "z" in coefnames(m_scam)
+
+        newdf_z = DataFrame(x = fill(0.5, 5), z = [-2.0, -1.0, 0.0, 1.0, 2.0])
+        pred_scam_z = StatsAPI.predict(m_scam, newdf_z)
+        pred_gam_z = StatsAPI.predict(m_gam, newdf_z)
+        @test pred_scam_z ≈ pred_gam_z atol = 1e-8
+        @test all(diff(pred_scam_z) .> 0)
+
+        newdf_x = DataFrame(x = collect(range(0.01, 0.99; length = 50)), z = fill(0.0, 50))
+        pred_scam_x = StatsAPI.predict(m_scam, newdf_x)
+        @test all(diff(pred_scam_x) .>= -1e-8)
+    end
+
     @testset "SCAM falls back to GAM for unconstrained smooths" begin
         Random.seed!(42)
         n = 200
