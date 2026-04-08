@@ -175,30 +175,30 @@ end
 # Constructed smooth — after basis construction from data
 # ============================================================================
 
+"""Internal marker type for smooth-specific prediction caches."""
+abstract type AbstractSmoothPredictCache end
+
 """
     ConstructedSmooth{B<:AbstractBasisType}
 
 A smooth term after basis construction. Contains the model matrix columns,
-penalty matrix/matrices, and all metadata needed for fitting and prediction.
+penalty matrix or matrices, and metadata needed for fitting and prediction.
 
 # Fields
-- `spec`: the original specification
-- `X`: model matrix for this smooth (n × k_eff after constraint absorption)
-- `S`: list of penalty matrices (each k_eff × k_eff)
-- `knots`: knot locations used
+- `spec`: the original smooth specification
+- `X`: model matrix for this smooth (n x k_eff after constraint absorption)
+- `S`: list of penalty matrices (each k_eff x k_eff)
+- `knots`: knot locations used to build the basis
 - `null_dim`: dimension of the penalty null space
 - `rank`: penalty rank
-- `constraint`: constraint matrix (if any) used for identifiability
-- `qrc`: QR factorization used for constraint absorption
-- `first_para`: index of first parameter in full model matrix
-- `last_para`: index of last parameter in full model matrix
-- `Sigma`: constraint matrix for shape-constrained smooths (scam)
-- `cmX`: column means for centering (scam)
-- `p_ident`: boolean mask — which coefficients must be positive (scam)
-- `predict_cache`: optional fitted metadata needed for prediction
+- `constraint`: identifiability constraint matrix, if any
+- `qrc`: QR factorization used for constraint absorption, if any
+- `first_para`, `last_para`: coefficient index range in the full model
+- `Sigma`, `cmX`, `p_ident`: shape-constraint metadata used by SCAM smooths
+- `del_index`: columns removed by side constraints
+- `Ain`, `bin`, `Aeq`, `beq`: optional linear inequality/equality constraints
+- `predict_cache`: cached metadata needed to build prediction matrices
 """
-abstract type AbstractSmoothPredictCache end
-
 mutable struct ConstructedSmooth{B<:AbstractBasisType}
     spec::SmoothSpec{B}
     X::Matrix{Float64}
@@ -421,7 +421,7 @@ A fitted generalized additive model. Implements the StatsBase interface
 - `control`: fitting control parameters
 """
 mutable struct GamModel{D, L<:GLM.Link}
-    formula::Union{FormulaTerm, Nothing}
+    formula::Any
     y::Vector{Float64}
     X::Matrix{Float64}
     coefficients::Vector{Float64}

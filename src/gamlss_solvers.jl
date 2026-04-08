@@ -957,7 +957,7 @@ end
 Internal function to fit GAMLSS using RS or CG solver, called from _gamlss_fit.
 Handles EFS initialization, solver dispatch, and result packaging.
 """
-function _gamlss_fit_rscg(method::Symbol, family::MultiParameterFamily,
+function _gamlss_fit_rscg(method::Symbol, formulas, family::MultiParameterFamily,
                           y::AbstractVector, X_list::Vector{Matrix{Float64}},
                           smooths_list::Vector{Vector{ConstructedSmooth}},
                           Sl::Vector{Matrix{Float64}},
@@ -1010,5 +1010,5 @@ function _gamlss_fit_rscg(method::Symbol, family::MultiParameterFamily,
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets)
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas)
 end

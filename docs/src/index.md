@@ -69,7 +69,7 @@ smooth_estimates(m)  # evaluate smooths on a grid
 
 ```julia
 using Pkg
-Pkg.add("GAM")
+Pkg.add(url="https://github.com/ecorecipes/GAM.jl")
 ```
 
 ## Contents

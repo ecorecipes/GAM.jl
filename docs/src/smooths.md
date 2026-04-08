@@ -347,7 +347,7 @@ families across GAM, GAMLSS, and GAMM workflows.
 
 These basis types impose monotonicity and/or convexity constraints on the
 smooth. They are used with the [`scam()`](@ref) function. See
-[Shape Constraints (SCAM)](@ref) for details.
+[Shape Constraints (SCAM)](scam.md) for details.
 
 | Basis | Constraint | When to use |
 |-------|-----------|-------------|
