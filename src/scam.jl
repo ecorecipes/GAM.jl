@@ -845,8 +845,7 @@ function scam(gf::GamFormula, data;
 
     # Bayesian dispatch
     if priors !== nothing
-        f = term(gf.response) ~ term(1)
-        return _fit_scam_bayes(f, gf, data, family, link_eff, priors;
+        return _fit_scam_bayes(gf, gf, data, family, link_eff, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains,
             weights = weights)
     end
@@ -856,8 +855,7 @@ function scam(gf::GamFormula, data;
 
     y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
     _validate_response(y, family)
-    f = term(gf.response) ~ term(1)
 
-    return _fit_scam(y, X, smooths, n_parametric, f, data, family, link_eff,
+    return _fit_scam(y, X, smooths, n_parametric, gf, data, family, link_eff,
         method, weights, control)
 end
