@@ -287,23 +287,21 @@ function gam(gf::GamFormula, data;
     if family isa ExtendedFamily
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
         _validate_response(y, family)
-        f = term(gf.response) ~ term(1)
-        return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
+        return _fit_gam_extended(y, X, smooths, n_parametric, gf, data, family, link_eff,
             method, weights, control; start = start)
     else
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
         _validate_response(y, family)
-        f = term(gf.response) ~ term(1)
 
         if has_linear_constraints(smooths)
-            return _fit_scasm(y, X, smooths, n_parametric, f, data, family, link_eff,
+            return _fit_scasm(y, X, smooths, n_parametric, gf, data, family, link_eff,
                 method, weights, control;
                 start = start)
         end
 
         # Auto-detect shape constraints → use SCAM fitting
         if has_shape_constraints(smooths)
-            return _fit_scam(y, X, smooths, n_parametric, f, data, family, link_eff,
+            return _fit_scam(y, X, smooths, n_parametric, gf, data, family, link_eff,
                 method, weights, scam_control(
                     epsilon = control.epsilon,
                     maxit = control.maxit,
@@ -313,7 +311,7 @@ function gam(gf::GamFormula, data;
                 ))
         end
 
-        return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
+        return _fit_gam(y, X, smooths, n_parametric, gf, data, family, link_eff,
             method, optimizer, weights, control)
     end
 end

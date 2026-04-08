@@ -6,7 +6,7 @@ A feature-complete Julia implementation of Generalized Additive Models, inspired
 
 ## Features
 
-- **Smooth term specification** — `s()`, `te()`, `ti()` with 18 basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes
+- **Smooth term specification** — `s()`, `te()`, `ti()` with 28 basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes
 - **Automatic smoothness estimation** — REML, ML, GCV, UBRE via Extended Fellner-Schall (EFS) or Newton optimization
 - **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta
 - **Multi-parameter models (GAMLSS)** — location-scale-shape regression with RS and CG solvers, local ML/GAIC/GCV smoothing parameter selection
@@ -273,7 +273,7 @@ The key difference from mgcv: GAM.jl is written in pure Julia (no C code), lever
 
 ## Testing
 
-GAM.jl has ~1,700 tests across 28 test files, including:
+GAM.jl has ~2,200 tests across 43 test files, including:
 
 - Unit tests for all basis types, families, and link functions
 - End-to-end tests for GAM, BAM, SCAM, QGAM, GAMLSS, GAMM, evgam, GINLA

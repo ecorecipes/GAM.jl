@@ -40,6 +40,53 @@
         @test length(coef(m)) == 11  # intercept + x2 + 9 basis
     end
 
+    @testset "No-intercept smooths" begin
+        m = gam(@formula(y ~ 0 + s(x)), df)
+        m_g = gam(@gam_formula(y ~ 0 + s(x)), df)
+
+        @test m.n_parametric == 0
+        @test m_g.n_parametric == 0
+
+        newdf = DataFrame(x = collect(range(0.15, 6.0; length = 7)))
+        pred = predict(m, newdf; type = :link)
+        pred_g = predict(m_g, newdf; type = :link)
+
+        X_new = predict_matrix(m.smooths[1], newdf)
+        X_new_g = predict_matrix(m_g.smooths[1], newdf)
+
+        @test pred ≈ X_new * coef(m) atol = 1e-8
+        @test pred_g ≈ X_new_g * coef(m_g) atol = 1e-8
+        @test pred ≈ pred_g atol = 1e-8
+    end
+
+    @testset "Parametric terms affect prediction" begin
+        y_lin = 1 .+ 2 .* x2 .+ sin.(x) .+ 0.05 .* randn(rng, n)
+        df_lin = DataFrame(x = collect(x), x2 = x2, y = y_lin)
+
+        m = gam(@formula(y ~ x2 + s(x)), df_lin)
+        m_g = gam(@gam_formula(y ~ x2 + s(x)), df_lin)
+
+        newdf = DataFrame(x = fill(π, 3), x2 = [-1.0, 0.0, 1.0])
+        pred = predict(m, newdf; type = :link)
+        pred_g = predict(m_g, newdf; type = :link)
+
+        X_new = hcat(
+            ones(3, 1),
+            reshape(Float64.(newdf.x2), :, 1),
+            predict_matrix(m.smooths[1], newdf),
+        )
+        X_new_g = hcat(
+            ones(3, 1),
+            reshape(Float64.(newdf.x2), :, 1),
+            predict_matrix(m_g.smooths[1], newdf),
+        )
+
+        @test pred ≈ vec(X_new * coef(m)) atol = 1e-8
+        @test pred_g ≈ vec(X_new_g * coef(m_g)) atol = 1e-8
+        @test pred[1] != pred[3]
+        @test pred ≈ pred_g atol = 1e-8
+    end
+
     @testset "Basis-type aliases" begin
         # cr()
         m_cr = gam(@formula(y ~ cr(x)), df)
