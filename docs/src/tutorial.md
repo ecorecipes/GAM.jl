@@ -380,7 +380,7 @@ mu, se = predict(m2, newdf; type=:response, se=true)
 ## GAMLSS: Location-Scale Models
 
 Model both the mean and variance as smooth functions of covariates. See
-[GAMLSS](@ref) for full details.
+[GAMLSS](gamlss.md) for full details.
 
 ```julia
 n = 500
@@ -389,16 +389,18 @@ y = sin.(x) .+ (0.1 .+ 0.3 .* abs.(cos.(x))) .* randn(n)
 df = DataFrame(x=x, y=y)
 
 m = gamlss(
-    @gam_formula(y ~ s(x, k=15, bs=:cr)),        # location (μ)
-    @gam_formula(~ s(x, k=10, bs=:cr)),           # scale (σ)
-    df;
+    [
+        @gam_formula(y ~ s(x, k=15, bs=:cr)),     # location (μ)
+        @gam_formula(y ~ s(x, k=10, bs=:cr)),     # scale (σ)
+    ],
+    df,
     family=GaussianLS(),
 )
 ```
 
 ## SCAM: Shape-Constrained Models
 
-Enforce monotonicity or convexity constraints. See [Shape Constraints (SCAM)](@ref).
+Enforce monotonicity or convexity constraints. See [Shape Constraints (SCAM)](scam.md).
 
 ```julia
 # Monotone increasing fit
@@ -410,7 +412,7 @@ m = scam(@gam_formula(y ~ s(x, k=15, bs=:cx)), df)
 
 ## QGAM: Quantile Regression
 
-Estimate conditional quantiles. See [Quantile Regression (QGAM)](@ref).
+Estimate conditional quantiles. See [Quantile Regression (QGAM)](qgam.md).
 
 ```julia
 # Fit median regression
@@ -424,7 +426,7 @@ m10 = qdo(fits, 0.1)   # extract individual quantile model
 
 ## BAM: Large Datasets
 
-Memory-efficient fitting for large n. See [Large Data (BAM)](@ref).
+Memory-efficient fitting for large n. See [Large Data (BAM)](bam.md).
 
 ```julia
 n = 100_000

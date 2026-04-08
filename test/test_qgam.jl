@@ -309,7 +309,7 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
 
         formulas = [
             @gam_formula(y ~ s(x, k=12, bs=:cr)),
-            @gam_formula(y ~ 0 + s(x, k=10, bs=:cr)),
+            @gam_formula(y ~ s(x, k=10, bs=:cr)),
         ]
 
         fit = qgam(formulas, df, 0.75)
@@ -356,7 +356,7 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
 
         formulas = [
             @gam_formula(y ~ s(x, k=12, bs=:cr)),
-            @gam_formula(y ~ 0 + s(x, k=10, bs=:cr)),
+            @gam_formula(y ~ s(x, k=10, bs=:cr)),
         ]
 
         fit = qgam(formulas, df, 0.75; co=0.2)
@@ -414,5 +414,39 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         @test se_link_new ≈ manual_se_link atol=1e-8
         @test pred_resp_new ≈ manual_resp atol=1e-8
         @test se_resp_new ≈ manual_se_resp atol=1e-8
+    end
+
+    @testset "ELFLSS retains parametric terms in fit and prediction" begin
+        Random.seed!(404)
+        n = 240
+        x = collect(range(-1.5, 1.5; length=n))
+        z1 = collect(range(-2.0, 2.0; length=n))
+        z2 = sin.(3 .* x)
+        y = 1 .+ 1.8 .* z1 .- 1.2 .* z2 .+ sin.(x) .+ 0.05 .* randn(n)
+        df = (y=y, x=x, z1=z1, z2=z2)
+
+        formulas = [
+            @gam_formula(y ~ z1 + z2 + s(x, k=10, bs=:cr)),
+            @gam_formula(y ~ 1),
+        ]
+
+        fit = qgam(formulas, df, 0.75; co=0.2)
+        @test fit.converged
+
+        n_parametric = size(fit.X_list[1], 2) - sum(size(sm.X, 2) for sm in fit.smooths[1]; init=0)
+        @test n_parametric == 3
+
+        newdf = (x=fill(0.0, 3), z1=[-1.0, 0.0, 1.0], z2=fill(0.0, 3))
+        pred_link = predict(fit, newdf; type=:link)[:, 1]
+
+        X_mu = hcat(
+            ones(3, 1),
+            reshape(Float64.(newdf.z1), :, 1),
+            reshape(Float64.(newdf.z2), :, 1),
+            predict_matrix(fit.smooths[1][1], newdf),
+        )
+
+        @test pred_link ≈ vec(X_mu * param_coef(fit, 1)) atol=1e-8
+        @test pred_link[1] != pred_link[3]
     end
 end

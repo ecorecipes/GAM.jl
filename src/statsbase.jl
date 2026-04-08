@@ -120,10 +120,13 @@ function coeftable(m::GamModel; level::Real = 0.95)
     end
 
     # Parameter names
-    names = String["(Intercept)"]
-    if n_para > 1
-        for i in 2:n_para
-            push!(names, "x$i")
+    names = _gam_parametric_names(m)
+    if length(names) != n_para
+        names = String["(Intercept)"]
+        if n_para > 1
+            for i in 2:n_para
+                push!(names, "x$i")
+            end
         end
     end
 
@@ -137,12 +140,24 @@ function coeftable(m::GamModel; level::Real = 0.95)
     )
 end
 
-function coefnames(m::GamModel)
+function _gam_parametric_names(m::GamModel)
+    if m.formula isa GamFormula || m.formula isa FormulaTerm
+        return _formula_parametric_names(m.formula)
+    end
+
+    if m.n_parametric == 0
+        return String[]
+    end
+
     names = String["(Intercept)"]
-    # Parametric terms (beyond intercept)
     for i in 2:(m.n_parametric)
         push!(names, "x$i")
     end
+    return names
+end
+
+function coefnames(m::GamModel)
+    names = _gam_parametric_names(m)
     # Smooth terms
     for sm in m.smooths
         k = size(sm.X, 2)
@@ -175,12 +190,36 @@ end
 
 Predict at new data points.
 """
-function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false)
-    t = Tables.columntable(newdata)
-    n_new = length(Tables.getcolumn(t, first(Tables.columnnames(t))))
+function _gam_parametric_matrix(m::GamModel, t)
+    n_new = _table_nrows(t)
 
-    # Build prediction matrix
-    X_para = ones(n_new, 1)  # intercept
+    if m.formula isa GamFormula || m.formula isa FormulaTerm
+        X_para, _ = _build_parametric_matrix(m.formula, t)
+        size(X_para, 2) == m.n_parametric || throw(DimensionMismatch(
+            "Prediction parametric matrix has $(size(X_para, 2)) columns, expected $(m.n_parametric)"))
+        return X_para
+    end
+
+    if m.n_parametric == 0
+        return Matrix{Float64}(undef, n_new, 0)
+    elseif m.n_parametric == 1
+        return ones(n_new, 1)
+    end
+
+    throw(ArgumentError(
+        "Model does not retain enough formula information to predict $(m.n_parametric) parametric columns"))
+end
+
+function _gam_has_intercept(m::GamModel)
+    if m.formula isa GamFormula || m.formula isa FormulaTerm
+        return _formula_has_intercept(m.formula)
+    end
+    return m.n_parametric > 0
+end
+
+function _gam_prediction_matrix(m::GamModel, newdata)
+    t = Tables.columntable(newdata)
+    X_para = _gam_parametric_matrix(m, t)
 
     X_smooth_parts = Matrix{Float64}[]
     for sm in m.smooths
@@ -189,7 +228,13 @@ function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false)
     end
 
     X_new = isempty(X_smooth_parts) ? X_para : hcat(X_para, X_smooth_parts...)
+    size(X_new, 2) == length(m.coefficients) || throw(DimensionMismatch(
+        "Prediction matrix has $(size(X_new, 2)) columns, expected $(length(m.coefficients))"))
+    return X_new
+end
 
+function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false)
+    X_new = _gam_prediction_matrix(m, newdata)
     eta = X_new * m.coefficients
 
     if se
@@ -235,23 +280,32 @@ function _mp_num_parametric(m::MultiParameterModel, k::Int)
 end
 
 function _mp_prediction_matrix(m::MultiParameterModel, k::Int, t)
-    n_new = length(Tables.getcolumn(t, first(Tables.columnnames(t))))
     n_parametric = _mp_num_parametric(m, k)
-    n_parametric <= 1 || throw(ArgumentError(
-        "Prediction for MultiParameterModel currently supports at most an intercept-only parametric block per parameter; parameter $k has $n_parametric parametric columns"))
-
     X_parts = Matrix{Float64}[]
-    if n_parametric == 1
-        push!(X_parts, ones(n_new, 1))
+
+    if !isempty(m.formulas)
+        X_para, _ = _build_parametric_matrix(m.formulas[k], t)
+        size(X_para, 2) == n_parametric || throw(DimensionMismatch(
+            "Prediction parametric matrix for parameter $k has $(size(X_para, 2)) columns, expected $n_parametric"))
+        size(X_para, 2) > 0 && push!(X_parts, X_para)
+    elseif n_parametric == 1
+        push!(X_parts, ones(_table_nrows(t), 1))
+    elseif n_parametric > 1
+        throw(ArgumentError(
+            "Model does not retain enough formula information to predict $n_parametric parametric columns for parameter $k"))
     end
+
     for sm in m.smooths[k]
         push!(X_parts, predict_matrix(sm, t))
     end
 
     if isempty(X_parts)
-        return Matrix{Float64}(undef, n_new, 0)
+        return Matrix{Float64}(undef, _table_nrows(t), 0)
     end
-    return hcat(X_parts...)
+    Xk = hcat(X_parts...)
+    size(Xk, 2) == size(m.X_list[k], 2) || throw(DimensionMismatch(
+        "Prediction matrix for parameter $k has $(size(Xk, 2)) columns, expected $(size(m.X_list[k], 2))"))
+    return Xk
 end
 
 function _predict_multiparameter(m::MultiParameterModel, X_list::Vector{Matrix{Float64}};

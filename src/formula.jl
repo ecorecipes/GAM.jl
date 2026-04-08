@@ -214,6 +214,137 @@ function _parse_gam_rhs!(ex, parametric, smooth_calls, has_intercept)
     end
 end
 
+function _table_nrows(t)
+    names = collect(Tables.columnnames(t))
+    isempty(names) && throw(ArgumentError("Cannot build a model matrix from a table with no columns"))
+    return length(Tables.getcolumn(t, first(names)))
+end
+
+function _split_formula_terms(f::FormulaTerm)
+    rhs_terms = _flatten_rhs(f.rhs)
+
+    smooth_terms = AppliedSmoothTerm[]
+    para_terms = StatsModels.AbstractTerm[]
+
+    for term in rhs_terms
+        if term isa AppliedSmoothTerm || term isa SmoothTerm
+            ast = term isa SmoothTerm ? AppliedSmoothTerm(term.spec, nothing) : term
+            push!(smooth_terms, ast)
+        elseif term isa StatsModels.FunctionTerm && _is_smooth_function(term.f)
+            spec = _functionterm_to_smoothspec(term)
+            push!(smooth_terms, AppliedSmoothTerm(spec, nothing))
+        else
+            push!(para_terms, term)
+        end
+    end
+
+    return smooth_terms, para_terms
+end
+
+function _formula_has_intercept(para_terms::AbstractVector{<:StatsModels.AbstractTerm})
+    has_intercept = true
+    for pt in para_terms
+        if pt isa InterceptTerm{true}
+            has_intercept = true
+        elseif pt isa InterceptTerm{false}
+            has_intercept = false
+        elseif pt isa ConstantTerm
+            has_intercept = getfield(pt, :n) == 1
+        end
+    end
+    return has_intercept
+end
+
+_formula_has_intercept(gf::GamFormula) = gf.has_intercept
+
+function _formula_has_intercept(f::FormulaTerm)
+    _, para_terms = _split_formula_terms(f)
+    return _formula_has_intercept(para_terms)
+end
+
+function _term_matrix(pt, t)
+    if pt isa Term
+        n = _table_nrows(t)
+        return reshape(Float64.(Tables.getcolumn(t, pt.sym)), n, 1)
+    elseif pt isa ContinuousTerm
+        col = StatsModels.modelcols(pt, t)
+        return reshape(Float64.(col), :, 1)
+    else
+        cols = StatsModels.modelcols(pt, t)
+        if cols isa AbstractMatrix
+            return Matrix{Float64}(cols)
+        elseif cols isa AbstractVector
+            return reshape(Float64.(cols), :, 1)
+        end
+        return reshape(Float64.(collect(cols)), :, 1)
+    end
+end
+
+function _term_names(pt)
+    if pt isa Term
+        return [string(pt.sym)]
+    elseif pt isa ContinuousTerm
+        return [string(pt.sym)]
+    else
+        names = StatsModels.coefnames(pt)
+        return names isa AbstractVector ? String.(names) : [string(names)]
+    end
+end
+
+function _formula_parametric_names(gf::GamFormula)
+    names = gf.has_intercept ? String["(Intercept)"] : String[]
+    append!(names, string.(gf.parametric))
+    return names
+end
+
+function _formula_parametric_names(f::FormulaTerm)
+    _, para_terms = _split_formula_terms(f)
+    names = _formula_has_intercept(para_terms) ? String["(Intercept)"] : String[]
+    for pt in para_terms
+        if pt isa InterceptTerm{true} || pt isa InterceptTerm{false} || pt isa ConstantTerm
+            continue
+        end
+        append!(names, _term_names(pt))
+    end
+    return names
+end
+
+function _build_parametric_matrix(gf::GamFormula, t)
+    n = _table_nrows(t)
+    X_para = gf.has_intercept ? ones(n, 1) : Matrix{Float64}(undef, n, 0)
+    para_names = gf.has_intercept ? String["(Intercept)"] : String[]
+
+    for sym in gf.parametric
+        X_para = hcat(X_para, reshape(Float64.(Tables.getcolumn(t, sym)), n, 1))
+        push!(para_names, string(sym))
+    end
+
+    return X_para, para_names
+end
+
+function _build_parametric_matrix(para_terms::AbstractVector{<:StatsModels.AbstractTerm}, t)
+    n = _table_nrows(t)
+    has_intercept = _formula_has_intercept(para_terms)
+    X_para = has_intercept ? ones(n, 1) : Matrix{Float64}(undef, n, 0)
+    para_names = has_intercept ? String["(Intercept)"] : String[]
+
+    for pt in para_terms
+        if pt isa InterceptTerm{true} || pt isa InterceptTerm{false} || pt isa ConstantTerm
+            continue
+        end
+        cols = _term_matrix(pt, t)
+        X_para = hcat(X_para, cols)
+        append!(para_names, _term_names(pt))
+    end
+
+    return X_para, para_names
+end
+
+function _build_parametric_matrix(f::FormulaTerm, t)
+    _, para_terms = _split_formula_terms(f)
+    return _build_parametric_matrix(para_terms, t)
+end
+
 function _build_smooth_call(ex::Expr)
     fname = ex.args[1]  # :s, :te, or :ti
     pos_args = Any[]
@@ -272,19 +403,10 @@ function setup_gam(gf::GamFormula, data;
 
     # Get response
     y = Float64.(Tables.getcolumn(t, gf.response))
-    n = length(y)
 
     # Build parametric model matrix
-    X_para = gf.has_intercept ? ones(n, 1) : Matrix{Float64}(undef, n, 0)
-    para_names = gf.has_intercept ? String["(Intercept)"] : String[]
-    n_parametric = gf.has_intercept ? 1 : 0
-
-    for sym in gf.parametric
-        col = Float64.(Tables.getcolumn(t, sym))
-        X_para = hcat(X_para, col)
-        push!(para_names, string(sym))
-        n_parametric += 1
-    end
+    X_para, para_names = _build_parametric_matrix(gf, t)
+    n_parametric = size(X_para, 2)
 
     # Construct smooth bases
     smooths = ConstructedSmooth[]
@@ -333,47 +455,9 @@ function setup_gam(f::FormulaTerm, data;
     t = Tables.columntable(data)
     resp_col = f.lhs isa Term ? f.lhs.sym : error("LHS must be a single term")
     y = Float64.(Tables.getcolumn(t, resp_col))
-    n = length(y)
-
-    rhs_terms = _flatten_rhs(f.rhs)
-
-    smooth_terms = AppliedSmoothTerm[]
-    para_terms = StatsModels.AbstractTerm[]
-
-    for term in rhs_terms
-        if term isa AppliedSmoothTerm || term isa SmoothTerm
-            ast = term isa SmoothTerm ? AppliedSmoothTerm(term.spec, nothing) : term
-            push!(smooth_terms, ast)
-        elseif term isa StatsModels.FunctionTerm && _is_smooth_function(term.f)
-            spec = _functionterm_to_smoothspec(term)
-            ast = AppliedSmoothTerm(spec, nothing)
-            push!(smooth_terms, ast)
-        else
-            push!(para_terms, term)
-        end
-    end
-
-    X_para = ones(n, 1)
-    para_names = String["(Intercept)"]
-    n_parametric = 1
-
-    for pt in para_terms
-        if pt isa InterceptTerm{true}
-            continue
-        elseif pt isa InterceptTerm{false}
-            continue
-        elseif pt isa ContinuousTerm
-            col = Float64.(modelcols(pt, t))
-            X_para = hcat(X_para, col)
-            push!(para_names, string(pt.sym))
-            n_parametric += 1
-        elseif pt isa Term
-            col = Float64.(Tables.getcolumn(t, pt.sym))
-            X_para = hcat(X_para, col)
-            push!(para_names, string(pt.sym))
-            n_parametric += 1
-        end
-    end
+    smooth_terms, para_terms = _split_formula_terms(f)
+    X_para, para_names = _build_parametric_matrix(para_terms, t)
+    n_parametric = size(X_para, 2)
 
     smooths = ConstructedSmooth[]
     for st in smooth_terms

@@ -26,6 +26,14 @@ struct MPFitControl
     trace::Bool
 end
 
+"""
+    mp_control(; inner_maxit=100, inner_tol=1e-6, outer_maxit=100, outer_tol=1e-5,
+                 step_max=1.0, trace=false)
+
+Construct an [`MPFitControl`](@ref) with defaults for multi-parameter GAM
+fitting backends such as [`evgam`](@ref), [`gamlss`](@ref), and multi-parameter
+[`qgam`](@ref) fits.
+"""
 function mp_control(; inner_maxit::Int=100, inner_tol::Real=1e-6,
                       outer_maxit::Int=100, outer_tol::Real=1e-5,
                       step_max::Real=1.0, trace::Bool=false)
@@ -690,12 +698,7 @@ function evgam(formulas, data, family::MultiParameterFamily;
                         control.step_max, trace)
     K = nparams(family)
 
-    # Handle single formula → replicate for all parameters
-    if formulas isa FormulaTerm || formulas isa GamFormula
-        formulas = fill(formulas, K)
-    end
-    length(formulas) == K || throw(ArgumentError(
-        "Expected $K formulas for $(typeof(family)), got $(length(formulas))"))
+    formulas = _normalize_mp_formulas(formulas, K, family)
 
     # Extract response from first formula
     cols = Tables.columntable(data)
@@ -730,10 +733,11 @@ function evgam(formulas, data, family::MultiParameterFamily;
     β_init = zeros(p)
     for k in 1:K
         s = param_offsets[k] + 1
-        e = param_offsets[k + 1]
-        pk = e - s + 1
-        # Set intercept to mean of initial η, rest to 0
-        β_init[s] = mean(η_init[k])
+        if formulas[k] isa GamFormula || formulas[k] isa FormulaTerm
+            _formula_has_intercept(formulas[k]) && (β_init[s] = mean(η_init[k]))
+        else
+            β_init[s] = mean(η_init[k])
+        end
     end
 
     # Smoothing parameters — use Hessian-based initialization (matching R evgam)
@@ -795,7 +799,7 @@ function evgam(formulas, data, family::MultiParameterFamily;
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas
     )
 end
 
@@ -813,65 +817,25 @@ function _extract_response(formula, cols)
     return Float64.(Tables.getcolumn(cols, resp_sym))
 end
 
+function _normalize_mp_formulas(formulas, K::Int, family)
+    formula_vec = if formulas isa FormulaTerm || formulas isa GamFormula
+        fill(formulas, K)
+    else
+        collect(formulas)
+    end
+    length(formula_vec) == K || throw(ArgumentError(
+        "Expected $K formulas for $(typeof(family)), got $(length(formula_vec))"))
+    return Any[formula_vec...]
+end
+
 function _build_design_matrix(formula, cols, n, global_offset)
-    if formula isa GamFormula
-        return _build_gam_design(formula, cols, n, global_offset)
-    else
-        return _build_parametric_design(formula, cols, n, global_offset)
+    _, X_full, _, smooths, n_parametric = setup_gam(formula, cols; family = Normal())
+    col_offset = global_offset + n_parametric
+    for sm in smooths
+        k = size(sm.X, 2)
+        sm.first_para = col_offset + 1
+        sm.last_para = col_offset + k
+        col_offset += k
     end
-end
-
-function _build_gam_design(gf::GamFormula, cols, n, global_offset)
-    # Use existing setup_gam infrastructure to build design matrix + smooths
-    # Build intercept + parametric + smooth terms
-    smooth_specs = gf.smooth_specs
-
-    # Parametric part: intercept
-    X_parts = Matrix{Float64}[ones(n, 1)]
-    col_offset = global_offset + 1  # intercept occupies 1 column
-
-    # Smooth terms — smooth_construct already absorbs constraints
-    smooths = ConstructedSmooth[]
-    for spec in smooth_specs
-        cs = smooth_construct(spec, cols)
-
-        # Update parameter indices to global
-        k_eff = size(cs.X, 2)
-        cs.first_para = col_offset + 1
-        cs.last_para = col_offset + k_eff
-        col_offset += k_eff
-
-        push!(X_parts, cs.X)
-        push!(smooths, cs)
-    end
-
-    X = hcat(X_parts...)
-    return X, smooths
-end
-
-function _build_parametric_design(formula::FormulaTerm, cols, n, global_offset)
-    # Use setup_gam to detect smooth function terms (cr(), tp(), etc.) in @formula
-    rhs_terms = _flatten_rhs(formula.rhs)
-    has_smooth = any(t -> (t isa AppliedSmoothTerm || t isa SmoothTerm ||
-        (t isa StatsModels.FunctionTerm && _is_smooth_function(t.f))),
-        rhs_terms)
-
-    if has_smooth
-        # Delegate to setup_gam for proper smooth detection, then reindex
-        # cols is already a column table from Tables.columntable
-        y, X_full, X_para, smooths, n_parametric = setup_gam(formula, cols)
-        # Reindex smooths to global offset
-        col_offset = global_offset + n_parametric
-        for sm in smooths
-            k = size(sm.X, 2)
-            sm.first_para = col_offset + 1
-            sm.last_para = col_offset + k
-            col_offset += k
-        end
-        return X_full, smooths
-    else
-        # Pure parametric formula (intercept only or simple terms)
-        X = ones(n, 1)
-        return X, ConstructedSmooth[]
-    end
+    return X_full, smooths
 end

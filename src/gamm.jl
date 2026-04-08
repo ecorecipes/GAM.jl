@@ -235,14 +235,11 @@ StatsAPI.response(m::GammModel) = response(m.gam_model)
 
 function StatsAPI.predict(m::GammModel, newdata)
     t = Tables.columntable(newdata)
-    n_new = length(Tables.getcolumn(t, first(Tables.columnnames(t))))
-
     gm = m.gam_model
     n_re = length(m.random_effects)
     n_actual_smooths = gm.n_smooth - n_re
 
-    # Build parametric part (intercept)
-    X_para = ones(n_new, 1)
+    X_para = _gam_parametric_matrix(gm, t)
 
     # Build smooth parts (actual smooths only, not RE-as-smooth)
     X_smooth_parts = Matrix{Float64}[]
@@ -1114,22 +1111,8 @@ function gamm(f::FormulaTerm, data;
             sampler, nsamples, nchains)
     end
 
-    # Build parametric matrix
-    X_para = ones(n, 1)
-    n_parametric = 1
-    for pt in para_terms
-        if pt isa InterceptTerm{true} || pt isa InterceptTerm{false}
-            continue
-        elseif pt isa Term
-            col = Float64.(Tables.getcolumn(t, pt.sym))
-            X_para = hcat(X_para, col)
-            n_parametric += 1
-        elseif pt isa ContinuousTerm
-            col = Float64.(modelcols(pt, t))
-            X_para = hcat(X_para, col)
-            n_parametric += 1
-        end
-    end
+    X_para, _ = _build_parametric_matrix(para_terms, t)
+    n_parametric = size(X_para, 2)
 
     # Construct smooths
     smooths = ConstructedSmooth[]

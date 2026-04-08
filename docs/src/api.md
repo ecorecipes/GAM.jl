@@ -19,7 +19,7 @@ te
 ti
 t2
 SmoothSpec
-ConstructedSmooth
+GAM.ConstructedSmooth
 smooth_construct
 predict_matrix
 ```
@@ -76,6 +76,9 @@ BamControl
 ```@docs
 gamlss
 GamlssControl
+GAM.MPFitControl
+GAM.MultiParameterModel
+GAM.mp_control
 GAM.GaussianLS
 GAM.GammaLocationScale
 GAM.BetaRegression
@@ -137,6 +140,7 @@ LOOResult
 WAICResult
 smooth2random
 PriorSpec
+GAM.smooth_prior
 pointwise_loglikelihood
 psis_loo
 pareto_k_diagnostic
@@ -158,12 +162,16 @@ AnovaGamResult
 
 ```@docs
 smooth_estimates
+GAM.SmoothEstimates
 derivatives
+GAM.DerivativeEstimates
 partial_residuals
 posterior_samples
 fitted_samples
 appraise
+GAM.AppraiseData
 rootogram
+GAM.RootogramData
 data_slice
 ```
 

@@ -174,7 +174,7 @@ function smooth_estimates(m::GamModel;
 
         # Standard errors
         Vp_s = Vcov[sm_idx, sm_idx]
-        if overall_uncertainty && m.n_parametric >= 1
+        if overall_uncertainty && _gam_has_intercept(m)
             # Include intercept uncertainty
             p = size(m.X, 2)
             X_full = zeros(size(X_pred, 1), p)
@@ -742,15 +742,7 @@ end
 
 """Build the full prediction matrix for new data."""
 function _build_prediction_matrix(m::GamModel, newdata)
-    t = Tables.columntable(newdata)
-    n_new = length(Tables.getcolumn(t, first(Tables.columnnames(t))))
-    X_para = ones(n_new, 1)
-    X_smooth_parts = Matrix{Float64}[]
-    for sm in m.smooths
-        X_sm = predict_matrix(sm, t)
-        push!(X_smooth_parts, X_sm)
-    end
-    return isempty(X_smooth_parts) ? X_para : hcat(X_para, X_smooth_parts...)
+    return _gam_prediction_matrix(m, newdata)
 end
 
 """First-order finite difference derivative."""

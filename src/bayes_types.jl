@@ -32,20 +32,7 @@ function gam_matrices(formula::GamFormula, data;
     knots::Union{Nothing, Dict} = nothing)
 
     # Build parametric part
-    n = Tables.rowcount(data)
-    X_para = ones(n, 1)  # intercept
-    if formula.has_intercept
-        para_names = ["(Intercept)"]
-    else
-        X_para = Matrix{Float64}(undef, n, 0)
-        para_names = String[]
-    end
-
-    for v in formula.parametric
-        col = Float64.(Tables.getcolumn(data, v))
-        X_para = hcat(X_para, col)
-        push!(para_names, string(v))
-    end
+    X_para, _ = _build_parametric_matrix(formula, Tables.columntable(data))
 
     # Build smooth terms
     smooths = SmoothMixedModel[]
@@ -70,38 +57,19 @@ terms (FunctionTerm{typeof(s)} etc.) and converts them to SmoothMixedModel.
 function gam_matrices(formula::FormulaTerm, data;
     knots::Union{Nothing, Dict} = nothing)
 
-    n = Tables.rowcount(data)
     cols = Tables.columntable(data)
-
-    X_para = ones(n, 1)
-    para_names = ["(Intercept)"]
-
-    # Flatten RHS and separate smooths from parametric
-    rhs_terms = _flatten_rhs(formula.rhs)
+    X_para, _ = _build_parametric_matrix(formula, cols)
+    smooth_terms, _ = _split_formula_terms(formula)
     smooths = SmoothMixedModel[]
     labels = String[]
 
-    for term in rhs_terms
+    for term in smooth_terms
         if term isa AppliedSmoothTerm || term isa SmoothTerm
             spec = term isa SmoothTerm ? term.spec : term.spec
             sm = smooth_construct(spec, cols, knots)
             smm = smooth2random(sm)
             push!(smooths, smm)
             push!(labels, spec.label)
-        elseif term isa StatsModels.FunctionTerm && _is_smooth_function(term.f)
-            spec = _functionterm_to_smoothspec(term)
-            sm = smooth_construct(spec, cols, knots)
-            smm = smooth2random(sm)
-            push!(smooths, smm)
-            push!(labels, spec.label)
-        elseif term isa Term
-            col = Float64.(Tables.getcolumn(cols, term.sym))
-            X_para = hcat(X_para, col)
-            push!(para_names, string(term.sym))
-        elseif term isa ContinuousTerm
-            col = Float64.(StatsModels.modelcols(term, cols))
-            X_para = hcat(X_para, col)
-            push!(para_names, string(term.sym))
         end
     end
 

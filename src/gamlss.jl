@@ -827,11 +827,7 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
 
     K = nparams(family)
 
-    if formulas isa FormulaTerm || formulas isa GamFormula
-        formulas = fill(formulas, K)
-    end
-    length(formulas) == K || throw(ArgumentError(
-        "Expected $K formulas for $(typeof(family)), got $(length(formulas))"))
+    formulas = _normalize_mp_formulas(formulas, K, family)
 
     cols = Tables.columntable(data)
     y = _extract_response(formulas[1], cols)
@@ -861,7 +857,11 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
     β_init = zeros(p)
     for k in 1:K
         s = param_offsets[k] + 1
-        β_init[s] = mean(η_init[k])
+        if formulas[k] isa GamFormula || formulas[k] isa FormulaTerm
+            _formula_has_intercept(formulas[k]) && (β_init[s] = mean(η_init[k]))
+        else
+            β_init[s] = mean(η_init[k])
+        end
     end
 
     if sp !== nothing
@@ -874,7 +874,7 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
 
     # Dispatch to solver
     if method == :rs || method == :cg
-        return _gamlss_fit_rscg(method, family, y, X_list, smooths_list, Sl,
+        return _gamlss_fit_rscg(method, formulas, family, y, X_list, smooths_list, Sl,
                                 β_init, log_sp, param_offsets, ctrl, gamlss_ctrl,
                                 nsp, Mp, p, n, sp,
                                 Ain_list, bin_list, Aeq_list, beq_list)
@@ -922,5 +922,5 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets)
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas)
 end

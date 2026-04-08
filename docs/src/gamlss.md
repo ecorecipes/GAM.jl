@@ -26,15 +26,18 @@ Custom families can be created using `DistFamily`.
 ## Interface
 
 ```julia
-gamlss(formula_location, formula_scale, data;
-    family = GaussianLS(),
-    control = GamlssControl(),
-    method = :REML,
+gamlss([
+    @gam_formula(y ~ s(x1)),
+    @gam_formula(y ~ 1 + s(x2)),
+], data, GaussianLS();
+    method = :efs,
+    gamlss_ctrl = gamlss_control(),
 )
 ```
 
-Each distribution parameter gets its own formula. The location formula includes
-the response variable; subsequent formulas specify only the right-hand side.
+Pass a vector of formulas, one per distribution parameter. With
+`@gam_formula`, repeat the response on each entry, e.g.
+`[@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)]`.
 
 ## Solvers
 
@@ -43,7 +46,7 @@ GAMLSS uses an outer iteration over distribution parameters with inner GAM fits:
 - **RS** (Rigby-Stasinopoulos): default algorithm, updates each parameter in turn
 - **CG** (Cole-Green): uses the full joint Hessian for faster convergence
 
-Set via `GamlssControl(solver=:RS)` or `GamlssControl(solver=:CG)`.
+Set via `method = :rs` or `method = :cg`.
 
 ## Smoothing Parameter Estimation
 
@@ -68,9 +71,11 @@ y = sin.(x) .+ (0.1 .+ 0.3 .* abs.(cos.(x))) .* randn(n)
 df = DataFrame(x=x, y=y)
 
 m = gamlss(
-    @gam_formula(y ~ s(x, k=15, bs=:cr)),    # μ model
-    @gam_formula(~ s(x, k=10, bs=:cr)),       # log(σ) model
-    df;
+    [
+        @gam_formula(y ~ s(x, k=15, bs=:cr)),  # μ model
+        @gam_formula(y ~ s(x, k=10, bs=:cr)),  # log(σ) model
+    ],
+    df,
     family=GaussianLS(),
 )
 ```
@@ -85,9 +90,11 @@ y = [rand(Gamma(mu[i]^2 / sigma[i]^2, sigma[i]^2 / mu[i])) for i in 1:500]
 df = DataFrame(x=x, y=y)
 
 m = gamlss(
-    @gam_formula(y ~ s(x, k=15, bs=:cr)),
-    @gam_formula(~ s(x, k=10, bs=:cr)),
-    df;
+    [
+        @gam_formula(y ~ s(x, k=15, bs=:cr)),
+        @gam_formula(y ~ s(x, k=10, bs=:cr)),
+    ],
+    df,
     family=GammaLocationScale(),
 )
 ```
@@ -95,20 +102,22 @@ m = gamlss(
 ### Controlling the Fit
 
 ```julia
-ctrl = GamlssControl(
-    solver = :RS,           # RS or CG algorithm
-    maxit = 50,             # max outer iterations
-    epsilon = 1e-7,         # convergence tolerance
+ctrl = gamlss_control(
+    n_cyc = 50,             # max outer iterations
+    c_crit = 1e-7,          # convergence tolerance
     sp_method = :efs,       # smoothing parameter method
     trace = true,           # print progress
 )
 
 m = gamlss(
-    @gam_formula(y ~ s(x, k=15)),
-    @gam_formula(~ s(x, k=10)),
-    df;
+    [
+        @gam_formula(y ~ s(x, k=15)),
+        @gam_formula(y ~ s(x, k=10)),
+    ],
+    df,
     family=GaussianLS(),
-    control=ctrl,
+    method = :rs,
+    gamlss_ctrl = ctrl,
 )
 ```
 

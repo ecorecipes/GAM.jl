@@ -37,17 +37,19 @@ Extensions of the GPD with additional flexibility:
 
 ## Multi-Parameter Model Specification
 
-Each distribution parameter gets its own formula. The first formula includes
-the response; subsequent formulas are right-hand-side only:
+Pass a vector of formulas, one per distribution parameter. With
+`@gam_formula`, repeat the response on each entry:
 
 ```julia
 # GEV: location, scale, shape
 m = evgam(
-    @gam_formula(y ~ s(x, k=15, bs=:cr)),   # location μ
-    @gam_formula(~ s(x, k=10, bs=:cr)),      # log(scale σ)
-    @gam_formula(~ 1),                        # shape ξ (constant)
-    df;
-    family=GEVFamily(),
+    [
+        @gam_formula(y ~ s(x, k=15, bs=:cr)),   # location μ
+        @gam_formula(y ~ s(x, k=10, bs=:cr)),   # log(scale σ)
+        @gam_formula(y ~ 1),                    # shape ξ (constant)
+    ],
+    df,
+    GEVFamily(),
 )
 ```
 
@@ -68,11 +70,13 @@ y = mu .+ sigma .* ((-log.(rand(n))).^(-xi) .- 1) ./ xi
 df = DataFrame(year=year, y=y)
 
 m = evgam(
-    @gam_formula(y ~ s(year, k=10, bs=:cr)),   # location
-    @gam_formula(~ 1),                           # scale
-    @gam_formula(~ 1),                           # shape
-    df;
-    family=GEVFamily(),
+    [
+        @gam_formula(y ~ s(year, k=10, bs=:cr)),  # location
+        @gam_formula(y ~ 1),                      # scale
+        @gam_formula(y ~ 1),                      # shape
+    ],
+    df,
+    GEVFamily(),
 )
 ```
 
@@ -88,10 +92,12 @@ y = sigma .* ((rand(300)).^(-xi) .- 1) ./ xi
 df = DataFrame(x=x, y=y)
 
 m = evgam(
-    @gam_formula(y ~ s(x, k=10, bs=:cr)),   # log(scale)
-    @gam_formula(~ 1),                        # shape
-    df;
-    family=GPDFamily(),
+    [
+        @gam_formula(y ~ s(x, k=10, bs=:cr)),  # log(scale)
+        @gam_formula(y ~ 1),                   # shape
+    ],
+    df,
+    GPDFamily(),
 )
 ```
 
@@ -101,11 +107,13 @@ All three GEV parameters as smooth functions:
 
 ```julia
 m = evgam(
-    @gam_formula(y ~ s(year, k=15, bs=:cr)),
-    @gam_formula(~ s(year, k=10, bs=:cr)),
-    @gam_formula(~ s(year, k=5, bs=:cr)),
-    df;
-    family=GEVFamily(),
+    [
+        @gam_formula(y ~ s(year, k=15, bs=:cr)),
+        @gam_formula(y ~ s(year, k=10, bs=:cr)),
+        @gam_formula(y ~ s(year, k=5, bs=:cr)),
+    ],
+    df,
+    GEVFamily(),
 )
 ```
 
