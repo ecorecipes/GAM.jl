@@ -9,7 +9,7 @@ makedocs(;
     warnonly = [:missing_docs, :cross_references],
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", "false") == "true",
-        canonical = "https://github.com/ecorecipes/GAM.jl",
+        canonical = "https://ecorecipes.github.io/GAM.jl",
     ),
     pages = [
         "Home" => "index.md",
@@ -28,4 +28,9 @@ makedocs(;
         "Comparison with mgcv" => "mgcv.md",
         "API Reference" => "api.md",
     ],
+)
+
+deploydocs(;
+    repo = "github.com/ecorecipes/GAM.jl.git",
+    devbranch = "main",
 )
