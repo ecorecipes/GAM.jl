@@ -87,9 +87,9 @@ $\xi$.
 
 ``` julia
 m_gev = evgam(
-    [@gam_formula(y ~ s(x, k=10, bs=:cr)),   # location μ(x)
-     @gam_formula(y ~ s(x, k=8, bs=:cr)),    # log-scale ψ(x)
-     @gam_formula(y ~ 1)],                    # shape ξ (constant)
+    [@formulak(y ~ s(x, k=10, bs=:cr)),   # location μ(x)
+     @formulak(y ~ s(x, k=8, bs=:cr)),    # log-scale ψ(x)
+     @formulak(y ~ 1)],                    # shape ξ (constant)
     df_gev,
     GEVFamily()
 )
@@ -230,8 +230,8 @@ $\xi$.
 
 ``` julia
 m_gpd = evgam(
-    [@gam_formula(y ~ s(x, k=10, bs=:cr)),   # log-scale ψ(x)
-     @gam_formula(y ~ 1)],                    # shape ξ (constant)
+    [@formulak(y ~ s(x, k=10, bs=:cr)),   # log-scale ψ(x)
+     @formulak(y ~ 1)],                    # shape ξ (constant)
     df_gpd,
     GPDFamily()
 )

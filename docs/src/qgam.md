@@ -72,13 +72,13 @@ x = range(0, 2π; length=n) |> collect
 y = sin.(x) .+ (0.1 .+ 0.3 .* x ./ (2π)) .* randn(n)
 df = DataFrame(x=x, y=y)
 
-m = qgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df, 0.5)
+m = qgam(@formulak(y ~ s(x, k=20, bs=:cr)), df, 0.5)
 ```
 
 ### Multiple Quantiles
 
 ```julia
-fits = mqgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df,
+fits = mqgam(@formulak(y ~ s(x, k=20, bs=:cr)), df,
     [0.1, 0.25, 0.5, 0.75, 0.9])
 
 # Extract individual quantile models
@@ -97,7 +97,7 @@ y = Float64.([rand(Poisson(m)) for m in mu])
 df = DataFrame(x=x, y=y)
 
 # Quantile regression on count data
-m = qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df, 0.75;
+m = qgam(@formulak(y ~ s(x, k=15, bs=:cr)), df, 0.75;
     family=Poisson(), link=LogLink())
 ```
 
@@ -105,8 +105,8 @@ m = qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df, 0.75;
 
 ```julia
 fit = qgam([
-    @gam_formula(y ~ s(x, k=20, bs=:cr)),
-    @gam_formula(y ~ 0 + s(x, k=10, bs=:cr))
+    @formulak(y ~ s(x, k=20, bs=:cr)),
+    @formulak(y ~ 0 + s(x, k=10, bs=:cr))
 ], df, 0.9)
 
 chk = check_qgam(fit)

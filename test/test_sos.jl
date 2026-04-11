@@ -69,7 +69,7 @@ const rng_sos = StableRNG(123)
         y = f_true .+ 0.2 .* randn(rng_sos, n)
 
         df = DataFrame(lat=lat, lon=lon, y=y)
-        m = gam(@gam_formula(y ~ s(lat, lon, bs = :sos, k = 20)), df)
+        m = gam(@formulak(y ~ s(lat, lon, bs = :sos, k = 20)), df)
 
         @test m isa GamModel
         @test m.converged
@@ -86,7 +86,7 @@ const rng_sos = StableRNG(123)
         y = f_true .+ 0.2 .* randn(rng_sos, n)
 
         df = DataFrame(lat=lat, lon=lon, y=y)
-        m = gam(@gam_formula(y ~ s(lat, lon, bs = :sos, k = 20)), df)
+        m = gam(@formulak(y ~ s(lat, lon, bs = :sos, k = 20)), df)
 
         # Predict on new data
         n_new = 50

@@ -457,7 +457,7 @@ s(x) 2.6      9  11.56  0.00614</code></pre>
 <tbody>
 <tr class="odd">
 <td><code>evgam(list(y ~ s(x), ~ s(x), ~ 1), family="gev")</code></td>
-<td><code>evgam([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x)), @gam_formula(y ~ 1)], GEVFamily())</code></td>
+<td><code>evgam([@formulak(y ~ s(x)), @formulak(y ~ s(x)), @formulak(y ~ 1)], GEVFamily())</code></td>
 </tr>
 <tr class="even">
 <td><code>predict(m)$location</code></td>

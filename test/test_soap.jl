@@ -70,7 +70,7 @@
     # ── GAM fitting tests ────────────────────────────────────────────────
     @testset "GAM fit on square domain" begin
         df, bnd = make_soap_data(300; seed = 123)
-        m = gam(@gam_formula(z ~ s(x, y, bs = :so, k = 15,
+        m = gam(@formulak(z ~ s(x, y, bs = :so, k = 15,
                     xt = Dict{Symbol,Any}(:bnd => bnd, :nmax => 40))),
                 df; control = GAM.gam_control(trace = false))
 
@@ -89,7 +89,7 @@
         df = DataFrame(x = x, y = y, z = z)
         bnd = square_bnd()
 
-        m = gam(@gam_formula(z ~ s(x, y, bs = :so, k = 20,
+        m = gam(@formulak(z ~ s(x, y, bs = :so, k = 20,
                     xt = Dict{Symbol,Any}(:bnd => bnd, :nmax => 50))),
                 df; control = GAM.gam_control(trace = false))
 
@@ -132,7 +132,7 @@
     # ── Prediction ───────────────────────────────────────────────────────
     @testset "Prediction at new data" begin
         df, bnd = make_soap_data(300; seed = 99)
-        m = gam(@gam_formula(z ~ s(x, y, bs = :so, k = 12,
+        m = gam(@formulak(z ~ s(x, y, bs = :so, k = 12,
                     xt = Dict{Symbol,Any}(:bnd => bnd, :nmax => 35))),
                 df; control = GAM.gam_control(trace = false))
 

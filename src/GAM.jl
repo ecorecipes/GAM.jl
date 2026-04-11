@@ -64,7 +64,8 @@ export
     GamControl,
     GamModel,
     GamFormula,
-    @gam_formula,
+    @formula,
+    @formulak,
 
     # Smooth specification
     s,

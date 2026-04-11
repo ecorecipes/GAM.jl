@@ -93,8 +93,8 @@ formula:
 
 ``` julia
 m = gamlss(
-    [@gam_formula(y ~ s(x, k=15, bs=:cr)),   # μ formula
-     @gam_formula(y ~ s(x, k=10, bs=:cr))],   # log(σ) formula
+    [@formulak(y ~ s(x, k=15, bs=:cr)),   # μ formula
+     @formulak(y ~ s(x, k=10, bs=:cr))],   # log(σ) formula
     dat, Normal()
 )
 println("Converged: $(m.converged)")
@@ -130,7 +130,7 @@ println("σ: cor with truth = $(round(cor(σ_fit, dat.sigma_true); digits=5))")
 A standard `gam()` assumes constant variance. Let’s compare:
 
 ``` julia
-m_gam = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), dat)
+m_gam = gam(@formulak(y ~ s(x, k=15, bs=:cr)), dat)
 μ_gam = m_gam.fitted_values
 println("Standard GAM μ: cor = $(round(cor(μ_gam, dat.mu_true); digits=5))")
 println("GAMLSS μ:       cor = $(round(cor(μ_fit, dat.mu_true); digits=5))")
@@ -170,8 +170,8 @@ a standard GAM:
 
 ``` julia
 m_const = gamlss(
-    [@gam_formula(y ~ s(x, k=15, bs=:cr)),
-     @gam_formula(y ~ 1)],
+    [@formulak(y ~ s(x, k=15, bs=:cr)),
+     @formulak(y ~ 1)],
     dat, Normal()
 )
 σ_const = exp.(m_const.fitted_eta[2])
@@ -208,8 +208,8 @@ println("All positive: $(all(dat_g.y .> 0))")
 
 ``` julia
 m_g = gamlss(
-    [@gam_formula(y ~ s(x, k=15, bs=:cr)),   # log(μ)
-     @gam_formula(y ~ s(x, k=10, bs=:cr))],   # log(σ)
+    [@formulak(y ~ s(x, k=15, bs=:cr)),   # log(μ)
+     @formulak(y ~ s(x, k=10, bs=:cr))],   # log(σ)
     dat_g, GammaLocationScale()
 )
 println("Converged: $(m_g.converged)")
@@ -284,8 +284,8 @@ smooth:
 
 ``` julia
 m_b = gamlss(
-    [@gam_formula(y ~ s(x, k=15, bs=:cr)),   # logit(μ)
-     @gam_formula(y ~ 1)],                     # log(φ)
+    [@formulak(y ~ s(x, k=15, bs=:cr)),   # logit(μ)
+     @formulak(y ~ 1)],                     # log(φ)
     dat_b, BetaRegression()
 )
 println("Converged: $(m_b.converged)")
@@ -335,8 +335,8 @@ y_pos = max.(y_pos, 0.01)
 dat_pos = DataFrame(x=x_pos, y=y_pos)
 
 m_custom = gamlss(
-    [@gam_formula(y ~ s(x, k=10, bs=:cr)),
-     @gam_formula(y ~ 1)],
+    [@formulak(y ~ s(x, k=10, bs=:cr)),
+     @formulak(y ~ 1)],
     dat_pos, Normal();
     links=[LogLink(), LogLink()]  # both parameters on log scale
 )
@@ -351,8 +351,8 @@ For reparameterized families, pass links to the constructor:
 
 ``` julia
 m_g2 = gamlss(
-    [@gam_formula(y ~ s(x, k=10, bs=:cr)),
-     @gam_formula(y ~ 1)],
+    [@formulak(y ~ s(x, k=10, bs=:cr)),
+     @formulak(y ~ 1)],
     dat_g, GammaLocationScale(links=[LogLink(), LogLink()])
 )
 println("Converged: $(m_g2.converged)")
@@ -409,8 +409,8 @@ using RCall
 
 # Re-fit the Normal location-scale model for comparison
 m_norm = gamlss(
-    [@gam_formula(y ~ s(x, k=15, bs=:cr)),
-     @gam_formula(y ~ s(x, k=10, bs=:cr))],
+    [@formulak(y ~ s(x, k=15, bs=:cr)),
+     @formulak(y ~ s(x, k=10, bs=:cr))],
     dat, Normal())
 μ_fit_norm = m_norm.fitted_eta[1]
 σ_fit_norm = exp.(m_norm.fitted_eta[2])

@@ -93,7 +93,7 @@ $\varepsilon \sim N(0, 0.3^2)$.
 ### Frequentist reference
 
 ``` julia
-m_freq = gam(@gam_formula(y ~ s(x, k = 10)), dat)
+m_freq = gam(@formulak(y ~ s(x, k = 10)), dat)
 freq_int = coef(m_freq)[1]
 freq_σ = sqrt(m_freq.scale)
 ```
@@ -108,7 +108,7 @@ To trigger Bayesian fitting, pass a `PriorSpec` to `gam()`. The same
 formula syntax is used — the dispatch is automatic:
 
 ``` julia
-m_bayes = gam(@gam_formula(y ~ s(x, k = 10)), dat;
+m_bayes = gam(@formulak(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 2000, nchains = 2)
 ```
@@ -228,7 +228,7 @@ raw data and the frequentist fit:
 
 ``` julia
 # Reconstruct full design matrix
-X_para, smooths, _ = GAM.gam_matrices(@gam_formula(y ~ s(x, k = 10)), dat)
+X_para, smooths, _ = GAM.gam_matrices(@formulak(y ~ s(x, k = 10)), dat)
 Xf = smooths[1].Xf
 Zs = smooths[1].Zs[1]
 
@@ -283,10 +283,10 @@ Count data with $\log(\lambda) = 1 + 1.5\sin(2\pi x)$.
 ### Frequentist vs Bayesian
 
 ``` julia
-m_freq2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
+m_freq2 = gam(@formulak(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink())
 
-m_bayes2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
+m_bayes2 = gam(@formulak(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink(),
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 2000, nchains = 2)
@@ -313,7 +313,7 @@ m_bayes2 = gam(@gam_formula(y ~ s(x, k = 10)), dat2;
 
 ``` julia
 # Reconstruct design matrix for Poisson model
-X_para2, smooths2, _ = GAM.gam_matrices(@gam_formula(y ~ s(x, k = 10)), dat2)
+X_para2, smooths2, _ = GAM.gam_matrices(@formulak(y ~ s(x, k = 10)), dat2)
 Xf2 = smooths2[1].Xf
 Zs2 = smooths2[1].Zs[1]
 
@@ -434,12 +434,12 @@ prior yields smoother fits:
 
 ``` julia
 # Tight prior: Exponential(0.1) → small σ_s → smoother
-m_tight = gam(@gam_formula(y ~ s(x, k = 10)), dat;
+m_tight = gam(@formulak(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(0.1)),
     nsamples = 1000, nchains = 1)
 
 # Wide prior: Exponential(5.0) → large σ_s → wigglier
-m_wide = gam(@gam_formula(y ~ s(x, k = 10)), dat;
+m_wide = gam(@formulak(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(5.0)),
     nsamples = 1000, nchains = 1)
 ```
@@ -475,7 +475,7 @@ evaluated smooth function:
 
 ``` julia
 # Create smooth components (mixed-model reparameterization)
-# Use bs=:tp to match the default in gam(@gam_formula(y ~ s(x, k=10)))
+# Use bs=:tp to match the default in gam(@formulak(y ~ s(x, k=10)))
 sm = GAM.gam_smooth(:x, dat; k = 10, bs = :tp)
 ```
 
@@ -546,7 +546,7 @@ for i in 1:n_draws_c
 end
 
 # --- gam() brms-like fitted values (from m_bayes) ---
-X_b, sm_b, _ = GAM.gam_matrices(@gam_formula(y ~ s(x, k = 10)), dat)
+X_b, sm_b, _ = GAM.gam_matrices(@formulak(y ~ s(x, k = 10)), dat)
 Xf_b = sm_b[1].Xf
 Zs_b = sm_b[1].Zs[1]
 chains_b = m_bayes.chains
@@ -639,7 +639,7 @@ For maximum control, extract the raw matrices with `gam_matrices()`:
 
 ``` julia
 # Extract matrices from a formula
-gf = @gam_formula(y ~ s(x, k = 10))
+gf = @formulak(y ~ s(x, k = 10))
 X, sms, labels = GAM.gam_matrices(gf, dat)
 ```
 

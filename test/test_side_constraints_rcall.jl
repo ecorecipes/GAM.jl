@@ -23,7 +23,7 @@ using StatsAPI
         ref_sum = CSV.read(joinpath(refdir, "side_m1_summary.csv"), DataFrame)
         ref_fit = CSV.read(joinpath(refdir, "side_m1_fitted.csv"), DataFrame)
 
-        f = GAM.@gam_formula(y ~ s(x, k = 8) + s(x, z, k = 25))
+        f = GAM.@formulak(y ~ s(x, k = 8) + s(x, z, k = 25))
         m = gam(f, data)
 
         # Column counts should match R
@@ -46,7 +46,7 @@ using StatsAPI
         ref_fit = CSV.read(joinpath(refdir, "side_m2_fitted.csv"), DataFrame)
 
         # Julia te(x,z,k=25) matches R te(x,z,k=c(5,5)) in total basis size
-        f = GAM.@gam_formula(y ~ s(x, k = 8) + s(z, k = 8) + te(x, z, k = 25))
+        f = GAM.@formulak(y ~ s(x, k = 8) + s(z, k = 8) + te(x, z, k = 25))
         m = gam(f, data)
 
         # s(x) and s(z) untouched
@@ -66,7 +66,7 @@ using StatsAPI
 
         # Julia ti() has different k split from R ti(k=c(5,5)),
         # but the key behavior is the same: NO columns are removed
-        f = GAM.@gam_formula(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 25))
+        f = GAM.@formulak(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 25))
         m = gam(f, data)
 
         # No columns removed from any smooth

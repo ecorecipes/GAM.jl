@@ -1,4 +1,4 @@
-# StatsModels formula integration — SmoothTerm for @formula / @gam_formula
+# StatsModels formula integration — SmoothTerm for @formula / @formulak
 
 # ─── @formula support: convert FunctionTerm{typeof(s)} to SmoothSpec ──────
 
@@ -31,8 +31,9 @@ a [`SmoothSpec`](@ref). The positional-argument convention is:
 | `Term`            | variable name           |
 | `ConstantTerm{Int}` | basis dimension `k`  |
 
-Keyword arguments (`k=10`, `bs=:cr`, etc.) are **not** supported in `@formula`
-because StatsModels does not parse them. Use `@gam_formula` for that syntax.
+StatsModels' own `@formula` does not parse keyword arguments (`k=10`,
+`bs=:cr`, etc.). When you import `@formula` from GAM, keyword smooth calls are
+automatically diverted to [`@formulak`](@ref).
 """
 function _functionterm_to_smoothspec(ft::StatsModels.FunctionTerm)
     var_syms = Symbol[]
@@ -117,11 +118,11 @@ StatsModels.coefnames(t::AppliedSmoothTerm) =
     GamFormula
 
 A GAM formula containing both a parametric formula (for StatsModels) and
-a vector of smooth term specifications. Created by `@gam_formula`.
+a vector of smooth term specifications. Created by `@formulak`.
 
 # Example
 ```julia
-gf = @gam_formula(y ~ 1 + x1 + s(x2, k=15, bs=:cr) + s(x3))
+gf = @formulak(y ~ 1 + x1 + s(x2, k=15, bs=:cr) + s(x3))
 ```
 """
 struct GamFormula
@@ -146,20 +147,7 @@ function Base.show(io::IO, gf::GamFormula)
     print(io, gf.response, " ~ ", rhs)
 end
 
-"""
-    @gam_formula(ex)
-
-Create a [`GamFormula`](@ref) from an expression. Unlike StatsModels' `@formula`,
-this macro supports `s()`, `te()`, and `ti()` smooth terms with keyword arguments.
-
-# Examples
-```julia
-gf = @gam_formula(y ~ s(x))
-gf = @gam_formula(y ~ 1 + s(x, k=15, bs=:cr))
-gf = @gam_formula(y ~ x1 + s(x2) + s(x3, k=20))
-```
-"""
-macro gam_formula(ex)
+function _formulak_expr(ex)
     ex.head == :call && ex.args[1] == :(~) ||
         error("Expected formula expression like `y ~ ...`, got $ex")
 
@@ -179,6 +167,44 @@ macro gam_formula(ex)
             $(has_intercept[]),
             $SmoothSpec[$(smooth_calls.args...)])
     end)
+end
+
+function _has_keyword_smooth_syntax(ex)
+    if ex isa Expr
+        if ex.head == :call
+            fname = ex.args[1]
+            if fname in (:s, :te, :ti, :t2)
+                any(arg -> arg isa Expr && (arg.head == :parameters || arg.head == :kw),
+                    ex.args[2:end]) && return true
+            end
+        end
+        return any(_has_keyword_smooth_syntax, ex.args)
+    end
+    return false
+end
+
+"""
+    @formulak(ex)
+
+Create a [`GamFormula`](@ref) from an expression. Unlike StatsModels' `@formula`,
+this macro supports `s()`, `te()`, and `ti()` smooth terms with keyword arguments.
+
+# Examples
+```julia
+gf = @formulak(y ~ s(x))
+gf = @formulak(y ~ 1 + s(x, k=15, bs=:cr))
+gf = @formulak(y ~ x1 + s(x2) + s(x3, k=20))
+```
+"""
+macro formulak(ex)
+    return _formulak_expr(ex)
+end
+
+macro formula(ex)
+    if _has_keyword_smooth_syntax(ex)
+        return _formulak_expr(ex)
+    end
+    return Expr(:macrocall, GlobalRef(StatsModels, Symbol("@formula")), __source__, ex)
 end
 
 function _parse_gam_rhs!(ex, parametric, smooth_calls, has_intercept)

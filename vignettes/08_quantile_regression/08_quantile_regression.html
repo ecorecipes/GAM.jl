@@ -229,7 +229,7 @@ Mean y: -0.002</code></pre>
 <section id="median-regression-τ-0.5" class="level3">
 <h3 class="anchored" data-anchor-id="median-regression-τ-0.5">Median regression (τ = 0.5)</h3>
 <div id="8" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>m_50 <span class="op">=</span> <span class="fu">qgam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">20</span>, bs<span class="op">=:</span>cr)), df, <span class="fl">0.5</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>m_50 <span class="op">=</span> <span class="fu">qgam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">20</span>, bs<span class="op">=:</span>cr)), df, <span class="fl">0.5</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display" data-execution_count="1">
 <pre><code>Generalized Additive Model
 
@@ -268,7 +268,7 @@ n = 500</code></pre>
 <section id="compare-with-mean-regression" class="level3">
 <h3 class="anchored" data-anchor-id="compare-with-mean-regression">Compare with mean regression</h3>
 <div id="12" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>m_mean <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">20</span>, bs<span class="op">=:</span>cr)), df)</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>m_mean <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">20</span>, bs<span class="op">=:</span>cr)), df)</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>yhat_mean <span class="op">=</span> <span class="fu">predict</span>(m_mean)</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Mean regression fitted range: [</span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">minimum</span>(yhat_mean), digits<span class="op">=</span><span class="fl">3</span>))<span class="st">, </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">maximum</span>(yhat_mean), digits<span class="op">=</span><span class="fl">3</span>))<span class="st">]"</span>)</span>
@@ -290,7 +290,7 @@ Correlation (mean vs median): 1.0</code></pre>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>fits <span class="op">=</span> <span class="fu">Dict</span><span class="dt">{Float64, Any}</span>()</span>
 <span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> qu <span class="kw">in</span> quantiles</span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>    fits[qu] <span class="op">=</span> <span class="fu">qgam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">20</span>, bs<span class="op">=:</span>cr)), df, qu)</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>    fits[qu] <span class="op">=</span> <span class="fu">qgam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">20</span>, bs<span class="op">=:</span>cr)), df, qu)</span>
 <span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="cf">end</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Examine fitted ranges for each quantile:</p>
@@ -327,7 +327,7 @@ Correlation (mean vs median): 1.0</code></pre>
 <h3 class="anchored" data-anchor-id="using-mqgam-for-simultaneous-fitting">Using <code>mqgam</code> for simultaneous fitting</h3>
 <p><code>mqgam</code> fits all quantiles simultaneously, sharing the preliminary variance estimate for efficiency:</p>
 <div id="20" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>mq <span class="op">=</span> <span class="fu">mqgam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">20</span>, bs<span class="op">=:</span>cr)), df, quantiles)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>mq <span class="op">=</span> <span class="fu">mqgam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">20</span>, bs<span class="op">=:</span>cr)), df, quantiles)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display" data-execution_count="1">
 <pre><code>(fits = Dict{Float64, Any}(0.5 =&gt; GamModel(n_smooth=1, edf=5.1, deviance=8.75), 0.9 =&gt; GamModel(n_smooth=1, edf=2.7, deviance=1694.55), 0.1 =&gt; GamModel(n_smooth=1, edf=8.2, deviance=1585.97), 0.25 =&gt; GamModel(n_smooth=1, edf=5.2, deviance=31.3), 0.75 =&gt; GamModel(n_smooth=1, edf=4.8, deviance=22.31)), quantiles = [0.1, 0.25, 0.5, 0.75, 0.9])</code></pre>
 </div>
@@ -525,7 +525,7 @@ Pinball loss (τ=0.9): 69.533</code></pre>
 </tr>
 <tr class="even">
 <td>Formula syntax</td>
-<td><code>@gam_formula(y ~ s(x, k=20))</code></td>
+<td><code>@formulak(y ~ s(x, k=20))</code></td>
 <td><code>y ~ s(x, k=20)</code></td>
 </tr>
 </tbody>

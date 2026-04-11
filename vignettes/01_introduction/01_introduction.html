@@ -246,7 +246,7 @@ y_i = \sin(2\pi x_i) + \varepsilon_i, \quad \varepsilon_i \sim \mathcal{N}(0, 0.
 <h2 class="anchored" data-anchor-id="fitting-a-gam">Fitting a GAM</h2>
 <p>We fit a GAM with a cubic regression spline (<code>bs=:cr</code>) smooth of <code>x</code> using 15 basis functions:</p>
 <div id="6" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>m <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k <span class="op">=</span> <span class="fl">15</span>, bs <span class="op">=</span> <span class="op">:</span>cr)), df)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>m <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k <span class="op">=</span> <span class="fl">15</span>, bs <span class="op">=</span> <span class="op">:</span>cr)), df)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display" data-execution_count="1">
 <pre><code>Generalized Additive Model
 

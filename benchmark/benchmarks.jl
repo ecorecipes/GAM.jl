@@ -155,10 +155,10 @@ function _run_gamlss_section!(all_results::Vector{NamedTuple})
     suppressPackageStartupMessages(library(gamlss))
     """
 
-    f_mu_cr = @gam_formula(y ~ s(x, k = 20, bs = :cr))
-    f_sigma_cr = @gam_formula(y ~ s(x, k = 10, bs = :cr))
-    f_mu_ps = @gam_formula(y ~ s(x, k = 23, bs = :ps))
-    f_sigma_ps = @gam_formula(y ~ s(x, k = 11, bs = :ps))
+    f_mu_cr = @formulak(y ~ s(x, k = 20, bs = :cr))
+    f_sigma_cr = @formulak(y ~ s(x, k = 10, bs = :cr))
+    f_mu_ps = @formulak(y ~ s(x, k = 23, bs = :ps))
+    f_sigma_ps = @formulak(y ~ s(x, k = 11, bs = :ps))
     ctrl_local_ml = GAM.gamlss_control(sp_method = :local_ml, n_cyc = 50, trace = false)
 
     for n in (500, 2000, 10000)
@@ -229,7 +229,7 @@ function run_benchmarks()
     df = DataFrame(x=x, y=y)
 
     push!(all_results, benchmark_one("Gaussian CR n=500 k=15",
-        () -> gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df),
+        () -> gam(@formulak(y ~ s(x, k=15, bs=:cr)), df),
         "gam(y ~ s(x, k=15, bs='cr'), data=bm_df, method='REML')"))
 
     # 1b. Medium Gaussian CR
@@ -243,7 +243,7 @@ function run_benchmarks()
     df2 = DataFrame(x=x2, y=y2)
 
     push!(all_results, benchmark_one("Gaussian CR n=5000 k=20",
-        () -> gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df2),
+        () -> gam(@formulak(y ~ s(x, k=20, bs=:cr)), df2),
         "gam(y ~ s(x, k=20, bs='cr'), data=bm_df2, method='REML')"))
 
     # 1c. Large Gaussian CR
@@ -257,13 +257,13 @@ function run_benchmarks()
     df3 = DataFrame(x=x3, y=y3)
 
     push!(all_results, benchmark_one("Gaussian CR n=50000 k=20",
-        () -> gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df3),
+        () -> gam(@formulak(y ~ s(x, k=20, bs=:cr)), df3),
         "gam(y ~ s(x, k=20, bs='cr'), data=bm_df3, method='REML')";
         n_reps=3))
 
     # 1d. TPRS (default basis)
     push!(all_results, benchmark_one("Gaussian TP n=5000 k=20",
-        () -> gam(@gam_formula(y ~ s(x, k=20)), df2),
+        () -> gam(@formulak(y ~ s(x, k=20)), df2),
         "gam(y ~ s(x, k=20), data=bm_df2, method='REML')"))
 
     # 1e. Two smooths
@@ -278,7 +278,7 @@ function run_benchmarks()
     dfm = DataFrame(x1=x1m, x2=x2m, y=ym)
 
     push!(all_results, benchmark_one("Gaussian 2 smooths n=2000",
-        () -> gam(@gam_formula(y ~ s(x1, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), dfm),
+        () -> gam(@formulak(y ~ s(x1, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), dfm),
         "gam(y ~ s(x1, k=15, bs='cr') + s(x2, k=10, bs='cr'), data=bm_dfm, method='REML')"))
 
     # 1f. Three smooths
@@ -294,7 +294,7 @@ function run_benchmarks()
     dfm3 = DataFrame(x1=x1_3, x2=x2_3, x3=x3_3, y=y_3)
 
     push!(all_results, benchmark_one("Gaussian 3 smooths n=3000",
-        () -> gam(@gam_formula(y ~ s(x1, k=10, bs=:cr) + s(x2, k=10, bs=:cr) + s(x3, k=10, bs=:cr)), dfm3),
+        () -> gam(@formulak(y ~ s(x1, k=10, bs=:cr) + s(x2, k=10, bs=:cr) + s(x3, k=10, bs=:cr)), dfm3),
         "gam(y ~ s(x1, k=10, bs='cr') + s(x2, k=10, bs='cr') + s(x3, k=10, bs='cr'), data=bm_dfm3, method='REML')"))
 
     # 1g. Poisson GLM-GAM
@@ -308,7 +308,7 @@ function run_benchmarks()
     dfp = DataFrame(x=xp, y=yp)
 
     push!(all_results, benchmark_one("Poisson CR n=2000 k=15",
-        () -> gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), dfp;
+        () -> gam(@formulak(y ~ s(x, k=15, bs=:cr)), dfp;
             family=Poisson(), link=LogLink()),
         "gam(y ~ s(x, k=15, bs='cr'), data=bm_dfp, family=poisson(), method='REML')"))
 
@@ -324,7 +324,7 @@ function run_benchmarks()
     dfg = DataFrame(x=xg, y=yg)
 
     push!(all_results, benchmark_one("Gamma CR n=2000 k=15",
-        () -> gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), dfg;
+        () -> gam(@formulak(y ~ s(x, k=15, bs=:cr)), dfg;
             family=Gamma(), link=LogLink()),
         "gam(y ~ s(x, k=15, bs='cr'), data=bm_dfg, family=Gamma(link=log), method='REML')"))
 
@@ -343,7 +343,7 @@ function run_benchmarks()
     df6 = DataFrame(x=x6, y=y6)
 
     push!(all_results, benchmark_one("BAM Gaussian n=100000 k=20",
-        () -> bam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df6;
+        () -> bam(@formulak(y ~ s(x, k=20, bs=:cr)), df6;
             bam_ctrl=bam_control(chunk_size=10000)),
         "bam(y ~ s(x, k=20, bs='cr'), data=bm_df6, method='fREML')";
         n_reps=3))
@@ -353,7 +353,7 @@ function run_benchmarks()
     # ═══════════════════════════════════════════════════════════════════════
     println("\n── Prediction ──────────────────────────────────────────────────")
 
-    m_julia = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df2)
+    m_julia = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df2)
     R"bm_m_r <- gam(y ~ s(x, k=20, bs='cr'), data=bm_df2, method='REML')"
 
     # predict at new data
@@ -416,7 +416,7 @@ function run_benchmarks()
     dfs = DataFrame(x=xs, y=ys)
 
     push!(all_results, benchmark_one("SCAM monotone incr n=1000 k=15",
-        () -> scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), dfs),
+        () -> scam(@formulak(y ~ s(x, k=15, bs=:mpi)), dfs),
         "scam(y ~ s(x, k=15, bs='mpi'), data=bm_dfs)"))
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -436,7 +436,7 @@ function run_benchmarks()
 
     # QGAM with pre-calibrated sigma (ELF fit only, no bootstrap)
     push!(all_results, benchmark_one("QGAM ELF fit n=5000 k=15",
-        () -> qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df2, 0.5; lsig=lsig_r),
+        () -> qgam(@formulak(y ~ s(x, k=15, bs=:cr)), df2, 0.5; lsig=lsig_r),
         "qgam(y ~ s(x, k=15, bs='cr'), data=bm_df2, qu=0.5, lsig=$lsig_r)";
         n_reps=3))
 
@@ -444,7 +444,7 @@ function run_benchmarks()
     dfq_small = DataFrame(x=x2[1:1000], y=y2[1:1000])
     R"bm_dfq_small <- bm_df2[1:1000,]"
     push!(all_results, benchmark_one("QGAM full calib n=1000 k=10",
-        () -> qgam(@gam_formula(y ~ s(x, k=10, bs=:cr)), dfq_small, 0.5),
+        () -> qgam(@formulak(y ~ s(x, k=10, bs=:cr)), dfq_small, 0.5),
         "qgam(y ~ s(x, k=10, bs='cr'), data=bm_dfq_small, qu=0.5)";
         n_reps=1))
 

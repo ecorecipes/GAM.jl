@@ -38,15 +38,15 @@ Extensions of the GPD with additional flexibility:
 ## Multi-Parameter Model Specification
 
 Pass a vector of formulas, one per distribution parameter. With
-`@gam_formula`, repeat the response on each entry:
+`@formulak`, repeat the response on each entry:
 
 ```julia
 # GEV: location, scale, shape
 m = evgam(
     [
-        @gam_formula(y ~ s(x, k=15, bs=:cr)),   # location μ
-        @gam_formula(y ~ s(x, k=10, bs=:cr)),   # log(scale σ)
-        @gam_formula(y ~ 1),                    # shape ξ (constant)
+        @formulak(y ~ s(x, k=15, bs=:cr)),   # location μ
+        @formulak(y ~ s(x, k=10, bs=:cr)),   # log(scale σ)
+        @formulak(y ~ 1),                    # shape ξ (constant)
     ],
     df,
     GEVFamily(),
@@ -71,9 +71,9 @@ df = DataFrame(year=year, y=y)
 
 m = evgam(
     [
-        @gam_formula(y ~ s(year, k=10, bs=:cr)),  # location
-        @gam_formula(y ~ 1),                      # scale
-        @gam_formula(y ~ 1),                      # shape
+        @formulak(y ~ s(year, k=10, bs=:cr)),  # location
+        @formulak(y ~ 1),                      # scale
+        @formulak(y ~ 1),                      # shape
     ],
     df,
     GEVFamily(),
@@ -93,8 +93,8 @@ df = DataFrame(x=x, y=y)
 
 m = evgam(
     [
-        @gam_formula(y ~ s(x, k=10, bs=:cr)),  # log(scale)
-        @gam_formula(y ~ 1),                   # shape
+        @formulak(y ~ s(x, k=10, bs=:cr)),  # log(scale)
+        @formulak(y ~ 1),                   # shape
     ],
     df,
     GPDFamily(),
@@ -108,9 +108,9 @@ All three GEV parameters as smooth functions:
 ```julia
 m = evgam(
     [
-        @gam_formula(y ~ s(year, k=15, bs=:cr)),
-        @gam_formula(y ~ s(year, k=10, bs=:cr)),
-        @gam_formula(y ~ s(year, k=5, bs=:cr)),
+        @formulak(y ~ s(year, k=15, bs=:cr)),
+        @formulak(y ~ s(year, k=10, bs=:cr)),
+        @formulak(y ~ s(year, k=5, bs=:cr)),
     ],
     df,
     GEVFamily(),

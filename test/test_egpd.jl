@@ -173,7 +173,7 @@ using Test, GAM, Random, Statistics, ForwardDiff, LinearAlgebra
 
         df = (; y=y)
         m = evgam(
-            [@gam_formula(y ~ 1), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+            [@formulak(y ~ 1), @formulak(y ~ 1), @formulak(y ~ 1)],
             df, EGPD1Family()
         )
         @test m.converged
@@ -195,7 +195,7 @@ using Test, GAM, Random, Statistics, ForwardDiff, LinearAlgebra
 
         df = (; y=y)
         m = evgam(
-            [@gam_formula(y ~ 1), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+            [@formulak(y ~ 1), @formulak(y ~ 1), @formulak(y ~ 1)],
             df, EGPD3Family()
         )
         @test m.converged
@@ -220,7 +220,7 @@ using Test, GAM, Random, Statistics, ForwardDiff, LinearAlgebra
 
         df = (; y=y, x=collect(x))
         m = evgam(
-            [@gam_formula(y ~ s(x, bs=:cr, k=6)), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x, bs=:cr, k=6)), @formulak(y ~ 1), @formulak(y ~ 1)],
             df, EGPD1Family()
         )
         @test m.converged

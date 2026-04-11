@@ -231,8 +231,8 @@ g_k(\theta_{ki}) = \beta_{0k} + f_{k1}(x_{1i}) + \cdots + f_{kJ_k}(x_{J_k i}), \
 <p>With <code>gamlss()</code>, pass <code>Normal()</code> directly — its parameters <span class="math inline">\((μ, σ)\)</span> match the Distributions.jl parameterization. Each parameter gets its own formula:</p>
 <div id="6" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>m <span class="op">=</span> <span class="fu">gamlss</span>(</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),   <span class="co"># μ formula</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr))],   <span class="co"># log(σ) formula</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),   <span class="co"># μ formula</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr))],   <span class="co"># log(σ) formula</span></span>
 <span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    dat, <span class="fu">Normal</span>()</span>
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Converged: </span><span class="sc">$</span>(m.converged)<span class="st">"</span>)</span>
@@ -265,7 +265,7 @@ Total EDF: 18.6</code></pre>
 <h3 class="anchored" data-anchor-id="comparison-with-standard-gam">Comparison with standard GAM</h3>
 <p>A standard <code>gam()</code> assumes constant variance. Let’s compare:</p>
 <div id="10" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>m_gam <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)), dat)</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>m_gam <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)), dat)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>μ_gam <span class="op">=</span> m_gam.fitted_values</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Standard GAM μ: cor = </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">cor</span>(μ_gam, dat.mu_true); digits<span class="op">=</span><span class="fl">5</span>))<span class="st">"</span>)</span>
 <span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"GAMLSS μ:       cor = </span><span class="sc">$</span>(<span class="fu">round</span>(<span class="fu">cor</span>(μ_fit, dat.mu_true); digits<span class="op">=</span><span class="fl">5</span>))<span class="st">"</span>)</span>
@@ -303,8 +303,8 @@ Max |μ_gam - μ_gamlss|: 0.0357</code></pre>
 <p>When <span class="math inline">\(\sigma\)</span> is modeled as intercept-only (<code>y ~ 1</code>), GAMLSS reduces to a standard GAM:</p>
 <div id="14" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>m_const <span class="op">=</span> <span class="fu">gamlss</span>(</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fl">1</span>)],</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fl">1</span>)],</span>
 <span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    dat, <span class="fu">Normal</span>()</span>
 <span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>σ_const <span class="op">=</span> <span class="fu">exp</span>.(m_const.fitted_eta[<span class="fl">2</span>])</span>
@@ -341,8 +341,8 @@ All positive: true</code></pre>
 <h3 class="anchored" data-anchor-id="fitting">Fitting</h3>
 <div id="18" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>m_g <span class="op">=</span> <span class="fu">gamlss</span>(</span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),   <span class="co"># log(μ)</span></span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr))],   <span class="co"># log(σ)</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),   <span class="co"># log(μ)</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr))],   <span class="co"># log(σ)</span></span>
 <span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>    dat_g, <span class="fu">GammaLocationScale</span>()</span>
 <span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Converged: </span><span class="sc">$</span>(m_g.converged)<span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -415,8 +415,8 @@ Mean fitted CV: 0.368</code></pre>
 <p>Here <span class="math inline">\(\phi\)</span> is constant (intercept-only), so we model only the mean as smooth:</p>
 <div id="26" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>m_b <span class="op">=</span> <span class="fu">gamlss</span>(</span>
-<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),   <span class="co"># logit(μ)</span></span>
-<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fl">1</span>)],                     <span class="co"># log(φ)</span></span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),   <span class="co"># logit(μ)</span></span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fl">1</span>)],                     <span class="co"># log(φ)</span></span>
 <span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a>    dat_b, <span class="fu">BetaRegression</span>()</span>
 <span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Converged: </span><span class="sc">$</span>(m_b.converged)<span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -468,8 +468,8 @@ Fitted precision φ ≈ 16.5 (true: 15.0)</code></pre>
 <span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>dat_pos <span class="op">=</span> <span class="fu">DataFrame</span>(x<span class="op">=</span>x_pos, y<span class="op">=</span>y_pos)</span>
 <span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a>m_custom <span class="op">=</span> <span class="fu">gamlss</span>(</span>
-<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr)),</span>
-<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fl">1</span>)],</span>
+<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr)),</span>
+<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fl">1</span>)],</span>
 <span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a>    dat_pos, <span class="fu">Normal</span>();</span>
 <span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a>    links<span class="op">=</span>[<span class="fu">LogLink</span>(), <span class="fu">LogLink</span>()]  <span class="co"># both parameters on log scale</span></span>
 <span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a>)</span>
@@ -483,8 +483,8 @@ Fitted μ range: [1.26, 2.17]</code></pre>
 <p>For reparameterized families, pass links to the constructor:</p>
 <div id="34" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>m_g2 <span class="op">=</span> <span class="fu">gamlss</span>(</span>
-<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr)),</span>
-<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fl">1</span>)],</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr)),</span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fl">1</span>)],</span>
 <span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>    dat_g, <span class="fu">GammaLocationScale</span>(links<span class="op">=</span>[<span class="fu">LogLink</span>(), <span class="fu">LogLink</span>()])</span>
 <span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a><span class="fu">println</span>(<span class="st">"Converged: </span><span class="sc">$</span>(m_g2.converged)<span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -587,8 +587,8 @@ Fitted μ range: [1.26, 2.17]</code></pre>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Re-fit the Normal location-scale model for comparison</span></span>
 <span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a>m_norm <span class="op">=</span> <span class="fu">gamlss</span>(</span>
-<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),</span>
-<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr))],</span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a>    [<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)),</span>
+<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a>     <span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">10</span>, bs<span class="op">=:</span>cr))],</span>
 <span id="cb33-7"><a href="#cb33-7" aria-hidden="true" tabindex="-1"></a>    dat, <span class="fu">Normal</span>())</span>
 <span id="cb33-8"><a href="#cb33-8" aria-hidden="true" tabindex="-1"></a>μ_fit_norm <span class="op">=</span> m_norm.fitted_eta[<span class="fl">1</span>]</span>
 <span id="cb33-9"><a href="#cb33-9" aria-hidden="true" tabindex="-1"></a>σ_fit_norm <span class="op">=</span> <span class="fu">exp</span>.(m_norm.fitted_eta[<span class="fl">2</span>])</span>

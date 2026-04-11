@@ -365,7 +365,7 @@ abline(v = 0, lty = 2)
 | Random intercept | `gamm(@gamm_formula(y ~ s(x) + (1\|g)), df)` | `gamm(y ~ s(x), random=list(g=~1), data=df)` |
 | `@formula` path | `gamm(@formula(y ~ cr(x, 10) + (1\|g)), df)` | — |
 | `re()` shorthand | `gamm(@formula(y ~ cr(x, 10) + re(g)), df)` | — |
-| Equivalent GAM | `gam(@gam_formula(y ~ s(x) + s(g, bs=:re)), df)` | `gam(y ~ s(x) + s(g, bs="re"), data=df)` |
+| Equivalent GAM | `gam(@formulak(y ~ s(x) + s(g, bs=:re)), df)` | `gam(y ~ s(x) + s(g, bs="re"), data=df)` |
 | Non-Gaussian | `gamm(..., Poisson())` | `gamm(..., family=poisson())` |
 | Extract RE | `ranef(m)` | `ranef(m$lme)` |
 | Variance components | `VarCorr(m)` | `VarCorr(m$lme)` |

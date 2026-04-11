@@ -32,7 +32,7 @@ Quasi-Likelihood (PQL), matching R's `mgcv::gamm()` which calls
 
 ## The `@gamm_formula` Macro
 
-`@gamm_formula` extends `@gam_formula` with lme4-style random effects syntax:
+`@gamm_formula` extends `@formulak` with lme4-style random effects syntax:
 
 ```julia
 # Random intercept for subject
@@ -204,7 +204,7 @@ interface:
 
 ```julia
 # Using gam() with random effect smooth — simpler, no BLUPs
-m_re = gam(@gam_formula(y ~ s(x, k=15, bs=:cr) + s(subject, bs=:re)), df)
+m_re = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(subject, bs=:re)), df)
 
 # Using gamm() — gives BLUPs, VarCorr, mixed model diagnostics
 m_gamm = gamm(@gamm_formula(y ~ s(x, k=15, bs=:cr) + (1 | subject)), df)

@@ -150,20 +150,20 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
 
         # Median fit
         elf = ELFFamily(qu=0.5, co=fill(0.2, n), theta=0.0)
-        fit = gam(@gam_formula(y ~ s(x, k=10)), df; family=elf)
+        fit = gam(@formulak(y ~ s(x, k=10)), df; family=elf)
         @test fit.converged
         @test cor(fit.fitted_values, sin.(x)) > 0.95
 
         # Quantile 0.1 — most points should be above
         elf1 = ELFFamily(qu=0.1, co=fill(0.2, n), theta=0.0)
-        fit1 = gam(@gam_formula(y ~ s(x, k=10)), df; family=elf1)
+        fit1 = gam(@formulak(y ~ s(x, k=10)), df; family=elf1)
         @test fit1.converged
         frac1 = mean(y .< fit1.fitted_values)
         @test 0.0 < frac1 < 0.4  # roughly 10% below, with some slack
 
         # Quantile 0.9 — most points should be below
         elf9 = ELFFamily(qu=0.9, co=fill(0.2, n), theta=0.0)
-        fit9 = gam(@gam_formula(y ~ s(x, k=10)), df; family=elf9)
+        fit9 = gam(@formulak(y ~ s(x, k=10)), df; family=elf9)
         @test fit9.converged
         frac9 = mean(y .< fit9.fitted_values)
         @test frac9 > 0.6  # roughly 90% below
@@ -178,11 +178,11 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
 
         # Single quantile fit with fixed learning rate
         elf = ELFFamily(qu=0.5, co=fill(0.15, n), theta=-0.5)
-        fit = gam(@gam_formula(y ~ s(x, k=8)), df; family=elf)
+        fit = gam(@formulak(y ~ s(x, k=8)), df; family=elf)
         @test fit.converged
 
         # Multiple quantiles
-        fits = mqgam(@gam_formula(y ~ s(x, k=8)), df, [0.25, 0.5, 0.75];
+        fits = mqgam(@formulak(y ~ s(x, k=8)), df, [0.25, 0.5, 0.75];
                      lsig=-0.5, co=0.15)
         @test length(fits.fits) == 3
         @test haskey(fits.fits, 0.25)
@@ -196,7 +196,7 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         y = 2.0 .* x .+ randn(n)
         df = (y=y, x=x)
 
-        fits = mqgam(@gam_formula(y ~ s(x, k=8)), df, [0.25, 0.5, 0.75];
+        fits = mqgam(@formulak(y ~ s(x, k=8)), df, [0.25, 0.5, 0.75];
                      lsig=-0.5, co=0.15)
 
         # Extract model
@@ -220,7 +220,7 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         df = (y=y, x=x)
 
         elf = ELFFamily(qu=0.5, co=fill(0.2, n), theta=-0.5)
-        fit = gam(@gam_formula(y ~ s(x, k=15)), df; family=elf)
+        fit = gam(@formulak(y ~ s(x, k=15)), df; family=elf)
 
         res = cqcheck(fit, x; nbin=8)
         @test res isa GAM.CQCheckResult
@@ -244,7 +244,7 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         df = (y=y, x=x)
 
         elf = ELFFamily(qu=0.5, co=fill(0.2, n), theta=-0.5)
-        fit = gam(@gam_formula(y ~ s(x, k=15)), df; family=elf)
+        fit = gam(@formulak(y ~ s(x, k=15)), df; family=elf)
 
         chk = check_qgam(fit; nbin=8)
         @test chk isa GAM.QGamCheck
@@ -263,7 +263,7 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         df = (y=y, x=x)
 
         elf = ELFFamily(qu=0.5, co=fill(0.2, n), theta=-0.5)
-        fit = gam(@gam_formula(y ~ s(x, k=15)), df; family=elf)
+        fit = gam(@formulak(y ~ s(x, k=15)), df; family=elf)
 
         qr = quantile_residuals(fit)
         @test length(qr) == n
@@ -308,8 +308,8 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         df = (y=y, x=x)
 
         formulas = [
-            @gam_formula(y ~ s(x, k=12, bs=:cr)),
-            @gam_formula(y ~ s(x, k=10, bs=:cr)),
+            @formulak(y ~ s(x, k=12, bs=:cr)),
+            @formulak(y ~ s(x, k=10, bs=:cr)),
         ]
 
         fit = qgam(formulas, df, 0.75)
@@ -355,8 +355,8 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         df = (y=y, x=x)
 
         formulas = [
-            @gam_formula(y ~ s(x, k=12, bs=:cr)),
-            @gam_formula(y ~ s(x, k=10, bs=:cr)),
+            @formulak(y ~ s(x, k=12, bs=:cr)),
+            @formulak(y ~ s(x, k=10, bs=:cr)),
         ]
 
         fit = qgam(formulas, df, 0.75; co=0.2)
@@ -426,8 +426,8 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         df = (y=y, x=x, z1=z1, z2=z2)
 
         formulas = [
-            @gam_formula(y ~ z1 + z2 + s(x, k=10, bs=:cr)),
-            @gam_formula(y ~ 1),
+            @formulak(y ~ z1 + z2 + s(x, k=10, bs=:cr)),
+            @formulak(y ~ 1),
         ]
 
         fit = qgam(formulas, df, 0.75; co=0.2)

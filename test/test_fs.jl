@@ -157,7 +157,7 @@
 
         df = DataFrame(x = x, y = y, group = group_labels)
 
-        m = gam(@gam_formula(y ~ s(x, group, bs = :fs, k = 10)), df)
+        m = gam(@formulak(y ~ s(x, group, bs = :fs, k = 10)), df)
 
         @test m.converged
         @test length(m.fitted_values) == n
@@ -188,7 +188,7 @@
 
         df = DataFrame(x = x, y = y, group = group_labels)
 
-        m = gam(@gam_formula(y ~ s(x, group, bs = :fs, k = 10)), df)
+        m = gam(@formulak(y ~ s(x, group, bs = :fs, k = 10)), df)
         @test m.converged
 
         # Predict at new x values for each group
@@ -236,7 +236,7 @@
         y = sin.(x) .+ (groups .== "hi") .* 2.0 .+ 0.1 .* randn(n)
         df = DataFrame(x = x, y = y, group = groups)
 
-        m = gam(@gam_formula(y ~ s(x, group, bs = :fs, k = 8)), df)
+        m = gam(@formulak(y ~ s(x, group, bs = :fs, k = 8)), df)
         @test m.converged
         @test m.deviance_val < sum((y .- mean(y)) .^ 2)
     end

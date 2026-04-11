@@ -137,7 +137,7 @@ the model is fit using the GAMLSS framework. You can also call
 
 # Arguments
 - `formula`: a StatsModels formula with smooth terms, e.g., `@formula(y ~ s(x))`
-  or a `GamFormula` from `@gam_formula`.
+  or a `GamFormula` from `@formulak`.
 - `data`: a table (DataFrame, NamedTuple of vectors, etc.)
 - `family`: distribution family (default: `Normal()`).
   Accepts `UnivariateDistribution`, `ExtendedFamily`, `MultiParameterFamily`,
@@ -168,10 +168,10 @@ df.count = counts
 m2 = gam(@formula(count ~ s(x)), df; family=Poisson(), link=LogLink())
 
 # Shape-constrained (auto-SCAM): monotone increasing
-m3 = gam(@gam_formula(y ~ s(x, bs=:mpi)), df)
+m3 = gam(@formulak(y ~ s(x, bs=:mpi)), df)
 
 # Multi-parameter GAMLSS (auto-dispatch)
-m4 = gam(@gam_formula(y ~ s(x)), df, GammaLocationScale())
+m4 = gam(@formulak(y ~ s(x)), df, GammaLocationScale())
 
 # Multiple smooths
 df.x2 = randn(n)
@@ -328,8 +328,8 @@ replicated for all distribution parameters. Delegates to [`gamlss`](@ref).
 
 # Examples
 ```julia
-m = gam(@gam_formula(y ~ s(x)), df, GammaLocationScale())
-m = gam([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)], df, BetaRegression())
+m = gam(@formulak(y ~ s(x)), df, GammaLocationScale())
+m = gam([@formulak(y ~ s(x)), @formulak(y ~ 1)], df, BetaRegression())
 ```
 """
 function gam(f::Union{FormulaTerm, GamFormula}, data, family::MultiParameterFamily; kwargs...)

@@ -25,7 +25,7 @@ estimated dispersion stored in `m.scale`.
 For overdispersed count data where the variance exceeds the mean.
 
 ```julia
-m = gam(@gam_formula(y ~ s(x)), df;
+m = gam(@formulak(y ~ s(x)), df;
     family=NegBinFamily(theta=1.0))
 ```
 
@@ -37,7 +37,7 @@ For overdispersed count data when you want Poisson mean structure with an
 estimated dispersion parameter rather than a fully specified count distribution.
 
 ```julia
-m = gam(@gam_formula(y ~ s(x)), df;
+m = gam(@formulak(y ~ s(x)), df;
     family=QuasiPoissonFamily())
 ```
 
@@ -50,7 +50,7 @@ For overdispersed binary or proportion data when a binomial mean-variance
 relationship is appropriate up to a multiplicative dispersion factor.
 
 ```julia
-m = gam(@gam_formula(y ~ s(x)), df;
+m = gam(@formulak(y ~ s(x)), df;
     family=QuasiBinomialFamily())
 ```
 
@@ -62,7 +62,7 @@ reported as `m.scale`.
 For non-negative data with exact zeros, common in insurance and ecology.
 
 ```julia
-m = gam(@gam_formula(y ~ s(x)), df;
+m = gam(@formulak(y ~ s(x)), df;
     family=TweedieFamily(p=1.5))
 ```
 
@@ -71,7 +71,7 @@ Power parameter p ∈ (1, 2). Variance: μᵖ.
 To update the power parameter during fitting, pass `estimate_p=true`:
 
 ```julia
-m = gam(@gam_formula(y ~ s(x)), df;
+m = gam(@formulak(y ~ s(x)), df;
     family=TweedieFamily(p=1.3, estimate_p=true))
 ```
 
@@ -93,7 +93,7 @@ bounded profile-likelihood update.
 For response data in (0, 1), such as proportions.
 
 ```julia
-m = gam(@gam_formula(y ~ s(x)), df;
+m = gam(@formulak(y ~ s(x)), df;
     family=BetaFamily(phi=1.0))
 ```
 
@@ -114,8 +114,8 @@ simultaneously. Used with [`gamlss()`](@ref). See [GAMLSS](gamlss.md) for full d
 
 ```julia
 m = gamlss([
-    @gam_formula(y ~ s(x)),
-    @gam_formula(y ~ s(x)),
+    @formulak(y ~ s(x)),
+    @formulak(y ~ s(x)),
 ], df, GaussianLS())
 ```
 
@@ -130,7 +130,7 @@ Used with [`qgam()`](@ref). See [Quantile Regression (QGAM)](qgam.md) for detail
 | `ELFLSSFamily(qu)` | ELF with covariate-dependent scale for location-scale quantile fits |
 
 ```julia
-m = qgam(@gam_formula(y ~ s(x)), df, 0.5)
+m = qgam(@formulak(y ~ s(x)), df, 0.5)
 ```
 
 ## evgam Families
@@ -149,9 +149,9 @@ Extreme value families for modeling tails of distributions. Used with
 
 ```julia
 m = evgam([
-    @gam_formula(y ~ s(x)),
-    @gam_formula(y ~ s(x)),
-    @gam_formula(y ~ 1),
+    @formulak(y ~ s(x)),
+    @formulak(y ~ s(x)),
+    @formulak(y ~ 1),
 ], df, GEVFamily())
 ```
 

@@ -25,12 +25,12 @@ using Statistics: mean, std
         df = DataFrame(y = y, x = x)
 
         # Frequentist reference
-        m_freq = gam(@gam_formula(y ~ s(x, k = 10)), df)
+        m_freq = gam(@formulak(y ~ s(x, k = 10)), df)
         freq_int = StatsAPI.coef(m_freq)[1]
         freq_σ = sqrt(m_freq.scale)
 
         # Bayesian fit
-        m_bayes = gam(@gam_formula(y ~ s(x, k = 10)), df;
+        m_bayes = gam(@formulak(y ~ s(x, k = 10)), df;
             priors = PriorSpec(sds = Exponential(1.0)),
             nsamples = 1000, nchains = 1)
 
@@ -128,9 +128,9 @@ using Statistics: mean, std
         y = [rand(Poisson(λ)) for λ in λ_true]
         df = DataFrame(y = y, x = x)
 
-        m_freq = gam(@gam_formula(y ~ s(x, k = 10)), df;
+        m_freq = gam(@formulak(y ~ s(x, k = 10)), df;
             family = Poisson(), link = LogLink())
-        m_bayes = gam(@gam_formula(y ~ s(x, k = 10)), df;
+        m_bayes = gam(@formulak(y ~ s(x, k = 10)), df;
             family = Poisson(), link = LogLink(),
             priors = PriorSpec(sds = Exponential(1.0)),
             nsamples = 1000, nchains = 1)
@@ -154,9 +154,9 @@ using Statistics: mean, std
         y = Float64.([rand(Bernoulli(p)) for p in p_true])
         df = DataFrame(y = y, x = x)
 
-        m_freq = gam(@gam_formula(y ~ s(x, k = 8)), df;
+        m_freq = gam(@formulak(y ~ s(x, k = 8)), df;
             family = Bernoulli(), link = LogitLink())
-        m_bayes = gam(@gam_formula(y ~ s(x, k = 8)), df;
+        m_bayes = gam(@formulak(y ~ s(x, k = 8)), df;
             family = Bernoulli(), link = LogitLink(),
             priors = PriorSpec(sds = Exponential(1.0)),
             nsamples = 1000, nchains = 1)
@@ -179,7 +179,7 @@ using Statistics: mean, std
         y = sin.(2π .* x1) .+ 0.5 .* x2 .+ 0.3 .* randn(n)
         df = DataFrame(y = y, x1 = x1, x2 = x2)
 
-        m_bayes = gam(@gam_formula(y ~ s(x1, k = 8) + s(x2, k = 8)), df;
+        m_bayes = gam(@formulak(y ~ s(x1, k = 8) + s(x2, k = 8)), df;
             priors = PriorSpec(sds = Exponential(1.0)),
             nsamples = 1000, nchains = 1)
 
@@ -207,12 +207,12 @@ using Statistics: mean, std
         df = DataFrame(y = y, x = x)
 
         # Tight prior on sds → more smoothing (smaller σ_s)
-        m_tight = gam(@gam_formula(y ~ s(x, k = 10)), df;
+        m_tight = gam(@formulak(y ~ s(x, k = 10)), df;
             priors = PriorSpec(sds = Exponential(0.1)),
             nsamples = 500, nchains = 1)
 
         # Wide prior on sds → less smoothing (larger σ_s)
-        m_wide = gam(@gam_formula(y ~ s(x, k = 10)), df;
+        m_wide = gam(@formulak(y ~ s(x, k = 10)), df;
             priors = PriorSpec(sds = Exponential(5.0)),
             nsamples = 500, nchains = 1)
 
@@ -235,7 +235,7 @@ using Statistics: mean, std
         @test !smm.fixed
 
         # gam_matrices
-        gf = @gam_formula(y ~ s(x, k = 10))
+        gf = @formulak(y ~ s(x, k = 10))
         X, sms, labels = gam_matrices(gf, df)
         @test size(X, 1) == n
         @test size(X, 2) == 1  # intercept only
@@ -302,7 +302,7 @@ using Statistics: mean, std
         y = y_true .+ 0.3 .* randn(n)
         df = DataFrame(y = y, x = x)
 
-        m = gam(@gam_formula(y ~ s(x, k = 10)), df;
+        m = gam(@formulak(y ~ s(x, k = 10)), df;
             priors = PriorSpec(sds = Exponential(1.0)),
             nsamples = 1000, nchains = 2)
 
@@ -328,7 +328,7 @@ using Statistics: mean, std
         df = DataFrame(y = y, x = x)
 
         t = @elapsed begin
-            m = gam(@gam_formula(y ~ s(x, k = 10)), df;
+            m = gam(@formulak(y ~ s(x, k = 10)), df;
                 priors = PriorSpec(sds = Exponential(1.0)),
                 nsamples = 500, nchains = 1)
         end

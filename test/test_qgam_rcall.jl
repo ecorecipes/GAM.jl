@@ -121,7 +121,7 @@ R"library(qgam); library(mgcv)"
         fitted_r = rcopy(R"fitted_r")
 
         elf = ELFFamily(qu=0.5, co=fill(0.2, n), theta=0.0)
-        fit_jl = gam(@gam_formula(y ~ s(x, bs=:cr, k=10)), (y=y, x=x); family=elf)
+        fit_jl = gam(@formulak(y ~ s(x, bs=:cr, k=10)), (y=y, x=x); family=elf)
 
         @test fit_jl.converged
         @test cor(fit_jl.fitted_values, fitted_r) > 0.99
@@ -172,8 +172,8 @@ R"library(qgam); library(mgcv)"
         co = 0.2
 
         formulas = [
-            @gam_formula(y ~ 1),
-            @gam_formula(y ~ 1),
+            @formulak(y ~ 1),
+            @formulak(y ~ 1),
         ]
         fit_jl = qgam(formulas, (y=y,), qu; co=co)
 

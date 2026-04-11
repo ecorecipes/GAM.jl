@@ -35,7 +35,7 @@ using GLM: LogLink
         x_r = rcopy(R"dat$x")
         y_r = rcopy(R"dat$y")
         df = DataFrame(x = x_r, y = y_r)
-        m_jl = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df)
+        m_jl = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df)
 
         # Get R smooth estimates
         est_r = rcopy(R"se_r$.estimate")
@@ -75,7 +75,7 @@ using GLM: LogLink
         x_r = rcopy(R"dat$x")
         y_r = rcopy(R"dat$y")
         df = DataFrame(x = x_r, y = y_r)
-        m_jl = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df)
+        m_jl = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df)
 
         d_est_r = rcopy(R"deriv_r$.derivative")
         d_se_r = rcopy(R"deriv_r$.se")
@@ -105,7 +105,7 @@ using GLM: LogLink
         x_r = rcopy(R"dat$x")
         y_r = rcopy(R"dat$y")
         df = DataFrame(x = x_r, y = y_r)
-        m_jl = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df)
+        m_jl = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df)
 
         coef_r = rcopy(R"coef_r")
         vcov_r = rcopy(R"vcov_r")
@@ -140,7 +140,7 @@ using GLM: LogLink
         y_r = rcopy(R"dat$y")
         fitted_r = rcopy(R"fitted_r")
         df = DataFrame(x = x_r, y = y_r)
-        m_jl = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df)
+        m_jl = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df)
 
         # Mean of fitted_samples should match fitted values
         fs = fitted_samples(m_jl; n = 1000, seed = 42)
@@ -171,7 +171,7 @@ using GLM: LogLink
         x2_r = rcopy(R"dat$x2")
         y_r = rcopy(R"dat$y")
         df = DataFrame(x1 = x1_r, x2 = x2_r, y = y_r)
-        m_jl = gam(@gam_formula(y ~ s(x1, k = 10, bs = :cr) + s(x2, k = 10, bs = :cr)), df)
+        m_jl = gam(@formulak(y ~ s(x1, k = 10, bs = :cr) + s(x2, k = 10, bs = :cr)), df)
 
         est_r1 = rcopy(R"se_r1$.estimate")
         est_r2 = rcopy(R"se_r2$.estimate")
@@ -211,7 +211,7 @@ using GLM: LogLink
         x_r = rcopy(R"dat$x")
         y_r = Float64.(rcopy(R"dat$y"))
         df = DataFrame(x = x_r, y = y_r)
-        m_jl = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+        m_jl = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df;
             family = Poisson(), link = LogLink())
 
         est_r = rcopy(R"se_r$.estimate")

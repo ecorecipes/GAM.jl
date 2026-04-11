@@ -131,7 +131,7 @@ import Distributions: Poisson, Binomial, Gamma
         # Julia: GAMM
         m_gamm = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
         # Julia: GAM with s(group, bs=:re)
-        m_gam_re = gam(@gam_formula(y ~ s(x) + s(group, bs = :re)), df)
+        m_gam_re = gam(@formulak(y ~ s(x) + s(group, bs = :re)), df)
 
         # R: GAM with s(group, bs="re")
         @rput x y group

@@ -8,7 +8,7 @@ gam_control
 GamControl
 GamModel
 GamFormula
-GAM.@gam_formula
+GAM.@formulak
 ```
 
 ## Smooth Specification

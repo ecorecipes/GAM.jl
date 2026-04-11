@@ -14,16 +14,34 @@
         @test length(coef(m)) == 10  # intercept + 9 basis
         @test deviance(m) < sum((y .- mean(y)) .^ 2)  # better than null
 
-        # Identical to @gam_formula
-        m_g = gam(@gam_formula(y ~ s(x)), df)
+        # Identical to @formulak
+        m_g = gam(@formulak(y ~ s(x)), df)
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
+    end
+
+    @testset "@formula diverts keyword smooth syntax to @formulak" begin
+        f_kw = @formula(y ~ x2 + s(x, k = 20, bs = :cr))
+        f_k = @formulak(y ~ x2 + s(x, k = 20, bs = :cr))
+        f_std = @formula(y ~ x2 + s(x, 20))
+
+        @test f_kw isa GAM.GamFormula
+        @test f_std isa StatsModels.FormulaTerm
+        @test f_kw.response == f_k.response
+        @test f_kw.parametric == f_k.parametric
+        @test f_kw.has_intercept == f_k.has_intercept
+        @test length(f_kw.smooth_specs) == length(f_k.smooth_specs)
+
+        m_kw = gam(f_kw, df)
+        m_k = gam(f_k, df)
+        @test coefnames(m_kw) == coefnames(m_k)
+        @test coef(m_kw) ≈ coef(m_k) atol = 1e-10
     end
 
     @testset "s(x, k) positional k" begin
         m = gam(@formula(y ~ s(x, 20)), df)
         @test length(coef(m)) == 20
 
-        m_g = gam(@gam_formula(y ~ s(x, k = 20)), df)
+        m_g = gam(@formulak(y ~ s(x, k = 20)), df)
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
     end
 
@@ -31,7 +49,7 @@
         m = gam(@formula(y ~ s(x) + s(x2)), df)
         @test length(coef(m)) == 19  # 1 intercept + 9 + 9
 
-        m_g = gam(@gam_formula(y ~ s(x) + s(x2)), df)
+        m_g = gam(@formulak(y ~ s(x) + s(x2)), df)
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
     end
 
@@ -42,7 +60,7 @@
 
     @testset "No-intercept smooths" begin
         m = gam(@formula(y ~ 0 + s(x)), df)
-        m_g = gam(@gam_formula(y ~ 0 + s(x)), df)
+        m_g = gam(@formulak(y ~ 0 + s(x)), df)
 
         @test m.n_parametric == 0
         @test m_g.n_parametric == 0
@@ -64,7 +82,7 @@
         df_lin = DataFrame(x = collect(x), x2 = x2, y = y_lin)
 
         m = gam(@formula(y ~ x2 + s(x)), df_lin)
-        m_g = gam(@gam_formula(y ~ x2 + s(x)), df_lin)
+        m_g = gam(@formulak(y ~ x2 + s(x)), df_lin)
 
         newdf = DataFrame(x = fill(π, 3), x2 = [-1.0, 0.0, 1.0])
         pred = predict(m, newdf; type = :link)
@@ -90,22 +108,22 @@
     @testset "Basis-type aliases" begin
         # cr()
         m_cr = gam(@formula(y ~ cr(x)), df)
-        m_cr_g = gam(@gam_formula(y ~ s(x, bs = :cr)), df)
+        m_cr_g = gam(@formulak(y ~ s(x, bs = :cr)), df)
         @test isapprox(coef(m_cr), coef(m_cr_g), atol = 1e-10)
 
         # cr(x, 20)
         m_cr20 = gam(@formula(y ~ cr(x, 20)), df)
-        m_cr20_g = gam(@gam_formula(y ~ s(x, bs = :cr, k = 20)), df)
+        m_cr20_g = gam(@formulak(y ~ s(x, bs = :cr, k = 20)), df)
         @test isapprox(coef(m_cr20), coef(m_cr20_g), atol = 1e-10)
 
         # tp()
         m_tp = gam(@formula(y ~ tp(x, 15)), df)
-        m_tp_g = gam(@gam_formula(y ~ s(x, bs = :tp, k = 15)), df)
+        m_tp_g = gam(@formulak(y ~ s(x, bs = :tp, k = 15)), df)
         @test isapprox(coef(m_tp), coef(m_tp_g), atol = 1e-10)
 
         # ps()
         m_ps = gam(@formula(y ~ ps(x)), df)
-        m_ps_g = gam(@gam_formula(y ~ s(x, bs = :ps)), df)
+        m_ps_g = gam(@formulak(y ~ s(x, bs = :ps)), df)
         @test isapprox(coef(m_ps), coef(m_ps_g), atol = 1e-10)
 
         # ts() — thin plate with shrinkage
@@ -123,25 +141,25 @@
 
     @testset "te() in @formula" begin
         m = gam(@formula(y ~ te(x, x2)), df)
-        m_g = gam(@gam_formula(y ~ te(x, x2)), df)
+        m_g = gam(@formulak(y ~ te(x, x2)), df)
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
     end
 
     @testset "ti() in @formula" begin
         m = gam(@formula(y ~ ti(x, x2)), df)
-        m_g = gam(@gam_formula(y ~ ti(x, x2)), df)
+        m_g = gam(@formulak(y ~ ti(x, x2)), df)
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
     end
 
     @testset "t2() in @formula" begin
         m = gam(@formula(y ~ t2(x, x2)), df)
-        m_g = gam(@gam_formula(y ~ t2(x, x2)), df)
+        m_g = gam(@formulak(y ~ t2(x, x2)), df)
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
     end
 
     @testset "te() with positional k" begin
         m = gam(@formula(y ~ te(x, x2, 8)), df)
-        m_g = gam(@gam_formula(y ~ te(x, x2, k = 8)), df)
+        m_g = gam(@formulak(y ~ te(x, x2, k = 8)), df)
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
     end
 
@@ -164,7 +182,7 @@
         df.count = rand.(rng, Poisson.(exp.(0.5 .* sin.(x))))
 
         m = gam(@formula(count ~ s(x)), df; family = Poisson())
-        m_g = gam(@gam_formula(count ~ s(x)), df; family = Poisson())
+        m_g = gam(@formulak(count ~ s(x)), df; family = Poisson())
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)
     end
 
@@ -226,21 +244,21 @@
         @test all(c -> startswith(c, "s(x,bs=tp)"), cn)
     end
 
-    @testset "@formula vs @gam_formula fitted values" begin
+    @testset "@formula vs @formulak fitted values" begin
         m1 = gam(@formula(y ~ s(x)), df)
-        m2 = gam(@gam_formula(y ~ s(x)), df)
+        m2 = gam(@formulak(y ~ s(x)), df)
         @test cor(fitted(m1), fitted(m2)) > 0.999
 
         m3 = gam(@formula(y ~ s(x, 15)), df)
-        m4 = gam(@gam_formula(y ~ s(x, k = 15)), df)
+        m4 = gam(@formulak(y ~ s(x, k = 15)), df)
         @test cor(fitted(m3), fitted(m4)) > 0.999
 
         m5 = gam(@formula(y ~ te(x, x2)), df)
-        m6 = gam(@gam_formula(y ~ te(x, x2)), df)
+        m6 = gam(@formulak(y ~ te(x, x2)), df)
         @test cor(fitted(m5), fitted(m6)) > 0.999
 
         m7 = gam(@formula(y ~ s(x) + s(x2)), df)
-        m8 = gam(@gam_formula(y ~ s(x) + s(x2)), df)
+        m8 = gam(@formulak(y ~ s(x) + s(x2)), df)
         @test cor(fitted(m7), fitted(m8)) > 0.999
     end
 

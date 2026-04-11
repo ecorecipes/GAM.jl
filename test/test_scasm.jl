@@ -74,7 +74,7 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
     @testset "constrained gam fit converges" begin
         y = exp.(1.5 .* x) .+ 0.05 .* randn(rng, n)
         df = DataFrame(x = x, y = y)
-        m = gam(@gam_formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 12)), df)
+        m = gam(@formulak(y ~ s(x, bs = :sc, xt = ["m+"], k = 12)), df)
         @test m isa GamModel
         @test m.converged
         @test cor(m.fitted_values, y) > 0.95
@@ -83,7 +83,7 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
     @testset "gam auto-dispatches to linear-constraint backend" begin
         y = exp.(1.2 .* x) .+ 0.05 .* randn(rng, n)
         df = DataFrame(x = x, y = y)
-        m = gam(@gam_formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 12)), df)
+        m = gam(@formulak(y ~ s(x, bs = :sc, xt = ["m+"], k = 12)), df)
         @test m isa GamModel
         @test m.converged
         @test cor(m.fitted_values, y) > 0.95
@@ -92,7 +92,7 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
     @testset "constrained gam validates control, method, and start" begin
         y = exp.(0.9 .* x) .+ 0.05 .* randn(rng, n)
         df = DataFrame(x = x, y = y)
-        f = @gam_formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 12))
+        f = @formulak(y ~ s(x, bs = :sc, xt = ["m+"], k = 12))
 
         @test_throws DimensionMismatch gam(f, df; start = zeros(3))
         @test_throws ArgumentError gam(f, df; control = gam_control(sp_optimizer = :newton))
@@ -109,7 +109,7 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
     @testset "positive smooth fit remains nonnegative" begin
         y = 0.5 .+ x .^ 2 .+ 0.03 .* randn(rng, n)
         df = DataFrame(x = x, y = y)
-        m = gam(@gam_formula(y ~ 0 + s(x, bs = :sc, xt = ["+"], k = 12)), df)
+        m = gam(@formulak(y ~ 0 + s(x, bs = :sc, xt = ["+"], k = 12)), df)
         @test m isa GamModel
         @test m.converged
         @test minimum(m.fitted_values) > -1e-6
@@ -120,7 +120,7 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
         y = Float64[rand(rng, NegativeBinomial(3.0, 3.0 / (3.0 + m))) for m in μ]
         df = DataFrame(x = x, y = y)
         m, stderr_text = capture_stderr_text() do
-            gam(@gam_formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 12)), df;
+            gam(@formulak(y ~ s(x, bs = :sc, xt = ["m+"], k = 12)), df;
                 family = NegBinFamily(theta = 3.0, estimate_theta = false))
         end
         @test m isa GamModel
@@ -138,8 +138,8 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
         y = μ .+ σ .* randn(gamlss_rng, n)
         df = DataFrame(x = xg, y = y)
         formulas = [
-            @gam_formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 12)),
-            @gam_formula(y ~ 1),
+            @formulak(y ~ s(x, bs = :sc, xt = ["m+"], k = 12)),
+            @formulak(y ~ 1),
         ]
         ctrl = gamlss_control(n_cyc = 50, i_cyc = 100, c_crit = 1e-4)
 

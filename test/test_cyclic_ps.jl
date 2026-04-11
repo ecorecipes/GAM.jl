@@ -103,7 +103,7 @@ using StatsAPI: predict
         y = y_true .+ 0.2 .* randn(n)
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, bs = :cps, k = 15)), df)
+        m = gam(@formulak(y ~ s(x, bs = :cps, k = 15)), df)
         @test m.converged
 
         # Correlation with true signal should be high
@@ -123,8 +123,8 @@ using StatsAPI: predict
         y = y_true .+ 0.15 .* randn(n)
         df = DataFrame(x = x, y = y)
 
-        m_cps = gam(@gam_formula(y ~ s(x, bs = :cps, k = 15)), df)
-        m_cc = gam(@gam_formula(y ~ s(x, bs = :cc, k = 15)), df)
+        m_cps = gam(@formulak(y ~ s(x, bs = :cps, k = 15)), df)
+        m_cc = gam(@formulak(y ~ s(x, bs = :cc, k = 15)), df)
 
         @test m_cps.converged
         @test m_cc.converged
@@ -145,7 +145,7 @@ using StatsAPI: predict
         y = sin.(x) .+ 0.1 .* randn(n)
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, bs = :cps, k = 15)), df)
+        m = gam(@formulak(y ~ s(x, bs = :cps, k = 15)), df)
 
         # Predict at points just inside boundaries
         eps_val = 1e-6
@@ -180,12 +180,12 @@ using StatsAPI: predict
         df = DataFrame(x = x, y = y)
 
         # Order 1 penalty
-        m1 = gam(@gam_formula(y ~ s(x, bs = :cps, k = 15, m = 1)), df)
+        m1 = gam(@formulak(y ~ s(x, bs = :cps, k = 15, m = 1)), df)
         @test m1.converged
         @test cor(m1.fitted_values, sin.(x)) > 0.9
 
         # Order 3 penalty
-        m3 = gam(@gam_formula(y ~ s(x, bs = :cps, k = 15, m = 3)), df)
+        m3 = gam(@formulak(y ~ s(x, bs = :cps, k = 15, m = 3)), df)
         @test m3.converged
         @test cor(m3.fitted_values, sin.(x)) > 0.9
     end

@@ -14,7 +14,7 @@ x = sort(rand(n))
 y = sin.(2π .* x) .+ 0.3 .* randn(n)
 df = DataFrame(x = x, y = y)
 
-m = gam(@gam_formula(y ~ s(x, k = 10)), df;
+m = gam(@formulak(y ~ s(x, k = 10)), df;
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 1000,
     nchains = 2)
@@ -113,7 +113,7 @@ becomes one or more Gaussian random-effect blocks (`smm.Zs`).
 GAM.jl also exposes lower-level building blocks for hand-written Turing models:
 
 ```julia
-X, smooths, labels = gam_matrices(@gam_formula(y ~ x + s(x, k = 10)), df)
+X, smooths, labels = gam_matrices(@formulak(y ~ x + s(x, k = 10)), df)
 smm = gam_smooth(:x, df; bs = :cr, k = 10)
 ```
 

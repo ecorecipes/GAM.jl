@@ -349,7 +349,7 @@ end
 # ─── Basis-type convenience functions for @formula ─────────────────────────
 #
 # These let users write `@formula(y ~ cr(x, 20))` instead of needing
-# `@gam_formula(y ~ s(x, k=20, bs=:cr))` for the most common basis types.
+# `@formulak(y ~ s(x, k=20, bs=:cr))` for the most common basis types.
 # Each is a thin wrapper around `s()` with a fixed `bs` argument.
 
 """

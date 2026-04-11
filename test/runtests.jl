@@ -1,5 +1,6 @@
 using Test
 using GAM
+using GAM: @formula
 using DataFrames
 using Distributions
 using StableRNGs
@@ -114,7 +115,7 @@ end
         @test all(isfinite, Xp_new)
 
         df = DataFrame(x = x, z = z, y = y)
-        m = gam(@gam_formula(y ~ s(x, z, bs = :tp, k = 20)), df)
+        m = gam(@formulak(y ~ s(x, z, bs = :tp, k = 20)), df)
         @test m.converged
         pred = predict(m, df; type = :response)
         @test pred ≈ m.fitted_values atol = 1e-8
@@ -339,20 +340,20 @@ end
         @test spec_mixed.basis isa TensorProduct
     end
 
-    @testset "Tensor product @gam_formula integration" begin
+    @testset "Tensor product @formulak integration" begin
         n = 100
         x1 = randn(rng, n)
         x2 = randn(rng, n)
         y = sin.(x1) .* cos.(x2) .+ 0.3 .* randn(rng, n)
         df = DataFrame(x1=x1, x2=x2, y=y)
 
-        # @gam_formula with te()
-        gf = @gam_formula(y ~ te(x1, x2))
+        # @formulak with te()
+        gf = @formulak(y ~ te(x1, x2))
         @test length(gf.smooth_specs) == 1
         @test gf.smooth_specs[1].basis isa TensorProduct
 
-        # @gam_formula with ti()
-        gf_ti = @gam_formula(y ~ ti(x1, x2))
+        # @formulak with ti()
+        gf_ti = @formulak(y ~ ti(x1, x2))
         @test length(gf_ti.smooth_specs) == 1
         @test gf_ti.smooth_specs[1].basis isa TensorInteraction
 
@@ -394,7 +395,7 @@ end
         y = sin.(x) .+ 0.3 .* randn(rng, n)
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, bs=:gp, k=15)), df)
+        m = gam(@formulak(y ~ s(x, bs=:gp, k=15)), df)
         @test m isa GamModel
         @test m.converged
         @test m.n_smooth == 1
@@ -692,7 +693,7 @@ end
         y = Float64[rand(rng_ext, NegativeBinomial(true_theta, true_theta / (true_theta + m))) for m in mu_true]
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 10)), df; family=NegBinFamily(theta=1.0))
+        m = gam(@formulak(y ~ s(x, k = 10)), df; family=NegBinFamily(theta=1.0))
         @test m isa GamModel
         @test m.family isa NegBinFamily
         @test m.converged
@@ -730,7 +731,7 @@ end
         end
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 10)), df; family=BetaFamily(phi=1.0))
+        m = gam(@formulak(y ~ s(x, k = 10)), df; family=BetaFamily(phi=1.0))
         @test m isa GamModel
         @test m.family isa BetaFamily
         @test m.converged
@@ -741,15 +742,15 @@ end
 
     @testset "Quasi family response validation" begin
         bad_count = DataFrame(x=1:6, y=[0.0, 1.0, -1.0, 2.0, 3.0, 1.0])
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x, k = 4)), bad_count;
+        @test_throws ArgumentError gam(@formulak(y ~ s(x, k = 4)), bad_count;
             family=QuasiPoissonFamily())
 
         bad_prop = DataFrame(x=1:6, y=[0.1, 0.2, 1.2, 0.4, 0.5, 0.6])
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x, k = 4)), bad_prop;
+        @test_throws ArgumentError gam(@formulak(y ~ s(x, k = 4)), bad_prop;
             family=QuasiBinomialFamily())
 
         bad_tw = DataFrame(x=1:6, y=[0.0, 0.2, -0.1, 0.5, 1.0, 0.3])
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x, k = 4)), bad_tw;
+        @test_throws ArgumentError gam(@formulak(y ~ s(x, k = 4)), bad_tw;
             family=TweedieFamily(p=1.4))
     end
 
@@ -762,7 +763,7 @@ end
         y = Float64[rand(rng_ext, NegativeBinomial(true_theta, true_theta / (true_theta + m))) for m in mu_true]
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 10)), df; family=QuasiPoissonFamily())
+        m = gam(@formulak(y ~ s(x, k = 10)), df; family=QuasiPoissonFamily())
         @test m isa GamModel
         @test m.family isa QuasiPoissonFamily
         @test m.converged
@@ -781,7 +782,7 @@ end
         y = Float64.(rand(rng_ext, n) .< p_true)
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 12)), df; family=QuasiBinomialFamily())
+        m = gam(@formulak(y ~ s(x, k = 12)), df; family=QuasiBinomialFamily())
         @test m isa GamModel
         @test m.family isa QuasiBinomialFamily
         @test m.converged
@@ -799,7 +800,7 @@ end
         y = Float64[max(rand(rng_ext, Poisson(m)), 0.0) for m in mu_true]
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 10)), df; family=TweedieFamily(p=1.5))
+        m = gam(@formulak(y ~ s(x, k = 10)), df; family=TweedieFamily(p=1.5))
         @test m isa GamModel
         @test m.family isa TweedieFamily
         @test m.deviance_val >= 0
@@ -821,7 +822,7 @@ end
         df = DataFrame(x = x, y = y)
 
         family = TweedieFamily(p = 1.8, estimate_p = true)
-        m = gam(@gam_formula(y ~ s(x, k = 12)), df; family = family)
+        m = gam(@formulak(y ~ s(x, k = 12)), df; family = family)
 
         @test m isa GamModel
         @test m.family isa TweedieFamily
@@ -843,7 +844,7 @@ end
         y = Float64[rand(rng_ext, NegativeBinomial(2.0, 2.0 / (2.0 + m))) for m in mu_true]
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 8)), df; family=NegBinFamily())
+        m = gam(@formulak(y ~ s(x, k = 8)), df; family=NegBinFamily())
         @test nobs(m) == n
         @test length(coef(m)) == size(m.X, 2)
         @test deviance(m) >= 0
@@ -857,7 +858,7 @@ end
         @test occursin("NegativeBinomial", out_str)
         @test occursin("Theta est.", out_str)
 
-        m_q = gam(@gam_formula(y ~ s(x, k = 8)), df; family=QuasiPoissonFamily())
+        m_q = gam(@formulak(y ~ s(x, k = 8)), df; family=QuasiPoissonFamily())
         buf_q = IOBuffer()
         show(buf_q, MIME"text/plain"(), m_q)
         out_quasi = String(take!(buf_q))
@@ -873,7 +874,7 @@ end
         y = Float64[rand(rng_ext, NegativeBinomial(3.0, 3.0 / (3.0 + m))) for m in mu_true]
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 10)), df; family=NegBinFamily())
+        m = gam(@formulak(y ~ s(x, k = 10)), df; family=NegBinFamily())
 
         # Predict on training data
         pred_link = predict(m; type=:link)

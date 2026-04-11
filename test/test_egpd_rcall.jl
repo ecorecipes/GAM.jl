@@ -155,7 +155,7 @@ library(egpd)
         y = Float64.(y_r)
         df = (; y=y)
         m = evgam(
-            [@gam_formula(y ~ 1), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+            [@formulak(y ~ 1), @formulak(y ~ 1), @formulak(y ~ 1)],
             df, EGPD1Family()
         )
 
@@ -176,7 +176,7 @@ library(egpd)
         y3 = Float64.(y_r3)
         df3 = (; y=y3)
         m3 = evgam(
-            [@gam_formula(y ~ 1), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+            [@formulak(y ~ 1), @formulak(y ~ 1), @formulak(y ~ 1)],
             df3, EGPD3Family()
         )
 
@@ -212,7 +212,7 @@ library(egpd)
         x_jl = Float64.(x)
         df = (; y=y_jl, x=x_jl)
         m = evgam(
-            [@gam_formula(y ~ s(x, bs=:cr, k=8)), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x, bs=:cr, k=8)), @formulak(y ~ 1), @formulak(y ~ 1)],
             df, EGPD1Family()
         )
 

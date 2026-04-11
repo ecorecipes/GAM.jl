@@ -28,7 +28,7 @@ using StatsAPI: fitted, coef
     f_true = sin.(dat.x)
 
     @testset "Julia SPDE vs R TP baseline: both recover sin(x)" begin
-        m = gam(@gam_formula(y ~ s(x, bs = :spde, k = 30)), dat)
+        m = gam(@formulak(y ~ s(x, bs = :spde, k = 30)), dat)
 
         @test m.converged
 
@@ -53,7 +53,7 @@ using StatsAPI: fitted, coef
         r_spde = CSV.read(spde_path, DataFrame)
 
         @testset "Julia SPDE vs R SPDE (INLA): fitted value correlation" begin
-            m = gam(@gam_formula(y ~ s(x, bs = :spde, k = 30)), dat)
+            m = gam(@formulak(y ~ s(x, bs = :spde, k = 30)), dat)
 
             # The mesh construction differs (INLA uses degree-2 splines on a
             # different mesh), so exact match is not expected.  But both should

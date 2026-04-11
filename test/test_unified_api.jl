@@ -8,7 +8,7 @@
         y = 3.0 .* x .+ 0.2 .* randn(n)
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, bs=:mpi, k=10)), df)
+        m = gam(@formulak(y ~ s(x, bs=:mpi, k=10)), df)
         @test m.converged || m.deviance_val < 20.0
 
         # Check monotonicity
@@ -24,8 +24,8 @@
         y = 3.0 .* x .+ 0.2 .* randn(n)
         df = DataFrame(x=x, y=y)
 
-        m_gam = gam(@gam_formula(y ~ s(x, bs=:mpi, k=10)), df)
-        m_scam = scam(@gam_formula(y ~ s(x, bs=:mpi, k=10)), df)
+        m_gam = gam(@formulak(y ~ s(x, bs=:mpi, k=10)), df)
+        m_scam = scam(@formulak(y ~ s(x, bs=:mpi, k=10)), df)
 
         @test m_gam.deviance_val ≈ m_scam.deviance_val atol=1e-6
         @test m_gam.fitted_values ≈ m_scam.fitted_values atol=1e-6
@@ -38,7 +38,7 @@
         y = x .^ 2 .+ 0.1 .* randn(n)
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, bs=:cx, k=10)), df)
+        m = gam(@formulak(y ~ s(x, bs=:cx, k=10)), df)
         @test m.deviance_val < 5.0
         @test cor(m.fitted_values, x .^ 2) > 0.98
     end
@@ -50,7 +50,7 @@
         y = sin.(2π .* x) .+ 0.1 .* randn(n)
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x, k=20)), df)
+        m = gam(@formulak(y ~ s(x, k=20)), df)
         @test m.converged
         @test cor(m.fitted_values, sin.(2π .* x)) > 0.95
     end
@@ -64,7 +64,7 @@
         df = DataFrame(x=x, y=y)
 
         # Single formula → replicated for all params
-        m = gam(@gam_formula(y ~ s(x)), df, GammaLocationScale())
+        m = gam(@formulak(y ~ s(x)), df, GammaLocationScale())
         @test m isa GAM.MultiParameterModel
         @test m.converged
     end
@@ -78,7 +78,7 @@
         df = DataFrame(x=x, y=y)
 
         m = gam(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x)), @formulak(y ~ 1)],
             df, GammaLocationScale()
         )
         @test m isa GAM.MultiParameterModel
@@ -92,7 +92,7 @@
         y = sin.(x) .+ 0.3 .* randn(n)
         df = DataFrame(x=x, y=y)
 
-        m = gam(@gam_formula(y ~ s(x)), df, GaussianLS())
+        m = gam(@formulak(y ~ s(x)), df, GaussianLS())
         @test m isa GAM.MultiParameterModel
         @test m.converged
     end
@@ -104,7 +104,7 @@
         y = sin.(x) .+ 0.3 .* randn(n)
         df = DataFrame(x=x, y=y)
 
-        formulas = [@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))]
+        formulas = [@formulak(y ~ s(x)), @formulak(y ~ s(x))]
         m_gam = gam(formulas, df, GaussianLS())
         m_gamlss = gamlss(formulas, df, GaussianLS())
 
@@ -119,7 +119,7 @@
         y = 3.0 .* x .+ 0.2 .* randn(n)
         df = DataFrame(x=x, y=y)
 
-        m = scam(@gam_formula(y ~ s(x, bs=:mpi, k=10)), df)
+        m = scam(@formulak(y ~ s(x, bs=:mpi, k=10)), df)
         @test m.converged || m.deviance_val < 20.0
     end
 
@@ -131,7 +131,7 @@
         df = DataFrame(x=x, y=y)
 
         m = gamlss(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+            [@formulak(y ~ s(x)), @formulak(y ~ s(x))],
             df, GaussianLS()
         )
         @test m.converged

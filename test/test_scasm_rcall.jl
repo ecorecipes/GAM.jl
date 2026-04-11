@@ -6,9 +6,9 @@ function _fit_julia_constrained(x, y, xt, bs::Symbol; family = Normal(), interce
     df = DataFrame(x = x, y = y)
 
     if intercept
-        f = @gam_formula(y ~ s(x, bs = bs, xt = xt, k = 10))
+        f = @formulak(y ~ s(x, bs = bs, xt = xt, k = 10))
     else
-        f = @gam_formula(y ~ 0 + s(x, bs = bs, xt = xt, k = 10))
+        f = @formulak(y ~ 0 + s(x, bs = bs, xt = xt, k = 10))
     end
 
     if family isa Normal

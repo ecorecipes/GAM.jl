@@ -82,8 +82,8 @@ end
     data = CSV.read(joinpath(REFDIR_RG, "gamlss_rgamlss_no_data.csv"), DataFrame)
 
     # pb(x, inter=20, degree=3) → 23 basis;  pb(x, inter=8, degree=3) → 11 basis
-    f_mu    = @gam_formula(y ~ s(x, k = 23, bs = :ps))
-    f_sigma = @gam_formula(y ~ s(x, k = 11, bs = :ps))
+    f_mu    = @formulak(y ~ s(x, k = 23, bs = :ps))
+    f_sigma = @formulak(y ~ s(x, k = 11, bs = :ps))
 
     @testset "RS + EFS vs pb(method=ML)" begin
         ref_fit = CSV.read(joinpath(REFDIR_RG, "gamlss_rgamlss_no_fitted.csv"), DataFrame)
@@ -140,8 +140,8 @@ end
 @testset "GammaLS (GA)" begin
     data = CSV.read(joinpath(REFDIR_RG, "gamlss_rgamlss_ga_data.csv"), DataFrame)
 
-    f_mu    = @gam_formula(y ~ s(x, k = 23, bs = :ps))
-    f_sigma = @gam_formula(y ~ s(x, k = 11, bs = :ps))
+    f_mu    = @formulak(y ~ s(x, k = 23, bs = :ps))
+    f_sigma = @formulak(y ~ s(x, k = 11, bs = :ps))
 
     @testset "RS + EFS vs pb(method=ML)" begin
         ref_fit = CSV.read(joinpath(REFDIR_RG, "gamlss_rgamlss_ga_fitted.csv"), DataFrame)

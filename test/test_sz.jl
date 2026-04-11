@@ -90,7 +90,7 @@ const rng_sz = StableRNG(456)
         y = f .+ 0.3 .* randn(rng_sz, n)
 
         df = DataFrame(x=x, group=group, y=y)
-        m = gam(@gam_formula(y ~ s(x, group, bs = :sz, k = 8)), df)
+        m = gam(@formulak(y ~ s(x, group, bs = :sz, k = 8)), df)
 
         @test m isa GamModel
         @test m.converged
@@ -107,7 +107,7 @@ const rng_sz = StableRNG(456)
         y = f .+ 0.2 .* randn(rng_sz, n)
 
         df = DataFrame(x=x, group=group, y=y)
-        m = gam(@gam_formula(y ~ s(x, group, bs = :sz, k = 8)), df)
+        m = gam(@formulak(y ~ s(x, group, bs = :sz, k = 8)), df)
 
         # Predict for each group separately
         x_new = range(-1.5, 1.5; length=50) |> collect

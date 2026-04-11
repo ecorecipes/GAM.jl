@@ -35,7 +35,7 @@ using Statistics
         # Fit in Julia with same data
         df = DataFrame(y=Float64.(y_r))
         m_j = evgam(
-            [@gam_formula(y ~ 1), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+            [@formulak(y ~ 1), @formulak(y ~ 1), @formulak(y ~ 1)],
             df, GEVFamily()
         )
 
@@ -78,9 +78,9 @@ using Statistics
 
         df = DataFrame(y=Float64.(y_r), x=Float64.(x_r))
         m_j = evgam(
-            [@gam_formula(y ~ s(x, bs=:cr, k=10)),
-             @gam_formula(y ~ 1),
-             @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x, bs=:cr, k=10)),
+             @formulak(y ~ 1),
+             @formulak(y ~ 1)],
             df, GEVFamily()
         )
 
@@ -119,7 +119,7 @@ using Statistics
 
         df = DataFrame(y=Float64.(y_r))
         m_j = evgam(
-            [@gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+            [@formulak(y ~ 1), @formulak(y ~ 1)],
             df, GPDFamily()
         )
 
@@ -157,8 +157,8 @@ using Statistics
 
         df = DataFrame(y=Float64.(y_r), x=Float64.(x_r))
         m_j = evgam(
-            [@gam_formula(y ~ s(x, bs=:cr, k=8)),
-             @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x, bs=:cr, k=8)),
+             @formulak(y ~ 1)],
             df, GPDFamily()
         )
 

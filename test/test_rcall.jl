@@ -90,7 +90,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df; method = :REML)
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df; method = :REML)
 
         # CR basis should give near-exact matches
         @test m.edf_total ≈ rs[:edf] atol = 0.05
@@ -117,7 +117,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :tp)), df; method = :REML)
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :tp)), df; method = :REML)
 
         # TPRS basis construction may differ slightly; check statistical equivalence
         @test abs(m.edf_total - rs[:edf]) < 1.0
@@ -142,7 +142,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :ps)), df; method = :REML)
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :ps)), df; method = :REML)
 
         @test abs(m.edf_total - rs[:edf]) < 1.5
         @test abs(m.deviance_val - rs[:deviance]) / rs[:deviance] < 0.05
@@ -168,7 +168,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x1 = r_x1, x2 = r_x2, y = r_y)
-        m = gam(@gam_formula(y ~ s(x1, k = 12, bs = :cr) + s(x2, k = 10, bs = :cr)),
+        m = gam(@formulak(y ~ s(x1, k = 12, bs = :cr) + s(x2, k = 10, bs = :cr)),
             df; method = :REML)
 
         @test m.edf_total ≈ rs[:edf] atol = 0.1
@@ -195,7 +195,7 @@ end
         r_y = rcopy(R"as.numeric(y)")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df;
             family = Poisson(), link = LogLink(), method = :REML)
 
         @test abs(m.edf_total - rs[:edf]) < 2.0
@@ -221,7 +221,7 @@ end
         r_y = rcopy(R"as.numeric(y)")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df;
             family = Binomial(), link = LogitLink(), method = :REML)
 
         @test abs(m.edf_total - rs[:edf]) < 2.0
@@ -248,7 +248,7 @@ end
         r_y = rcopy(R"as.numeric(y)")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df;
             family = QuasiPoissonFamily(), link = LogLink(), method = :REML)
 
         @test abs(m.edf_total - rs[:edf]) < 4.0
@@ -282,7 +282,7 @@ end
         r_w = rcopy(R"as.numeric(w)")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df;
             family = QuasiBinomialFamily(), link = LogitLink(),
             weights = r_w, method = :REML)
 
@@ -311,7 +311,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df;
             family = Gamma(), link = LogLink(), method = :REML)
 
         @test abs(m.edf_total - rs[:edf]) < 2.0
@@ -370,7 +370,7 @@ end
         y = simulate_tweedie_rcall(rng_tw, mu_true, true_p, true_phi)
 
         df = DataFrame(x = x, y = y)
-        m = gam(@gam_formula(y ~ s(x, k = 12, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 12, bs = :cr)), df;
             family = TweedieFamily(p = true_p), method = :REML)
 
         R"""
@@ -407,7 +407,7 @@ end
         r_tw_fit = rcopy(R"as.numeric(r_tw_fit)")
 
         df = DataFrame(x=x, y=y)
-        m = gam(@gam_formula(y ~ s(x, k = 12, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 12, bs = :cr)), df;
             family = TweedieFamily(p = 1.8, estimate_p = true), method = :REML)
 
         @test m.converged
@@ -504,7 +504,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 20, bs = :cr)), df; method = :REML)
+        m = gam(@formulak(y ~ s(x, k = 20, bs = :cr)), df; method = :REML)
 
         # Scale should be close to true variance 0.25
         @test m.scale ≈ rs[:scale] atol = 0.005
@@ -531,7 +531,7 @@ end
         r_xnew = rcopy(R"x_new")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df; method = :REML)
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df; method = :REML)
 
         # Build prediction matrix at new points
         sm = m.smooths[1]
@@ -562,7 +562,7 @@ end
         r_f = rcopy(R"f")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 30, bs = :cr)), df; method = :REML)
+        m = gam(@formulak(y ~ s(x, k = 30, bs = :cr)), df; method = :REML)
 
         # Both should recover the true function well
         rmse_r = sqrt(mean((rs[:fitted] .- r_f) .^ 2))
@@ -592,7 +592,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 20, bs = :cr)), df; method = :REML)
+        m = gam(@formulak(y ~ s(x, k = 20, bs = :cr)), df; method = :REML)
 
         @test abs(m.edf_total - rs[:edf]) < 0.5
         @test abs(m.deviance_val - rs[:deviance]) / rs[:deviance] < 0.01
@@ -619,7 +619,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x1 = r_x1, x2 = r_x2, y = r_y)
-        m = gam(@gam_formula(y ~ s(x1, k = 12, bs = :cr) + s(x2, k = 8, bs = :cr)),
+        m = gam(@formulak(y ~ s(x1, k = 12, bs = :cr) + s(x2, k = 8, bs = :cr)),
             df; method = :REML)
 
         r_edf_per = rs[:edf_per]
@@ -649,7 +649,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df; method = :REML)
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df; method = :REML)
 
         # Gaussian deviance residuals = y - mu
         j_resid = r_y .- m.fitted_values
@@ -674,7 +674,7 @@ end
         r_y = rcopy(R"y")
 
         df = DataFrame(x = r_x, y = r_y)
-        m = bam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df;
+        m = bam(@formulak(y ~ s(x, k = 15, bs = :cr)), df;
             bam_ctrl = bam_control(chunk_size = 1000))
 
         # Fitted values should correlate well
@@ -700,7 +700,7 @@ end
         r_y = rcopy(reval("as.numeric(y)"))
 
         df = DataFrame(x = r_x, y = r_y)
-        m = bam(@gam_formula(y ~ s(x, k = 12, bs = :cr)), df;
+        m = bam(@formulak(y ~ s(x, k = 12, bs = :cr)), df;
             family = Poisson(), link = LogLink(),
             bam_ctrl = bam_control(chunk_size = 500))
 
@@ -729,7 +729,7 @@ end
         r_x = rcopy(reval("x"))
         r_y = rcopy(reval("y"))
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 10, bs = :cr)), df)
+        m = gam(@formulak(y ~ s(x, k = 10, bs = :cr)), df)
         gi = ginla(m; nk = 16, nb = 100)
 
         p = size(gi.beta, 1)
@@ -777,7 +777,7 @@ end
         r_x = rcopy(reval("x"))
         r_y = rcopy(reval("as.numeric(y)"))
         df = DataFrame(x = r_x, y = r_y)
-        m = gam(@gam_formula(y ~ s(x, k = 8, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 8, bs = :cr)), df;
             family = Poisson(), link = LogLink())
         gi = ginla(m; nk = 16, nb = 100)
 
