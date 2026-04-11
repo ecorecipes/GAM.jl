@@ -18,7 +18,7 @@ x = range(0, 2π; length=n) |> collect
 y = sin.(x) .+ 0.3 .* randn(n)
 df = DataFrame(x=x, y=y)
 
-m = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+m = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 gc = gam_check(m)
 ```
 
@@ -48,7 +48,7 @@ x2 = randn(n)
 y2 = sin.(x) .+ 0.5 .* x2 .+ 0.3 .* randn(n)
 df2 = DataFrame(x=x, x2=x2, y=y2)
 
-m2 = gam(@gam_formula(y ~ s(x, k=15) + s(x2, k=10)), df2)
+m2 = gam(@formulak(y ~ s(x, k=15) + s(x2, k=10)), df2)
 c = concurvity(m2)
 ```
 
@@ -67,7 +67,7 @@ Wood (2013). This is equivalent to the smooth significance table printed by
 R's `summary.gam()` or `anova.gam(m)` with a single model:
 
 ```julia
-m = gam(@gam_formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
+m = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
 a = anova_gam(m)
 ```
 
@@ -92,8 +92,8 @@ Compare two or more nested GAM models via sequential deviance tests.
 Equivalent to R's `anova(m1, m2, test="F")`:
 
 ```julia
-m_small = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df2)
-m_full = gam(@gam_formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
+m_small = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df2)
+m_full = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
 
 a = anova_gam(m_small, m_full)
 ```
@@ -105,9 +105,9 @@ and p-value.
 You can compare more than two models:
 
 ```julia
-m1 = gam(@gam_formula(y ~ s(x, k=10, bs=:cr)), df2)
-m2 = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df2)
-m3 = gam(@gam_formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
+m1 = gam(@formulak(y ~ s(x, k=10, bs=:cr)), df2)
+m2 = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df2)
+m3 = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
 
 a = anova_gam(m1, m2, m3)
 ```
@@ -129,9 +129,9 @@ mu = exp.(0.5 .* sin.(x) .+ 0.3 .* x2 .+ 0.5)
 counts = Float64.([rand(Poisson(m)) for m in mu])
 df_pois = DataFrame(x=x, x2=x2, y=counts)
 
-m_p1 = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df_pois;
+m_p1 = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df_pois;
     family=Poisson(), link=LogLink())
-m_p2 = gam(@gam_formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df_pois;
+m_p2 = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df_pois;
     family=Poisson(), link=LogLink())
 
 # Uses χ² test automatically for Poisson
@@ -219,7 +219,7 @@ For count data models, computes a rootogram comparing observed and expected
 frequencies:
 
 ```julia
-m_pois = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df_pois;
+m_pois = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df_pois;
     family=Poisson(), link=LogLink())
 rg = rootogram(m_pois)
 ```
@@ -252,8 +252,8 @@ y = sin.(4π .* x1) .+ 0.8 .* x2.^2 .+ 0.3 .* randn(n)
 df = DataFrame(x1=x1, x2=x2, y=y)
 
 # Fit two candidate models
-m1 = gam(@gam_formula(y ~ s(x1, k=20, bs=:cr)), df)
-m2 = gam(@gam_formula(y ~ s(x1, k=20, bs=:cr) + s(x2, k=10, bs=:cr)), df)
+m1 = gam(@formulak(y ~ s(x1, k=20, bs=:cr)), df)
+m2 = gam(@formulak(y ~ s(x1, k=20, bs=:cr) + s(x2, k=10, bs=:cr)), df)
 
 # 1. Check model adequacy
 gc = gam_check(m2)
@@ -297,7 +297,7 @@ x1 = rand(n); x2 = rand(n)
 y = sin.(2π .* x1) .* cos.(2π .* x2) .+ 0.3 .* randn(n)
 df = DataFrame(x1=x1, x2=x2, y=y)
 
-m = gam(@gam_formula(y ~ te(x1, x2, k=10)), df)
+m = gam(@formulak(y ~ te(x1, x2, k=10)), df)
 
 # Basic surface plot
 plot(vis_gam(m; select=1, n_grid=40))

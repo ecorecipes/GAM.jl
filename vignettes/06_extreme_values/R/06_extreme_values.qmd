@@ -202,7 +202,7 @@ The R evgam and Julia GAM.jl `evgam` functions share the same interface structur
 
 | R evgam | Julia GAM.jl |
 |---------|--------------|
-| `evgam(list(y ~ s(x), ~ s(x), ~ 1), family="gev")` | `evgam([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x)), @gam_formula(y ~ 1)], GEVFamily())` |
+| `evgam(list(y ~ s(x), ~ s(x), ~ 1), family="gev")` | `evgam([@formulak(y ~ s(x)), @formulak(y ~ s(x)), @formulak(y ~ 1)], GEVFamily())` |
 | `predict(m)$location` | `param_eta(m, 1)` |
 | `predict(m)$logscale` | `param_eta(m, 2)` |
 | `family = "gev"` | `GEVFamily()` |

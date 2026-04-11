@@ -163,7 +163,7 @@ end
     Random.seed!(42)
     df = DataFrame(x = randn(100), x2 = randn(100), y = randn(100))
 
-    gf = @gam_formula(y ~ x + s(x2, bs = :cr, k = 10))
+    gf = @formulak(y ~ x + s(x2, bs = :cr, k = 10))
     X_para, sms, labels = gam_matrices(gf, df)
 
     @test size(X_para, 1) == 100
@@ -282,12 +282,12 @@ end
 
         # Tight prior on fixed-effect coefficients
         ps_tight = PriorSpec(b = Normal(0, 0.01))
-        m_tight = gam(@gam_formula(y ~ s(x, k = 10)), df;
+        m_tight = gam(@formulak(y ~ s(x, k = 10)), df;
             priors = ps_tight, nsamples = 500, nchains = 1)
 
         # Wide prior on fixed-effect coefficients
         ps_wide = PriorSpec(b = Normal(0, 100))
-        m_wide = gam(@gam_formula(y ~ s(x, k = 10)), df;
+        m_wide = gam(@formulak(y ~ s(x, k = 10)), df;
             priors = ps_wide, nsamples = 500, nchains = 1)
 
         # Tight priors should produce smaller (or equal) coefficient magnitudes on average
@@ -340,6 +340,6 @@ end
     df = DataFrame(x = randn(50), y = randn(50))
 
     # Without priors: works as usual (frequentist)
-    m = gam(@gam_formula(y ~ s(x)), df)
+    m = gam(@formulak(y ~ s(x)), df)
     @test m isa GamModel
 end

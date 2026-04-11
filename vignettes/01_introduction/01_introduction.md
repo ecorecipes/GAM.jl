@@ -80,7 +80,7 @@ We fit a GAM with a cubic regression spline (`bs=:cr`) smooth of `x`
 using 15 basis functions:
 
 ``` julia
-m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df)
+m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df)
 ```
 
     Generalized Additive Model

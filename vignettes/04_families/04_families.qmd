@@ -62,7 +62,7 @@ n = nrow(df_pois)
 ### Fitting the model
 
 ```{julia}
-m_pois = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df_pois;
+m_pois = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_pois;
     family = Poisson(), link = LogLink())
 m_pois
 ```
@@ -124,7 +124,7 @@ x_bin = df_bin.x
 ### Fitting the model
 
 ```{julia}
-m_bin = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df_bin;
+m_bin = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_bin;
     family = Binomial(), link = LogitLink())
 m_bin
 ```
@@ -188,7 +188,7 @@ x_gam = df_gam.x
 We use `Gamma()` with `LogLink()` (log link is more commonly used in practice than the canonical inverse link):
 
 ```{julia}
-m_gam = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df_gam;
+m_gam = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_gam;
     family = Gamma(), link = LogLink())
 m_gam
 ```

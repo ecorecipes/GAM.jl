@@ -40,10 +40,10 @@
         df = DataFrame(x=x, y=y)
 
         # Fit with gam
-        m_gam = gam(@gam_formula(y ~ s(x, k=10, bs=:cr)), df)
+        m_gam = gam(@formulak(y ~ s(x, k=10, bs=:cr)), df)
 
         # Fit with bam (same data, should give similar results)
-        m_bam = bam(@gam_formula(y ~ s(x, k=10, bs=:cr)), df;
+        m_bam = bam(@formulak(y ~ s(x, k=10, bs=:cr)), df;
             bam_ctrl=bam_control(chunk_size=50))
 
         @test m_bam isa GamModel
@@ -68,7 +68,7 @@
         y = sin.(x) .+ 0.3 .* randn(rng_bam, n)
         df = DataFrame(x=x, y=y)
 
-        m = bam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df;
+        m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), df;
             bam_ctrl=bam_control(chunk_size=2000))
 
         @test m isa GamModel
@@ -93,7 +93,7 @@
         y = Float64[rand(rng_bam, Poisson(m)) for m in mu_true]
         df = DataFrame(x=x, y=y)
 
-        m = bam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df;
+        m = bam(@formulak(y ~ s(x, k=15, bs=:cr)), df;
             family=Poisson(), link=LogLink(),
             bam_ctrl=bam_control(chunk_size=1000))
 
@@ -111,7 +111,7 @@
         y = sin.(x1) .+ 0.5 .* x2 .^ 2 .+ 0.3 .* randn(rng_bam, n)
         df = DataFrame(x1=x1, x2=x2, y=y)
 
-        m = bam(@gam_formula(y ~ s(x1, k=10, bs=:cr) + s(x2, k=10, bs=:cr)), df;
+        m = bam(@formulak(y ~ s(x1, k=10, bs=:cr) + s(x2, k=10, bs=:cr)), df;
             bam_ctrl=bam_control(chunk_size=1000))
 
         @test m isa GamModel
@@ -128,7 +128,7 @@
         y = sin.(x) .+ 0.3 .* randn(rng_bam, n)
         df = DataFrame(x=x, y=y)
 
-        m = bam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df;
+        m = bam(@formulak(y ~ s(x, k=15, bs=:cr)), df;
             bam_ctrl=bam_control(chunk_size=500))
 
         @test nobs(m) == n

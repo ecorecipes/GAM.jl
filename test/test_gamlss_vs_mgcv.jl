@@ -77,8 +77,8 @@ end
         ref_sum = read_summary(joinpath(REFDIR, "gamlss_gaulss_cr_summary.csv"))
 
         m = gamlss(
-            [@gam_formula(y ~ s(x, k = 20, bs = :cr)),
-             @gam_formula(y ~ s(x, k = 10, bs = :cr))],
+            [@formulak(y ~ s(x, k = 20, bs = :cr)),
+             @formulak(y ~ s(x, k = 10, bs = :cr))],
             data, GaussianLS(); method = :efs)
 
         @test m.converged
@@ -91,8 +91,8 @@ end
         ref_sum = read_summary(joinpath(REFDIR, "gamlss_gaulss_tp_summary.csv"))
 
         m = gamlss(
-            [@gam_formula(y ~ s(x, k = 20, bs = :tp)),
-             @gam_formula(y ~ s(x, k = 10, bs = :tp))],
+            [@formulak(y ~ s(x, k = 20, bs = :tp)),
+             @formulak(y ~ s(x, k = 10, bs = :tp))],
             data, GaussianLS(); method = :efs)
 
         @test m.converged
@@ -115,8 +115,8 @@ end
         ref_sum = read_summary(joinpath(REFDIR, "gamlss_gammals_cr_summary.csv"))
 
         m = gamlss(
-            [@gam_formula(y ~ s(x, k = 20, bs = :cr)),
-             @gam_formula(y ~ s(x, k = 10, bs = :cr))],
+            [@formulak(y ~ s(x, k = 20, bs = :cr)),
+             @formulak(y ~ s(x, k = 10, bs = :cr))],
             data, GammaLS(); method = :efs)
 
         @test m.converged
@@ -129,8 +129,8 @@ end
         ref_sum = read_summary(joinpath(REFDIR, "gamlss_gammals_tp_summary.csv"))
 
         m = gamlss(
-            [@gam_formula(y ~ s(x, k = 20, bs = :tp)),
-             @gam_formula(y ~ s(x, k = 10, bs = :tp))],
+            [@formulak(y ~ s(x, k = 20, bs = :tp)),
+             @formulak(y ~ s(x, k = 10, bs = :tp))],
             data, GammaLS(); method = :efs)
 
         @test m.converged

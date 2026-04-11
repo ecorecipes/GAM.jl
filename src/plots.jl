@@ -32,7 +32,7 @@ Create a plot specification for a fitted GAM. Requires `using Plots`.
 # Example
 ```julia
 using Plots
-m = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df)
+m = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df)
 plot(gamplot(m; se=true, residuals=true))
 ```
 """

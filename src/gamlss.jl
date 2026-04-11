@@ -721,7 +721,7 @@ NegBinLS() = NegativeBinomialLocationScale()
 Fit a Generalized Additive Model for Location, Scale, and Shape (GAMLSS).
 
 # Arguments
-- `formulas`: vector of `@gam_formula`, one per distribution parameter.
+- `formulas`: vector of `@formulak`, one per distribution parameter.
   A single formula is replicated for all parameters.
 - `data`: a table (DataFrame, etc.)
 - `family`: a distribution or family:
@@ -744,23 +744,23 @@ Fit a Generalized Additive Model for Location, Scale, and Shape (GAMLSS).
 using GAM, DataFrames, Distributions, GLM
 
 # Normal — pass Distributions.jl type directly, links specified separately
-m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+m = gamlss([@formulak(y ~ s(x)), @formulak(y ~ s(x))],
            df, Normal())
 
 # Normal with custom links
-m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+m = gamlss([@formulak(y ~ s(x)), @formulak(y ~ s(x))],
            df, Normal(); links=[IdentityLink(), IdentityLink()])
 
 # Gamma — reparameterized (μ, σ=CV), links in constructor
-m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+m = gamlss([@formulak(y ~ s(x)), @formulak(y ~ s(x))],
            df, GammaLocationScale())
 
 # Beta regression
-m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+m = gamlss([@formulak(y ~ s(x)), @formulak(y ~ 1)],
            df, BetaRegression())
 
 # GEV extreme value (MultiParameterFamily passed through)
-m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1), @gam_formula(y ~ 1)],
+m = gamlss([@formulak(y ~ s(x)), @formulak(y ~ 1), @formulak(y ~ 1)],
            df, GEVFamily())
 ```
 """

@@ -24,42 +24,42 @@ Random.seed!(123)
         y_nan = copy(y_good)
         y_nan[5] = NaN
         df_nan = DataFrame(x = collect(x), y = y_nan)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_nan)
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_nan)
     end
 
     @testset "Response: Inf values" begin
         y_inf = copy(y_good)
         y_inf[10] = Inf
         df_inf = DataFrame(x = collect(x), y = y_inf)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_inf)
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_inf)
     end
 
     @testset "Response: negative Inf" begin
         y_neginf = copy(y_good)
         y_neginf[3] = -Inf
         df_neginf = DataFrame(x = collect(x), y = y_neginf)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_neginf)
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_neginf)
     end
 
     @testset "Response: Poisson requires non-negative" begin
         y_neg = abs.(y_good)
         y_neg[1] = -1.0
         df_neg = DataFrame(x = collect(x), y = y_neg)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_neg; family = Poisson())
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_neg; family = Poisson())
     end
 
     @testset "Response: Gamma requires positive" begin
         y_zero = abs.(y_good) .+ 0.1
         y_zero[1] = 0.0
         df_zero = DataFrame(x = collect(x), y = y_zero)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_zero; family = Gamma())
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_zero; family = Gamma())
     end
 
     @testset "Response: InverseGaussian requires positive" begin
         y_zero = abs.(y_good) .+ 0.1
         y_zero[1] = -0.5
         df_zero = DataFrame(x = collect(x), y = y_zero)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_zero;
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_zero;
             family = InverseGaussian())
     end
 
@@ -67,7 +67,7 @@ Random.seed!(123)
         y_bin = rand(n)
         y_bin[1] = 1.5
         df_bin = DataFrame(x = collect(x), y = y_bin)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_bin;
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_bin;
             family = Binomial())
     end
 
@@ -75,7 +75,7 @@ Random.seed!(123)
         y_bern = Float64.(rand([0, 1], n))
         y_bern[1] = -0.1
         df_bern = DataFrame(x = collect(x), y = y_bern)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_bern;
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_bern;
             family = Bernoulli())
     end
 
@@ -83,15 +83,15 @@ Random.seed!(123)
     # Formula validation
     # ====================================================================
     @testset "Formula: missing smooth variable" begin
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(z)), df_good)
+        @test_throws ArgumentError gam(@formulak(y ~ s(z)), df_good)
     end
 
     @testset "Formula: missing by variable" begin
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x, by = :nonexistent)), df_good)
+        @test_throws ArgumentError gam(@formulak(y ~ s(x, by = :nonexistent)), df_good)
     end
 
     @testset "Formula: missing response" begin
-        @test_throws ArgumentError gam(@gam_formula(z ~ s(x)), df_good)
+        @test_throws ArgumentError gam(@formulak(z ~ s(x)), df_good)
     end
 
     @testset "Formula: no smooths warning" begin
@@ -128,14 +128,14 @@ Random.seed!(123)
         x_nan = collect(x)
         x_nan[5] = NaN
         df_xnan = DataFrame(x = x_nan, y = y_good)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_xnan)
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_xnan)
     end
 
     @testset "Smooth data: Inf in predictor" begin
         x_inf = collect(x)
         x_inf[5] = Inf
         df_xinf = DataFrame(x = x_inf, y = y_good)
-        @test_throws ArgumentError gam(@gam_formula(y ~ s(x)), df_xinf)
+        @test_throws ArgumentError gam(@formulak(y ~ s(x)), df_xinf)
     end
 
     # ====================================================================
@@ -186,20 +186,20 @@ Random.seed!(123)
     # GAMLSS validation
     # ====================================================================
     @testset "GAMLSS: wrong number of formulas" begin
-        gf1 = @gam_formula(y ~ s(x))
+        gf1 = @formulak(y ~ s(x))
         @test_throws ArgumentError GAM._validate_gamlss_formulas(
             [gf1, gf1, gf1],  # 3 formulas
             GammaLocationScale())  # expects 2
     end
 
     @testset "GAMLSS: correct number of formulas passes" begin
-        gf1 = @gam_formula(y ~ s(x))
+        gf1 = @formulak(y ~ s(x))
         # Should not throw
         GAM._validate_gamlss_formulas([gf1, gf1], GammaLocationScale())
     end
 
     @testset "GAMLSS: single formula is replicated (no error)" begin
-        gf1 = @gam_formula(y ~ s(x))
+        gf1 = @formulak(y ~ s(x))
         # Single formula should not throw (it gets replicated internally)
         GAM._validate_gamlss_formulas(gf1, GammaLocationScale())
     end
@@ -252,19 +252,19 @@ Random.seed!(123)
     # ====================================================================
     @testset "Valid data passes all validation" begin
         # Normal GAM — should succeed
-        m = gam(@gam_formula(y ~ s(x)), df_good)
+        m = gam(@formulak(y ~ s(x)), df_good)
         @test m isa GAM.GamModel
 
         # Poisson GAM
         y_count = Float64.(rand(Poisson(5), n))
         df_count = DataFrame(x = collect(x), y = y_count)
-        m2 = gam(@gam_formula(y ~ s(x)), df_count; family = Poisson())
+        m2 = gam(@formulak(y ~ s(x)), df_count; family = Poisson())
         @test m2 isa GAM.GamModel
 
         # Binomial GAM
         y_prop = rand(n)
         df_prop = DataFrame(x = collect(x), y = y_prop)
-        m3 = gam(@gam_formula(y ~ s(x)), df_prop; family = Binomial())
+        m3 = gam(@formulak(y ~ s(x)), df_prop; family = Binomial())
         @test m3 isa GAM.GamModel
     end
 end

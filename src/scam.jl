@@ -813,8 +813,8 @@ y = 2 .* x .+ 0.5 .* x.^2 .+ 0.1 .* randn(n)
 df = DataFrame(x=x, y=y)
 
 # These are equivalent:
-m = scam(@gam_formula(y ~ s(x, bs=:mpi, k=10)), df)
-m = gam(@gam_formula(y ~ s(x, bs=:mpi, k=10)), df)
+m = scam(@formulak(y ~ s(x, bs=:mpi, k=10)), df)
+m = gam(@formulak(y ~ s(x, bs=:mpi, k=10)), df)
 ```
 """
 function scam(f::FormulaTerm, data; kwargs...)

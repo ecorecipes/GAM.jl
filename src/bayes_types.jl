@@ -22,7 +22,7 @@ Returns:
 
 # Example
 ```julia
-X, sms, labels = gam_matrices(@gam_formula(y ~ x1 + s(x2, k=20)), data)
+X, sms, labels = gam_matrices(@formulak(y ~ x1 + s(x2, k=20)), data)
 # X is (n × 2) — intercept + x1
 # sms[1].Xf is (n × 1) — s(x2) null space
 # sms[1].Zs[1] is (n × 18) — s(x2) penalized wiggle

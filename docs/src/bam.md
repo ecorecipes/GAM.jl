@@ -46,7 +46,7 @@ ctrl = bam_control(
     trace = true,           # print progress
 )
 
-m = bam(@gam_formula(y ~ s(x, k=20, bs=:cr)), big_df; control=ctrl)
+m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), big_df; control=ctrl)
 ```
 
 ## Examples
@@ -61,7 +61,7 @@ x = rand(n)
 y = sin.(2π .* x) .+ 0.3 .* randn(n)
 df = DataFrame(x=x, y=y)
 
-m = bam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 ```
 
 ### Multiple Smooths
@@ -73,7 +73,7 @@ x2 = rand(n)
 y = sin.(2π .* x1) .+ cos.(2π .* x2) .+ 0.3 .* randn(n)
 df = DataFrame(x1=x1, x2=x2, y=y)
 
-m = bam(@gam_formula(y ~ s(x1, k=20, bs=:cr) + s(x2, k=20, bs=:cr)), df)
+m = bam(@formulak(y ~ s(x1, k=20, bs=:cr) + s(x2, k=20, bs=:cr)), df)
 ```
 
 ### Poisson BAM
@@ -87,7 +87,7 @@ mu = exp.(0.5 .+ sin.(x))
 y = Float64.([rand(Poisson(m)) for m in mu])
 df = DataFrame(x=x, y=y)
 
-m = bam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df;
+m = bam(@formulak(y ~ s(x, k=15, bs=:cr)), df;
     family=Poisson(), link=LogLink())
 ```
 

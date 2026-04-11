@@ -39,7 +39,7 @@
         y = sin.(x) .+ 0.3 .* randn(rng_g, n)
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 10, bs = :cr)), df)
+        m = gam(@formulak(y ~ s(x, k = 10, bs = :cr)), df)
 
         # logf at the fitted coefficients should be at the optimum
         nll_opt, grad_opt = GAM._logf(m.coefficients, m, m.X; deriv = true)
@@ -87,7 +87,7 @@
         y = sin.(x) .+ 0.3 .* randn(rng_g, n)
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 10, bs = :cr)), df)
+        m = gam(@formulak(y ~ s(x, k = 10, bs = :cr)), df)
 
         # Run GINLA
         result = ginla(m; nk = 12, nb = 50)
@@ -119,7 +119,7 @@
         y = sin.(x) .+ 0.3 .* randn(rng_g, n)
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 8, bs = :cr)), df)
+        m = gam(@formulak(y ~ s(x, k = 8, bs = :cr)), df)
 
         # Only compute for first 3 coefficients
         result = ginla(m; A = [1, 2, 3], nk = 10, nb = 40)
@@ -136,7 +136,7 @@
         y = sin.(x) .+ 0.3 .* randn(rng_g, n)
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 8, bs = :cr)), df)
+        m = gam(@formulak(y ~ s(x, k = 8, bs = :cr)), df)
 
         # Test all three approximation levels
         r0 = ginla(m; A = [1, 2], nk = 10, nb = 30, approx = 0)
@@ -165,7 +165,7 @@
         y = Float64[rand(rng_g, Poisson(m)) for m in mu_true]
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, k = 8, bs = :cr)), df;
+        m = gam(@formulak(y ~ s(x, k = 8, bs = :cr)), df;
             family = Poisson(), link = LogLink())
 
         result = ginla(m; A = [1, 2], nk = 10, nb = 40, approx = 1)

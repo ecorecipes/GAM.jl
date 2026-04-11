@@ -159,7 +159,7 @@ const ad_rng = StableRNG(123)
         y = sin.(2.0 .* x) .+ 0.3 .* randn(ad_rng, n)
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, bs = :ad, k = 15)), df)
+        m = gam(@formulak(y ~ s(x, bs = :ad, k = 15)), df)
         @test m.converged
         @test length(m.sp) == 5  # 5 smoothing parameters (one per local penalty)
         @test m.edf_total > 1.0
@@ -179,8 +179,8 @@ const ad_rng = StableRNG(123)
         end
         df = DataFrame(x = x, y = y)
 
-        m_ad = gam(@gam_formula(y ~ s(x, bs = :ad, k = 25)), df)
-        m_ps = gam(@gam_formula(y ~ s(x, bs = :ps, k = 25)), df)
+        m_ad = gam(@formulak(y ~ s(x, bs = :ad, k = 25)), df)
+        m_ps = gam(@formulak(y ~ s(x, bs = :ps, k = 25)), df)
 
         @test m_ad.converged
         @test m_ps.converged
@@ -213,7 +213,7 @@ const ad_rng = StableRNG(123)
         y = sin.(x) .+ 0.2 .* randn(ad_rng, n)
         df = DataFrame(x = x, y = y)
 
-        m = gam(@gam_formula(y ~ s(x, bs = :ad, k = 15)), df)
+        m = gam(@formulak(y ~ s(x, bs = :ad, k = 15)), df)
         @test m.converged
 
         df_new = DataFrame(x = range(-2.0, 2.0, length = 50))

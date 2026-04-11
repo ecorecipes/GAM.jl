@@ -126,7 +126,7 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         y = 3.0 .* x .+ 0.2 .* randn(n)
         df = DataFrame(x = x, y = y)
 
-        m = scam(@gam_formula(y ~ s(x, bs = :mpi, k = 10)), df)
+        m = scam(@formulak(y ~ s(x, bs = :mpi, k = 10)), df)
         @test m.converged || m.deviance_val < 20.0  # may not converge but fits well
 
         # Check monotonicity of predictions
@@ -145,7 +145,7 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         y = 3.0 .- 3.0 .* x .+ 0.2 .* randn(n)
         df = DataFrame(x = x, y = y)
 
-        m = scam(@gam_formula(y ~ s(x, bs = :mpd, k = 10)), df)
+        m = scam(@formulak(y ~ s(x, bs = :mpd, k = 10)), df)
         @test m.deviance_val < 20.0
 
         xp = collect(0.01:0.01:0.99)
@@ -160,7 +160,7 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         y = x .^ 2 .+ 0.1 .* randn(n)
         df = DataFrame(x = x, y = y)
 
-        m = scam(@gam_formula(y ~ s(x, bs = :cx, k = 10)), df)
+        m = scam(@formulak(y ~ s(x, bs = :cx, k = 10)), df)
         @test m.deviance_val < 5.0
         @test cor(m.fitted_values, x .^ 2) > 0.98
     end
@@ -172,7 +172,7 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         y = sqrt.(x) .+ 0.1 .* randn(n)
         df = DataFrame(x = x, y = y)
 
-        m = scam(@gam_formula(y ~ s(x, bs = :cv, k = 10)), df)
+        m = scam(@formulak(y ~ s(x, bs = :cv, k = 10)), df)
         @test m.deviance_val < 10.0
     end
 
@@ -183,17 +183,17 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
 
         # Monotone increasing + convex
         y = x .^ 2 .+ 0.1 .* randn(n)
-        m_micx = scam(@gam_formula(y ~ s(x, bs = :micx, k = 10)), DataFrame(x = x, y = y))
+        m_micx = scam(@formulak(y ~ s(x, bs = :micx, k = 10)), DataFrame(x = x, y = y))
         @test m_micx.deviance_val < 10.0
 
         # Monotone increasing + concave
         y = sqrt.(x) .+ 0.1 .* randn(n)
-        m_micv = scam(@gam_formula(y ~ s(x, bs = :micv, k = 10)), DataFrame(x = x, y = y))
+        m_micv = scam(@formulak(y ~ s(x, bs = :micv, k = 10)), DataFrame(x = x, y = y))
         @test m_micv.deviance_val < 10.0
 
         # Monotone decreasing + concave
         y = -x .^ 2 .+ 0.1 .* randn(n)
-        m_mdcv = scam(@gam_formula(y ~ s(x, bs = :mdcv, k = 10)), DataFrame(x = x, y = y))
+        m_mdcv = scam(@formulak(y ~ s(x, bs = :mdcv, k = 10)), DataFrame(x = x, y = y))
         @test m_mdcv.deviance_val < 10.0
     end
 
@@ -205,7 +205,7 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         y = 1.5 .+ 2.0 .* z .+ log1p.(4 .* x) .+ 0.05 .* randn(n)
         df = DataFrame(x = x, z = z, y = y)
 
-        f = @gam_formula(y ~ z + s(x, bs = :mpi, k = 12))
+        f = @formulak(y ~ z + s(x, bs = :mpi, k = 12))
         m_scam = scam(f, df)
         m_gam = gam(f, df)
 
@@ -233,7 +233,7 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         df = DataFrame(x = x, y = y)
 
         # Using standard cr basis with scam() should fall back to gam()
-        m = scam(@gam_formula(y ~ s(x, bs = :cr, k = 20)), df)
+        m = scam(@formulak(y ~ s(x, bs = :cr, k = 20)), df)
         @test m.converged
         @test cor(m.fitted_values, sin.(2π .* x)) > 0.95
     end

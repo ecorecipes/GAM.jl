@@ -197,11 +197,11 @@ plot(p1, p2; layout=(1, 2), size=(900, 400))
 
 In GAM.jl, `gamm(@gamm_formula(y ~ s(x) + (1|subject)), ...)` is
 mathematically equivalent to
-`gam(@gam_formula(y ~ s(x) + s(subject, bs=:re)), ...)`. Both treat the
+`gam(@formulak(y ~ s(x) + s(subject, bs=:re)), ...)`. Both treat the
 random intercept as a smooth with identity penalty:
 
 ``` julia
-m_gam = gam(@gam_formula(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
+m_gam = gam(@formulak(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
 @printf("Fitted values correlation: %.6f\n", cor(fitted(m), fitted(m_gam)))
 @printf("Scale (gamm): %.6f\n", m.gam_model.scale)
 @printf("Scale (gam):  %.6f\n", m_gam.scale)
@@ -363,7 +363,7 @@ pred_new = predict(m, df_new)
 | Random intercept    | `(1 \| group)` or `re(group)`                         |
 | Gaussian family     | `gamm(formula, data)`                                 |
 | Non-Gaussian        | `gamm(formula, data, Poisson())`                      |
-| Equivalent GAM      | `gam(@gam_formula(y ~ s(x) + s(group, bs=:re)), ...)` |
+| Equivalent GAM      | `gam(@formulak(y ~ s(x) + s(group, bs=:re)), ...)` |
 | Random effects      | `ranef(m)`                                            |
 | Variance components | `VarCorr(m)`                                          |
 | Prediction          | `predict(m, newdata)`                                 |

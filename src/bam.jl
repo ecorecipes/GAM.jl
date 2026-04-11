@@ -664,7 +664,7 @@ smoothing parameter estimation (EFS/REML) but with memory-efficient
 accumulation of X'WX and X'Wz.
 
 # Arguments
-- `formula`: a formula with smooth terms (via `@gam_formula` or `@formula`)
+- `formula`: a formula with smooth terms (via `@formulak` or `@formula`)
 - `data`: a table (DataFrame, NamedTuple of vectors, etc.)
 - `family`: distribution family (default: `Normal()`)
 - `link`: link function (default: canonical link for family)
@@ -687,7 +687,7 @@ y = sin.(x) .+ 0.3 .* randn(n)
 df = DataFrame(x=x, y=y)
 
 # bam is faster than gam for large n
-m = bam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 ```
 """
 function bam(f::FormulaTerm, data;

@@ -27,8 +27,8 @@ Custom families can be created using `DistFamily`.
 
 ```julia
 gamlss([
-    @gam_formula(y ~ s(x1)),
-    @gam_formula(y ~ 1 + s(x2)),
+    @formulak(y ~ s(x1)),
+    @formulak(y ~ 1 + s(x2)),
 ], data, GaussianLS();
     method = :efs,
     gamlss_ctrl = gamlss_control(),
@@ -36,8 +36,8 @@ gamlss([
 ```
 
 Pass a vector of formulas, one per distribution parameter. With
-`@gam_formula`, repeat the response on each entry, e.g.
-`[@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)]`.
+`@formulak`, repeat the response on each entry, e.g.
+`[@formulak(y ~ s(x)), @formulak(y ~ 1)]`.
 
 ## Solvers
 
@@ -72,8 +72,8 @@ df = DataFrame(x=x, y=y)
 
 m = gamlss(
     [
-        @gam_formula(y ~ s(x, k=15, bs=:cr)),  # μ model
-        @gam_formula(y ~ s(x, k=10, bs=:cr)),  # log(σ) model
+        @formulak(y ~ s(x, k=15, bs=:cr)),  # μ model
+        @formulak(y ~ s(x, k=10, bs=:cr)),  # log(σ) model
     ],
     df,
     family=GaussianLS(),
@@ -91,8 +91,8 @@ df = DataFrame(x=x, y=y)
 
 m = gamlss(
     [
-        @gam_formula(y ~ s(x, k=15, bs=:cr)),
-        @gam_formula(y ~ s(x, k=10, bs=:cr)),
+        @formulak(y ~ s(x, k=15, bs=:cr)),
+        @formulak(y ~ s(x, k=10, bs=:cr)),
     ],
     df,
     family=GammaLocationScale(),
@@ -111,8 +111,8 @@ ctrl = gamlss_control(
 
 m = gamlss(
     [
-        @gam_formula(y ~ s(x, k=15)),
-        @gam_formula(y ~ s(x, k=10)),
+        @formulak(y ~ s(x, k=15)),
+        @formulak(y ~ s(x, k=10)),
     ],
     df,
     family=GaussianLS(),

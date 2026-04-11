@@ -51,7 +51,7 @@ x = sort(randn(n))
 y = 2.0 .* atan.(x) .+ 0.3 .* randn(n)   # monotone increasing truth
 df = DataFrame(x=x, y=y)
 
-m = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), df)
+m = scam(@formulak(y ~ s(x, k=15, bs=:mpi)), df)
 ```
 
 ### Convex Fit
@@ -60,7 +60,7 @@ m = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), df)
 y = x.^2 .+ 0.5 .* randn(n)   # convex truth
 df = DataFrame(x=x, y=y)
 
-m = scam(@gam_formula(y ~ s(x, k=15, bs=:cx)), df)
+m = scam(@formulak(y ~ s(x, k=15, bs=:cx)), df)
 ```
 
 ### Combined Constraints
@@ -73,7 +73,7 @@ y = 2.0 .* atan.(x) .+ sin.(x2) .+ 0.3 .* randn(n)
 df = DataFrame(x=x, x2=x2, y=y)
 
 # x must be monotone increasing, x2 is unconstrained
-m = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi) + s(x2, k=10, bs=:cr)), df)
+m = scam(@formulak(y ~ s(x, k=15, bs=:mpi) + s(x2, k=10, bs=:cr)), df)
 ```
 
 ### Monotone Decreasing & Concave
@@ -82,7 +82,7 @@ m = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi) + s(x2, k=10, bs=:cr)), df)
 y = -log.(1.0 .+ exp.(x)) .+ 0.3 .* randn(n)
 df = DataFrame(x=x, y=y)
 
-m = scam(@gam_formula(y ~ s(x, k=15, bs=:mdcv)), df)
+m = scam(@formulak(y ~ s(x, k=15, bs=:mdcv)), df)
 ```
 
 ## ScamControl Options
@@ -94,7 +94,7 @@ ctrl = scam_control(
     trace = true,        # print progress
 )
 
-m = scam(@gam_formula(y ~ s(x, bs=:mpi)), df; control=ctrl)
+m = scam(@formulak(y ~ s(x, bs=:mpi)), df; control=ctrl)
 ```
 
 ## See Also

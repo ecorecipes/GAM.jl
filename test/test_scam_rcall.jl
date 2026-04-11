@@ -46,7 +46,7 @@ R"library(scam)"
         """
         fitted_r = rcopy(R"fitted_r")
 
-        m_jl = scam(@gam_formula(y ~ s(x, bs = :mpi, k = 10)), DataFrame(x = x, y = y))
+        m_jl = scam(@formulak(y ~ s(x, bs = :mpi, k = 10)), DataFrame(x = x, y = y))
         @test cor(m_jl.fitted_values, fitted_r) > 0.999
     end
 
@@ -59,7 +59,7 @@ R"library(scam)"
         """
         fitted_r = rcopy(R"fitted_r")
 
-        m_jl = scam(@gam_formula(y ~ s(x, bs = :mpd, k = 10)), DataFrame(x = x, y = y))
+        m_jl = scam(@formulak(y ~ s(x, bs = :mpd, k = 10)), DataFrame(x = x, y = y))
         @test cor(m_jl.fitted_values, fitted_r) > 0.999
     end
 
@@ -72,7 +72,7 @@ R"library(scam)"
         """
         fitted_r = rcopy(R"fitted_r")
 
-        m_jl = scam(@gam_formula(y ~ s(x, bs = :cx, k = 10)), DataFrame(x = x, y = y))
+        m_jl = scam(@formulak(y ~ s(x, bs = :cx, k = 10)), DataFrame(x = x, y = y))
         @test cor(m_jl.fitted_values, fitted_r) > 0.99
     end
 
@@ -85,7 +85,7 @@ R"library(scam)"
         """
         fitted_r = rcopy(R"fitted_r")
 
-        m_jl = scam(@gam_formula(y ~ s(x, bs = :cv, k = 10)), DataFrame(x = x, y = y))
+        m_jl = scam(@formulak(y ~ s(x, bs = :cv, k = 10)), DataFrame(x = x, y = y))
         @test cor(m_jl.fitted_values, fitted_r) > 0.99
     end
 
@@ -98,7 +98,7 @@ R"library(scam)"
         """
         fitted_r = rcopy(R"fitted_r")
 
-        m_jl = scam(@gam_formula(y ~ s(x, bs = :micx, k = 10)), DataFrame(x = x, y = y))
+        m_jl = scam(@formulak(y ~ s(x, bs = :micx, k = 10)), DataFrame(x = x, y = y))
         @test cor(m_jl.fitted_values, fitted_r) > 0.99
     end
 
@@ -111,7 +111,7 @@ R"library(scam)"
         """
         fitted_r = rcopy(R"fitted_r")
 
-        m_jl = scam(@gam_formula(y ~ s(x, bs = :mdcv, k = 10)), DataFrame(x = x, y = y))
+        m_jl = scam(@formulak(y ~ s(x, bs = :mdcv, k = 10)), DataFrame(x = x, y = y))
         @test cor(m_jl.fitted_values, fitted_r) > 0.99
     end
 
@@ -125,7 +125,7 @@ R"library(scam)"
         """
         fitted_r = rcopy(R"fitted_r")
 
-        m_jl = scam(@gam_formula(y_f ~ s(x, bs = :mpi, k = 10)),
+        m_jl = scam(@formulak(y_f ~ s(x, bs = :mpi, k = 10)),
             DataFrame(x = x, y_f = y_f); family = Poisson())
         @test cor(m_jl.fitted_values, fitted_r) > 0.99
     end
