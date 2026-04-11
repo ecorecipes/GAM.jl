@@ -19,6 +19,7 @@ end
 
 # Populated after basis-alias definitions in smoothspec.jl
 const _SMOOTH_ALIASES = Set{Function}()
+const _RAW_SMOOTH_FUNCTION_NAMES = (:s, :te, :ti, :t2, :cr, :tp, :ts, :cs, :cc, :ps, :cps)
 
 """
     _functionterm_to_smoothspec(ft::FunctionTerm) → SmoothSpec
@@ -173,12 +174,25 @@ function _has_keyword_smooth_syntax(ex)
     if ex isa Expr
         if ex.head == :call
             fname = ex.args[1]
-            if fname in (:s, :te, :ti, :t2)
+            if fname isa Symbol && fname in _RAW_SMOOTH_FUNCTION_NAMES
                 any(arg -> arg isa Expr && (arg.head == :parameters || arg.head == :kw),
                     ex.args[2:end]) && return true
             end
         end
         return any(_has_keyword_smooth_syntax, ex.args)
+    end
+    return false
+end
+
+function _has_gamm_syntax(ex)
+    if ex isa Expr
+        if ex.head == :call
+            fname = ex.args[1]
+            if fname == :(|) || fname == :re
+                return true
+            end
+        end
+        return any(_has_gamm_syntax, ex.args)
     end
     return false
 end
@@ -200,8 +214,30 @@ macro formulak(ex)
     return _formulak_expr(ex)
 end
 
+"""
+    @formula(ex)
+
+GAM-aware wrapper around StatsModels' `@formula`.
+
+- Ordinary formulas continue to use the standard StatsModels path.
+- Formulas containing keyword smooth terms such as `s(x, k=15, bs=:cr)` are
+  diverted to [`@formulak`](@ref).
+- Formulas containing GAMM random-effect syntax such as `(1 | group)` or
+  `re(group)` are diverted to the GAMM parser, so keyword smooths and random
+  effects work together under a single macro.
+
+# Examples
+```julia
+@formula(y ~ x1 + x2)
+@formula(y ~ s(x, k=15, bs=:cr))
+@formula(y ~ s(x, k=10) + (1 | subject))
+@formula(y ~ s(x, k=10) + re(subject))
+```
+"""
 macro formula(ex)
-    if _has_keyword_smooth_syntax(ex)
+    if _has_gamm_syntax(ex)
+        return _gamm_formula_expr(ex)
+    elseif _has_keyword_smooth_syntax(ex)
         return _formulak_expr(ex)
     end
     return Expr(:macrocall, GlobalRef(StatsModels, Symbol("@formula")), __source__, ex)
@@ -224,8 +260,8 @@ function _parse_gam_rhs!(ex, parametric, smooth_calls, has_intercept)
                     _parse_gam_rhs!(ex.args[i], parametric, smooth_calls,
                         has_intercept)
                 end
-            elseif fname in (:s, :te, :ti, :t2)
-                # Extract s(x, k=15, bs=:cr) → s(:x; k=15, bs=:cr)
+            elseif fname isa Symbol && fname in _RAW_SMOOTH_FUNCTION_NAMES
+                # Extract cr(x, 15) / s(x, k=15, bs=:cr) → GAM.cr(:x; k=15) / GAM.s(:x; ...)
                 push!(smooth_calls.args, _build_smooth_call(ex))
             else
                 # Other function calls go to parametric as-is
@@ -372,9 +408,11 @@ function _build_parametric_matrix(f::FormulaTerm, t)
 end
 
 function _build_smooth_call(ex::Expr)
-    fname = ex.args[1]  # :s, :te, or :ti
+    fname = ex.args[1]
     pos_args = Any[]
     kw_args = Any[]
+    k_pos = nothing
+    has_k_kw = false
 
     for i in 2:length(ex.args)
         arg = ex.args[i]
@@ -382,18 +420,24 @@ function _build_smooth_call(ex::Expr)
             push!(pos_args, QuoteNode(arg))
         elseif arg isa Expr && arg.head == :kw
             push!(kw_args, Expr(:kw, arg.args[1], arg.args[2]))
+            has_k_kw |= arg.args[1] == :k
         elseif arg isa Expr && arg.head == :parameters
             for kw in arg.args
                 if kw isa Expr && kw.head == :kw
                     push!(kw_args, Expr(:kw, kw.args[1], kw.args[2]))
+                    has_k_kw |= kw.args[1] == :k
                 end
             end
         elseif arg isa Integer
-            # Positional integer — could be k value in s(x, 15)
-            push!(pos_args, arg)
+            # Positional integer is treated as k, matching StatsModels FunctionTerm parsing.
+            k_pos = arg
         else
             push!(pos_args, arg)
         end
+    end
+
+    if k_pos !== nothing && !has_k_kw
+        push!(kw_args, Expr(:kw, :k, k_pos))
     end
 
     # Qualify the smooth constructor (s, te, ti) with GAM module

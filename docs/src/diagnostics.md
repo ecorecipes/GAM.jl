@@ -3,23 +3,27 @@
 GAM.jl provides comprehensive model diagnostics inspired by mgcv's built-in
 checks and the [gratia](https://gavinsimpson.github.io/gratia/) R package.
 
+```@setup diagnostics
+using GAM, DataFrames, Random, Distributions, Plots
+using GLM: LogLink
+Random.seed!(42)
+
+n = 180
+x = range(0, 2π; length=n) |> collect
+y = sin.(x) .+ 0.3 .* randn(n)
+df = DataFrame(x=x, y=y)
+```
+
 ## Model Checking
 
 ### `gam_check`
 
 Produces residual diagnostic information similar to R's `gam.check()`:
 
-```julia
-using GAM, DataFrames, Random, Distributions
-Random.seed!(42)
-
-n = 500
-x = range(0, 2π; length=n) |> collect
-y = sin.(x) .+ 0.3 .* randn(n)
-df = DataFrame(x=x, y=y)
-
-m = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
-gc = gam_check(m)
+```@example diagnostics
+m = gam(@formula(y ~ s(x, k=20, bs=:cr)), df);
+gc = gam_check(m);
+nothing
 ```
 
 Returns a `GamCheck` object with:
@@ -32,8 +36,9 @@ Returns a `GamCheck` object with:
 
 Tests whether the basis dimension `k` is adequate for each smooth term:
 
-```julia
-kc = k_check(m)
+```@example diagnostics
+kc = k_check(m);
+nothing
 ```
 
 A significant p-value suggests that `k` should be increased. Rule of thumb:
@@ -43,13 +48,14 @@ if the effective degrees of freedom (EDF) is close to `k - 1`, increase `k`.
 
 Measures concurvity (the smooth analogue of collinearity) between smooth terms:
 
-```julia
+```@example diagnostics
 x2 = randn(n)
 y2 = sin.(x) .+ 0.5 .* x2 .+ 0.3 .* randn(n)
 df2 = DataFrame(x=x, x2=x2, y=y2)
 
-m2 = gam(@formulak(y ~ s(x, k=15) + s(x2, k=10)), df2)
-c = concurvity(m2)
+m2 = gam(@formula(y ~ s(x, k=15) + s(x2, k=10)), df2);
+c = concurvity(m2);
+nothing
 ```
 
 Returns worst-case and observed concurvity measures for each smooth.
@@ -66,9 +72,10 @@ Tests the significance of each smooth term using the Bayesian test of
 Wood (2013). This is equivalent to the smooth significance table printed by
 R's `summary.gam()` or `anova.gam(m)` with a single model:
 
-```julia
-m = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
-a = anova_gam(m)
+```@example diagnostics
+m_single = gam(@formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2);
+a = anova_gam(m_single);
+nothing
 ```
 
 The returned `AnovaGamResult` contains a `smooth_table` with:
@@ -91,11 +98,12 @@ scale parameter is estimated (e.g., Gaussian); a χ² test when it is known
 Compare two or more nested GAM models via sequential deviance tests.
 Equivalent to R's `anova(m1, m2, test="F")`:
 
-```julia
-m_small = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df2)
-m_full = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
+```@example diagnostics
+m_small = gam(@formula(y ~ s(x, k=15, bs=:cr)), df2);
+m_full = gam(@formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2);
 
-a = anova_gam(m_small, m_full)
+a = anova_gam(m_small, m_full);
+nothing
 ```
 
 Models are automatically sorted by increasing total EDF. The result includes
@@ -104,12 +112,13 @@ and p-value.
 
 You can compare more than two models:
 
-```julia
-m1 = gam(@formulak(y ~ s(x, k=10, bs=:cr)), df2)
-m2 = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df2)
-m3 = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
+```@example diagnostics
+m1 = gam(@formula(y ~ s(x, k=10, bs=:cr)), df2);
+m2_seq = gam(@formula(y ~ s(x, k=15, bs=:cr)), df2);
+m3 = gam(@formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2);
 
-a = anova_gam(m1, m2, m3)
+a = anova_gam(m1, m2_seq, m3);
+nothing
 ```
 
 ### Controlling the Test Type
@@ -117,25 +126,26 @@ a = anova_gam(m1, m2, m3)
 By default, `anova_gam` selects the test automatically (`:auto`): F-test for
 families with estimated scale, χ² for known scale. You can override this:
 
-```julia
-a_f = anova_gam(m_small, m_full; test=:F)
-a_chi = anova_gam(m_small, m_full; test=:Chisq)
+```@example diagnostics
+a_f = anova_gam(m_small, m_full; test=:F);
+a_chi = anova_gam(m_small, m_full; test=:Chisq);
+nothing
 ```
 
 ### Example: Poisson Model Comparison
 
-```julia
+```@example diagnostics
 mu = exp.(0.5 .* sin.(x) .+ 0.3 .* x2 .+ 0.5)
-counts = Float64.([rand(Poisson(m)) for m in mu])
+counts = Float64.(rand.(Poisson.(mu)))
 df_pois = DataFrame(x=x, x2=x2, y=counts)
 
-m_p1 = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df_pois;
-    family=Poisson(), link=LogLink())
-m_p2 = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df_pois;
-    family=Poisson(), link=LogLink())
+m_p1 = gam(@formula(y ~ s(x, k=15, bs=:cr)), df_pois;
+    family=Poisson(), link=LogLink());
+m_p2 = gam(@formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df_pois;
+    family=Poisson(), link=LogLink());
 
-# Uses χ² test automatically for Poisson
-a = anova_gam(m_p1, m_p2)
+a_pois = anova_gam(m_p1, m_p2);
+nothing
 ```
 
 ## Smooth Evaluation
@@ -145,8 +155,9 @@ a = anova_gam(m_p1, m_p2)
 Evaluates smooth functions on a regular grid, returning estimates with
 confidence intervals:
 
-```julia
-se = smooth_estimates(m)
+```@example diagnostics
+se = smooth_estimates(m);
+nothing
 ```
 
 Returns a DataFrame with columns for the covariate value, estimated smooth
@@ -157,9 +168,10 @@ value, standard error, and confidence bounds. Useful for plotting.
 Computes first (and optionally higher-order) derivatives of smooth functions
 using finite differences:
 
-```julia
-d = derivatives(m)                    # first derivatives
-d2 = derivatives(m; order=2)          # second derivatives
+```@example diagnostics
+d = derivatives(m);           # first derivatives
+d2 = derivatives(m; order=2); # second derivatives
+nothing
 ```
 
 Useful for identifying regions of significant change.
@@ -169,8 +181,9 @@ Useful for identifying regions of significant change.
 Computes partial residuals for each smooth term — the residuals plus the
 smooth contribution:
 
-```julia
-pr = partial_residuals(m)
+```@example diagnostics
+pr = partial_residuals(m);
+nothing
 ```
 
 Useful for assessing smooth fit: plot partial residuals against the covariate
@@ -183,16 +196,18 @@ and overlay the estimated smooth.
 Draws samples from the approximate posterior distribution of the model
 coefficients (using the Bayesian covariance matrix):
 
-```julia
-ps = posterior_samples(m; n_samples=1000)
+```@example diagnostics
+ps = posterior_samples(m; n=200);
+nothing
 ```
 
 ### `fitted_samples`
 
 Draws samples from the posterior distribution of the fitted values:
 
-```julia
-fs = fitted_samples(m; n_samples=1000)
+```@example diagnostics
+fs = fitted_samples(m; n=200);
+nothing
 ```
 
 Useful for computing posterior credible intervals on predictions.
@@ -203,8 +218,9 @@ Useful for computing posterior credible intervals on predictions.
 
 Produces a multi-panel diagnostic summary (analogous to gratia's `appraise`):
 
-```julia
-ap = appraise(m)
+```@example diagnostics
+ap = appraise(m);
+nothing
 ```
 
 Returns data for four diagnostic panels:
@@ -218,10 +234,11 @@ Returns data for four diagnostic panels:
 For count data models, computes a rootogram comparing observed and expected
 frequencies:
 
-```julia
-m_pois = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df_pois;
-    family=Poisson(), link=LogLink())
-rg = rootogram(m_pois)
+```@example diagnostics
+m_root = gam(@formula(y ~ s(x, k=15, bs=:cr)), df_pois;
+    family=Poisson(), link=LogLink());
+rg = rootogram(m_root);
+nothing
 ```
 
 Useful for diagnosing fit of Poisson, negative binomial, and other count models.
@@ -233,53 +250,36 @@ Useful for diagnosing fit of Poisson, negative binomial, and other count models.
 Creates a data slice for evaluating model predictions while holding some
 variables at fixed values:
 
-```julia
-ds = data_slice(m2; x=range(0, 2π; length=100), x2=0.5)
+```@example diagnostics
+ds = data_slice(m2; var=:x, n=100, x2=0.5);
+nothing
 ```
 
 Useful for generating prediction grids for visualization.
 
 ## Example Workflow
 
-```julia
-using GAM, DataFrames, Random, Distributions
+```@example diagnostics
 Random.seed!(123)
+x1 = range(0, 1; length=160) |> collect
+x2_workflow = rand(160)
+y_workflow = sin.(4π .* x1) .+ 0.8 .* x2_workflow.^2 .+ 0.3 .* randn(160)
+df_workflow = DataFrame(x1=x1, x2=x2_workflow, y=y_workflow)
 
-n = 500
-x1 = range(0, 1; length=n) |> collect
-x2 = rand(n)
-y = sin.(4π .* x1) .+ 0.8 .* x2.^2 .+ 0.3 .* randn(n)
-df = DataFrame(x1=x1, x2=x2, y=y)
+m1_workflow = gam(@formula(y ~ s(x1, k=20, bs=:cr)), df_workflow);
+m2_workflow = gam(@formula(y ~ s(x1, k=20, bs=:cr) + s(x2, k=10, bs=:cr)), df_workflow);
 
-# Fit two candidate models
-m1 = gam(@formulak(y ~ s(x1, k=20, bs=:cr)), df)
-m2 = gam(@formulak(y ~ s(x1, k=20, bs=:cr) + s(x2, k=10, bs=:cr)), df)
-
-# 1. Check model adequacy
-gc = gam_check(m2)
-kc = k_check(m2)
-
-# 2. Check concurvity between smooths
-c = concurvity(m2)
-
-# 3. Test smooth significance
-a = anova_gam(m2)
-
-# 4. Compare models — is x2 needed?
-a_comp = anova_gam(m1, m2)
-
-# 5. Evaluate smooth on a grid
-se = smooth_estimates(m2)
-
-# 6. Compute derivatives to find where the function changes
-d = derivatives(m2)
-
-# 7. Get posterior uncertainty
-ps = posterior_samples(m2; n_samples=500)
-fs = fitted_samples(m2; n_samples=500)
-
-# 8. Multi-panel diagnostic
-ap = appraise(m2)
+gc = gam_check(m2_workflow);
+kc = k_check(m2_workflow);
+c = concurvity(m2_workflow);
+a = anova_gam(m2_workflow);
+a_comp = anova_gam(m1_workflow, m2_workflow);
+se = smooth_estimates(m2_workflow);
+d = derivatives(m2_workflow);
+ps = posterior_samples(m2_workflow; n=150);
+fs = fitted_samples(m2_workflow; n=150);
+ap = appraise(m2_workflow);
+nothing
 ```
 
 ## 3D Surface Visualization
@@ -289,25 +289,19 @@ ap = appraise(m2)
 Creates a 3D surface/perspective visualization of a 2D smooth term,
 analogous to R's `vis.gam()`:
 
-```julia
-using GAM, DataFrames, Plots
+```@example diagnostics
+x1_surface = rand(140)
+x2_surface = rand(140)
+y_surface = sin.(2π .* x1_surface) .* cos.(2π .* x2_surface) .+ 0.3 .* randn(140)
+df_surface = DataFrame(x1=x1_surface, x2=x2_surface, y=y_surface)
 
-n = 500
-x1 = rand(n); x2 = rand(n)
-y = sin.(2π .* x1) .* cos.(2π .* x2) .+ 0.3 .* randn(n)
-df = DataFrame(x1=x1, x2=x2, y=y)
+m_surface = gam(@formula(y ~ te(x1, x2, k=10)), df_surface);
 
-m = gam(@formulak(y ~ te(x1, x2, k=10)), df)
-
-# Basic surface plot
-plot(vis_gam(m; select=1, n_grid=40))
-
-# With standard errors and too-far masking
-v = vis_gam(m; select=1, n_grid=30, se=true, too_far=0.1)
-plot(v)
-
-# Response-scale predictions (useful for non-Gaussian families)
-plot(vis_gam(m; select=1, type=:response))
+plot(vis_gam(m_surface; select=1, n_grid=30));
+v = vis_gam(m_surface; select=1, n_grid=25, se=true, too_far=0.1);
+plot(v);
+plot(vis_gam(m_surface; select=1, type=:response));
+nothing
 ```
 
 Returns a `VisGamData` struct containing:

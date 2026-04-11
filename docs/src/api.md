@@ -7,8 +7,15 @@ gam
 gam_control
 GamControl
 GamModel
-GamFormula
+```
+
+## Formula Macros
+
+```@docs
+GAM.@formula
 GAM.@formulak
+GamFormula
+GammFormula
 ```
 
 ## Smooth Specification
@@ -119,7 +126,6 @@ GAM.MultiParameterFamily
 ```@docs
 gamm
 GammModel
-GAM.@gamm_formula
 ranef
 VarCorr
 ```

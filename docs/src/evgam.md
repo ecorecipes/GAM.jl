@@ -4,13 +4,32 @@ GAM.jl includes extreme value GAM functionality following Youngman (2022).
 This allows modeling the tails of distributions — useful in hydrology,
 meteorology, finance, and other fields where extreme events matter.
 
+```@setup evgam
+using GAM, DataFrames, Random
+Random.seed!(42)
+
+n = 90
+year = collect(1:n)
+mu = 10.0 .+ 0.03 .* year
+sigma = 1.5
+xi = 0.1
+y = mu .+ sigma .* ((-log.(rand(n))).^(-xi) .- 1) ./ xi
+df = DataFrame(year=year, y=y)
+
+x = randn(120)
+sigma_gpd = exp.(0.4 .+ 0.2 .* x)
+xi_gpd = 0.1
+y_gpd = sigma_gpd .* (rand(length(x)).^(-xi_gpd) .- 1) ./ xi_gpd
+df_gpd = DataFrame(x=x, y=y_gpd)
+```
+
 ## Families
 
 ### GEV (Generalized Extreme Value)
 
 For block maxima data. Three parameters: location (μ), scale (σ), shape (ξ).
 
-```julia
+```text
 evgam(formula_mu, formula_sigma, formula_xi, data;
     family=GEVFamily())
 ```
@@ -19,7 +38,7 @@ evgam(formula_mu, formula_sigma, formula_xi, data;
 
 For threshold exceedances. Two parameters: scale (σ), shape (ξ).
 
-```julia
+```text
 evgam(formula_sigma, formula_xi, data;
     family=GPDFamily())
 ```
@@ -38,17 +57,17 @@ Extensions of the GPD with additional flexibility:
 ## Multi-Parameter Model Specification
 
 Pass a vector of formulas, one per distribution parameter. With
-`@formulak`, repeat the response on each entry:
+`@formula`, repeat the response on each entry:
 
-```julia
+```text
 # GEV: location, scale, shape
-m = evgam(
+evgam(
     [
-        @formulak(y ~ s(x, k=15, bs=:cr)),   # location μ
-        @formulak(y ~ s(x, k=10, bs=:cr)),   # log(scale σ)
-        @formulak(y ~ 1),                    # shape ξ (constant)
+        @formula(y ~ s(x, k=15, bs=:cr)),   # location μ
+        @formula(y ~ s(x, k=10, bs=:cr)),   # log(scale σ)
+        @formula(y ~ 1),                    # shape ξ (constant)
     ],
-    df,
+    data,
     GEVFamily(),
 )
 ```
@@ -57,64 +76,48 @@ m = evgam(
 
 ### GEV for Annual Maxima
 
-```julia
-using GAM, DataFrames
-
-n = 200
-year = range(1, n) |> collect
-# Non-stationary GEV: location trend, constant scale and shape
-mu = 10.0 .+ 0.05 .* year
-sigma = 2.0
-xi = 0.1
-y = mu .+ sigma .* ((-log.(rand(n))).^(-xi) .- 1) ./ xi
-df = DataFrame(year=year, y=y)
-
+```@example evgam
 m = evgam(
     [
-        @formulak(y ~ s(year, k=10, bs=:cr)),  # location
-        @formulak(y ~ 1),                      # scale
-        @formulak(y ~ 1),                      # shape
+        @formula(y ~ s(year, k=10, bs=:cr)),  # location
+        @formula(y ~ 1),                      # scale
+        @formula(y ~ 1),                      # shape
     ],
     df,
     GEVFamily(),
-)
+);
+nothing
 ```
 
 ### GPD for Threshold Exceedances
 
-```julia
-# Exceedances above a threshold
-threshold = 10.0
-x = randn(300)
-sigma = exp.(0.5 .+ 0.3 .* x)
-xi = 0.1
-y = sigma .* ((rand(300)).^(-xi) .- 1) ./ xi
-df = DataFrame(x=x, y=y)
-
-m = evgam(
+```@example evgam
+m_gpd = evgam(
     [
-        @formulak(y ~ s(x, k=10, bs=:cr)),  # log(scale)
-        @formulak(y ~ 1),                   # shape
+        @formula(y ~ s(x, k=10, bs=:cr)),  # log(scale)
+        @formula(y ~ 1),                   # shape
     ],
-    df,
+    df_gpd,
     GPDFamily(),
-)
+);
+nothing
 ```
 
 ### Non-Stationary GEV
 
 All three GEV parameters as smooth functions:
 
-```julia
-m = evgam(
+```@example evgam
+m_ns = evgam(
     [
-        @formulak(y ~ s(year, k=15, bs=:cr)),
-        @formulak(y ~ s(year, k=10, bs=:cr)),
-        @formulak(y ~ s(year, k=5, bs=:cr)),
+        @formula(y ~ s(year, k=15, bs=:cr)),
+        @formula(y ~ s(year, k=10, bs=:cr)),
+        @formula(y ~ s(year, k=5, bs=:cr)),
     ],
     df,
     GEVFamily(),
-)
+);
+nothing
 ```
 
 ## See Also

@@ -14,8 +14,21 @@ using LinearAlgebra
     # Formula parsing
     # ========================================================================
     @testset "Formula parsing" begin
-        @testset "@gamm_formula: random intercept" begin
-            gf = @gamm_formula(y ~ s(x) + (1 | group))
+        @testset "@gamm_formula remains a compatibility alias" begin
+            gf_alias = @gamm_formula(y ~ s(x, k = 12) + (1 | group))
+            gf_main = @formula(y ~ s(x, k = 12) + (1 | group))
+
+            @test gf_alias.gam_formula.response == gf_main.gam_formula.response
+            @test gf_alias.gam_formula.parametric == gf_main.gam_formula.parametric
+            @test gf_alias.gam_formula.has_intercept == gf_main.gam_formula.has_intercept
+            @test length(gf_alias.gam_formula.smooth_specs) == length(gf_main.gam_formula.smooth_specs)
+            @test gf_alias.gam_formula.smooth_specs[1].label == gf_main.gam_formula.smooth_specs[1].label
+            @test length(gf_alias.random_effects) == length(gf_main.random_effects)
+            @test gf_alias.random_effects[1].label == gf_main.random_effects[1].label
+        end
+
+        @testset "@formula: random intercept" begin
+            gf = @formula(y ~ s(x) + (1 | group))
             @test length(gf.random_effects) == 1
             re = gf.random_effects[1]
             @test re.grouping == :group
@@ -24,8 +37,8 @@ using LinearAlgebra
             @test re.label == "(1 | group)"
         end
 
-        @testset "@gamm_formula: random slope" begin
-            gf = @gamm_formula(y ~ s(x) + (0 + x | group))
+        @testset "@formula: random slope" begin
+            gf = @formula(y ~ s(x) + (0 + x | group))
             @test length(gf.random_effects) == 1
             re = gf.random_effects[1]
             @test re.grouping == :group
@@ -33,8 +46,8 @@ using LinearAlgebra
             @test :x in re.terms
         end
 
-        @testset "@gamm_formula: random intercept + slope" begin
-            gf = @gamm_formula(y ~ s(x) + (1 + z | subject))
+        @testset "@formula: random intercept + slope" begin
+            gf = @formula(y ~ s(x) + (1 + z | subject))
             @test length(gf.random_effects) == 1
             re = gf.random_effects[1]
             @test re.grouping == :subject
@@ -42,11 +55,20 @@ using LinearAlgebra
             @test :z in re.terms
         end
 
-        @testset "@gamm_formula: multiple random effects" begin
-            gf = @gamm_formula(y ~ s(x) + (1 | site) + (1 | subject))
+        @testset "@formula: multiple random effects" begin
+            gf = @formula(y ~ s(x) + (1 | site) + (1 | subject))
             @test length(gf.random_effects) == 2
             @test gf.random_effects[1].grouping == :site
             @test gf.random_effects[2].grouping == :subject
+        end
+
+        @testset "@formula: basis alias with positional k" begin
+            gf = @formula(y ~ cr(x, 10) + re(group))
+            @test length(gf.gam_formula.smooth_specs) == 1
+            @test gf.gam_formula.smooth_specs[1].k == 10
+            @test gf.gam_formula.smooth_specs[1].basis isa CubicSpline
+            @test length(gf.random_effects) == 1
+            @test gf.random_effects[1].grouping == :group
         end
 
         @testset "@formula with (1|group)" begin
@@ -65,6 +87,14 @@ using LinearAlgebra
             m = gamm(@formula(y ~ cr(x, 10) + re(group)), df)
             @test m isa GammModel
             @test length(m.random_effects) == 1
+        end
+
+        @testset "@formula with re(group, x) keeps slope terms" begin
+            gf = @formula(y ~ s(x, k = 12) + re(group, x))
+            @test length(gf.random_effects) == 1
+            @test gf.random_effects[1].grouping == :group
+            @test gf.random_effects[1].terms == [:x]
+            @test gf.random_effects[1].label == "re(group, x)"
         end
     end
 
@@ -128,7 +158,7 @@ using LinearAlgebra
         y = sin.(x) .+ true_re[group] .+ 0.3 .* randn(n)
         df = DataFrame(x = x, y = y, group = group)
 
-        m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        m = gamm(@formula(y ~ s(x) + (1 | group)), df)
 
         @test m isa GammModel
         @test m.gam_model.converged
@@ -176,7 +206,7 @@ using LinearAlgebra
         df = DataFrame(x = x, y = y, group = group)
 
         # Fit GAMM
-        m_gamm = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        m_gamm = gamm(@formula(y ~ s(x) + (1 | group)), df)
 
         # Fit equivalent GAM with s(group, bs=:re)
         m_gam = gam(@formulak(y ~ s(x) + s(group, bs = :re)), df)
@@ -210,7 +240,7 @@ using LinearAlgebra
         y = [Float64(rand(Poisson(exp(η[i])))) for i in 1:n]
         df = DataFrame(x = x, y = y, group = group)
 
-        m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df, Poisson())
+        m = gamm(@formula(y ~ s(x) + (1 | group)), df, Poisson())
 
         @test m isa GammModel{Poisson{Float64}, LogLink}
         @test m.gam_model.converged
@@ -241,7 +271,7 @@ using LinearAlgebra
         y = [Float64(rand(Bernoulli(prob[i]))) for i in 1:n]
         df = DataFrame(x = x, y = y, group = group)
 
-        m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df, Bernoulli())
+        m = gamm(@formula(y ~ s(x) + (1 | group)), df, Bernoulli())
 
         @test m isa GammModel
         @test m.gam_model.converged
@@ -265,7 +295,7 @@ using LinearAlgebra
         y = x .+ true_re[group] .+ 0.2 .* randn(n)
         df = DataFrame(x = x, y = y, group = group)
 
-        m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        m = gamm(@formula(y ~ s(x) + (1 | group)), df)
 
         # Predict on training data
         ŷ = predict(m, df)
@@ -296,8 +326,8 @@ using LinearAlgebra
         y = x .+ randn(5)[group] * 0.3 .+ 0.2 .* randn(n)
         df = DataFrame(x = x, y = y, group = group)
 
-        # @gamm_formula path
-        m1 = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        # @formula with keyword smooths + (1|group)
+        m1 = gamm(@formula(y ~ s(x) + (1 | group)), df)
         # @formula with (1|group) path
         m2 = gamm(@formula(y ~ cr(x, 10) + (1 | group)), df)
         # @formula with re() path
@@ -331,7 +361,7 @@ using LinearAlgebra
             y = sin.(x) .+ randn(n_groups)[group] * 0.3 .+ 0.5 .* randn(n)
             df = DataFrame(x = x, y = y, group = group)
 
-            m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+            m = gamm(@formula(y ~ s(x) + (1 | group)), df)
             @test m isa GammModel
             @test m.gam_model.converged
         end
@@ -344,7 +374,7 @@ using LinearAlgebra
             y = x .+ [0.5, -0.5][group] .+ 0.3 .* randn(n)
             df = DataFrame(x = x, y = y, group = group)
 
-            m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+            m = gamm(@formula(y ~ s(x) + (1 | group)), df)
             @test m isa GammModel
             re = ranef(m)
             est = vec(re.group.effects)
@@ -377,7 +407,7 @@ using LinearAlgebra
     # ========================================================================
     @testset "Formula parsing edge cases" begin
         @testset "Nested effects: (1|a/b) expands to (1|a) + (1|a_b)" begin
-            gf = @gamm_formula(y ~ s(x) + (1 | a / b))
+            gf = @formula(y ~ s(x) + (1 | a / b))
             @test length(gf.random_effects) == 2
             re1 = gf.random_effects[1]
             re2 = gf.random_effects[2]
@@ -390,7 +420,7 @@ using LinearAlgebra
         end
 
         @testset "Nested effects with slope: (0+x|a/b)" begin
-            gf = @gamm_formula(y ~ s(x) + (0 + x | a / b))
+            gf = @formula(y ~ s(x) + (0 + x | a / b))
             @test length(gf.random_effects) == 2
             @test gf.random_effects[1].grouping == :a
             @test gf.random_effects[1].has_intercept == false
@@ -401,8 +431,8 @@ using LinearAlgebra
         end
 
         @testset "(1+x|group) and (x|group) are equivalent" begin
-            gf1 = @gamm_formula(y ~ s(x) + (1 + z | group))
-            gf2 = @gamm_formula(y ~ s(x) + (z | group))
+            gf1 = @formula(y ~ s(x) + (1 + z | group))
+            gf2 = @formula(y ~ s(x) + (z | group))
             re1 = gf1.random_effects[1]
             re2 = gf2.random_effects[1]
             @test re1.has_intercept == re2.has_intercept == true
@@ -411,7 +441,7 @@ using LinearAlgebra
         end
 
         @testset "Uncorrelated RE: (1|group) + (0+x|group) creates 2 blocks" begin
-            gf = @gamm_formula(y ~ s(x) + (1 | group) + (0 + x | group))
+            gf = @formula(y ~ s(x) + (1 | group) + (0 + x | group))
             @test length(gf.random_effects) == 2
             re1 = gf.random_effects[1]
             re2 = gf.random_effects[2]
@@ -445,7 +475,7 @@ using LinearAlgebra
             y = sin.(x) .+ re_a[a] .+ re_ab[ab_idx] .+ 0.2 .* randn(n)
             df = DataFrame(x = x, y = y, a = a, a_b = a_b)
 
-            m = gamm(@gamm_formula(y ~ s(x) + (1 | a / b)), df)
+            m = gamm(@formula(y ~ s(x) + (1 | a / b)), df)
             @test m isa GammModel
             @test length(m.random_effects) == 2
             @test m.gam_model.converged
@@ -465,7 +495,7 @@ using LinearAlgebra
         true_re = randn(n_groups) * 0.5
         y = sin.(x) .+ true_re[group] .+ 0.3 .* randn(n)
         df = DataFrame(x = x, y = y, group = group)
-        m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        m = gamm(@formula(y ~ s(x) + (1 | group)), df)
 
         @testset "ranef returns proper structure" begin
             re = ranef(m)
@@ -515,7 +545,7 @@ using LinearAlgebra
             x = randn(n)
             y = x .+ randn(5)[site] * 0.3 .+ randn(10)[subject] * 0.4 .+ 0.2 .* randn(n)
             df = DataFrame(x = x, y = y, site = site, subject = subject)
-            m2 = gamm(@gamm_formula(y ~ s(x) + (1 | site) + (1 | subject)), df)
+            m2 = gamm(@formula(y ~ s(x) + (1 | site) + (1 | subject)), df)
             vc = VarCorr(m2)
             @test length(vc) == 3  # site + subject + Residual
             @test vc[1].group == :site
@@ -537,7 +567,7 @@ using LinearAlgebra
         true_re = randn(n_groups) * 0.4
         y = x .+ true_re[group] .+ 0.2 .* randn(n)
         df = DataFrame(x = x, y = y, group = group)
-        m = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        m = gamm(@formula(y ~ s(x) + (1 | group)), df)
 
         @testset "Known group → uses estimated BLUP" begin
             df_known = DataFrame(x = [0.0, 1.0], group = [1, 2])

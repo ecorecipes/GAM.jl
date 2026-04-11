@@ -42,7 +42,7 @@ y = sin.(x1) .+ 3 .* x2.^2 .+ randn(n) .* 0.3
 df = DataFrame(; y, x1, x2)
 
 # Fit a GAM with two smooth terms
-m = gam(@formulak(y ~ s(x1, k=15, bs=:cr) + s(x2, k=10)), df)
+m = gam(@formula(y ~ s(x1, k=15, bs=:cr) + s(x2, k=10)), df)
 
 # Standard StatsAPI interface
 using StatsAPI
@@ -56,10 +56,11 @@ r2(m)                # R-squared
 
 ## Smooth Term Types
 
-`@formulak` is the explicit GAM macro. If you import `@formula` from GAM,
-keyword smooth calls such as `@formula(y ~ s(x1, k=15, bs=:cr))` are routed to
-the same parser automatically. If another package also exports `@formula`, use
-`GAM.@formula(...)` or `using GAM: @formula`.
+`@formula` is the public formula interface. Keyword smooth calls such as
+`@formula(y ~ s(x1, k=15, bs=:cr))` are routed to GAM.jl's extended parser,
+while `@formulak` remains available as an explicit GAM-only fallback. If
+another package also exports `@formula`, use `GAM.@formula(...)` or
+`using GAM: @formula`.
 
 | Syntax | Basis | Description |
 |--------|-------|-------------|
@@ -86,19 +87,19 @@ All GLM families from Distributions.jl are supported, plus extended families:
 
 ```julia
 # Gaussian (default)
-gam(@formulak(y ~ s(x)), df)
+gam(@formula(y ~ s(x)), df)
 
 # Poisson with log link
-gam(@formulak(y ~ s(x)), df, Poisson(), LogLink())
+gam(@formula(y ~ s(x)), df, Poisson(), LogLink())
 
 # Negative binomial
-gam(@formulak(y ~ s(x)), df, NegBinFamily(1.0))
+gam(@formula(y ~ s(x)), df, NegBinFamily(1.0))
 
 # Tweedie
-gam(@formulak(y ~ s(x)), df, TweedieFamily(1.5))
+gam(@formula(y ~ s(x)), df, TweedieFamily(1.5))
 
 # Beta regression
-gam(@formulak(y ~ s(x)), df, BetaFamily())
+gam(@formula(y ~ s(x)), df, BetaFamily())
 ```
 
 ## Multi-Parameter Models (GAMLSS)
@@ -118,11 +119,13 @@ y = μ .+ σ .* randn(n)
 df = DataFrame(; y, x)
 
 # Gaussian location-scale model
-m = gamlss(
+m = gam(
+    [
+        @formula(y ~ s(x, k=15)),   # mean model
+        @formula(y ~ s(x, k=10)),   # log-sd model
+    ],
+    df,
     GaussianLS(),
-    @formulak(y ~ s(x, k=15)),      # mean model
-    @formulak(y ~ s(x, k=10)),      # log-sd model
-    df
 )
 ```
 
@@ -138,13 +141,13 @@ Enforce monotonicity, convexity, or concavity constraints on smooth terms:
 using GAM
 
 # Monotone increasing smooth
-m = scam(@formulak(y ~ s(x, bs=:mpi, k=15)), df)
+m = gam(@formula(y ~ s(x, bs=:mpi, k=15)), df)
 
 # Convex smooth
-m = scam(@formulak(y ~ s(x, bs=:cx, k=15)), df)
+m = gam(@formula(y ~ s(x, bs=:cx, k=15)), df)
 
 # Combined: monotone increasing and concave
-m = scam(@formulak(y ~ s(x, bs=:micv, k=15)), df)
+m = gam(@formula(y ~ s(x, bs=:micv, k=15)), df)
 ```
 
 Constraint types: `:mpi` (monotone increasing), `:mpd` (monotone decreasing), `:cx` (convex), `:cv` (concave), `:micx` (increasing + convex), `:micv` (increasing + concave), `:mdcx` (decreasing + convex), `:mdcv` (decreasing + concave).
@@ -155,10 +158,10 @@ Fit quantile regression GAMs with automatic calibration:
 
 ```julia
 # Single quantile
-m = qgam(@formulak(y ~ s(x, k=15)), df, 0.5)  # median
+m = qgam(@formula(y ~ s(x, k=15)), df, 0.5)  # median
 
 # Multiple quantiles
-fits = mqgam(@formulak(y ~ s(x, k=15)), df, [0.1, 0.25, 0.5, 0.75, 0.9])
+fits = mqgam(@formula(y ~ s(x, k=15)), df, [0.1, 0.25, 0.5, 0.75, 0.9])
 
 # Extract a single fit
 m50 = qdo(fits, 0.5)
@@ -171,11 +174,13 @@ Model block maxima (GEV) or threshold exceedances (GPD):
 ```julia
 # GEV model for annual maxima
 m = evgam(
+    [
+        @formula(y ~ s(x, k=10)),   # location
+        @formula(y ~ s(x, k=8)),    # log-scale
+        @formula(y ~ 1),            # shape (constant)
+    ],
+    df,
     GEVFamily(),
-    @formulak(y ~ s(x, k=10)),      # location
-    @formulak(y ~ s(x, k=8)),       # log-scale
-    @formulak(y ~ 1),               # shape (constant)
-    df
 )
 ```
 
@@ -184,7 +189,7 @@ m = evgam(
 For datasets too large for standard fitting:
 
 ```julia
-m = bam(@formulak(y ~ s(x1, k=20) + s(x2, k=20)), df)
+m = bam(@formula(y ~ s(x1, k=20) + s(x2, k=20)), df)
 ```
 
 ## Mixed Models (GAMM)
@@ -193,7 +198,7 @@ GAMs with random effects via MixedModels.jl:
 
 ```julia
 m = gamm(
-    @gamm_formula(y ~ s(x, k=10) + (1 | group)),
+    GAM.@formula(y ~ s(x, k=10) + (1 | group)),
     df
 )
 ```
@@ -205,7 +210,7 @@ Posterior sampling via Turing.jl extension:
 ```julia
 using GAM, Turing, Distributions
 
-m_bayes = gam(@formulak(y ~ s(x, k=10)), df;
+m_bayes = gam(@formula(y ~ s(x, k=10)), df;
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 1000,
     nchains = 2)

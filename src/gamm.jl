@@ -689,6 +689,26 @@ function _parse_random_effect(ex::Expr)
     return RandomEffectSpec(grouping, terms, has_intercept, true, label)
 end
 
+function _parse_re_call(ex::Expr)
+    ex.head == :call && ex.args[1] == :re ||
+        throw(ArgumentError("Expected re(group[, slope...]), got $ex"))
+    length(ex.args) >= 2 || throw(ArgumentError("re() requires at least one argument"))
+
+    grouping = ex.args[2]
+    grouping isa Symbol ||
+        throw(ArgumentError("Grouping factor must be a symbol, got $grouping"))
+
+    terms = Symbol[]
+    for arg in ex.args[3:end]
+        arg isa Symbol ||
+            throw(ArgumentError("Random-effect slope terms in re(...) must be symbols, got $arg"))
+        push!(terms, arg)
+    end
+
+    label_args = join(string.([grouping; terms]), ", ")
+    return RandomEffectSpec(grouping, terms, true, true, "re($label_args)")
+end
+
 """
     _is_random_effect_expr(ex) → Bool
 
@@ -700,6 +720,13 @@ function _is_random_effect_expr(ex)
     ex isa Expr || return false
     ex.head == :call || return false
     ex.args[1] == :(|) || return false
+    return true
+end
+
+function _is_re_call_expr(ex)
+    ex isa Expr || return false
+    ex.head == :call || return false
+    ex.args[1] == :re || return false
     return true
 end
 
@@ -757,6 +784,8 @@ function _parse_gamm_rhs!(ex, parametric, smooth_calls, re_calls, has_intercept)
         else
             push!(re_calls.args, _build_re_spec_call(ex))
         end
+    elseif _is_re_call_expr(ex)
+        push!(re_calls.args, _build_re_call_spec(ex))
     elseif ex isa Expr && ex.head == :call && ex.args[1] == :+
         for i in 2:length(ex.args)
             _parse_gamm_rhs!(ex.args[i], parametric, smooth_calls, re_calls, has_intercept)
@@ -815,6 +844,18 @@ function _build_re_spec_call(ex::Expr)
         label)
 end
 
+function _build_re_call_spec(ex::Expr)
+    spec = _parse_re_call(ex)
+    terms_expr = Expr(:ref, :Symbol, [QuoteNode(s) for s in spec.terms]...)
+
+    return Expr(:call, :(GAM.RandomEffectSpec),
+        QuoteNode(spec.grouping),
+        terms_expr,
+        spec.has_intercept,
+        spec.correlated,
+        spec.label)
+end
+
 # ============================================================================
 # GamFormula extension for GAMM — GammFormula
 # ============================================================================
@@ -839,15 +880,16 @@ end
 """
     @gamm_formula(ex)
 
-Parse a GAMM formula with smooth terms and random effects.
+Compatibility macro for GAMM formulas with smooth terms and random effects.
+Prefer [`@formula`](@ref) for new code.
 
 # Examples
 ```julia
-gf = @gamm_formula(y ~ s(x, k=20) + (1|group))
-gf = @gamm_formula(y ~ x1 + s(x2) + (1|site) + (x1|subject))
+gf = @formula(y ~ s(x, k=20) + (1|group))
+gf = @formula(y ~ x1 + s(x2) + (1|site) + (x1|subject))
 ```
 """
-macro gamm_formula(ex)
+function _gamm_formula_expr(ex)
     ex.head == :call && ex.args[1] == :(~) ||
         error("Expected formula expression like `y ~ ...`, got $ex")
 
@@ -870,6 +912,10 @@ macro gamm_formula(ex)
                 SmoothSpec[$(smooth_calls.args...)]),
             RandomEffectSpec[$(re_calls.args...)])
     end)
+end
+
+macro gamm_formula(ex)
+    return _gamm_formula_expr(ex)
 end
 
 # ============================================================================
@@ -942,7 +988,7 @@ end
 
 """
     re(group)
-    re(group, n_levels)
+    re(group, slope...)
 
 Convenience function for random intercepts in `@formula`:
 ```julia
@@ -967,7 +1013,7 @@ function re(vars...; kwargs...)
     for t in terms
         push!(lhs_parts, string(t))
     end
-    label = "re(" * join([string(grouping)], ", ") * ")"
+    label = "re(" * join(string.([grouping; terms]), ", ") * ")"
 
     return RandomEffectSpec(grouping, terms, has_intercept, true, label)
 end
@@ -985,19 +1031,19 @@ Extends `gam()` by supporting grouped random effects alongside smooth terms.
 
 # Formula syntax
 
-With `@gamm_formula` (supports kwargs on smooths):
+With `@formula` (supports keyword smooths and lme4-style random effects):
 ```julia
-gamm(@gamm_formula(y ~ s(x, k=20) + (1|subject)), data)
-gamm(@gamm_formula(y ~ x1 + s(x2) + (1|site) + (x1|subject)), data)
+gamm(@formula(y ~ s(x, k=20) + (1|subject)), data)
+gamm(@formula(y ~ x1 + s(x2) + (1|site) + (x1|subject)), data)
 ```
 
-With `@formula` (positional args only, use `re()` for random effects):
+`re()` remains available as a convenience shorthand:
 ```julia
-gamm(@formula(y ~ cr(x, 20) + re(subject)), data)
+gamm(@formula(y ~ s(x, k=20) + re(subject)), data)
 ```
 
 # Arguments
-- `formula`: a `GammFormula` (from `@gamm_formula`), `FormulaTerm`, or `GamFormula`
+- `formula`: a `GammFormula`, `FormulaTerm`, or `GamFormula`
 - `data`: a Tables.jl-compatible data source
 - `family=Normal()`: response distribution
 - `link=nothing`: link function (default: canonical link for family)
@@ -1159,9 +1205,9 @@ function gamm(f::FormulaTerm, data;
         f, data, family, link_eff, method, weights, control)
 end
 
-# GamFormula dispatch: no RE support, suggest @gamm_formula
+# GamFormula dispatch: no RE support, suggest @formula with random-effect syntax
 function gamm(gf::GamFormula, data; kwargs...)
-    @warn "GamFormula does not support random effects. Use @gamm_formula or @formula instead."
+    @warn "GamFormula does not support random effects. Use @formula(... + (1 | group)) or @formula(... + re(group)) instead."
     return gam(gf, data; kwargs...)
 end
 
@@ -1177,7 +1223,6 @@ gamm(f::FormulaTerm, data, family::UnivariateDistribution; kwargs...) =
 Convert `FunctionTerm` wrapping `re(group)` call to `RandomEffectSpec`.
 """
 function _functionterm_to_re_from_call(ft::StatsModels.FunctionTerm)
-    # ft.args[1] = Term(:group)
     length(ft.args) >= 1 || throw(ArgumentError("re() requires at least one argument"))
 
     grouping = if ft.args[1] isa Term
@@ -1186,7 +1231,17 @@ function _functionterm_to_re_from_call(ft::StatsModels.FunctionTerm)
         throw(ArgumentError("re() argument must be a variable name"))
     end
 
-    return RandomEffectSpec(grouping, Symbol[], true, true, "re($(grouping))")
+    terms = Symbol[]
+    for arg in ft.args[2:end]
+        if arg isa Term
+            push!(terms, arg.sym)
+        else
+            throw(ArgumentError("re() slope arguments must be variable names"))
+        end
+    end
+
+    label_args = join(string.([grouping; terms]), ", ")
+    return RandomEffectSpec(grouping, terms, true, true, "re($label_args)")
 end
 
 # Bayesian stubs (implemented in GAMTuringExt)
