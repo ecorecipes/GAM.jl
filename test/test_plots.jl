@@ -14,12 +14,12 @@ using LinearAlgebra: diag
     y = sin.(2π .* x1) .* cos.(2π .* x2) .+ 0.3 .* randn(rng, n)
     df = DataFrame(x1 = x1, x2 = x2, y = y)
 
-    m_te = gam(@gam_formula(y ~ te(x1, x2, k = 5)), df)
+    m_te = gam(@formulak(y ~ te(x1, x2, k = 5)), df)
 
     # Also build a 1D model for error-path testing
     y1d = sin.(2π .* x1) .+ 0.3 .* randn(rng, n)
     df1d = DataFrame(x = x1, y = y1d)
-    m_1d = gam(@gam_formula(y ~ s(x, k = 10, bs = :cr)), df1d)
+    m_1d = gam(@formulak(y ~ s(x, k = 10, bs = :cr)), df1d)
 
     # ── Basic construction ───────────────────────────────────────────────
     @testset "basic construction" begin
@@ -61,7 +61,7 @@ using LinearAlgebra: diag
         λ = exp.(0.5 .* sin.(2π .* a) .+ 0.3 .* cos.(2π .* b))
         y_pois = Float64.([rand(rng3, Poisson(l)) for l in λ])
         df_pois = DataFrame(a = a, b = b, y = y_pois)
-        m_pois = gam(@gam_formula(y ~ te(a, b, k = 5)), df_pois;
+        m_pois = gam(@formulak(y ~ te(a, b, k = 5)), df_pois;
                      family = Poisson(), link = LogLink())
 
         v_link = vis_gam(m_pois; n_grid = 10, type = :link)

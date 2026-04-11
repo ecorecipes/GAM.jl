@@ -11,7 +11,7 @@
         df = DataFrame(x=x, y=y)
 
         m = gamlss(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+            [@formulak(y ~ s(x)), @formulak(y ~ s(x))],
             df, GaussianLS())
 
         @test m.converged
@@ -30,11 +30,11 @@
         df = DataFrame(x=x, y=y)
 
         # Standard GAM
-        m_gam = gam(@gam_formula(y ~ s(x)), df)
+        m_gam = gam(@formulak(y ~ s(x)), df)
 
         # GAMLSS with intercept-only σ formula
         m_ls = gamlss(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x)), @formulak(y ~ 1)],
             df, GaussianLS())
 
         μ_gam = m_gam.fitted_values
@@ -57,7 +57,7 @@
         df = DataFrame(x=x, y=y)
 
         m = gamlss(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+            [@formulak(y ~ s(x)), @formulak(y ~ s(x))],
             df, GammaLS())
 
         @test m.converged
@@ -75,7 +75,7 @@
         df = DataFrame(x=x, y=y)
 
         m = gamlss(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x)), @formulak(y ~ 1)],
             df, BetaLS())
 
         @test m.converged
@@ -91,7 +91,7 @@
         df = DataFrame(x=x, y=y)
 
         # Single formula should be replicated for both params
-        m = gamlss(@gam_formula(y ~ s(x)), df, GaussianLS())
+        m = gamlss(@formulak(y ~ s(x)), df, GaussianLS())
         @test m.converged
     end
 
@@ -115,13 +115,13 @@
         df = DataFrame(x=x, y=y)
 
         # Direct Distributions.jl type
-        m1 = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+        m1 = gamlss([@formulak(y ~ s(x)), @formulak(y ~ s(x))],
                      df, Normal())
         @test m1.converged
         @test cor(m1.fitted_eta[1], μ_true) > 0.99
 
         # Legacy alias gives identical result
-        m2 = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+        m2 = gamlss([@formulak(y ~ s(x)), @formulak(y ~ s(x))],
                      df, GaussianLS())
         @test maximum(abs.(m1.fitted_eta[1] - m2.fitted_eta[1])) < 1e-10
     end
@@ -134,7 +134,7 @@
         df = DataFrame(x=x, y=y)
 
         # Normal with LogLink for σ (default) vs IdentityLink
-        m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+        m = gamlss([@formulak(y ~ s(x)), @formulak(y ~ 1)],
                    df, Normal(); links=[IdentityLink(), LogLink()])
         @test m.converged
     end
@@ -147,7 +147,7 @@
         y = [rand(Gamma(1 / 0.09, μ * 0.09)) for μ in μ_true]
         df = DataFrame(x=x, y=y)
 
-        m = gamlss([@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+        m = gamlss([@formulak(y ~ s(x)), @formulak(y ~ 1)],
                    df, GammaLocationScale(links=[LogLink(), LogLink()]))
         @test m.converged
         μ_fit = exp.(m.fitted_eta[1])

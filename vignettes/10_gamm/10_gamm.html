@@ -330,9 +330,9 @@ n = 480
 </section>
 <section id="equivalence-with-ssubject-bsre" class="level3">
 <h3 class="anchored" data-anchor-id="equivalence-with-ssubject-bsre">Equivalence with <code>s(subject, bs=:re)</code></h3>
-<p>In GAM.jl, <code>gamm(@gamm_formula(y ~ s(x) + (1|subject)), ...)</code> is mathematically equivalent to <code>gam(@gam_formula(y ~ s(x) + s(subject, bs=:re)), ...)</code>. Both treat the random intercept as a smooth with identity penalty:</p>
+<p>In GAM.jl, <code>gamm(@gamm_formula(y ~ s(x) + (1|subject)), ...)</code> is mathematically equivalent to <code>gam(@formulak(y ~ s(x) + s(subject, bs=:re)), ...)</code>. Both treat the random intercept as a smooth with identity penalty:</p>
 <div id="16" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>m_gam <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>) <span class="op">+</span> <span class="fu">s</span>(subject, bs<span class="op">=:</span>re)), dat)</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>m_gam <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>) <span class="op">+</span> <span class="fu">s</span>(subject, bs<span class="op">=:</span>re)), dat)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="pp">@printf</span>(<span class="st">"Fitted values correlation: %.6f</span><span class="sc">\n</span><span class="st">"</span>, <span class="fu">cor</span>(<span class="fu">fitted</span>(m), <span class="fu">fitted</span>(m_gam)))</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="pp">@printf</span>(<span class="st">"Scale (gamm): %.6f</span><span class="sc">\n</span><span class="st">"</span>, m.gam_model.scale)</span>
 <span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="pp">@printf</span>(<span class="st">"Scale (gam):  %.6f</span><span class="sc">\n</span><span class="st">"</span>, m_gam.scale)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -517,7 +517,7 @@ Predictions (new subject):    [0.495, 0.650, 0.544]</code></pre>
 </tr>
 <tr class="even">
 <td>Equivalent GAM</td>
-<td><code>gam(@gam_formula(y ~ s(x) + s(group, bs=:re)), ...)</code></td>
+<td><code>gam(@formulak(y ~ s(x) + s(group, bs=:re)), ...)</code></td>
 </tr>
 <tr class="odd">
 <td>Random effects</td>

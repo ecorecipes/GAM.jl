@@ -128,7 +128,7 @@ const rng_spde = StableRNG(314)
         y = f_true .+ 0.3 .* randn(rng_spde, n)
 
         df = DataFrame(x = x, y = y)
-        m = gam(@gam_formula(y ~ s(x, bs = :spde, k = 30)), df)
+        m = gam(@formulak(y ~ s(x, bs = :spde, k = 30)), df)
 
         @test m isa GamModel
         @test m.converged
@@ -144,7 +144,7 @@ const rng_spde = StableRNG(314)
         y = sin.(x) .+ 0.2 .* randn(rng_spde, n)
 
         df = DataFrame(x = x, y = y)
-        m = gam(@gam_formula(y ~ s(x, bs = :spde, k = 25)), df)
+        m = gam(@formulak(y ~ s(x, bs = :spde, k = 25)), df)
 
         # Predict on new data
         n_new = 50
@@ -205,7 +205,7 @@ const rng_spde = StableRNG(314)
         y = f_true .+ 0.3 .* randn(rng_spde, n)
 
         df = DataFrame(x1 = x1, x2 = x2, y = y)
-        m = gam(@gam_formula(y ~ s(x1, x2, bs = :spde, k = 36)), df)
+        m = gam(@formulak(y ~ s(x1, x2, bs = :spde, k = 36)), df)
 
         @test m isa GamModel
         @test m.converged
@@ -219,7 +219,7 @@ const rng_spde = StableRNG(314)
         y = sin.(x1) .* cos.(x2) .+ 0.3 .* randn(rng_spde, n)
 
         df = DataFrame(x1 = x1, x2 = x2, y = y)
-        m = gam(@gam_formula(y ~ s(x1, x2, bs = :spde, k = 25)), df)
+        m = gam(@formulak(y ~ s(x1, x2, bs = :spde, k = 25)), df)
 
         n_new = 50
         x1n = rand(rng_spde, n_new) * 2.0
@@ -280,8 +280,8 @@ const rng_spde = StableRNG(314)
         y = f_true .+ 0.3 .* randn(rng_spde, n)
         df = DataFrame(x = x, y = y)
 
-        m_spde = gam(@gam_formula(y ~ s(x, bs = :spde, k = 30)), df)
-        m_ps = gam(@gam_formula(y ~ s(x, bs = :ps, k = 30)), df)
+        m_spde = gam(@formulak(y ~ s(x, bs = :spde, k = 30)), df)
+        m_ps = gam(@formulak(y ~ s(x, bs = :ps, k = 30)), df)
 
         # Both should recover the function well
         r2_spde = cor(fitted(m_spde), f_true)^2

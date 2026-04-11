@@ -307,7 +307,7 @@ assume the same smoothness in all directions. Tensor products handle this.
 te(:x, :y, k=8)
 
 # ANOVA-style decomposition (equivalent to R's ti(x1, x2))
-@gam_formula(y ~ s(x1) + s(x2) + ti(x1, x2))
+@formulak(y ~ s(x1) + s(x2) + ti(x1, x2))
 
 # Alternative tensor product with independent marginal penalties (R's t2())
 t2(:x, :y, k=8)
@@ -331,10 +331,10 @@ backend.
 
 ```julia
 # Monotone increasing via explicit linear constraints
-gam(@gam_formula(y ~ s(x, bs=:sc, xt=["m+"], k=12)), df)
+gam(@formulak(y ~ s(x, bs=:sc, xt=["m+"], k=12)), df)
 
 # Positive smooth with no intercept
-gam(@gam_formula(y ~ 0 + s(x, bs=:sc, xt=["+"], k=12)), df)
+gam(@formulak(y ~ 0 + s(x, bs=:sc, xt=["+"], k=12)), df)
 ```
 
 These smooths are the closest analogue to `mgcv::scasm()`, but GAM.jl does not

@@ -214,7 +214,7 @@ x = range(0, 2π; length=n) |> collect
 y = sin.(x) .+ 0.3 .* randn(n)
 df = DataFrame(x=x, y=y)
 
-m = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df)
+m = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df)
 inla = ginla(m)
 
 # inla.beta[k,:] gives grid points for coefficient k

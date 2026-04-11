@@ -92,7 +92,7 @@ it:
 ### Median regression (τ = 0.5)
 
 ``` julia
-m_50 = qgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df, 0.5)
+m_50 = qgam(@formulak(y ~ s(x, k=20, bs=:cr)), df, 0.5)
 ```
 
     Generalized Additive Model
@@ -130,7 +130,7 @@ println("Median regression fitted range: [$(round(minimum(yhat_50), digits=3)), 
 ### Compare with mean regression
 
 ``` julia
-m_mean = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+m_mean = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 yhat_mean = predict(m_mean)
 
 println("Mean regression fitted range: [$(round(minimum(yhat_mean), digits=3)), $(round(maximum(yhat_mean), digits=3))]")
@@ -152,7 +152,7 @@ quantiles = [0.1, 0.25, 0.5, 0.75, 0.9]
 
 fits = Dict{Float64, Any}()
 for qu in quantiles
-    fits[qu] = qgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df, qu)
+    fits[qu] = qgam(@formulak(y ~ s(x, k=20, bs=:cr)), df, qu)
 end
 ```
 
@@ -192,7 +192,7 @@ current()
 variance estimate for efficiency:
 
 ``` julia
-mq = mqgam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df, quantiles)
+mq = mqgam(@formulak(y ~ s(x, k=20, bs=:cr)), df, quantiles)
 ```
 
     (fits = Dict{Float64, Any}(0.5 => GamModel(n_smooth=1, edf=5.1, deviance=8.75), 0.9 => GamModel(n_smooth=1, edf=2.7, deviance=1694.55), 0.1 => GamModel(n_smooth=1, edf=8.2, deviance=1585.97), 0.25 => GamModel(n_smooth=1, edf=5.2, deviance=31.3), 0.75 => GamModel(n_smooth=1, edf=4.8, deviance=22.31)), quantiles = [0.1, 0.25, 0.5, 0.75, 0.9])
@@ -359,7 +359,7 @@ bar(xs, losses, color=:teal, alpha=0.8, legend=false,
 | Loss function | ELF (Extended Log-F) | ELF |
 | Smoothing | Automatic (REML-based) | Automatic |
 | Pinball loss | `pinball_loss(r, τ)` | `pinLoss(...)` |
-| Formula syntax | `@gam_formula(y ~ s(x, k=20))` | `y ~ s(x, k=20)` |
+| Formula syntax | `@formulak(y ~ s(x, k=20))` | `y ~ s(x, k=20)` |
 
 Quantile GAMs extend the GAM framework to model the full conditional
 distribution, making them especially valuable for heteroscedastic data

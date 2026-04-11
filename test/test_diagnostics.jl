@@ -27,7 +27,7 @@ using StatsAPI: deviance, nobs, dof_residual
     # 1. Single-model smooth significance (Gaussian / F-test)
     # ========================================================================
     @testset "Single model - Gaussian (F-test)" begin
-        m = gam(@gam_formula(y ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)), df)
+        m = gam(@formulak(y ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)), df)
 
         result = anova_gam(m)
 
@@ -68,7 +68,7 @@ using StatsAPI: deviance, nobs, dof_residual
     # 2. Single-model smooth significance (Poisson / Chi-sq test)
     # ========================================================================
     @testset "Single model - Poisson (Chi-sq test)" begin
-        m_pois = gam(@gam_formula(y_pois ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)),
+        m_pois = gam(@formulak(y_pois ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)),
                      df, family=Poisson(), link=LogLink())
 
         result = anova_gam(m_pois)
@@ -93,8 +93,8 @@ using StatsAPI: deviance, nobs, dof_residual
     # ========================================================================
     @testset "Multi-model comparison - Gaussian" begin
         # Intercept-only (no smooths — use a linear model via fixed smooth)
-        m1 = gam(@gam_formula(y ~ s(x, k=10, bs=:cr)), df)
-        m2 = gam(@gam_formula(y ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)), df)
+        m1 = gam(@formulak(y ~ s(x, k=10, bs=:cr)), df)
+        m2 = gam(@formulak(y ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)), df)
 
         result = anova_gam(m1, m2)
 
@@ -139,9 +139,9 @@ using StatsAPI: deviance, nobs, dof_residual
         y_pois_strong = [rand(rng, Poisson(λ_i)) for λ_i in λ_strong]
         df_p = DataFrame(x=x, z=z, y_pois=Float64.(y_pois_strong))
 
-        m1_p = gam(@gam_formula(y_pois ~ s(x, k=10, bs=:cr)),
+        m1_p = gam(@formulak(y_pois ~ s(x, k=10, bs=:cr)),
                    df_p, family=Poisson(), link=LogLink())
-        m2_p = gam(@gam_formula(y_pois ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)),
+        m2_p = gam(@formulak(y_pois ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)),
                    df_p, family=Poisson(), link=LogLink())
 
         result = anova_gam(m1_p, m2_p)
@@ -158,9 +158,9 @@ using StatsAPI: deviance, nobs, dof_residual
     # 5. Three-model comparison
     # ========================================================================
     @testset "Three-model comparison" begin
-        m_small = gam(@gam_formula(y ~ s(x, k=5, bs=:cr)), df)
-        m_med = gam(@gam_formula(y ~ s(x, k=10, bs=:cr)), df)
-        m_large = gam(@gam_formula(y ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)), df)
+        m_small = gam(@formulak(y ~ s(x, k=5, bs=:cr)), df)
+        m_med = gam(@formulak(y ~ s(x, k=10, bs=:cr)), df)
+        m_large = gam(@formulak(y ~ s(x, k=10, bs=:cr) + s(z, k=10, bs=:cr)), df)
 
         result = anova_gam(m_small, m_med, m_large)
 

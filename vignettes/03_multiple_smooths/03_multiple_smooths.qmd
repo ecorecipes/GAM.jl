@@ -68,7 +68,7 @@ first(df, 5)
 ## Fitting the model
 
 ```{julia}
-m = gam(@gam_formula(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
+m = gam(@formulak(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
 ```
 
 ## Model overview

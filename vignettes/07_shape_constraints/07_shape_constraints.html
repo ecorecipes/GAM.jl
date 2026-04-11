@@ -295,8 +295,8 @@ window.Quarto = {
 <section id="fit-unconstrained-gam-vs-scam" class="level3">
 <h3 class="anchored" data-anchor-id="fit-unconstrained-gam-vs-scam">Fit unconstrained GAM vs SCAM</h3>
 <div id="6" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>m_gam <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)), df)</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>m_scam <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>mpi)), df)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>m_gam <span class="op">=</span> <span class="fu">gam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)), df)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>m_scam <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>mpi)), df)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display" data-execution_count="1">
 <pre><code>Generalized Additive Model
 
@@ -433,7 +433,7 @@ GAM all non-decreasing: false</code></pre>
 <section id="fit-with-convexity-constraint" class="level3">
 <h3 class="anchored" data-anchor-id="fit-with-convexity-constraint">Fit with convexity constraint</h3>
 <div id="16" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>m_cx <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cx)), df2)</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>m_cx <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cx)), df2)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>yhat_cx <span class="op">=</span> <span class="fu">predict</span>(m_cx)</span>
 <span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>rmse_cx <span class="op">=</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_cx <span class="op">.-</span> f_true2)<span class="op">.^</span><span class="fl">2</span>))</span>
@@ -540,7 +540,7 @@ All convex: false</code></pre>
 <section id="fit-with-monotone-increasing-concave-constraint" class="level3">
 <h3 class="anchored" data-anchor-id="fit-with-monotone-increasing-concave-constraint">Fit with monotone increasing + concave constraint</h3>
 <div id="24" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>m_micv <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>micv)), df3)</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>m_micv <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>micv)), df3)</span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>yhat_micv <span class="op">=</span> <span class="fu">predict</span>(m_micv)</span>
 <span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>rmse_micv <span class="op">=</span> <span class="fu">sqrt</span>(<span class="fu">mean</span>((yhat_micv <span class="op">.-</span> f_true3)<span class="op">.^</span><span class="fl">2</span>))</span>
@@ -606,7 +606,7 @@ Concave: false</code></pre>
 <span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>    not_exp<span class="op">=</span><span class="cn">false</span>        <span class="co"># use exp() transform (default); true for softplus</span></span>
 <span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a>m_ctrl <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>mpi)), df; control<span class="op">=</span>ctrl)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a>m_ctrl <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>mpi)), df; control<span class="op">=</span>ctrl)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display" data-execution_count="1">
 <pre><code>Generalized Additive Model
 
@@ -636,7 +636,7 @@ Scale est. = 0.0830   n = 200</code></pre>
 </div>
 <p>If no shape-constrained basis types are detected, <code>scam</code> automatically falls back to standard <code>gam</code> fitting:</p>
 <div id="32" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>m_fallback <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@gam_formula</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)), df)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode julia code-with-copy"><code class="sourceCode julia"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>m_fallback <span class="op">=</span> <span class="fu">scam</span>(<span class="pp">@formulak</span>(y <span class="op">~</span> <span class="fu">s</span>(x, k<span class="op">=</span><span class="fl">15</span>, bs<span class="op">=:</span>cr)), df)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display" data-execution_count="1">
 <pre><code>Generalized Additive Model
 

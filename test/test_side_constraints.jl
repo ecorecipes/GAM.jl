@@ -16,7 +16,7 @@ using StatsAPI
 
     # ----------------------------------------------------------------
     @testset "No overlap — s(x) + s(z)" begin
-        m = gam(@gam_formula(y ~ s(x, k = 8) + s(z, k = 8)), data)
+        m = gam(@formulak(y ~ s(x, k = 8) + s(z, k = 8)), data)
         @test m.converged
         @test length(m.smooths) == 2
 
@@ -28,7 +28,7 @@ using StatsAPI
 
     # ----------------------------------------------------------------
     @testset "1d + 2d overlap — s(x) + s(x, z)" begin
-        m = gam(@gam_formula(y ~ s(x, k = 8) + s(x, z, k = 25)), data)
+        m = gam(@formulak(y ~ s(x, k = 8) + s(x, z, k = 25)), data)
         @test m.converged
         @test length(m.smooths) == 2
 
@@ -47,7 +47,7 @@ using StatsAPI
 
     # ----------------------------------------------------------------
     @testset "te() with marginals — s(x) + s(z) + te(x, z)" begin
-        m = gam(@gam_formula(y ~ s(x, k = 8) + s(z, k = 8) + te(x, z, k = 25)), data)
+        m = gam(@formulak(y ~ s(x, k = 8) + s(z, k = 8) + te(x, z, k = 25)), data)
         @test m.converged
         @test length(m.smooths) == 3
 
@@ -67,7 +67,7 @@ using StatsAPI
     # ----------------------------------------------------------------
     @testset "side-constrained tensor keeps linear constraints aligned" begin
         df = DataFrame(y = y, x = x, z = z)
-        gf = @gam_formula(y ~ s(x, k = 8, bs = :cr) +
+        gf = @formulak(y ~ s(x, k = 8, bs = :cr) +
                               s(z, k = 8, bs = :cr) +
                               te(x, z, k = 25, bs = [:sc, :cr], xt = Any[["m+"], nothing]))
         _, _, _, smooths, _ = GAM.setup_gam(gf, df; family = Normal())
@@ -84,7 +84,7 @@ using StatsAPI
 
     # ----------------------------------------------------------------
     @testset "ti() with marginals — s(x) + s(z) + ti(x, z)" begin
-        m = gam(@gam_formula(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 25)), data)
+        m = gam(@formulak(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 25)), data)
         @test m.converged
         @test length(m.smooths) == 3
 
@@ -103,7 +103,7 @@ using StatsAPI
     # ----------------------------------------------------------------
     @testset "Predict consistency" begin
         # Use CR basis (exact prediction) and te() for the 2d interaction
-        m = gam(@gam_formula(y ~ s(x, k = 8, bs = :cr) + s(z, k = 8, bs = :cr) + te(x, z, k = 25)), data)
+        m = gam(@formulak(y ~ s(x, k = 8, bs = :cr) + s(z, k = 8, bs = :cr) + te(x, z, k = 25)), data)
         @test m.converged
 
         # te() has side constraints applied (marginals overlap)

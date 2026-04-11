@@ -683,9 +683,9 @@ See [`gamlss`](@ref) for full documentation.
 using GAM, DataFrames
 # GEV model: location and log-scale depend on x, shape is constant
 m = evgam(
-    [@gam_formula(y ~ s(x, bs=:cr, k=10)),   # location μ
-     @gam_formula(y ~ s(x, bs=:cr, k=8)),    # log-scale ψ
-     @gam_formula(y ~ 1)],                     # shape ξ
+    [@formulak(y ~ s(x, bs=:cr, k=10)),   # location μ
+     @formulak(y ~ s(x, bs=:cr, k=8)),    # log-scale ψ
+     @formulak(y ~ 1)],                     # shape ξ
     df, GEVFamily()
 )
 ```

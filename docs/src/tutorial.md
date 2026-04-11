@@ -20,11 +20,14 @@ y = sin.(x) .+ 0.3 .* randn(n)
 df = DataFrame(x=x, y=y)
 
 # Fit with cubic regression splines
-m = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+m = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 ```
 
-The `@gam_formula` macro works like StatsModels' `@formula` but supports
-`s()`, `te()`, `ti()`, and `t2()` smooth terms with keyword arguments.
+The `@formulak` macro works like StatsModels' `@formula` but supports
+`s()`, `te()`, `ti()`, and `t2()` smooth terms with keyword arguments. When
+you import `@formula` from GAM, those keyword smooth calls are automatically
+routed to `@formulak`. If you also load another package that exports
+`@formula`, use `GAM.@formula(...)` or `using GAM: @formula`.
 
 ## Multiple Smooths
 
@@ -35,7 +38,7 @@ x2 = randn(n)
 y2 = sin.(x) .+ 0.5 .* x2.^2 .+ 0.3 .* randn(n)
 df2 = DataFrame(x=x, x2=x2, y=y2)
 
-m2 = gam(@gam_formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
+m2 = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
 ```
 
 You can mix parametric and smooth terms freely:
@@ -45,7 +48,7 @@ z = randn(n)
 y3 = sin.(x) .+ 1.5 .* z .+ 0.3 .* randn(n)
 df3 = DataFrame(x=x, z=z, y=y3)
 
-m3 = gam(@gam_formula(y ~ z + s(x, k=15, bs=:cr)), df3)
+m3 = gam(@formulak(y ~ z + s(x, k=15, bs=:cr)), df3)
 ```
 
 ## Poisson GAM
@@ -58,7 +61,7 @@ mu = exp.(0.5 .* sin.(x) .+ 0.5)
 counts = [rand(Poisson(m)) for m in mu]
 df_pois = DataFrame(x=x, y=Float64.(counts))
 
-m_pois = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df_pois;
+m_pois = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df_pois;
     family=Poisson(), link=LogLink())
 ```
 
@@ -72,7 +75,7 @@ p = 1.0 ./ (1.0 .+ exp.(-2.0 .* sin.(x)))
 y_bin = Float64.([rand(Bernoulli(pi)) for pi in p])
 df_bin = DataFrame(x=x, y=y_bin)
 
-m_bin = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df_bin;
+m_bin = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df_bin;
     family=Binomial(), link=LogitLink())
 ```
 
@@ -87,7 +90,7 @@ mu_gamma = exp.(1.0 .+ 0.5 .* sin.(x))
 y_gamma = [rand(Gamma(shape, m / shape)) for m in mu_gamma]
 df_gamma = DataFrame(x=x, y=y_gamma)
 
-m_gamma = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df_gamma;
+m_gamma = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df_gamma;
     family=Gamma(), link=LogLink())
 ```
 
@@ -103,13 +106,13 @@ y = sin.(4π .* x) .+ 0.3 .* randn(n)
 df_smooth = DataFrame(x=x, y=y)
 
 # Thin plate regression spline — the default, good general-purpose choice
-m_tp = gam(@gam_formula(y ~ s(x, k=20, bs=:tp)), df_smooth)
+m_tp = gam(@formulak(y ~ s(x, k=20, bs=:tp)), df_smooth)
 
 # Cubic regression spline — fast, good for 1D smooths
-m_cr = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df_smooth)
+m_cr = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df_smooth)
 
 # P-spline — B-spline basis with difference penalty, popular in biostatistics
-m_ps = gam(@gam_formula(y ~ s(x, k=20, bs=:ps)), df_smooth)
+m_ps = gam(@formulak(y ~ s(x, k=20, bs=:ps)), df_smooth)
 ```
 
 **When to use each:**
@@ -134,13 +137,13 @@ overfitting), but wastes computation.
 
 ```julia
 # Too low — underfits
-m_low = gam(@gam_formula(y ~ s(x, k=4, bs=:cr)), df_smooth)
+m_low = gam(@formulak(y ~ s(x, k=4, bs=:cr)), df_smooth)
 
 # Adequate
-m_ok = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df_smooth)
+m_ok = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df_smooth)
 
 # Generous — fine, penalty handles it
-m_high = gam(@gam_formula(y ~ s(x, k=50, bs=:cr)), df_smooth)
+m_high = gam(@formulak(y ~ s(x, k=50, bs=:cr)), df_smooth)
 ```
 
 Use [`k_check`](@ref) to test whether `k` is large enough (see
@@ -162,7 +165,7 @@ x2 = rand(n)
 y_te = sin.(2π .* x1) .* cos.(2π .* x2) .+ 0.3 .* randn(n)
 df_te = DataFrame(x1=x1, x2=x2, y=y_te)
 
-m_te = gam(@gam_formula(y ~ te(x1, x2, k=8)), df_te)
+m_te = gam(@formulak(y ~ te(x1, x2, k=8)), df_te)
 ```
 
 ### `ti()` — Tensor Product Interaction
@@ -172,7 +175,7 @@ Equivalent to R's `ti(x1, x2)`:
 
 ```julia
 m_anova = gam(
-    @gam_formula(y ~ s(x1, k=10) + s(x2, k=10) + ti(x1, x2, k=6)),
+    @formulak(y ~ s(x1, k=10) + s(x2, k=10) + ti(x1, x2, k=6)),
     df_te,
 )
 ```
@@ -183,7 +186,7 @@ Like `te()` but with independent marginal penalties, giving finer control per
 marginal direction. Equivalent to R's `t2(x1, x2)`:
 
 ```julia
-m_t2 = gam(@gam_formula(y ~ t2(x1, x2, k=8)), df_te)
+m_t2 = gam(@formulak(y ~ t2(x1, x2, k=8)), df_te)
 ```
 
 ## Model Diagnostics
@@ -194,7 +197,7 @@ Returns QQ plot data, residuals vs fitted, histogram of residuals, and
 response vs fitted (equivalent to R's `gam.check()`):
 
 ```julia
-m = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+m = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 gc = gam_check(m)
 ```
 
@@ -216,7 +219,7 @@ Measures concurvity between smooth terms (the nonlinear analogue of
 collinearity). Values close to 1 indicate identifiability issues:
 
 ```julia
-m_multi = gam(@gam_formula(y ~ s(x, k=15) + s(x2, k=10)), df2)
+m_multi = gam(@formulak(y ~ s(x, k=15) + s(x2, k=10)), df2)
 c = concurvity(m_multi)
 ```
 
@@ -234,8 +237,8 @@ a = anova_gam(m_multi)
 Equivalent to R's `anova(m1, m2, test="F")`:
 
 ```julia
-m_small = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df2)
-m_full = gam(@gam_formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
+m_small = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df2)
+m_full = gam(@formulak(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2)
 a_comp = anova_gam(m_small, m_full)
 ```
 
@@ -252,7 +255,7 @@ Use `predict()` to evaluate the model at new covariate values (equivalent to
 R's `predict.gam()`):
 
 ```julia
-m = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+m = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 
 # New data as a DataFrame
 newdf = DataFrame(x=range(0, 2π; length=100) |> collect)
@@ -271,7 +274,7 @@ For Poisson or Binomial models, response-scale predictions are on the natural
 scale (counts or probabilities):
 
 ```julia
-m_pois = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df_pois;
+m_pois = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df_pois;
     family=Poisson(), link=LogLink())
 
 newdf = DataFrame(x=range(0, 2π; length=50) |> collect)
@@ -313,7 +316,7 @@ ctrl = gam_control(
     gamma = 1.4,         # extra smoothing (>1 = smoother)
 )
 
-m = gam(@gam_formula(y ~ s(x)), df; control=ctrl)
+m = gam(@formulak(y ~ s(x)), df; control=ctrl)
 ```
 
 Use `gamma > 1` to encourage smoother fits (useful for exploratory analysis).
@@ -324,7 +327,7 @@ Evaluate smooth functions on a grid for plotting, and compute derivatives to
 identify regions of significant change:
 
 ```julia
-m = gam(@gam_formula(y ~ s(x, k=20, bs=:cr)), df)
+m = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 
 # Evaluate smooth on a regular grid with confidence intervals
 se = smooth_estimates(m)
@@ -355,8 +358,8 @@ y = sin.(4π .* x1) .+ 0.8 .* x2.^2 .+ 0.3 .* randn(n)
 df = DataFrame(x1=x1, x2=x2, y=y)
 
 # Fit candidate models
-m1 = gam(@gam_formula(y ~ s(x1, k=20, bs=:cr)), df)
-m2 = gam(@gam_formula(y ~ s(x1, k=20, bs=:cr) + s(x2, k=10, bs=:cr)), df)
+m1 = gam(@formulak(y ~ s(x1, k=20, bs=:cr)), df)
+m2 = gam(@formulak(y ~ s(x1, k=20, bs=:cr) + s(x2, k=10, bs=:cr)), df)
 
 # Diagnostics
 gam_check(m2)
@@ -390,8 +393,8 @@ df = DataFrame(x=x, y=y)
 
 m = gamlss(
     [
-        @gam_formula(y ~ s(x, k=15, bs=:cr)),     # location (μ)
-        @gam_formula(y ~ s(x, k=10, bs=:cr)),     # scale (σ)
+        @formulak(y ~ s(x, k=15, bs=:cr)),     # location (μ)
+        @formulak(y ~ s(x, k=10, bs=:cr)),     # scale (σ)
     ],
     df,
     family=GaussianLS(),
@@ -404,10 +407,10 @@ Enforce monotonicity or convexity constraints. See [Shape Constraints (SCAM)](sc
 
 ```julia
 # Monotone increasing fit
-m = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), df)
+m = scam(@formulak(y ~ s(x, k=15, bs=:mpi)), df)
 
 # Convex fit
-m = scam(@gam_formula(y ~ s(x, k=15, bs=:cx)), df)
+m = scam(@formulak(y ~ s(x, k=15, bs=:cx)), df)
 ```
 
 ## QGAM: Quantile Regression
@@ -416,10 +419,10 @@ Estimate conditional quantiles. See [Quantile Regression (QGAM)](qgam.md).
 
 ```julia
 # Fit median regression
-m50 = qgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df, 0.5)
+m50 = qgam(@formulak(y ~ s(x, k=15, bs=:cr)), df, 0.5)
 
 # Fit multiple quantiles at once
-fits = mqgam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df,
+fits = mqgam(@formulak(y ~ s(x, k=15, bs=:cr)), df,
     [0.1, 0.25, 0.5, 0.75, 0.9])
 m10 = qdo(fits, 0.1)   # extract individual quantile model
 ```
@@ -434,13 +437,13 @@ x = rand(n)
 y = sin.(2π .* x) .+ 0.3 .* randn(n)
 big_df = DataFrame(x=x, y=y)
 
-m = bam(@gam_formula(y ~ s(x, k=20, bs=:cr)), big_df)
+m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), big_df)
 ```
 
 ## Next Steps
 
 - [Smooth Terms](@ref smooth-terms) — full reference for all 28 smooth basis types
-- [Formula Syntax](@ref formula-syntax) — details on `@gam_formula`
+- [Formula Syntax](@ref formula-syntax) — details on `@formulak`
 - [Diagnostics](@ref diagnostics) — comprehensive diagnostic functions
 - [Mixed Models (GAMM)](@ref gamm) — hierarchical data with random effects
 - [API Reference](@ref api-reference) — complete function signatures

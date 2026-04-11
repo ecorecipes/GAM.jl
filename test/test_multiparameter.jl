@@ -205,9 +205,9 @@ using Random
         df = (; y=collect(y), x=collect(x))
 
         m = evgam(
-            [@gam_formula(y ~ s(x, bs=:cr, k=8)),
-             @gam_formula(y ~ 1),
-             @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x, bs=:cr, k=8)),
+             @formulak(y ~ 1),
+             @formulak(y ~ 1)],
             df, GEVFamily()
         )
 
@@ -236,8 +236,8 @@ using Random
         df = (; y=y)
 
         m = evgam(
-            [@gam_formula(y ~ 1),
-             @gam_formula(y ~ 1)],
+            [@formulak(y ~ 1),
+             @formulak(y ~ 1)],
             df, GPDFamily()
         )
 

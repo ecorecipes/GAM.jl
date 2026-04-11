@@ -147,7 +147,7 @@ using DataFrames
         y = f_true .+ 0.3 .* randn(t2_rng, n)
         data = DataFrame(x=x, z=z, y=y)
 
-        m = gam(@gam_formula(y ~ t2(x, z, k=25)), data)
+        m = gam(@formulak(y ~ t2(x, z, k=25)), data)
 
         @test m isa GamModel
         @test m.converged
@@ -173,8 +173,8 @@ using DataFrames
         y = f_true .+ 0.3 .* randn(t2_rng, n)
         data = DataFrame(x=x, z=z, y=y)
 
-        m_te = gam(@gam_formula(y ~ te(x, z, k=25)), data)
-        m_t2 = gam(@gam_formula(y ~ t2(x, z, k=25)), data)
+        m_te = gam(@formulak(y ~ te(x, z, k=25)), data)
+        m_t2 = gam(@formulak(y ~ t2(x, z, k=25)), data)
 
         @test m_te.converged
         @test m_t2.converged
@@ -184,8 +184,8 @@ using DataFrames
         @test cor_fits > 0.9
     end
 
-    @testset "@gam_formula parsing" begin
-        gf = @gam_formula(y ~ t2(x, z))
+    @testset "@formulak parsing" begin
+        gf = @formulak(y ~ t2(x, z))
         @test length(gf.smooth_specs) == 1
         @test gf.smooth_specs[1].basis isa T2TensorProduct
         @test gf.smooth_specs[1].term_vars == [:x, :z]

@@ -179,7 +179,7 @@ using LinearAlgebra
         m_gamm = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
 
         # Fit equivalent GAM with s(group, bs=:re)
-        m_gam = gam(@gam_formula(y ~ s(x) + s(group, bs = :re)), df)
+        m_gam = gam(@formulak(y ~ s(x) + s(group, bs = :re)), df)
 
         # Both should give similar scale estimates
         @test abs(m_gamm.gam_model.scale - m_gam.scale) / m_gam.scale < 0.5

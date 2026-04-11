@@ -115,8 +115,8 @@ f_true = 3.0 .* (1.0 .- exp.(-5.0 .* x))
 ### Fit unconstrained GAM vs SCAM
 
 ``` julia
-m_gam = gam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df)
-m_scam = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), df)
+m_gam = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df)
+m_scam = scam(@formulak(y ~ s(x, k=15, bs=:mpi)), df)
 ```
 
     Generalized Additive Model
@@ -250,7 +250,7 @@ f_true2 = 2.0 .* x_cx.^2
 ### Fit with convexity constraint
 
 ``` julia
-m_cx = scam(@gam_formula(y ~ s(x, k=15, bs=:cx)), df2)
+m_cx = scam(@formulak(y ~ s(x, k=15, bs=:cx)), df2)
 
 yhat_cx = predict(m_cx)
 rmse_cx = sqrt(mean((yhat_cx .- f_true2).^2))
@@ -357,7 +357,7 @@ f_true3 = 3.0 .* sqrt.(x_micv)
 ### Fit with monotone increasing + concave constraint
 
 ``` julia
-m_micv = scam(@gam_formula(y ~ s(x, k=15, bs=:micv)), df3)
+m_micv = scam(@formulak(y ~ s(x, k=15, bs=:micv)), df3)
 
 yhat_micv = predict(m_micv)
 rmse_micv = sqrt(mean((yhat_micv .- f_true3).^2))
@@ -421,7 +421,7 @@ ctrl = scam_control(
     not_exp=false        # use exp() transform (default); true for softplus
 )
 
-m_ctrl = scam(@gam_formula(y ~ s(x, k=15, bs=:mpi)), df; control=ctrl)
+m_ctrl = scam(@formulak(y ~ s(x, k=15, bs=:mpi)), df; control=ctrl)
 ```
 
     Generalized Additive Model
@@ -453,7 +453,7 @@ If no shape-constrained basis types are detected, `scam` automatically
 falls back to standard `gam` fitting:
 
 ``` julia
-m_fallback = scam(@gam_formula(y ~ s(x, k=15, bs=:cr)), df)
+m_fallback = scam(@formulak(y ~ s(x, k=15, bs=:cr)), df)
 ```
 
     Generalized Additive Model

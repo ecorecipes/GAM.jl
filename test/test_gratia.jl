@@ -16,7 +16,7 @@ using Distributions
     x = sort(rand(rng, n))
     y = sin.(2π .* x) .+ 0.3 .* randn(rng, n)
     df = DataFrame(x = x, y = y)
-    m = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df)
+    m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df)
 
     # Multi-smooth model
     rng2 = MersenneTwister(123)
@@ -25,7 +25,7 @@ using Distributions
     x2 = rand(rng2, n2)
     y2 = sin.(2π .* x1) .+ cos.(2π .* x2) .+ 0.5 .* randn(rng2, n2)
     df2 = DataFrame(x1 = x1, x2 = x2, y = y2)
-    m2 = gam(@gam_formula(y ~ s(x1, k = 10, bs = :cr) + s(x2, k = 10, bs = :cr)), df2)
+    m2 = gam(@formulak(y ~ s(x1, k = 10, bs = :cr) + s(x2, k = 10, bs = :cr)), df2)
 
     # ─── smooth_estimates ────────────────────────────────────────────────
 
@@ -254,7 +254,7 @@ using Distributions
         mu_p = exp.(1.0 .+ 2.0 .* sin.(2π .* x_p))
         y_p = Float64.([rand(rng_p, Distributions.Poisson(max(m, 0.1))) for m in mu_p])
         df_p = DataFrame(x = x_p, y = y_p)
-        m_p = gam(@gam_formula(y ~ s(x, k = 15, bs = :cr)), df_p;
+        m_p = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_p;
             family = Poisson(), link = LogLink())
 
         rd = rootogram(m_p)

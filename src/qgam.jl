@@ -506,11 +506,11 @@ following Fasiolo et al. (2020).
 
 # Examples
 ```julia
-fit = qgam(@gam_formula(y ~ s(x, k=20)), data, 0.5)
+fit = qgam(@formulak(y ~ s(x, k=20)), data, 0.5)
 
 fit_lss = qgam([
-    @gam_formula(y ~ s(x, k=20)),
-    @gam_formula(y ~ 0 + s(x, k=10))
+    @formulak(y ~ s(x, k=20)),
+    @formulak(y ~ 0 + s(x, k=10))
 ], data, 0.9)
 ```
 """
@@ -886,7 +886,7 @@ Apply function `f` to a single quantile model extracted from an `mqgam` result.
 
 # Examples
 ```julia
-mq = mqgam(@gam_formula(y ~ s(x, k=20)), data, [0.1, 0.5, 0.9])
+mq = mqgam(@formulak(y ~ s(x, k=20)), data, [0.1, 0.5, 0.9])
 qdo(mq, 0.5)                          # extract the median fit
 qdo(mq, 0.1, predict)                 # predictions at 10th percentile
 qdo(mq, 0.9, predict, newdata; type=:response)
@@ -957,7 +957,7 @@ A `CQCheckResult` with per-bin calibration diagnostics.
 
 # Examples
 ```julia
-fit = qgam(@gam_formula(y ~ s(x, k=20)), data, 0.5)
+fit = qgam(@formulak(y ~ s(x, k=20)), data, 0.5)
 res = cqcheck(fit, data.x; nbin=10)
 res.flagged  # which bins have miscalibration
 ```
@@ -1111,7 +1111,7 @@ A `QGamCheck` with diagnostic results.
 
 # Examples
 ```julia
-fit = qgam(@gam_formula(y ~ s(x, k=20)), data, 0.5)
+fit = qgam(@formulak(y ~ s(x, k=20)), data, 0.5)
 chk = check_qgam(fit)
 chk.actual_proportion   # should be ≈ 0.5
 chk.integrated_abs_bias # should be small (< 0.05)
@@ -1255,7 +1255,7 @@ where z = (y - μ)/σ and B is the beta function.
 Use directly with `gam()` / `gamlss()`, or via `qgam([mu_formula, sigma_formula], ...)`:
 ```julia
 fam = ELFLSSFamily(qu=0.5, co=0.2)
-m = gam([@gam_formula(y ~ s(x, k=20)), @gam_formula(y ~ 0 + s(x, k=10))],
+m = gam([@formulak(y ~ s(x, k=20)), @formulak(y ~ 0 + s(x, k=10))],
         data, fam)
 ```
 """

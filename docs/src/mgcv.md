@@ -11,7 +11,7 @@ conventions. In the latest checked-in benchmark snapshot, GAM.jl achieves a
 
 | Feature | R mgcv | GAM.jl |
 |---------|--------|--------|
-| Fit a GAM | `gam(y ~ s(x), data=df)` | `gam(@gam_formula(y ~ s(x)), df)` |
+| Fit a GAM | `gam(y ~ s(x), data=df)` | `gam(@formulak(y ~ s(x)), df)` |
 | Basis type | `bs="cr"` | `bs=:cr` |
 | Family | `family=poisson()` | `family=Poisson()` |
 | Link | implicit | `link=LogLink()` |
@@ -21,9 +21,9 @@ conventions. In the latest checked-in benchmark snapshot, GAM.jl achieves a
 | Deviance | `deviance(m)` | `deviance(m)` |
 | Predict | `predict(m, newdata)` | manual via `predict_matrix` |
 | GAMLSS | `gaulss()` family | `gamlss(..., family=GaussianLS())` |
-| SCAM | `scam(y ~ s(x, bs="mpi"))` | `scam(@gam_formula(y ~ s(x, bs=:mpi)), df)` |
-| QGAM | `qgam(y ~ s(x), qu=0.5)` | `qgam(@gam_formula(y ~ s(x)), df, 0.5)` |
-| BAM | `bam(y ~ s(x))` | `bam(@gam_formula(y ~ s(x)), df)` |
+| SCAM | `scam(y ~ s(x, bs="mpi"))` | `scam(@formulak(y ~ s(x, bs=:mpi)), df)` |
+| QGAM | `qgam(y ~ s(x), qu=0.5)` | `qgam(@formulak(y ~ s(x)), df, 0.5)` |
+| BAM | `bam(y ~ s(x))` | `bam(@formulak(y ~ s(x)), df)` |
 | GAMM | `gamm(y ~ s(x))` | `gamm(@gamm_formula(y ~ s(x) + (1\|group)), df)` |
 
 ### Architecture

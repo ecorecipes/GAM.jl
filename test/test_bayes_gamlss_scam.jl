@@ -25,7 +25,7 @@ using StatsAPI: nobs, coef, coeftable, confint, vcov
         df = DataFrame(x = collect(x), y = y)
 
         m = gamlss(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ s(x))],
+            [@formulak(y ~ s(x)), @formulak(y ~ s(x))],
             df, Normal();
             priors = PriorSpec(), nsamples = 300, nchains = 1
         )
@@ -79,7 +79,7 @@ using StatsAPI: nobs, coef, coeftable, confint, vcov
         df = DataFrame(x = collect(x), y = y)
 
         # Single formula gets replicated for both μ and σ
-        m = gamlss(@gam_formula(y ~ s(x)), df, Normal();
+        m = gamlss(@formulak(y ~ s(x)), df, Normal();
             priors = PriorSpec(), nsamples = 300, nchains = 1)
         @test m isa BayesGamModel
         @test nobs(m) == n
@@ -95,7 +95,7 @@ using StatsAPI: nobs, coef, coeftable, confint, vcov
         df = DataFrame(x = collect(x), y = y_g)
 
         m = gamlss(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x)), @formulak(y ~ 1)],
             df, GammaLocationScale();
             priors = PriorSpec(), nsamples = 300, nchains = 1
         )
@@ -118,7 +118,7 @@ using StatsAPI: nobs, coef, coeftable, confint, vcov
         df = DataFrame(x = collect(x), y = y_b)
 
         m = gamlss(
-            [@gam_formula(y ~ s(x)), @gam_formula(y ~ 1)],
+            [@formulak(y ~ s(x)), @formulak(y ~ 1)],
             df, BetaRegression();
             priors = PriorSpec(), nsamples = 300, nchains = 1
         )
@@ -133,7 +133,7 @@ using StatsAPI: nobs, coef, coeftable, confint, vcov
         y = y_true .+ 0.1 .* randn(rng, n)
         df = DataFrame(x = x, y = y)
 
-        m = scam(@gam_formula(y ~ s(x, bs = :mpi, k = 8)), df;
+        m = scam(@formulak(y ~ s(x, bs = :mpi, k = 8)), df;
             priors = PriorSpec(), nsamples = 300, nchains = 1)
         @test m isa BayesGamModel
         @test nobs(m) == n
@@ -142,7 +142,7 @@ using StatsAPI: nobs, coef, coeftable, confint, vcov
         @test length(c) >= 1
 
         # Compare with frequentist — intercepts should be reasonably close
-        m_freq = scam(@gam_formula(y ~ s(x, bs = :mpi, k = 8)), df)
+        m_freq = scam(@formulak(y ~ s(x, bs = :mpi, k = 8)), df)
         @test abs(c[1] - coef(m_freq)[1]) < 0.5
 
         l = loo(m)
@@ -161,7 +161,7 @@ using StatsAPI: nobs, coef, coeftable, confint, vcov
         y = 3.0 .- 2 .* x .+ 0.1 .* randn(rng, n)
         df = DataFrame(x = x, y = y)
 
-        m = scam(@gam_formula(y ~ s(x, bs = :mpd, k = 8)), df;
+        m = scam(@formulak(y ~ s(x, bs = :mpd, k = 8)), df;
             priors = PriorSpec(), nsamples = 300, nchains = 1)
         @test m isa BayesGamModel
         @test nobs(m) == n
@@ -172,7 +172,7 @@ using StatsAPI: nobs, coef, coeftable, confint, vcov
         y = x .^ 2 .+ 0.1 .* randn(rng, n)
         df = DataFrame(x = x, y = y)
 
-        m = scam(@gam_formula(y ~ s(x, bs = :cx, k = 8)), df;
+        m = scam(@formulak(y ~ s(x, bs = :cx, k = 8)), df;
             priors = PriorSpec(), nsamples = 300, nchains = 1)
         @test m isa BayesGamModel
         @test nobs(m) == n
