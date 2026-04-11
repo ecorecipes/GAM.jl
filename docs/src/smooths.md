@@ -5,28 +5,44 @@ R's mgcv, plus shape-constrained bases from scam and several additional types
 including loess, fractional polynomials, spherical splines, SPDE Matérn, and
 constrained factor smooths.
 
+```@setup smooths
+using GAM, DataFrames, Random
+Random.seed!(42)
+x = range(0, 1; length=40) |> collect
+y = 2 .* x .+ 0.1 .* randn(length(x))
+df = DataFrame(x=x, y=y)
+```
+
 ## Specifying Smooths
 
 All smooth terms are specified using the `s()` function (or `te()`/`ti()`/`t2()`
 for tensor products):
 
-```julia
-s(:x)                          # TPRS, default k=10
-s(:x, bs=:cr, k=20)           # cubic regression spline, k=20
-s(:x, :y)                     # 2d TPRS
-s(:x, bs=:ps, m=3)            # P-spline with 3rd-order difference penalty
-s(:x, bs=:cps, k=12)          # cyclic P-spline
-s(:x, :y, bs=:gp)             # Gaussian process smooth
-s(:x, fx=true, k=5)           # unpenalized (fixed df)
-s(:group, bs=:re)              # random effect
-s(:region, bs=:mrf, xt=nb)    # Markov random field
-s(:x, bs=:lo, k=15)           # loess smooth
-s(:x, bs=:fp)                 # fractional polynomial
-s(:lon, :lat, bs=:sos, k=50)  # spherical spline
-s(:x, :y, bs=:spde)           # SPDE Matérn
-te(:x, :y, k=5)               # tensor product
-ti(:x, :y, k=5)               # tensor product interaction
-t2(:x, :y, k=5)               # alternative tensor product
+```@example smooths
+s(:x);                          # TPRS, default k=10
+s(:x, bs=:cr, k=20);            # cubic regression spline, k=20
+s(:x, :y);                      # 2d TPRS
+s(:x, bs=:ps, m=3);             # P-spline with 3rd-order difference penalty
+s(:x, bs=:cps, k=12);           # cyclic P-spline
+s(:x, :y, bs=:gp);              # Gaussian process smooth
+s(:x, fx=true, k=5);            # unpenalized (fixed df)
+s(:group, bs=:re);              # random effect
+s(:x, bs=:lo, k=15);            # loess smooth
+s(:x, bs=:fp);                  # fractional polynomial
+s(:lon, :lat, bs=:sos, k=50);   # spherical spline
+s(:x, :y, bs=:spde);            # SPDE Matérn
+te(:x, :y, k=5);                # tensor product
+ti(:x, :y, k=5);                # tensor product interaction
+t2(:x, :y, k=5);                # alternative tensor product
+nothing
+```
+
+For neighbourhood- and boundary-based smooths, pass the auxiliary structure
+through `xt`:
+
+```text
+s(:region, bs=:mrf, xt=nb, k=20)    # Markov random field
+s(:x, :y, bs=:so, xt=bnd, k=30)     # soap film smooth
 ```
 
 ## Available Basis Types
@@ -44,10 +60,11 @@ a given dimension and penalty order.
 
 **Default k**: 10 for 1D, 30 for 2D.
 
-```julia
-s(:x)               # default TPRS
-s(:x, bs=:ts)       # with shrinkage — smooth can be penalized to zero
-s(:x, :y, bs=:tp)   # 2D thin plate spline
+```@example smooths
+s(:x);               # default TPRS
+s(:x, bs=:ts);       # with shrinkage — smooth can be penalized to zero
+s(:x, :y, bs=:tp);   # 2D thin plate spline
+nothing
 ```
 
 ### Cubic Regression Splines (`bs=:cr`, `bs=:cs`, `bs=:cc`)
@@ -63,9 +80,10 @@ the natural choice for periodic covariates (time of day, day of year, angle).
 
 **Default k**: 10.
 
-```julia
-s(:x, bs=:cr, k=20)
-s(:time, bs=:cc, k=12)   # cyclic for periodic data
+```@example smooths
+s(:x, bs=:cr, k=20);
+s(:time, bs=:cc, k=12);   # cyclic for periodic data
+nothing
 ```
 
 ### P-Splines (`bs=:ps`)
@@ -80,8 +98,9 @@ explicit control over penalty order.
 
 **Default k**: 10.
 
-```julia
-s(:x, bs=:ps, m=3)   # third-order difference penalty
+```@example smooths
+s(:x, bs=:ps, m=3);   # third-order difference penalty
+nothing
 ```
 
 ### Cyclic P-Splines (`bs=:cps`)
@@ -94,8 +113,9 @@ cubic splines (e.g., hour of day, month of year).
 
 **Default k**: 10.
 
-```julia
-s(:hour, bs=:cps, k=12)   # smooth over 24-hour cycle
+```@example smooths
+s(:hour, bs=:cps, k=12);   # smooth over 24-hour cycle
+nothing
 ```
 
 ### B-Splines (`bs=:bs`)
@@ -110,8 +130,9 @@ discrete difference penalty of P-splines.
 
 **Default k**: 10.
 
-```julia
-s(:x, bs=:bs, m=2)
+```@example smooths
+s(:x, bs=:bs, m=2);
+nothing
 ```
 
 ### Gaussian Process Smooth (`bs=:gp`)
@@ -126,9 +147,10 @@ for uncertainty quantification with a specific correlation structure).
 
 **Default k**: 10.
 
-```julia
-s(:x, bs=:gp)                             # default kernel
-s(:x, :y, bs=:gp, k=50)                   # 2D GP smooth
+```@example smooths
+s(:x, bs=:gp);            # default kernel
+s(:x, :y, bs=:gp, k=50);  # 2D GP smooth
+nothing
 ```
 
 ### Loess Smooth (`bs=:lo`)
@@ -142,9 +164,10 @@ Equivalent to R's `lo()` in gam/mgcv.
 
 **Default k**: 10.
 
-```julia
-s(:x, bs=:lo)
-s(:x, bs=:lo, k=15)
+```@example smooths
+s(:x, bs=:lo);
+s(:x, bs=:lo, k=15);
+nothing
 ```
 
 ### Fractional Polynomial (`bs=:fp`)
@@ -156,8 +179,9 @@ a predefined set (including negative and fractional powers).
 polynomial-like function with potentially non-integer powers. Common in
 epidemiology and dose-response modelling. Equivalent to R's `fp()` in mfp.
 
-```julia
-s(:x, bs=:fp)
+```@example smooths
+s(:x, bs=:fp);
+nothing
 ```
 
 ### Duchon Splines (`bs=:ds`)
@@ -171,8 +195,12 @@ more flexibility in the smoothness penalty.
 
 **Default k**: 10.
 
-```julia
-s(:x, bs=:ds)
+```@example smooths
+s(:x, bs=:ds);
+nothing
+```
+
+```text
 s(:x, :y, bs=:ds, m=(1, 0.5))   # custom penalty specification
 ```
 
@@ -186,8 +214,9 @@ with more rapid change.
 regions of slow change. The penalty adapts so you don't oversmooth or
 undersmooth locally.
 
-```julia
-s(:x, bs=:ad, k=20)
+```@example smooths
+s(:x, bs=:ad, k=20);
+nothing
 ```
 
 ### Spherical Splines (`bs=:sos`)
@@ -201,8 +230,9 @@ Equivalent to R's `s(lon, lat, bs="sos")` in mgcv.
 
 **Default k**: 50.
 
-```julia
-s(:lon, :lat, bs=:sos, k=50)
+```@example smooths
+s(:lon, :lat, bs=:sos, k=50);
+nothing
 ```
 
 ### SPDE Matérn Smooth (`bs=:spde`)
@@ -215,8 +245,9 @@ approach of Lindgren et al. (2011).
 computational efficiency from sparse precision matrices. Especially useful
 for large spatial datasets where a dense GP (`bs=:gp`) is too slow.
 
-```julia
-s(:x, :y, bs=:spde)
+```@example smooths
+s(:x, :y, bs=:spde);
+nothing
 ```
 
 ### Markov Random Field (`bs=:mrf`)
@@ -230,7 +261,7 @@ matrix passed via `xt`.
 **When to use:** Areal/lattice data (e.g., disease mapping by region).
 Equivalent to R's `s(region, bs="mrf", xt=list(nb=nb))`.
 
-```julia
+```text
 # nb is a Dict mapping region => [neighbours...]
 s(:region, bs=:mrf, xt=nb, k=20)
 ```
@@ -247,7 +278,7 @@ Uses a soap-film PDE approach to respect domain boundaries.
 and you don't want the smooth to "leak" across boundaries. Equivalent to R's
 `s(x, y, bs="so", xt=list(bnd=bnd))`.
 
-```julia
+```text
 # bnd defines the domain boundary
 s(:x, :y, bs=:so, xt=bnd, k=30)
 ```
@@ -261,8 +292,9 @@ level of a factor, sharing a common smoothing parameter.
 own smooth, but a shared smoothing parameter prevents overfitting. Equivalent
 to R's `s(x, group, bs="fs")`.
 
-```julia
-s(:x, :group, bs=:fs, k=10)   # separate smooth per group level
+```@example smooths
+s(:x, :group, bs=:fs, k=10);   # separate smooth per group level
+nothing
 ```
 
 ### Constrained Factor Smooth (`bs=:sz`)
@@ -275,8 +307,9 @@ value, ensuring identifiability with a population-level smooth.
 and want to ensure the deviations are identifiable (sum to zero). Equivalent
 to R's `s(x, group, bs="sz")`.
 
-```julia
-s(:x, :group, bs=:sz, k=10)
+```@example smooths
+s(:x, :group, bs=:sz, k=10);
+nothing
 ```
 
 ### Random Effects (`bs=:re`)
@@ -286,8 +319,9 @@ Identity penalty matrix — equivalent to a random intercept or random slope.
 **When to use:** Simple random effects (intercepts or slopes) within a `gam()`
 call. For more complex random effects structures, use [`gamm()`](@ref).
 
-```julia
-s(:group, bs=:re)   # random intercept for `group`
+```@example smooths
+s(:group, bs=:re);   # random intercept for `group`
+nothing
 ```
 
 ### Tensor Products (`te()`, `ti()`, `t2()`)
@@ -302,15 +336,11 @@ Tensor product smooths for interactions between variables on different scales.
 and time), isotropic smooths (`s(:x, :y)`) are inappropriate because they
 assume the same smoothness in all directions. Tensor products handle this.
 
-```julia
-# Full tensor product (equivalent to R's te(x1, x2))
-te(:x, :y, k=8)
-
-# ANOVA-style decomposition (equivalent to R's ti(x1, x2))
-@formulak(y ~ s(x1) + s(x2) + ti(x1, x2))
-
-# Alternative tensor product with independent marginal penalties (R's t2())
-t2(:x, :y, k=8)
+```@example smooths
+te(:x, :y, k=8);                               # full tensor product
+@formula(y ~ s(x1) + s(x2) + ti(x1, x2));     # ANOVA-style decomposition
+t2(:x, :y, k=8);                              # alternative tensor product
+nothing
 ```
 
 `t2()` produces more penalties than `te()` (one per marginal direction plus a
@@ -320,21 +350,19 @@ control over smoothing in each marginal direction.
 ### Linear-Constraint Bases (`bs=:sc`, `bs=:scad`)
 
 These bases impose general linear inequality or equality constraints on spline
-coefficients. Use them through [`gam()`](@ref), [`gamm()`](@ref), or
-[`gamlss()`](@ref); they dispatch automatically to the constrained fitting
-backend.
+coefficients. Use them through [`gam()`](@ref), `gam(..., family)` for
+multi-parameter models, or [`gamm()`](@ref); they dispatch automatically to
+the constrained fitting backend.
 
 - `:sc` — single-penalty constrained spline
 - `:scad` — adaptive constrained spline with multiple penalties
 - `pc=...` — additional point or weighted-average linear constraints appended to
   a smooth
 
-```julia
-# Monotone increasing via explicit linear constraints
-gam(@formulak(y ~ s(x, bs=:sc, xt=["m+"], k=12)), df)
-
-# Positive smooth with no intercept
-gam(@formulak(y ~ 0 + s(x, bs=:sc, xt=["+"], k=12)), df)
+```@example smooths
+gam(@formula(y ~ s(x, bs=:sc, xt=["m+"], k=12)), df);
+gam(@formula(y ~ 0 + s(x, bs=:sc, xt=["+"], k=12)), df);
+nothing
 ```
 
 These smooths are the closest analogue to `mgcv::scasm()`, but GAM.jl does not
@@ -346,7 +374,8 @@ families across GAM, GAMLSS, and GAMM workflows.
 ### SCAM Shape-Constrained Bases
 
 These basis types impose monotonicity and/or convexity constraints on the
-smooth. They are used with the [`scam()`](@ref) function. See
+smooth. They dispatch automatically through [`gam()`](@ref); the legacy
+[`scam()`](@ref) wrapper remains available. See
 [Shape Constraints (SCAM)](scam.md) for details.
 
 | Basis | Constraint | When to use |
@@ -360,12 +389,10 @@ smooth. They are used with the [`scam()`](@ref) function. See
 | `:mdcx` | Monotone decreasing & convex | Decelerating decline |
 | `:mdcv` | Monotone decreasing & concave | Accelerating decline |
 
-```julia
-# Monotone increasing smooth (use with scam())
-s(:x, bs=:mpi, k=10)
-
-# Convex smooth
-s(:x, bs=:cx, k=15)
+```@example smooths
+s(:x, bs=:mpi, k=10);   # monotone increasing smooth
+s(:x, bs=:cx, k=15);    # convex smooth
+nothing
 ```
 
 ## Quick Reference Table

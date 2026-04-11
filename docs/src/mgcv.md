@@ -11,7 +11,7 @@ conventions. In the latest checked-in benchmark snapshot, GAM.jl achieves a
 
 | Feature | R mgcv | GAM.jl |
 |---------|--------|--------|
-| Fit a GAM | `gam(y ~ s(x), data=df)` | `gam(@formulak(y ~ s(x)), df)` |
+| Fit a GAM | `gam(y ~ s(x), data=df)` | `gam(@formula(y ~ s(x)), df)` |
 | Basis type | `bs="cr"` | `bs=:cr` |
 | Family | `family=poisson()` | `family=Poisson()` |
 | Link | implicit | `link=LogLink()` |
@@ -20,11 +20,11 @@ conventions. In the latest checked-in benchmark snapshot, GAM.jl achieves a
 | Coefficients | `coef(m)` | `coef(m)` |
 | Deviance | `deviance(m)` | `deviance(m)` |
 | Predict | `predict(m, newdata)` | manual via `predict_matrix` |
-| GAMLSS | `gaulss()` family | `gamlss(..., family=GaussianLS())` |
-| SCAM | `scam(y ~ s(x, bs="mpi"))` | `scam(@formulak(y ~ s(x, bs=:mpi)), df)` |
-| QGAM | `qgam(y ~ s(x), qu=0.5)` | `qgam(@formulak(y ~ s(x)), df, 0.5)` |
-| BAM | `bam(y ~ s(x))` | `bam(@formulak(y ~ s(x)), df)` |
-| GAMM | `gamm(y ~ s(x))` | `gamm(@gamm_formula(y ~ s(x) + (1\|group)), df)` |
+| GAMLSS | `gaulss()` family | `gam(@formula(y ~ s(x)), df, GaussianLS())` |
+| SCAM | `scam(y ~ s(x, bs="mpi"))` | `gam(@formula(y ~ s(x, bs=:mpi)), df)` |
+| QGAM | `qgam(y ~ s(x), qu=0.5)` | `qgam(@formula(y ~ s(x)), df, 0.5)` |
+| BAM | `bam(y ~ s(x))` | `bam(@formula(y ~ s(x)), df)` |
+| GAMM | `gamm(y ~ s(x))` | `gamm(@formula(y ~ s(x) + (1 \| group)), df)` |
 
 ### Architecture
 
@@ -74,10 +74,10 @@ in basis construction.
 
 | Feature | R package | GAM.jl |
 |---------|-----------|--------|
-| GAMLSS (distributional regression) | gamlss / mgcv | ✅ `gamlss()` |
+| GAMLSS (distributional regression) | gamlss / mgcv | ✅ `gam(..., family)` |
 | BAM (large data) | mgcv | ✅ `bam()` |
 | GAMM (mixed models) | mgcv | ✅ `gamm()` |
-| SCAM (shape constraints) | scam | ✅ `scam()` |
+| SCAM (shape constraints) | scam | ✅ `gam(...)` |
 | QGAM (quantile regression) | qgam | ✅ `qgam()` |
 | evgam (extreme values) | evgam | ✅ `evgam()` |
 | GINLA (posterior inference) | mgcv | ✅ `ginla()` |

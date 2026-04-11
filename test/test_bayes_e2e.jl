@@ -286,8 +286,8 @@ using Statistics: mean, std
         @test length(β_mean) > 0
         @test all(isfinite, β_mean)
 
-        # Fit via @gamm_formula
-        m2 = gamm(@gamm_formula(y ~ s(x, k = 10) + (1|group)), df;
+        # Fit via @formula
+        m2 = gamm(@formula(y ~ s(x, k = 10) + (1|group)), df;
             priors = PriorSpec(sds = Exponential(1.0), sigma = Exponential(1.0)),
             nsamples = 500, nchains = 1)
 

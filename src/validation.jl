@@ -277,7 +277,7 @@ Validate random effect specifications for GAMM.
 function _validate_gamm_random_effects(re_specs::Vector{RandomEffectSpec}, data)
     isempty(re_specs) && throw(ArgumentError(
         "gamm() requires at least one random effect term. " *
-        "Use `(1|group)` syntax in @gamm_formula, or `re(group)` in @formula. " *
+        "Use `@formula(... + (1 | group))` or `@formula(... + re(group))`. " *
         "For models without random effects, use gam() instead."))
 
     t = Tables.columntable(data)

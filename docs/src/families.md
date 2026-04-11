@@ -2,6 +2,40 @@
 
 GAM.jl supports a wide range of distribution families for different model types.
 
+```@setup families
+using GAM, DataFrames, Random, Distributions
+Random.seed!(42)
+
+n = 120
+x = range(0.1, 3.0; length=n) |> collect
+y = sin.(x) .+ 0.2 .* randn(n)
+df = DataFrame(x=x, y=y)
+
+counts = Float64.(rand.(Poisson.(exp.(0.4 .+ 0.2 .* x))))
+df_count = DataFrame(x=x, y=counts)
+
+p_bin = clamp.(0.2 .+ 0.6 .* (x .- minimum(x)) ./ (maximum(x) - minimum(x)), 0.05, 0.95)
+y_bin = Float64.(rand.(Bernoulli.(p_bin)))
+df_bin = DataFrame(x=x, y=y_bin)
+
+props = clamp.(0.15 .+ 0.7 .* (x .- minimum(x)) ./ (maximum(x) - minimum(x)) .+ 0.05 .* randn(n), 0.01, 0.99)
+df_prop = DataFrame(x=x, y=props)
+
+y_pos = exp.(0.4 .* sin.(x) .+ 0.2 .* randn(n))
+df_pos = DataFrame(x=x, y=y_pos)
+
+y_zero = max.(0.0, exp.(0.4 .* sin.(x) .+ 0.2 .* randn(n)) .- 1.0)
+df_tweedie = DataFrame(x=x, y=y_zero)
+
+x_ls = range(0, 2π; length=n) |> collect
+y_ls = sin.(x_ls) .+ (0.1 .+ 0.2 .* abs.(cos.(x_ls))) .* randn(n)
+df_ls = DataFrame(x=x_ls, y=y_ls)
+
+year = collect(1:n)
+y_gev = 10.0 .+ 0.03 .* year .+ abs.(randn(n))
+df_gev = DataFrame(x=year, y=y_gev)
+```
+
 ## Standard Exponential Families
 
 These are used with `gam()` and work like GLM.jl families:
@@ -24,9 +58,10 @@ estimated dispersion stored in `m.scale`.
 
 For overdispersed count data where the variance exceeds the mean.
 
-```julia
-m = gam(@formulak(y ~ s(x)), df;
-    family=NegBinFamily(theta=1.0))
+```@example families
+m = gam(@formula(y ~ s(x)), df_count;
+    family=NegBinFamily(theta=1.0));
+nothing
 ```
 
 The shape parameter θ is estimated automatically. Variance: μ + μ²/θ.
@@ -36,9 +71,10 @@ The shape parameter θ is estimated automatically. Variance: μ + μ²/θ.
 For overdispersed count data when you want Poisson mean structure with an
 estimated dispersion parameter rather than a fully specified count distribution.
 
-```julia
-m = gam(@formulak(y ~ s(x)), df;
-    family=QuasiPoissonFamily())
+```@example families
+m = gam(@formula(y ~ s(x)), df_count;
+    family=QuasiPoissonFamily());
+nothing
 ```
 
 The unit variance function is `V(μ) = μ`, and the fitted dispersion is reported
@@ -49,9 +85,10 @@ as `m.scale`.
 For overdispersed binary or proportion data when a binomial mean-variance
 relationship is appropriate up to a multiplicative dispersion factor.
 
-```julia
-m = gam(@formulak(y ~ s(x)), df;
-    family=QuasiBinomialFamily())
+```@example families
+m = gam(@formula(y ~ s(x)), df_bin;
+    family=QuasiBinomialFamily());
+nothing
 ```
 
 The unit variance function is `V(μ) = μ(1-μ)`, and the fitted dispersion is
@@ -61,18 +98,20 @@ reported as `m.scale`.
 
 For non-negative data with exact zeros, common in insurance and ecology.
 
-```julia
-m = gam(@formulak(y ~ s(x)), df;
-    family=TweedieFamily(p=1.5))
+```@example families
+m = gam(@formula(y ~ s(x)), df_tweedie;
+    family=TweedieFamily(p=1.5));
+nothing
 ```
 
 Power parameter p ∈ (1, 2). Variance: μᵖ.
 
 To update the power parameter during fitting, pass `estimate_p=true`:
 
-```julia
-m = gam(@formulak(y ~ s(x)), df;
-    family=TweedieFamily(p=1.3, estimate_p=true))
+```@example families
+m = gam(@formula(y ~ s(x)), df_tweedie;
+    family=TweedieFamily(p=1.3, estimate_p=true));
+nothing
 ```
 
 This uses a bounded profile-likelihood update based on the Tweedie log density
@@ -92,9 +131,10 @@ bounded profile-likelihood update.
 
 For response data in (0, 1), such as proportions.
 
-```julia
-m = gam(@formulak(y ~ s(x)), df;
-    family=BetaFamily(phi=1.0))
+```@example families
+m = gam(@formula(y ~ s(x)), df_prop;
+    family=BetaFamily(phi=1.0));
+nothing
 ```
 
 Precision parameter φ is estimated. Variance: μ(1-μ)/(1+φ).
@@ -102,7 +142,8 @@ Precision parameter φ is estimated. Variance: μ(1-μ)/(1+φ).
 ## GAMLSS Families
 
 GAMLSS families model multiple distribution parameters (location, scale, shape)
-simultaneously. Used with [`gamlss()`](@ref). See [GAMLSS](gamlss.md) for full details.
+simultaneously. Use them through `gam(..., family)`; the legacy
+[`gamlss()`](@ref) wrapper remains available. See [GAMLSS](gamlss.md) for full details.
 
 | Family | Parameters | Use case |
 |--------|-----------|----------|
@@ -112,11 +153,12 @@ simultaneously. Used with [`gamlss()`](@ref). See [GAMLSS](gamlss.md) for full d
 | `NegativeBinomialLocationScale()` | μ (location), θ (shape) | Overdispersed counts |
 | `InverseGaussianLocationScale()` | μ (location), σ (scale) | Positive data |
 
-```julia
-m = gamlss([
-    @formulak(y ~ s(x)),
-    @formulak(y ~ s(x)),
-], df, GaussianLS())
+```@example families
+m = gam([
+    @formula(y ~ s(x)),
+    @formula(y ~ s(x)),
+], df_ls, GaussianLS());
+nothing
 ```
 
 ## QGAM Families
@@ -129,8 +171,9 @@ Used with [`qgam()`](@ref). See [Quantile Regression (QGAM)](qgam.md) for detail
 | `ELFFamily(qu)` | Extended log-F for a single quantile `qu` |
 | `ELFLSSFamily(qu)` | ELF with covariate-dependent scale for location-scale quantile fits |
 
-```julia
-m = qgam(@formulak(y ~ s(x)), df, 0.5)
+```@example families
+m = qgam(@formula(y ~ s(x)), df, 0.5);
+nothing
 ```
 
 ## evgam Families
@@ -147,12 +190,13 @@ Extreme value families for modeling tails of distributions. Used with
 | `EGPD3Family()` | Extended GPD, model 3 |
 | `EGPD4Family()` | Extended GPD, model 4 |
 
-```julia
+```@example families
 m = evgam([
-    @formulak(y ~ s(x)),
-    @formulak(y ~ s(x)),
-    @formulak(y ~ 1),
-], df, GEVFamily())
+    @formula(y ~ s(x)),
+    @formula(y ~ s(x)),
+    @formula(y ~ 1),
+], df_gev, GEVFamily());
+nothing
 ```
 
 ## API Reference

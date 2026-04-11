@@ -33,7 +33,7 @@ import Distributions: Poisson, Binomial, Gamma
         df = DataFrame(x = x, y = y, group = group_str)
 
         # Julia fit
-        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        m_jl = gamm(@formula(y ~ s(x) + (1 | group)), df)
         re_jl = ranef(m_jl)
         est_jl = vec(re_jl.group.effects)
         vc_jl = VarCorr(m_jl)
@@ -85,7 +85,7 @@ import Distributions: Poisson, Binomial, Gamma
         df = DataFrame(x = x, y = yf, group = group_str)
 
         # Julia fit
-        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df, Poisson())
+        m_jl = gamm(@formula(y ~ s(x) + (1 | group)), df, Poisson())
         re_jl = ranef(m_jl)
         est_jl = vec(re_jl.group.effects)
 
@@ -129,7 +129,7 @@ import Distributions: Poisson, Binomial, Gamma
         df = DataFrame(x = x, y = y, group = group)
 
         # Julia: GAMM
-        m_gamm = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        m_gamm = gamm(@formula(y ~ s(x) + (1 | group)), df)
         # Julia: GAM with s(group, bs=:re)
         m_gam_re = gam(@formulak(y ~ s(x) + s(group, bs = :re)), df)
 
@@ -174,7 +174,7 @@ import Distributions: Poisson, Binomial, Gamma
         df = DataFrame(x = x, y = y, group = group_str)
 
         # Julia: random intercept + slope
-        m_jl = gamm(@gamm_formula(y ~ s(x) + (x | group)), df)
+        m_jl = gamm(@formula(y ~ s(x) + (x | group)), df)
         re_jl = ranef(m_jl)
         vc_jl = VarCorr(m_jl)
 
@@ -225,7 +225,7 @@ import Distributions: Poisson, Binomial, Gamma
         df = DataFrame(x = x, y = y, site = site_str, subject = subject_str)
 
         # Julia: two crossed random intercepts
-        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | site) + (1 | subject)), df)
+        m_jl = gamm(@formula(y ~ s(x) + (1 | site) + (1 | subject)), df)
         vc_jl = VarCorr(m_jl)
 
         @test m_jl isa GammModel
@@ -274,7 +274,7 @@ import Distributions: Poisson, Binomial, Gamma
         df = DataFrame(x = x, y = y, group = group_str)
 
         # Julia
-        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df)
+        m_jl = gamm(@formula(y ~ s(x) + (1 | group)), df)
         vc_jl = VarCorr(m_jl)
         σ_re_jl = vc_jl[1].std
         σ_res_jl = vc_jl[end].std
@@ -324,7 +324,7 @@ import Distributions: Poisson, Binomial, Gamma
         df = DataFrame(x = x, y = y, group = group_str)
 
         # Julia fit (default link for Binomial is LogitLink)
-        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df, Binomial())
+        m_jl = gamm(@formula(y ~ s(x) + (1 | group)), df, Binomial())
         re_jl = ranef(m_jl)
         est_jl = vec(re_jl.group.effects)
 
@@ -370,7 +370,7 @@ import Distributions: Poisson, Binomial, Gamma
         df = DataFrame(x = x, y = y, group = group_str)
 
         # Julia fit (use LogLink for Gamma to match R)
-        m_jl = gamm(@gamm_formula(y ~ s(x) + (1 | group)), df, Gamma(); link = LogLink())
+        m_jl = gamm(@formula(y ~ s(x) + (1 | group)), df, Gamma(); link = LogLink())
         re_jl = ranef(m_jl)
         est_jl = vec(re_jl.group.effects)
 

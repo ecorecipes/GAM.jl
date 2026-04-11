@@ -26,7 +26,7 @@ geometric-mean speedup over R in the latest checked-in benchmark snapshot.
 - **QGAM**: quantile regression GAMs via extended log-F likelihood
 - **evgam**: extreme value GAMs (GEV, GPD, EGPD families)
 - **BAM**: `bam()` for memory-efficient fitting of large datasets with discretization
-- **GAMM**: `gamm()` for mixed-effects GAMs with `@gamm_formula` syntax, including
+- **GAMM**: `gamm()` for mixed-effects GAMs with `GAM.@formula` syntax, including
   PQL estimation for non-Gaussian families (Poisson, Binomial, Gamma)
 - **ANOVA for GAMs**: `anova_gam()` for smooth significance testing and nested
   model comparison (F-test and χ² test)
@@ -36,40 +36,40 @@ geometric-mean speedup over R in the latest checked-in benchmark snapshot.
 - **Gratia-style diagnostics**: `smooth_estimates`, `derivatives`, `partial_residuals`,
   `appraise`, `rootogram`, `posterior_samples`, `fitted_samples`, `data_slice`
 - **JuliaStats integration**: follows StatsModels.jl/GLM.jl conventions with
-  `@formulak` syntax and full StatsBase interface
+  `@formula` syntax, plus `@formulak` as an explicit GAM-only fallback, and full
+  StatsBase interface
 - **Tested against R**: comprehensive integration tests comparing results against mgcv
 
 ## Quick Start
 
-```julia
-using GAM, DataFrames
+```@setup index
+using GAM, DataFrames, Random
+Random.seed!(42)
+```
 
-# Generate data
+```@example index
 n = 200
 x = range(0, 2π; length=n) |> collect
 y = sin.(x) .+ 0.3 .* randn(n)
 df = DataFrame(x=x, y=y)
 
-# Fit a GAM
-m = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df)
+m = gam(@formula(y ~ s(x, k=15, bs=:cr)), df);
 
-# Inspect the fit
-m                    # pretty-printed summary
-coef(m)              # coefficients
-deviance(m)          # model deviance
-m.edf                # effective degrees of freedom per smooth
-m.scale              # estimated scale parameter
-
-# Diagnostics
-gam_check(m)         # residual diagnostics
-smooth_estimates(m)  # evaluate smooths on a grid
+GAM.coef(m);
+GAM.deviance(m);
+m.edf;
+m.scale;
+gam_check(m);
+smooth_estimates(m);
+nothing
 ```
 
 ## Installation
 
-```julia
-using Pkg
-Pkg.add(url="https://github.com/ecorecipes/GAM.jl")
+```julia-repl
+julia> using Pkg
+
+julia> Pkg.add(url="https://github.com/ecorecipes/GAM.jl")
 ```
 
 ## Contents
