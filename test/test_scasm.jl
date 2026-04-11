@@ -173,7 +173,7 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
         re = 0.4 .* randn(rng, n_groups)
         y = 0.5 .+ xg .+ re[group] .+ 0.05 .* randn(rng, length(xg))
         df = DataFrame(x = xg, y = y, group = group)
-        m = gamm(@gamm_formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 10) + (1 | group)), df)
+        m = gamm(@formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 10) + (1 | group)), df)
         @test m isa GammModel
         @test m.gam_model.converged
         @test cor(m.gam_model.fitted_values, y) > 0.9
@@ -188,7 +188,7 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
         η = 0.3 .+ 0.8 .* xg .+ re[group]
         y = Float64[rand(rng, Poisson(exp(ηi))) for ηi in η]
         df = DataFrame(x = xg, y = y, group = group)
-        m = gamm(@gamm_formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 10) + (1 | group)),
+        m = gamm(@formula(y ~ s(x, bs = :sc, xt = ["m+"], k = 10) + (1 | group)),
             df, Poisson())
         @test m isa GammModel
         @test m.gam_model.converged

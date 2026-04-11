@@ -1,3 +1,5 @@
+ENV["GKSwstype"] = get(ENV, "GKSwstype", "100")
+
 using Documenter
 using GAM
 

@@ -5,6 +5,22 @@ standard GAMs by modeling multiple distribution parameters as smooth functions
 of covariates. While a standard GAM models only the mean (location), GAMLSS
 simultaneously models the variance (scale) and potentially higher parameters (shape).
 
+```@setup gamlss
+using GAM, DataFrames, Random, Distributions
+Random.seed!(42)
+
+n = 160
+x = range(0, 2π; length=n) |> collect
+y = sin.(x) .+ (0.1 .+ 0.2 .* abs.(cos.(x))) .* randn(n)
+df = DataFrame(x=x, y=y)
+
+x_gamma = range(0.1, 3.0; length=n) |> collect
+mu = exp.(0.3 .+ 0.4 .* x_gamma)
+sigma = 0.2 .+ 0.05 .* x_gamma
+y_gamma = [rand(Gamma(mu[i]^2 / sigma[i]^2, sigma[i]^2 / mu[i])) for i in eachindex(x_gamma)]
+df_gamma = DataFrame(x=x_gamma, y=y_gamma)
+```
+
 ## When to Use GAMLSS
 
 - **Heteroscedastic data**: variance changes with covariates
@@ -25,10 +41,10 @@ Custom families can be created using `DistFamily`.
 
 ## Interface
 
-```julia
-gamlss([
-    @formulak(y ~ s(x1)),
-    @formulak(y ~ 1 + s(x2)),
+```text
+gam([
+    @formula(y ~ s(x1)),
+    @formula(y ~ 1 + s(x2)),
 ], data, GaussianLS();
     method = :efs,
     gamlss_ctrl = gamlss_control(),
@@ -36,8 +52,17 @@ gamlss([
 ```
 
 Pass a vector of formulas, one per distribution parameter. With
-`@formulak`, repeat the response on each entry, e.g.
-`[@formulak(y ~ s(x)), @formulak(y ~ 1)]`.
+`@formula`, repeat the response on each entry, e.g.
+`[@formula(y ~ s(x)), @formula(y ~ 1)]`. The legacy `gamlss(...)` wrapper
+still works, but `gam(..., family)` is now the preferred entry point.
+
+When a single formula is provided, `gam` replicates it for all distribution
+parameters:
+
+```@example gamlss
+m_same = gam(@formula(y ~ s(x, k=12, bs=:cr)), df, GaussianLS());
+nothing
+```
 
 ## Solvers
 
@@ -61,68 +86,57 @@ Set via `method = :rs` or `method = :cg`.
 
 ### Gaussian Location-Scale
 
-```julia
-using GAM, DataFrames
-
-n = 500
-x = range(0, 2π; length=n) |> collect
-# Mean varies as sin(x), variance increases with |cos(x)|
-y = sin.(x) .+ (0.1 .+ 0.3 .* abs.(cos.(x))) .* randn(n)
-df = DataFrame(x=x, y=y)
-
-m = gamlss(
+```@example gamlss
+m = gam(
     [
-        @formulak(y ~ s(x, k=15, bs=:cr)),  # μ model
-        @formulak(y ~ s(x, k=10, bs=:cr)),  # log(σ) model
+        @formula(y ~ s(x, k=15, bs=:cr)),  # μ model
+        @formula(y ~ s(x, k=10, bs=:cr)),  # log(σ) model
     ],
     df,
-    family=GaussianLS(),
-)
+    GaussianLS(),
+);
+nothing
 ```
 
 ### Gamma Location-Scale
 
-```julia
-x = range(0.1, 3.0; length=500) |> collect
-mu = exp.(0.5 .* x)
-sigma = 0.2 .+ 0.1 .* x
-y = [rand(Gamma(mu[i]^2 / sigma[i]^2, sigma[i]^2 / mu[i])) for i in 1:500]
-df = DataFrame(x=x, y=y)
-
-m = gamlss(
+```@example gamlss
+m_gamma = gam(
     [
-        @formulak(y ~ s(x, k=15, bs=:cr)),
-        @formulak(y ~ s(x, k=10, bs=:cr)),
+        @formula(y ~ s(x, k=15, bs=:cr)),
+        @formula(y ~ s(x, k=10, bs=:cr)),
     ],
-    df,
-    family=GammaLocationScale(),
-)
+    df_gamma,
+    GammaLocationScale(),
+);
+nothing
 ```
 
 ### Controlling the Fit
 
-```julia
+```@example gamlss
 ctrl = gamlss_control(
-    n_cyc = 50,             # max outer iterations
+    n_cyc = 20,             # max outer iterations
     c_crit = 1e-7,          # convergence tolerance
     sp_method = :efs,       # smoothing parameter method
-    trace = true,           # print progress
+    trace = false,
 )
 
-m = gamlss(
+m_ctrl = gam(
     [
-        @formulak(y ~ s(x, k=15)),
-        @formulak(y ~ s(x, k=10)),
+        @formula(y ~ s(x, k=15)),
+        @formula(y ~ s(x, k=10)),
     ],
     df,
-    family=GaussianLS(),
+    GaussianLS();
     method = :rs,
     gamlss_ctrl = ctrl,
-)
+);
+nothing
 ```
 
 ## See Also
 
 - [Families & Models](@ref families) for the full family list
 - [Getting Started](@ref getting-started) for a quick GAMLSS example
-- [API Reference](@ref api-reference) for `gamlss`, `GamlssControl`, and family types
+- [API Reference](@ref api-reference) for `gam`, `gamlss`, `GamlssControl`, and family types

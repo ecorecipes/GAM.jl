@@ -7,6 +7,16 @@ increasing or convex.
 
 GAM.jl's SCAM implementation follows Pya & Wood (2015).
 
+```@setup scam
+using GAM, DataFrames, Random
+Random.seed!(42)
+
+n = 120
+x = sort(randn(n))
+y = 2.0 .* atan.(x) .+ 0.3 .* randn(n)
+df = DataFrame(x=x, y=y)
+```
+
 For explicit linear-constraint smooths (`bs=:sc`, `bs=:scad`, or `pc`
 constraints), use `gam(...)` instead. Those terms go through GAM.jl's separate
 constrained-QP backend, whereas SCAM basis types use reparameterized
@@ -27,78 +37,81 @@ SCOP-splines.
 
 ## Interface
 
-```julia
-scam(formula, data;
-    family = Gaussian(),
+```text
+gam(formula, data;
+    family = Normal(),
     link = IdentityLink(),
     method = :REML,
-    control = scam_control(),
+    control = gam_control(),
 )
 ```
 
-The interface is identical to `gam()` except that smooth terms use
-shape-constrained basis types.
+The preferred interface is ordinary `gam(...)` with SCAM basis types such as
+`bs=:mpi` or `bs=:cx`. The unified `gam(...)` surface reuses
+`gam_control(...)`; the legacy `scam(...)` wrapper remains available for
+compatibility and still accepts `scam_control(...)` for the SCAM-specific
+`not_exp` option.
 
 ## Examples
 
 ### Monotone Increasing
 
-```julia
-using GAM, DataFrames
-
-n = 200
-x = sort(randn(n))
-y = 2.0 .* atan.(x) .+ 0.3 .* randn(n)   # monotone increasing truth
-df = DataFrame(x=x, y=y)
-
-m = scam(@formulak(y ~ s(x, k=15, bs=:mpi)), df)
+```@example scam
+m = gam(@formula(y ~ s(x, k=15, bs=:mpi)), df);
+nothing
 ```
 
 ### Convex Fit
 
-```julia
-y = x.^2 .+ 0.5 .* randn(n)   # convex truth
-df = DataFrame(x=x, y=y)
+```@example scam
+y_cx = x .^ 2 .+ 0.3 .* randn(n)
+df_cx = DataFrame(x=x, y=y_cx)
 
-m = scam(@formulak(y ~ s(x, k=15, bs=:cx)), df)
+m_cx = gam(@formula(y ~ s(x, k=15, bs=:cx)), df_cx);
+nothing
 ```
 
 ### Combined Constraints
 
 You can mix constrained and unconstrained smooths in the same model:
 
-```julia
+```@example scam
 x2 = randn(n)
-y = 2.0 .* atan.(x) .+ sin.(x2) .+ 0.3 .* randn(n)
-df = DataFrame(x=x, x2=x2, y=y)
+y_mix = 2.0 .* atan.(x) .+ sin.(x2) .+ 0.3 .* randn(n)
+df_mix = DataFrame(x=x, x2=x2, y=y_mix)
 
-# x must be monotone increasing, x2 is unconstrained
-m = scam(@formulak(y ~ s(x, k=15, bs=:mpi) + s(x2, k=10, bs=:cr)), df)
+m_mix = gam(@formula(y ~ s(x, k=15, bs=:mpi) + s(x2, k=10, bs=:cr)), df_mix);
+nothing
 ```
 
 ### Monotone Decreasing & Concave
 
-```julia
-y = -log.(1.0 .+ exp.(x)) .+ 0.3 .* randn(n)
-df = DataFrame(x=x, y=y)
+```@example scam
+y_mdcv = -log.(1.0 .+ exp.(x)) .+ 0.3 .* randn(n)
+df_mdcv = DataFrame(x=x, y=y_mdcv)
 
-m = scam(@formulak(y ~ s(x, k=15, bs=:mdcv)), df)
+m_mdcv = gam(@formula(y ~ s(x, k=15, bs=:mdcv)), df_mdcv);
+nothing
 ```
 
-## ScamControl Options
+## Control Options
 
-```julia
-ctrl = scam_control(
+```@example scam
+ctrl = gam_control(
     epsilon = 1e-7,      # convergence tolerance
-    maxit = 200,         # max iterations
-    trace = true,        # print progress
+    maxit = 100,         # max iterations
+    trace = false,
 )
 
-m = scam(@formulak(y ~ s(x, bs=:mpi)), df; control=ctrl)
+m_ctrl = gam(@formula(y ~ s(x, bs=:mpi)), df; control=ctrl);
+nothing
 ```
+
+If you prefer the legacy `scam(...)` wrapper, it still accepts
+`scam_control(...)` directly.
 
 ## See Also
 
 - [Smooth Terms](@ref smooth-terms) for the full list of basis types including SCAM bases
 - [Comparison with mgcv](@ref mgcv-comparison) for how SCAM compares to R's scam package
-- [API Reference](@ref api-reference) for `scam`, `scam_control`, `ScamControl`
+- [API Reference](@ref api-reference) for `gam`, `gam_control`, and the compatibility wrappers `scam`, `scam_control`, `ScamControl`

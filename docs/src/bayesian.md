@@ -1,51 +1,63 @@
 # [Bayesian Inference](@id bayesian)
 
 GAM.jl supports Bayesian GAM fitting through its Turing.jl extension. When
-`Turing` is loaded, passing `priors = PriorSpec(...)` to `gam()`, `gamlss()`,
-`scam()`, or `gamm()` switches the fit from penalized likelihood to full MCMC.
+`Turing` is loaded, passing `priors = PriorSpec(...)` to `gam()` (including the
+SCAM and GAMLSS dispatch paths) or `gamm()` switches the fit from penalized
+likelihood to full MCMC.
 
-## Fitting a Bayesian GAM
+```@setup bayesian
+using GAM, DataFrames, Random, Turing, Distributions
+Random.seed!(42)
+Turing.setprogress!(false)
 
-```julia
-using GAM, DataFrames, Turing, Distributions
-
-n = 200
+n = 80
 x = sort(rand(n))
 y = sin.(2π .* x) .+ 0.3 .* randn(n)
 df = DataFrame(x = x, y = y)
+```
 
-m = gam(@formulak(y ~ s(x, k = 10)), df;
+## Fitting a Bayesian GAM
+
+```@example bayesian
+m = gam(@formula(y ~ s(x, k = 10)), df;
     priors = PriorSpec(sds = Exponential(1.0)),
-    nsamples = 1000,
-    nchains = 2)
+    nsamples = 100,
+    nchains = 1);
+nothing
 ```
 
 This returns a [`BayesGamModel`](@ref) whose `chains` field stores the
 underlying `MCMCChains.Chains` object.
 
+!!! note
+    The documentation uses a short chain to keep the build practical. For real
+    analyses, increase `nsamples` (and usually `nchains`) substantially.
+
 ## Prior specification
 
 `PriorSpec` controls the default priors for the Bayesian backend:
 
-```julia
+```@example bayesian
 priors = PriorSpec(
-    b = Normal(0, 10),                         # fixed effects
-    sds = Exponential(1.0),                    # smooth SDs
+    b = Normal(0, 10),                              # fixed effects
+    sds = Exponential(1.0),                         # smooth SDs
     sigma = truncated(Normal(0, 2.5); lower = 0),  # Gaussian residual SD
     phi = truncated(Normal(0, 5); lower = 0),      # dispersion / precision
-)
+);
+nothing
 ```
 
 Specific parameters can be overridden by name:
 
-```julia
-priors = PriorSpec(
+```@example bayesian
+priors_specific = PriorSpec(
     sds = Exponential(1.0),
     specific = Dict(
         "sds_s(x)" => Exponential(0.5),
         "b_(Intercept)" => Normal(0, 100),
     ),
-)
+);
+nothing
 ```
 
 ## Posterior summaries
@@ -53,34 +65,36 @@ priors = PriorSpec(
 Bayesian fits expose posterior summaries through the usual StatsAPI-style
 methods:
 
-```julia
-coef(m)          # posterior means of fixed effects
-vcov(m)          # posterior covariance of fixed effects
-coeftable(m)     # posterior mean / sd / credible intervals
-confint(m)       # equal-tail credible intervals
-posterior_samples(m)  # raw fixed-effect draws
+```@example bayesian
+GAM.coef(m);
+GAM.vcov(m);
+GAM.coeftable(m);
+GAM.confint(m);
+posterior_samples(m);
+nothing
 ```
 
 For model scoring, Bayesian fits also retain pointwise log-likelihood draws:
 
-```julia
-ll = pointwise_loglikelihood(m)  # n_draws × n_obs
-l = loo(m)                       # PSIS-LOO by default
-l_is = loo(m; method = :is)      # raw importance-sampling fallback
-p = psis_loo(m)
-d = pareto_k_diagnostic(p)
-w = waic(m)
+```@example bayesian
+ll = pointwise_loglikelihood(m);
+l = loo(m);
+l_is = loo(m; method = :is);
+p = psis_loo(m);
+d = pareto_k_diagnostic(p);
+w = waic(m);
 
-l.elpd_loo
-l.p_loo
-l.looic
-l.pareto_k
-l.n_eff
-d.warning_indices
-d.danger_indices
-w.elpd_waic
-w.p_waic
-w.waic
+l.elpd_loo;
+l.p_loo;
+l.looic;
+l.pareto_k;
+l.n_eff;
+d.warning_indices;
+d.danger_indices;
+w.elpd_waic;
+w.p_waic;
+w.waic;
+nothing
 ```
 
 `psis_loo` and the default `loo` path use Pareto-smoothed importance sampling to
@@ -100,9 +114,10 @@ importance ratios are reliable:
 The key bridge to Bayesian fitting is [`smooth2random`](@ref), which converts a
 penalized smooth into a mixed-model representation:
 
-```julia
-sm = smooth_construct(s(:x, bs = :cr, k = 10), df)
-smm = smooth2random(sm)
+```@example bayesian
+sm = smooth_construct(s(:x, bs = :cr, k = 10), df);
+smm = smooth2random(sm);
+nothing
 ```
 
 The null space becomes fixed effects (`smm.Xf`) and the penalized wiggliness
@@ -112,9 +127,10 @@ becomes one or more Gaussian random-effect blocks (`smm.Zs`).
 
 GAM.jl also exposes lower-level building blocks for hand-written Turing models:
 
-```julia
-X, smooths, labels = gam_matrices(@formulak(y ~ x + s(x, k = 10)), df)
-smm = gam_smooth(:x, df; bs = :cr, k = 10)
+```@example bayesian
+X, smooths, labels = gam_matrices(@formula(y ~ x + s(x, k = 10)), df);
+smm2 = gam_smooth(:x, df; bs = :cr, k = 10);
+nothing
 ```
 
 Use [`smooth_prior`](@ref) inside a custom `@model` when you want the GAM
