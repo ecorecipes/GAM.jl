@@ -56,7 +56,7 @@ first(df, 5)
 ## Fit the GAM
 
 ```{julia}
-m = gam(@formulak(y ~ s(x0, k=10, bs=:cr) + s(x1, k=10, bs=:cr) +
+m = gam(@formula(y ~ s(x0, k=10, bs=:cr) + s(x1, k=10, bs=:cr) +
                           s(x2, k=10, bs=:cr) + s(x3, k=10, bs=:cr)), df)
 ```
 

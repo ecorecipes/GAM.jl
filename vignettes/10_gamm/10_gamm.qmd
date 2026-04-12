@@ -63,7 +63,7 @@ println("y range: [$(round(minimum(dat.y); digits=2)), $(round(maximum(dat.y); d
 The `(1 | subject)` syntax specifies a random intercept for each subject level:
 
 ```{julia}
-m = gamm(@gamm_formula(y ~ s(x, k=15) + (1 | subject)), dat)
+m = gamm(@formula(y ~ s(x, k=15) + (1 | subject)), dat)
 println(m)
 ```
 
@@ -107,13 +107,21 @@ true_re = [dat.re_true[findfirst(dat.subject .== s)] for s in sort(unique(dat.su
 #| fig-height: 5
 
 # Population smooth on a prediction grid (unknown subject → zero RE)
-x_grid = range(minimum(dat.x), maximum(dat.x); length=200)
-pop_pred = predict(m, DataFrame(x=x_grid, subject=fill(999, 200)))
+x_grid = collect(range(minimum(dat.x), maximum(dat.x); length=200))
+pop_pred = predict(m, DataFrame(x=x_grid, subject=fill(999, length(x_grid))))
+mu_true_grid = 1.5 .* sin.(1.5 .* x_grid)
+subject_levels = sort(unique(dat.subject))
 
-p1 = scatter(dat.x, dat.y; group=dat.subject, markersize=2, alpha=0.5,
+p1 = scatter(dat.x, dat.y; group=dat.subject, markersize=2, alpha=0.45,
     xlabel="x", ylabel="y", title="Gaussian GAMM: data by subject",
-    legend=:none)
-plot!(p1, x_grid, pop_pred; color=:black, linewidth=3, label="population smooth")
+    label="")
+for (i, subj) in enumerate(subject_levels)
+    subj_pred = predict(m, DataFrame(x=x_grid, subject=fill(subj, length(x_grid))))
+    plot!(p1, x_grid, subj_pred; color=i, alpha=0.35, linewidth=1.25,
+        label=i == 1 ? "subject-specific fits" : "")
+end
+plot!(p1, x_grid, pop_pred; color=:black, linewidth=3, linestyle=:dash, label="population mean")
+plot!(p1, x_grid, mu_true_grid; color=:red, linewidth=2, linestyle=:dot, label="true population mean")
 
 n_groups = length(levels)
 p2 = bar(1:n_groups, [est true_re]; label=["Estimated" "True"], legend=:topright,
@@ -126,10 +134,10 @@ plot(p1, p2; layout=(1, 2), size=(900, 400))
 
 ### Equivalence with `s(subject, bs=:re)`
 
-In GAM.jl, `gamm(@gamm_formula(y ~ s(x) + (1|subject)), ...)` is mathematically equivalent to `gam(@formulak(y ~ s(x) + s(subject, bs=:re)), ...)`. Both treat the random intercept as a smooth with identity penalty:
+In GAM.jl, `gamm(@formula(y ~ s(x) + (1|subject)), ...)` is mathematically equivalent to `gam(@formula(y ~ s(x) + s(subject, bs=:re)), ...)`. Both treat the random intercept as a smooth with identity penalty:
 
 ```{julia}
-m_gam = gam(@formulak(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
+m_gam = gam(@formula(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
 @printf("Fitted values correlation: %.6f\n", cor(fitted(m), fitted(m_gam)))
 @printf("Scale (gamm): %.6f\n", m.gam_model.scale)
 @printf("Scale (gam):  %.6f\n", m_gam.scale)
@@ -154,7 +162,7 @@ println("y range: [$(minimum(dat2.y)), $(maximum(dat2.y))]")
 Pass `Poisson()` as the family — the canonical `LogLink` is used automatically:
 
 ```{julia}
-m2 = gamm(@gamm_formula(y ~ s(x, k=15) + (1 | site)), dat2, Poisson())
+m2 = gamm(@formula(y ~ s(x, k=15) + (1 | site)), dat2, Poisson())
 println(m2)
 ```
 
@@ -177,14 +185,21 @@ vc2 = VarCorr(m2)
 #| fig-height: 5
 
 # Population smooth on prediction grid
-x_grid2 = range(minimum(dat2.x), maximum(dat2.x); length=200)
-pop_pred2 = predict(m2, DataFrame(x=x_grid2, site=fill(999, 200)))
+x_grid2 = collect(range(minimum(dat2.x), maximum(dat2.x); length=200))
+pop_pred2 = predict(m2, DataFrame(x=x_grid2, site=fill(999, length(x_grid2))))
+lambda_true_grid = exp.(1 .+ 0.8 .* sin.(x_grid2))
 
 site_levels = sort(unique(dat2.site))
-p1 = scatter(dat2.x, dat2.y; group=dat2.site, markersize=2, alpha=0.5,
+p1 = scatter(dat2.x, dat2.y; group=dat2.site, markersize=2, alpha=0.45,
     xlabel="x", ylabel="y (count)", title="Poisson GAMM: data by site",
-    legend=:none)
-plot!(p1, x_grid2, pop_pred2; color=:black, linewidth=3, label="population mean")
+    label="")
+for (i, site) in enumerate(site_levels)
+    site_pred = predict(m2, DataFrame(x=x_grid2, site=fill(site, length(x_grid2))))
+    plot!(p1, x_grid2, site_pred; color=i, alpha=0.35, linewidth=1.25,
+        label=i == 1 ? "site-specific fits" : "")
+end
+plot!(p1, x_grid2, pop_pred2; color=:black, linewidth=3, linestyle=:dash, label="population mean")
+plot!(p1, x_grid2, lambda_true_grid; color=:red, linewidth=2, linestyle=:dot, label="true population mean")
 
 n_sites = length(site_levels)
 p2 = bar(1:n_sites, [est2 true_re2]; label=["Estimated" "True"], legend=:topright,
@@ -195,7 +210,7 @@ p2 = bar(1:n_sites, [est2 true_re2]; label=["Estimated" "True"], legend=:toprigh
 plot(p1, p2; layout=(1, 2), size=(900, 400))
 ```
 
-## Example 3: Alternative Formula Interfaces
+## Example 3: Equivalent Formula Interfaces
 
 GAM.jl supports multiple ways to specify random effects:
 
@@ -218,14 +233,14 @@ m3b = gamm(@formula(y ~ cr(x, 15) + re(subject)), dat)
 @printf("re() path: scale = %.6f\n", _scale(m3b))
 ```
 
-### Consistency
+### Consistency with `re(group)` and `s(group, bs=:re)`
 
-All three formula interfaces produce the same fit:
+These formula forms all produce the same fit:
 
 ```{julia}
-m3c = gamm(@gamm_formula(y ~ s(x, k=15) + (1|subject)), dat)
-@printf("cor(@gamm_formula, @formula(|)):  %.6f\n", cor(fitted(m3c), fitted(m3a)))
-@printf("cor(@gamm_formula, @formula(re)): %.6f\n", cor(fitted(m3c), fitted(m3b)))
+m3c = gam(@formula(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
+@printf("cor((1|subject), re(subject)): %.6f\n", cor(fitted(m3a), fitted(m3b)))
+@printf("cor((1|subject), s(subject, bs=:re)): %.6f\n", cor(fitted(m3a), fitted(m3c)))
 ```
 
 ## Prediction
@@ -251,7 +266,7 @@ pred_new = predict(m, df_new)
 | Random intercept | `(1 \| group)` or `re(group)` |
 | Gaussian family | `gamm(formula, data)` |
 | Non-Gaussian | `gamm(formula, data, Poisson())` |
-| Equivalent GAM | `gam(@formulak(y ~ s(x) + s(group, bs=:re)), ...)` |
+| Equivalent GAM | `gam(@formula(y ~ s(x) + s(group, bs=:re)), ...)` |
 | Random effects | `ranef(m)` |
 | Variance components | `VarCorr(m)` |
 | Prediction | `predict(m, newdata)` |
