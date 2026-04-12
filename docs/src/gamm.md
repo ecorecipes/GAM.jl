@@ -46,20 +46,17 @@ For non-Gaussian families, `gamm()` automatically uses Penalized
 Quasi-Likelihood (PQL), matching R's `mgcv::gamm()` which calls
 `MASS::glmmPQL` internally.
 
-## Recommended Formula Syntax
+## Formula Syntax
 
-Use `GAM.@formula(...)` for GAMM models. It supports the same keyword smooth
-syntax as `@formulak`, plus lme4-style random effects:
+Use `GAM.@formula(...)` for GAMM models. It supports smooth terms with keyword
+arguments, lme4-style random effects, and the `re(group)` shorthand:
 
 ```@example gamm
-GAM.@formula(y ~ s(x, k=10) + (1 | subject));
-GAM.@formula(y ~ s(x, k=10, bs=:cr) + (1 + x | subject));
-GAM.@formula(y ~ s(x, k=10, bs=:cr) + (1 | subject) + (1 | item));
-nothing
+f_intercept = GAM.@formula(y ~ s(x, k=10) + (1 | subject))
+f_slope = GAM.@formula(y ~ s(x, k=10, bs=:cr) + (1 + x | subject))
+f_crossed = GAM.@formula(y ~ s(x, k=10, bs=:cr) + (1 | subject) + (1 | item))
+[f_intercept, f_slope, f_crossed]
 ```
-
-`@gamm_formula` remains a compatibility alias, but new code should prefer
-`GAM.@formula(...)`.
 
 ## Examples
 
@@ -70,7 +67,7 @@ Equivalent to R's `gamm(y ~ s(x), random=list(subject=~1))`.
 
 ```@example gamm
 m = gamm(GAM.@formula(y ~ s(x, k=15, bs=:cr) + (1 | subject)), df);
-nothing
+collect(keys(ranef(m)))
 ```
 
 ### Extracting Random Effects with `ranef()`
@@ -80,7 +77,7 @@ random effect grouping factor:
 
 ```@example gamm
 re_estimates = ranef(m);
-nothing
+collect(keys(re_estimates))
 ```
 
 Each key in the returned dictionary corresponds to a grouping factor (e.g.,
@@ -92,8 +89,7 @@ Each key in the returned dictionary corresponds to a grouping factor (e.g.,
 effects, equivalent to R's `VarCorr()` from nlme/lme4:
 
 ```@example gamm
-vc = VarCorr(m);
-nothing
+VarCorr(m)
 ```
 
 This returns a `VarCorrResult` showing the estimated variance (and standard
@@ -114,8 +110,7 @@ m_slope = gamm(
     df_slope,
 );
 
-VarCorr(m_slope);
-nothing
+VarCorr(m_slope)
 ```
 
 ### Crossed Random Effects
@@ -134,9 +129,7 @@ m_crossed = gamm(
     df_crossed,
 );
 
-ranef(m_crossed);
-VarCorr(m_crossed);
-nothing
+sort!(collect(keys(ranef(m_crossed))))
 ```
 
 ### Poisson GAMM (PQL)
@@ -157,10 +150,7 @@ m_pois = gamm(
     link=LogLink(),
 );
 
-GAM.coef(m_pois);
-ranef(m_pois);
-VarCorr(m_pois);
-nothing
+collect(keys(ranef(m_pois)))
 ```
 
 !!! note "PQL Estimation"
@@ -184,7 +174,8 @@ m_bin = gamm(
     family=Binomial(),
     link=LogitLink(),
 );
-nothing
+
+collect(keys(ranef(m_bin)))
 ```
 
 ## GammModel
