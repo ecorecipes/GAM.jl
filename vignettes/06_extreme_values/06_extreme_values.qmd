@@ -67,9 +67,9 @@ We specify one formula per distribution parameter. The GEV has three parameters:
 
 ```{julia}
 m_gev = evgam(
-    [@formulak(y ~ s(x, k=10, bs=:cr)),   # location μ(x)
-     @formulak(y ~ s(x, k=8, bs=:cr)),    # log-scale ψ(x)
-     @formulak(y ~ 1)],                    # shape ξ (constant)
+    [@formula(y ~ s(x, k=10, bs=:cr)),   # location μ(x)
+     @formula(y ~ s(x, k=8, bs=:cr)),    # log-scale ψ(x)
+     @formula(y ~ 1)],                    # shape ξ (constant)
     df_gev,
     GEVFamily()
 )
@@ -183,8 +183,8 @@ The GPD has two parameters: log-scale $\psi = \log\sigma$ and shape $\xi$.
 
 ```{julia}
 m_gpd = evgam(
-    [@formulak(y ~ s(x, k=10, bs=:cr)),   # log-scale ψ(x)
-     @formulak(y ~ 1)],                    # shape ξ (constant)
+    [@formula(y ~ s(x, k=10, bs=:cr)),   # log-scale ψ(x)
+     @formula(y ~ 1)],                    # shape ξ (constant)
     df_gpd,
     GPDFamily()
 )
