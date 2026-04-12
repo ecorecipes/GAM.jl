@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Getting Started · GAM.jl</title><meta name="title" content="Getting Started · GAM.jl"/><meta property="og:title" content="Getting Started · GAM.jl"/><meta property="twitter:title" content="Getting Started · GAM.jl"/><meta name="description" content="Documentation for GAM.jl."/><meta property="og:description" content="Documentation for GAM.jl."/><meta property="twitter:description" content="Documentation for GAM.jl."/><meta property="og:url" content="https://ecorecipes.github.io/GAM.jl/tutorial/"/><meta property="twitter:url" content="https://ecorecipes.github.io/GAM.jl/tutorial/"/><link rel="canonical" href="https://ecorecipes.github.io/GAM.jl/tutorial/"/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">GAM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li><li class="is-active"><a class="tocitem" href>Getting Started</a><ul class="internal"><li><a class="tocitem" href="#Basic-Gaussian-GAM"><span>Basic Gaussian GAM</span></a></li><li><a class="tocitem" href="#Multiple-Smooths"><span>Multiple Smooths</span></a></li><li><a class="tocitem" href="#Poisson-GAM"><span>Poisson GAM</span></a></li><li><a class="tocitem" href="#Binomial-GAM"><span>Binomial GAM</span></a></li><li><a class="tocitem" href="#Gamma-GAM"><span>Gamma GAM</span></a></li><li><a class="tocitem" href="#Choosing-Smooth-Types"><span>Choosing Smooth Types</span></a></li><li><a class="tocitem" href="#Choosing-k-(Basis-Dimension)"><span>Choosing <code>k</code> (Basis Dimension)</span></a></li><li><a class="tocitem" href="#Tensor-Product-Smooths"><span>Tensor Product Smooths</span></a></li><li><a class="tocitem" href="#Model-Diagnostics"><span>Model Diagnostics</span></a></li><li><a class="tocitem" href="#Prediction-on-New-Data"><span>Prediction on New Data</span></a></li><li><a class="tocitem" href="#Inspecting-the-Model"><span>Inspecting the Model</span></a></li><li><a class="tocitem" href="#Controlling-the-Fit"><span>Controlling the Fit</span></a></li><li><a class="tocitem" href="#Smooth-Evaluation-and-Derivatives"><span>Smooth Evaluation and Derivatives</span></a></li><li><a class="tocitem" href="#Complete-Workflow-Example"><span>Complete Workflow Example</span></a></li><li><a class="tocitem" href="#GAMLSS:-Location-Scale-Models"><span>GAMLSS: Location-Scale Models</span></a></li><li><a class="tocitem" href="#SCAM:-Shape-Constrained-Models"><span>SCAM: Shape-Constrained Models</span></a></li><li><a class="tocitem" href="#QGAM:-Quantile-Regression"><span>QGAM: Quantile Regression</span></a></li><li><a class="tocitem" href="#BAM:-Large-Datasets"><span>BAM: Large Datasets</span></a></li><li><a class="tocitem" href="#Next-Steps"><span>Next Steps</span></a></li></ul></li><li><a class="tocitem" href="../smooths/">Smooth Terms</a></li><li><a class="tocitem" href="../formulas/">Formula Syntax</a></li><li><a class="tocitem" href="../families/">Families &amp; Models</a></li><li><a class="tocitem" href="../gamlss/">GAMLSS</a></li><li><a class="tocitem" href="../scam/">Shape Constraints (SCAM)</a></li><li><a class="tocitem" href="../qgam/">Quantile Regression (QGAM)</a></li><li><a class="tocitem" href="../evgam/">Extreme Values (evgam)</a></li><li><a class="tocitem" href="../bam/">Large Data (BAM)</a></li><li><a class="tocitem" href="../gamm/">Mixed Models (GAMM)</a></li><li><a class="tocitem" href="../bayesian/">Bayesian Inference</a></li><li><a class="tocitem" href="../diagnostics/">Diagnostics</a></li><li><a class="tocitem" href="../mgcv/">Comparison with mgcv</a></li><li><a class="tocitem" href="../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>Getting Started</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Getting Started</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/ecorecipes/GAM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/ecorecipes/GAM.jl/blob/main/docs/src/tutorial.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="getting-started"><a class="docs-heading-anchor" href="#getting-started">Getting Started</a><a id="getting-started-1"></a><a class="docs-heading-anchor-permalink" href="#getting-started" title="Permalink"></a></h1><p>This tutorial walks through practical GAM fitting in Julia, from basic models to diagnostics and model comparison. All examples use synthetic data so you can run them directly.</p><h2 id="Basic-Gaussian-GAM"><a class="docs-heading-anchor" href="#Basic-Gaussian-GAM">Basic Gaussian GAM</a><a id="Basic-Gaussian-GAM-1"></a><a class="docs-heading-anchor-permalink" href="#Basic-Gaussian-GAM" title="Permalink"></a></h2><p>The simplest use case: fitting a smooth function to noisy continuous data.</p><pre><code class="language-julia hljs">n = 180
+x = range(0, 2π; length=n) |&gt; collect
+y = sin.(x) .+ 0.3 .* randn(n)
+df = DataFrame(x=x, y=y)
+
+# Fit with cubic regression splines
+m = gam(@formula(y ~ s(x, k=20, bs=:cr)), df);
+nothing</code></pre><p>The public <code>@formula</code> macro works like StatsModels&#39; <code>@formula</code> but supports <code>s()</code>, <code>te()</code>, <code>ti()</code>, and <code>t2()</code> smooth terms with keyword arguments. If you also load another package that exports <code>@formula</code>, use <code>GAM.@formula(...)</code> or <code>using GAM: @formula</code>.</p><h2 id="Multiple-Smooths"><a class="docs-heading-anchor" href="#Multiple-Smooths">Multiple Smooths</a><a id="Multiple-Smooths-1"></a><a class="docs-heading-anchor-permalink" href="#Multiple-Smooths" title="Permalink"></a></h2><p>When the response depends on several covariates, add multiple smooth terms:</p><pre><code class="language-julia hljs">x2 = randn(n)
+y2 = sin.(x) .+ 0.5 .* x2.^2 .+ 0.3 .* randn(n)
+df2 = DataFrame(x=x, x2=x2, y=y2)
+
+m2 = gam(@formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2);
+nothing</code></pre><p>You can mix parametric and smooth terms freely:</p><pre><code class="language-julia hljs">z = randn(n)
+y3 = sin.(x) .+ 1.5 .* z .+ 0.3 .* randn(n)
+df3 = DataFrame(x=x, z=z, y=y3)
+
+m3 = gam(@formula(y ~ z + s(x, k=15, bs=:cr)), df3);
+nothing</code></pre><h2 id="Poisson-GAM"><a class="docs-heading-anchor" href="#Poisson-GAM">Poisson GAM</a><a id="Poisson-GAM-1"></a><a class="docs-heading-anchor-permalink" href="#Poisson-GAM" title="Permalink"></a></h2><p>For count data, specify a Poisson family with log link (equivalent to R&#39;s <code>gam(y ~ s(x), family=poisson)</code>):</p><pre><code class="language-julia hljs">mu = exp.(0.5 .* sin.(x) .+ 0.5)
+counts = Float64.(rand.(Poisson.(mu)))
+df_pois = DataFrame(x=x, y=Float64.(counts))
+
+m_pois = gam(@formula(y ~ s(x, k=15, bs=:cr)), df_pois;
+    family=Poisson(), link=LogLink());
+nothing</code></pre><h2 id="Binomial-GAM"><a class="docs-heading-anchor" href="#Binomial-GAM">Binomial GAM</a><a id="Binomial-GAM-1"></a><a class="docs-heading-anchor-permalink" href="#Binomial-GAM" title="Permalink"></a></h2><p>For binary outcomes or proportions (equivalent to R&#39;s <code>gam(y ~ s(x), family=binomial)</code>):</p><pre><code class="language-julia hljs">p = 1.0 ./ (1.0 .+ exp.(-2.0 .* sin.(x)))
+y_bin = Float64.(rand.(Bernoulli.(p)))
+df_bin = DataFrame(x=x, y=y_bin)
+
+m_bin = gam(@formula(y ~ s(x, k=15, bs=:cr)), df_bin;
+    family=Binomial(), link=LogitLink());
+nothing</code></pre><h2 id="Gamma-GAM"><a class="docs-heading-anchor" href="#Gamma-GAM">Gamma GAM</a><a id="Gamma-GAM-1"></a><a class="docs-heading-anchor-permalink" href="#Gamma-GAM" title="Permalink"></a></h2><p>For positive continuous data with variance proportional to the mean squared (equivalent to R&#39;s <code>gam(y ~ s(x), family=Gamma(link=&quot;log&quot;))</code>):</p><pre><code class="language-julia hljs">shape = 5.0
+mu_gamma = exp.(1.0 .+ 0.5 .* sin.(x))
+y_gamma = [rand(Gamma(shape, m / shape)) for m in mu_gamma]
+df_gamma = DataFrame(x=x, y=y_gamma)
+
+m_gamma = gam(@formula(y ~ s(x, k=15, bs=:cr)), df_gamma;
+    family=Gamma(), link=LogLink());
+nothing</code></pre><h2 id="Choosing-Smooth-Types"><a class="docs-heading-anchor" href="#Choosing-Smooth-Types">Choosing Smooth Types</a><a id="Choosing-Smooth-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Choosing-Smooth-Types" title="Permalink"></a></h2><p>The basis type (<code>bs</code>) controls the shape of basis functions. Different types suit different problems:</p><pre><code class="language-julia hljs">n = 220
+x = range(0, 1; length=n) |&gt; collect
+y = sin.(4π .* x) .+ 0.3 .* randn(n)
+df_smooth = DataFrame(x=x, y=y)
+
+# Thin plate regression spline — the default, good general-purpose choice
+m_tp = gam(@formula(y ~ s(x, k=20, bs=:tp)), df_smooth);
+
+# Cubic regression spline — fast, good for 1D smooths
+m_cr = gam(@formula(y ~ s(x, k=20, bs=:cr)), df_smooth);
+
+# P-spline — B-spline basis with difference penalty, popular in biostatistics
+m_ps = gam(@formula(y ~ s(x, k=20, bs=:ps)), df_smooth);
+nothing</code></pre><p><strong>When to use each:</strong></p><table><tr><th style="text-align: right">Basis</th><th style="text-align: right">When to use</th></tr><tr><td style="text-align: right"><code>:tp</code></td><td style="text-align: right">Default choice; optimal smoothness properties; good for 1–3 dimensions</td></tr><tr><td style="text-align: right"><code>:ts</code></td><td style="text-align: right">Like <code>:tp</code> but with shrinkage — smooth can be penalized to zero</td></tr><tr><td style="text-align: right"><code>:cr</code></td><td style="text-align: right">Fast for 1D; knots at quantiles; slightly less optimal than <code>:tp</code></td></tr><tr><td style="text-align: right"><code>:cs</code></td><td style="text-align: right">Like <code>:cr</code> with shrinkage</td></tr><tr><td style="text-align: right"><code>:cc</code></td><td style="text-align: right">Periodic data (time of day, angle) — endpoints match</td></tr><tr><td style="text-align: right"><code>:ps</code></td><td style="text-align: right">When you want explicit control over penalty order via <code>m</code></td></tr><tr><td style="text-align: right"><code>:cps</code></td><td style="text-align: right">Periodic P-spline</td></tr><tr><td style="text-align: right"><code>:bs</code></td><td style="text-align: right">B-spline with integrated derivative penalty</td></tr><tr><td style="text-align: right"><code>:gp</code></td><td style="text-align: right">When a Gaussian process interpretation is desired</td></tr></table><h2 id="Choosing-k-(Basis-Dimension)"><a class="docs-heading-anchor" href="#Choosing-k-(Basis-Dimension)">Choosing <code>k</code> (Basis Dimension)</a><a id="Choosing-k-(Basis-Dimension)-1"></a><a class="docs-heading-anchor-permalink" href="#Choosing-k-(Basis-Dimension)" title="Permalink"></a></h2><p><code>k</code> sets the upper bound on complexity. If <code>k</code> is too low the smooth cannot capture the true signal; too high is usually fine (the penalty prevents overfitting), but wastes computation.</p><pre><code class="language-julia hljs"># Too low — underfits
+m_low = gam(@formula(y ~ s(x, k=4, bs=:cr)), df_smooth);
+
+# Adequate
+m_ok = gam(@formula(y ~ s(x, k=20, bs=:cr)), df_smooth);
+
+# Generous — fine, penalty handles it
+m_high = gam(@formula(y ~ s(x, k=50, bs=:cr)), df_smooth);
+nothing</code></pre><p>Use <a href="../diagnostics/#k_check"><code>k_check</code></a> to test whether <code>k</code> is large enough (see <a href="../diagnostics/#diagnostics">Diagnostics</a> below).</p><h2 id="Tensor-Product-Smooths"><a class="docs-heading-anchor" href="#Tensor-Product-Smooths">Tensor Product Smooths</a><a id="Tensor-Product-Smooths-1"></a><a class="docs-heading-anchor-permalink" href="#Tensor-Product-Smooths" title="Permalink"></a></h2><p>For interactions between covariates measured on different scales, tensor products (<code>te</code>, <code>ti</code>, <code>t2</code>) are preferred over isotropic 2D smooths.</p><h3 id="te()-—-Full-Tensor-Product"><a class="docs-heading-anchor" href="#te()-—-Full-Tensor-Product"><code>te()</code> — Full Tensor Product</a><a id="te()-—-Full-Tensor-Product-1"></a><a class="docs-heading-anchor-permalink" href="#te()-—-Full-Tensor-Product" title="Permalink"></a></h3><p>Includes both main effects and interaction. Equivalent to R&#39;s <code>te(x1, x2)</code>:</p><pre><code class="language-julia hljs">n = 180
+x1 = rand(n)
+x2 = rand(n)
+y_te = sin.(2π .* x1) .* cos.(2π .* x2) .+ 0.3 .* randn(n)
+df_te = DataFrame(x1=x1, x2=x2, y=y_te)
+
+m_te = gam(@formula(y ~ te(x1, x2, k=8)), df_te);
+nothing</code></pre><h3 id="ti()-—-Tensor-Product-Interaction"><a class="docs-heading-anchor" href="#ti()-—-Tensor-Product-Interaction"><code>ti()</code> — Tensor Product Interaction</a><a id="ti()-—-Tensor-Product-Interaction-1"></a><a class="docs-heading-anchor-permalink" href="#ti()-—-Tensor-Product-Interaction" title="Permalink"></a></h3><p>For an ANOVA-style decomposition separating main effects from interaction. Equivalent to R&#39;s <code>ti(x1, x2)</code>:</p><pre><code class="language-julia hljs">m_anova = gam(
+    @formula(y ~ s(x1, k=10) + s(x2, k=10) + ti(x1, x2, k=6)),
+    df_te,
+);
+nothing</code></pre><h3 id="t2()-—-Alternative-Tensor-Product"><a class="docs-heading-anchor" href="#t2()-—-Alternative-Tensor-Product"><code>t2()</code> — Alternative Tensor Product</a><a id="t2()-—-Alternative-Tensor-Product-1"></a><a class="docs-heading-anchor-permalink" href="#t2()-—-Alternative-Tensor-Product" title="Permalink"></a></h3><p>Like <code>te()</code> but with independent marginal penalties, giving finer control per marginal direction. Equivalent to R&#39;s <code>t2(x1, x2)</code>:</p><pre><code class="language-julia hljs">m_t2 = gam(@formula(y ~ t2(x1, x2, k=8)), df_te);
+nothing</code></pre><h2 id="Model-Diagnostics"><a class="docs-heading-anchor" href="#Model-Diagnostics">Model Diagnostics</a><a id="Model-Diagnostics-1"></a><a class="docs-heading-anchor-permalink" href="#Model-Diagnostics" title="Permalink"></a></h2><h3 id="gam_check-—-Residual-Diagnostics"><a class="docs-heading-anchor" href="#gam_check-—-Residual-Diagnostics"><code>gam_check</code> — Residual Diagnostics</a><a id="gam_check-—-Residual-Diagnostics-1"></a><a class="docs-heading-anchor-permalink" href="#gam_check-—-Residual-Diagnostics" title="Permalink"></a></h3><p>Returns QQ plot data, residuals vs fitted, histogram of residuals, and response vs fitted (equivalent to R&#39;s <code>gam.check()</code>):</p><pre><code class="language-julia hljs">m = gam(@formula(y ~ s(x, k=20, bs=:cr)), df);
+gc = gam_check(m);
+nothing</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">GAM checking results
+====================
+
+✓ Model converged
+
+Method: REML
+Scale est. = 0.0767
+n = 180
+
+Basis dimension (k) checking results:
+────────────────────────────────────────────────────────────
+Smooth                     k&#39;      edf  k-index
+────────────────────────────────────────────────────────────
+s(x,bs=cr)                 19     8.92    0.469
+────────────────────────────────────────────────────────────
+
+
+Deviance explained = 87.4%
+Scale (σ²) = 0.0767</code></pre><h3 id="k_check-—-Basis-Dimension-Adequacy"><a class="docs-heading-anchor" href="#k_check-—-Basis-Dimension-Adequacy"><code>k_check</code> — Basis Dimension Adequacy</a><a id="k_check-—-Basis-Dimension-Adequacy-1"></a><a class="docs-heading-anchor-permalink" href="#k_check-—-Basis-Dimension-Adequacy" title="Permalink"></a></h3><p>Tests whether <code>k</code> is large enough. A significant p-value suggests you should increase <code>k</code> (equivalent to the basis dimension test in R&#39;s <code>gam.check()</code>):</p><pre><code class="language-julia hljs">kc = k_check(m);
+nothing</code></pre><p>Rule of thumb: if the effective degrees of freedom (EDF) is close to <code>k - 1</code>, increase <code>k</code>.</p><h3 id="concurvity-—-Smooth-Collinearity"><a class="docs-heading-anchor" href="#concurvity-—-Smooth-Collinearity"><code>concurvity</code> — Smooth Collinearity</a><a id="concurvity-—-Smooth-Collinearity-1"></a><a class="docs-heading-anchor-permalink" href="#concurvity-—-Smooth-Collinearity" title="Permalink"></a></h3><p>Measures concurvity between smooth terms (the nonlinear analogue of collinearity). Values close to 1 indicate identifiability issues:</p><pre><code class="language-julia hljs">m_multi = gam(@formula(y ~ s(x, k=15) + s(x2, k=10)), df2);
+c = concurvity(m_multi);
+nothing</code></pre><h3 id="anova_gam-—-Smooth-Significance-and-Model-Comparison"><a class="docs-heading-anchor" href="#anova_gam-—-Smooth-Significance-and-Model-Comparison"><code>anova_gam</code> — Smooth Significance and Model Comparison</a><a id="anova_gam-—-Smooth-Significance-and-Model-Comparison-1"></a><a class="docs-heading-anchor-permalink" href="#anova_gam-—-Smooth-Significance-and-Model-Comparison" title="Permalink"></a></h3><p><strong>Single model</strong> — tests significance of each smooth term using the Bayesian test of Wood (2013). Equivalent to R&#39;s <code>summary.gam()</code> smooth significance table or <code>anova.gam(m)</code>:</p><pre><code class="language-julia hljs">a = anova_gam(m_multi);
+nothing</code></pre><p><strong>Multiple models</strong> — sequential deviance comparison of nested models. Equivalent to R&#39;s <code>anova(m1, m2, test=&quot;F&quot;)</code>:</p><pre><code class="language-julia hljs">m_small = gam(@formula(y ~ s(x, k=15, bs=:cr)), df2);
+m_full = gam(@formula(y ~ s(x, k=15, bs=:cr) + s(x2, k=10, bs=:cr)), df2);
+a_comp = anova_gam(m_small, m_full);
+nothing</code></pre><p>Uses F-test for scale-estimated families, χ² for known-scale families. You can force a specific test:</p><pre><code class="language-julia hljs">a_chisq = anova_gam(m_small, m_full; test=:Chisq);
+nothing</code></pre><h2 id="Prediction-on-New-Data"><a class="docs-heading-anchor" href="#Prediction-on-New-Data">Prediction on New Data</a><a id="Prediction-on-New-Data-1"></a><a class="docs-heading-anchor-permalink" href="#Prediction-on-New-Data" title="Permalink"></a></h2><p>Use <code>predict()</code> to evaluate the model at new covariate values (equivalent to R&#39;s <code>predict.gam()</code>):</p><pre><code class="language-julia hljs">m = gam(@formula(y ~ s(x, k=20, bs=:cr)), df);
+
+# New data as a DataFrame
+newdf = DataFrame(x=range(0, 2π; length=100) |&gt; collect)
+
+# Predictions on the link scale (default)
+eta = GAM.predict(m, newdf);
+
+# Predictions on the response scale
+mu = GAM.predict(m, newdf; type=:response);
+
+# With standard errors
+mu, se = GAM.predict(m, newdf; type=:response, se=true);
+nothing</code></pre><p>For Poisson or Binomial models, response-scale predictions are on the natural scale (counts or probabilities):</p><pre><code class="language-julia hljs">m_pois = gam(@formula(y ~ s(x, k=15, bs=:cr)), df_pois;
+    family=Poisson(), link=LogLink());
+
+newdf = DataFrame(x=range(0, 2π; length=50) |&gt; collect)
+lambda, se_lambda = GAM.predict(m_pois, newdf; type=:response, se=true);
+nothing</code></pre><h2 id="Inspecting-the-Model"><a class="docs-heading-anchor" href="#Inspecting-the-Model">Inspecting the Model</a><a id="Inspecting-the-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Inspecting-the-Model" title="Permalink"></a></h2><p>GAM.jl implements the full StatsBase interface:</p><pre><code class="language-julia hljs">GAM.coef(m);       # coefficients
+GAM.vcov(m);       # variance-covariance matrix
+GAM.stderror(m);   # standard errors
+GAM.deviance(m);   # model deviance
+GAM.nobs(m);       # number of observations
+GAM.dof(m);        # degrees of freedom
+
+m.edf;             # EDF per smooth
+m.edf_total;       # total EDF
+m.scale;           # scale parameter
+m.sp;              # log smoothing parameters
+m.smooths;         # constructed smooth terms
+nothing</code></pre><h2 id="Controlling-the-Fit"><a class="docs-heading-anchor" href="#Controlling-the-Fit">Controlling the Fit</a><a id="Controlling-the-Fit-1"></a><a class="docs-heading-anchor-permalink" href="#Controlling-the-Fit" title="Permalink"></a></h2><p>Fine-tune convergence criteria and optimization behaviour:</p><pre><code class="language-julia hljs">ctrl = gam_control(
+    epsilon = 1e-8,      # convergence tolerance
+    maxit = 500,         # max PIRLS iterations
+    outer_maxit = 100,   # max outer iterations
+    trace = false,
+    gamma = 1.4,         # extra smoothing (&gt;1 = smoother)
+)
+
+m = gam(@formula(y ~ s(x)), df; control=ctrl);
+nothing</code></pre><p>Use <code>gamma &gt; 1</code> to encourage smoother fits (useful for exploratory analysis).</p><h2 id="Smooth-Evaluation-and-Derivatives"><a class="docs-heading-anchor" href="#Smooth-Evaluation-and-Derivatives">Smooth Evaluation and Derivatives</a><a id="Smooth-Evaluation-and-Derivatives-1"></a><a class="docs-heading-anchor-permalink" href="#Smooth-Evaluation-and-Derivatives" title="Permalink"></a></h2><p>Evaluate smooth functions on a grid for plotting, and compute derivatives to identify regions of significant change:</p><pre><code class="language-julia hljs">m = gam(@formula(y ~ s(x, k=20, bs=:cr)), df);
+
+# Evaluate smooth on a regular grid with confidence intervals
+se = smooth_estimates(m);
+
+# First derivatives (finite differences)
+d = derivatives(m);
+
+# Second derivatives
+d2 = derivatives(m; order=2);
+
+# Partial residuals for each smooth term
+pr = partial_residuals(m);
+nothing</code></pre><h2 id="Complete-Workflow-Example"><a class="docs-heading-anchor" href="#Complete-Workflow-Example">Complete Workflow Example</a><a id="Complete-Workflow-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Complete-Workflow-Example" title="Permalink"></a></h2><p>Putting it all together — fit, check, compare, and predict:</p><pre><code class="language-julia hljs">Random.seed!(123)
+
+n = 180
+x1 = range(0, 1; length=n) |&gt; collect
+x2 = rand(n)
+y = sin.(4π .* x1) .+ 0.8 .* x2.^2 .+ 0.3 .* randn(n)
+df = DataFrame(x1=x1, x2=x2, y=y)
+
+# Fit candidate models
+m1 = gam(@formula(y ~ s(x1, k=20, bs=:cr)), df);
+m2 = gam(@formula(y ~ s(x1, k=20, bs=:cr) + s(x2, k=10, bs=:cr)), df);
+
+# Diagnostics
+gam_check(m2);
+k_check(m2);
+concurvity(m2);
+
+# Smooth significance
+anova_gam(m2);
+
+# Compare nested models — is x2 needed?
+anova_gam(m1, m2);
+
+# Predict on new data
+newdf = DataFrame(
+    x1 = range(0, 1; length=120) |&gt; collect,
+    x2 = fill(0.5, 120),
+)
+mu, se = GAM.predict(m2, newdf; type=:response, se=true);
+nothing</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">GAM checking results
+====================
+
+✓ Model converged
+
+Method: REML
+Scale est. = 0.0962
+n = 180
+
+Basis dimension (k) checking results:
+────────────────────────────────────────────────────────────
+Smooth                     k&#39;      edf  k-index
+────────────────────────────────────────────────────────────
+s(x1,bs=cr)                19    13.05    0.687
+s(x2,bs=cr)                 9     2.14    0.238
+────────────────────────────────────────────────────────────
+
+
+Deviance explained = 86.4%
+Scale (σ²) = 0.0962</code></pre><h2 id="GAMLSS:-Location-Scale-Models"><a class="docs-heading-anchor" href="#GAMLSS:-Location-Scale-Models">GAMLSS: Location-Scale Models</a><a id="GAMLSS:-Location-Scale-Models-1"></a><a class="docs-heading-anchor-permalink" href="#GAMLSS:-Location-Scale-Models" title="Permalink"></a></h2><p>Model both the mean and variance as smooth functions of covariates. See <a href="../gamlss/">GAMLSS</a> for full details.</p><pre><code class="language-julia hljs">n = 180
+x = range(0, 2π; length=n) |&gt; collect
+y = sin.(x) .+ (0.1 .+ 0.3 .* abs.(cos.(x))) .* randn(n)
+df = DataFrame(x=x, y=y)
+
+m = gam(
+    [
+        @formula(y ~ s(x, k=15, bs=:cr)),     # location (μ)
+        @formula(y ~ s(x, k=10, bs=:cr)),     # scale (σ)
+    ],
+    df,
+    GaussianLS(),
+);
+nothing</code></pre><h2 id="SCAM:-Shape-Constrained-Models"><a class="docs-heading-anchor" href="#SCAM:-Shape-Constrained-Models">SCAM: Shape-Constrained Models</a><a id="SCAM:-Shape-Constrained-Models-1"></a><a class="docs-heading-anchor-permalink" href="#SCAM:-Shape-Constrained-Models" title="Permalink"></a></h2><p>Enforce monotonicity or convexity constraints. See <a href="../scam/">Shape Constraints (SCAM)</a>.</p><pre><code class="language-julia hljs"># Monotone increasing fit
+m = gam(@formula(y ~ s(x, k=15, bs=:mpi)), df);
+
+# Convex fit
+m = gam(@formula(y ~ s(x, k=15, bs=:cx)), df);
+nothing</code></pre><h2 id="QGAM:-Quantile-Regression"><a class="docs-heading-anchor" href="#QGAM:-Quantile-Regression">QGAM: Quantile Regression</a><a id="QGAM:-Quantile-Regression-1"></a><a class="docs-heading-anchor-permalink" href="#QGAM:-Quantile-Regression" title="Permalink"></a></h2><p>Estimate conditional quantiles. See <a href="../qgam/">Quantile Regression (QGAM)</a>.</p><pre><code class="language-julia hljs"># Fit median regression
+m50 = qgam(@formula(y ~ s(x, k=15, bs=:cr)), df, 0.5);
+
+# Fit multiple quantiles at once
+fits = mqgam(@formula(y ~ s(x, k=15, bs=:cr)), df,
+    [0.1, 0.25, 0.5, 0.75, 0.9]);
+m10 = qdo(fits, 0.1);   # extract individual quantile model
+nothing</code></pre><h2 id="BAM:-Large-Datasets"><a class="docs-heading-anchor" href="#BAM:-Large-Datasets">BAM: Large Datasets</a><a id="BAM:-Large-Datasets-1"></a><a class="docs-heading-anchor-permalink" href="#BAM:-Large-Datasets" title="Permalink"></a></h2><p>Memory-efficient fitting for large n. See <a href="../bam/">Large Data (BAM)</a>.</p><pre><code class="language-julia hljs">n = 12_000
+x = rand(n)
+y = sin.(2π .* x) .+ 0.3 .* randn(n)
+big_df = DataFrame(x=x, y=y)
+
+m = bam(@formula(y ~ s(x, k=20, bs=:cr)), big_df);
+nothing</code></pre><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li><a href="../smooths/#smooth-terms">Smooth Terms</a> — full reference for all 28 smooth basis types</li><li><a href="../formulas/#formula-syntax">Formula Syntax</a> — details on <code>@formula</code></li><li><a href="../diagnostics/#diagnostics">Diagnostics</a> — comprehensive diagnostic functions</li><li><a href="../gamm/#gamm">Mixed Models (GAMM)</a> — hierarchical data with random effects</li><li><a href="../api/#api-reference">API Reference</a> — complete function signatures</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../smooths/">Smooth Terms »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Sunday 12 April 2026 04:11">Sunday 12 April 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
