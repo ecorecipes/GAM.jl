@@ -14,7 +14,7 @@ A feature-complete Julia implementation of Generalized Additive Models, inspired
 - **Quantile regression (QGAM)** — Extended Log-F families with automatic calibration
 - **Extreme value models** — GEV, GPD, and extended GPD families
 - **Large-scale fitting (BAM)** — chunked accumulation for datasets with millions of rows
-- **Mixed models (GAMM)** — random intercepts/slopes via MixedModels.jl integration
+- **Mixed models (GAMM)** — random intercepts/slopes via `gamm()` with `GAM.@formula(...)`
 - **Bayesian inference** — Turing.jl extension for posterior sampling with smooth-aware priors
 - **Diagnostics** — gratia-style smooth estimates, derivatives, posterior samples, concurvity, rootograms
 - **Side constraints** — automatic identifiability constraints when smooths share covariates
@@ -56,11 +56,9 @@ r2(m)                # R-squared
 
 ## Smooth Term Types
 
-`@formula` is the public formula interface. Keyword smooth calls such as
-`@formula(y ~ s(x1, k=15, bs=:cr))` are routed to GAM.jl's extended parser,
-while `@formulak` remains available as an explicit GAM-only fallback. If
-another package also exports `@formula`, use `GAM.@formula(...)` or
-`using GAM: @formula`.
+`@formula` is the public formula interface. It covers ordinary linear terms,
+smooths, and GAMM random effects. If another package also exports `@formula`,
+use `GAM.@formula(...)` or `using GAM: @formula`.
 
 | Syntax | Basis | Description |
 |--------|-------|-------------|

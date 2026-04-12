@@ -26,10 +26,9 @@ nothing
 ```
 
 The public `@formula` macro works like StatsModels' `@formula` but supports
-`s()`, `te()`, `ti()`, and `t2()` smooth terms with keyword arguments. GAM.jl
-also keeps `@formulak` as an explicit GAM-only fallback. If you also load
-another package that exports
-`@formula`, use `GAM.@formula(...)` or `using GAM: @formula`.
+`s()`, `te()`, `ti()`, and `t2()` smooth terms with keyword arguments. If you
+also load another package that exports `@formula`, use `GAM.@formula(...)` or
+`using GAM: @formula`.
 
 ## Multiple Smooths
 
@@ -466,7 +465,7 @@ nothing
 ## Next Steps
 
 - [Smooth Terms](@ref smooth-terms) — full reference for all 28 smooth basis types
-- [Formula Syntax](@ref formula-syntax) — details on `@formula` and `@formulak`
+- [Formula Syntax](@ref formula-syntax) — details on `@formula`
 - [Diagnostics](@ref diagnostics) — comprehensive diagnostic functions
 - [Mixed Models (GAMM)](@ref gamm) — hierarchical data with random effects
 - [API Reference](@ref api-reference) — complete function signatures

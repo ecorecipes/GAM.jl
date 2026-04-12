@@ -217,14 +217,11 @@ end
 """
     @formula(ex)
 
-GAM-aware wrapper around StatsModels' `@formula`.
+Public formula macro for GAM.jl models.
 
-- Ordinary formulas continue to use the standard StatsModels path.
-- Formulas containing keyword smooth terms such as `s(x, k=15, bs=:cr)` are
-  diverted to [`@formulak`](@ref).
-- Formulas containing GAMM random-effect syntax such as `(1 | group)` or
-  `re(group)` are diverted to the GAMM parser, so keyword smooths and random
-  effects work together under a single macro.
+Use `@formula` for ordinary linear terms, smooth constructors with keyword
+arguments such as `s(x, k=15, bs=:cr)`, and GAMM random-effect syntax such as
+`(1 | group)` or `re(group)`.
 
 # Examples
 ```julia
