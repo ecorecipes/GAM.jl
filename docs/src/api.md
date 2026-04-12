@@ -13,7 +13,6 @@ GamModel
 
 ```@docs
 GAM.@formula
-GAM.@formulak
 GamFormula
 GammFormula
 ```

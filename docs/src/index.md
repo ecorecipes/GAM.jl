@@ -36,8 +36,7 @@ geometric-mean speedup over R in the latest checked-in benchmark snapshot.
 - **Gratia-style diagnostics**: `smooth_estimates`, `derivatives`, `partial_residuals`,
   `appraise`, `rootogram`, `posterior_samples`, `fitted_samples`, `data_slice`
 - **JuliaStats integration**: follows StatsModels.jl/GLM.jl conventions with
-  `@formula` syntax, plus `@formulak` as an explicit GAM-only fallback, and full
-  StatsBase interface
+  `@formula` syntax and full StatsBase interface
 - **Tested against R**: comprehensive integration tests comparing results against mgcv
 
 ## Quick Start
@@ -55,13 +54,10 @@ df = DataFrame(x=x, y=y)
 
 m = gam(@formula(y ~ s(x, k=15, bs=:cr)), df);
 
-GAM.coef(m);
-GAM.deviance(m);
-m.edf;
-m.scale;
-gam_check(m);
-smooth_estimates(m);
-nothing
+(
+    coef = round.(GAM.coef(m)[1:3], digits=3),
+    edf = round.(m.edf, digits=2),
+)
 ```
 
 ## Installation
