@@ -57,12 +57,13 @@ df_pois = CSV.read("data_poisson.csv", DataFrame)
 x = df_pois.x
 n = nrow(df_pois)
 η = 1.0 .+ 1.5 .* sin.(2π .* x)
+ord = sortperm(x)
 ```
 
 ### Fitting the model
 
 ```{julia}
-m_pois = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_pois;
+m_pois = gam(@formula(y ~ s(x, k = 15, bs = :cr)), df_pois;
     family = Poisson(), link = LogLink())
 m_pois
 ```
@@ -81,7 +82,7 @@ p1 = plot(x_grid, se_pois.estimate;
     xlabel = "x",
     ylabel = "f(x) [log scale]",
     title = "Poisson GAM — smooth on link scale")
-plot!(p1, x, η .- mean(η);
+plot!(p1, x[ord], (η .- mean(η))[ord];
     label = "true f(x)",
     linestyle = :dash,
     linewidth = 2,
@@ -119,12 +120,13 @@ $$
 df_bin = CSV.read("data_binomial.csv", DataFrame)
 x_bin = df_bin.x
 η_bin = -0.5 .+ 2.0 .* sin.(2π .* x_bin)
+ord_bin = sortperm(x_bin)
 ```
 
 ### Fitting the model
 
 ```{julia}
-m_bin = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_bin;
+m_bin = gam(@formula(y ~ s(x, k = 15, bs = :cr)), df_bin;
     family = Binomial(), link = LogitLink())
 m_bin
 ```
@@ -143,7 +145,7 @@ p3 = plot(x_grid_bin, se_bin.estimate;
     xlabel = "x",
     ylabel = "f(x) [logit scale]",
     title = "Binomial GAM — smooth on link scale")
-plot!(p3, x_bin, η_bin .- mean(η_bin);
+plot!(p3, x_bin[ord_bin], (η_bin .- mean(η_bin))[ord_bin];
     label = "true f(x)",
     linestyle = :dash,
     linewidth = 2,
@@ -181,6 +183,7 @@ $$
 df_gam = CSV.read("data_gamma.csv", DataFrame)
 x_gam = df_gam.x
 η_gam = 1.0 .+ sin.(2π .* x_gam)
+ord_gam = sortperm(x_gam)
 ```
 
 ### Fitting the model
@@ -188,7 +191,7 @@ x_gam = df_gam.x
 We use `Gamma()` with `LogLink()` (log link is more commonly used in practice than the canonical inverse link):
 
 ```{julia}
-m_gam = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_gam;
+m_gam = gam(@formula(y ~ s(x, k = 15, bs = :cr)), df_gam;
     family = Gamma(), link = LogLink())
 m_gam
 ```
@@ -207,7 +210,7 @@ p5 = plot(x_grid_gam, se_gam.estimate;
     xlabel = "x",
     ylabel = "f(x) [log scale]",
     title = "Gamma GAM — smooth on link scale")
-plot!(p5, x_gam, η_gam .- mean(η_gam);
+plot!(p5, x_gam[ord_gam], (η_gam .- mean(η_gam))[ord_gam];
     label = "true f(x)",
     linestyle = :dash,
     linewidth = 2,

@@ -68,7 +68,7 @@ first(df, 5)
 ## Fitting the model
 
 ```{julia}
-m = gam(@formulak(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
+m = gam(@formula(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
 ```
 
 ## Model overview
@@ -169,8 +169,15 @@ println(round.(conc_pw; digits = 3))
 Does the basis dimension `k` matter? Let us refit with smaller and larger `k`:
 
 ```{julia}
-for k_val in [5, 10, 20, 30]
-    mk = gam(GamFormula(:y, Symbol[], true, [s(:x0, k=k_val), s(:x1, k=k_val), s(:x2, k=k_val), s(:x3, k=k_val)]), df)
+k_models = Dict(
+    5 => gam(@formula(y ~ s(x0, k=5) + s(x1, k=5) + s(x2, k=5) + s(x3, k=5)), df),
+    10 => gam(@formula(y ~ s(x0, k=10) + s(x1, k=10) + s(x2, k=10) + s(x3, k=10)), df),
+    20 => gam(@formula(y ~ s(x0, k=20) + s(x1, k=20) + s(x2, k=20) + s(x3, k=20)), df),
+    30 => gam(@formula(y ~ s(x0, k=30) + s(x1, k=30) + s(x2, k=30) + s(x3, k=30)), df),
+)
+
+for k_val in sort(collect(keys(k_models)))
+    mk = k_models[k_val]
     edfs = round.(edf(mk); digits = 2)
     dev = round(r2(mk) * 100; digits = 1)
     println("k=$k_val  EDF=$(edfs)  Dev.Expl=$(dev)%")

@@ -62,11 +62,11 @@ n = nrow(df)
 f_true = 3.0 .* (1.0 .- exp.(-5.0 .* x))
 ```
 
-### Fit unconstrained GAM vs SCAM
+### Fit unconstrained and shape-constrained GAMs
 
 ```{julia}
-m_gam = gam(@formulak(y ~ s(x, k=15, bs=:cr)), df)
-m_scam = scam(@formulak(y ~ s(x, k=15, bs=:mpi)), df)
+m_gam = gam(@formula(y ~ s(x, k=15, bs=:cr)), df)
+m_scam = gam(@formula(y ~ s(x, k=15, bs=:mpi)), df)
 ```
 
 ### Compare fitted values
@@ -101,23 +101,21 @@ println("GAM all non-decreasing: ", all(diffs_gam .>= -1e-10))
 ```{julia}
 #| fig-width: 8
 #| fig-height: 5
-se_scam = smooth_estimates(m_scam; n=200)
-x_grid = se_scam.covariates[:x]
-f_hat_scam = se_scam.estimate
-f_se_scam = se_scam.se
+x_grid = collect(range(minimum(x), maximum(x); length=200))
+grid_df = DataFrame(x=x_grid)
+f_hat_scam, f_se_scam = predict(m_scam, grid_df; se=true)
 f_true_grid = 3.0 .* (1.0 .- exp.(-5.0 .* x_grid))
 
-se_gam = smooth_estimates(m_gam; n=200)
-f_hat_gam = se_gam.estimate
+f_hat_gam = predict(m_gam, grid_df)
 
 p = plot(x_grid, f_hat_scam;
     ribbon=2 .* f_se_scam, fillalpha=0.2, fillcolor=:steelblue,
-    label="SCAM (mpi) ± 2SE", linewidth=2, color=:steelblue,
+    label="Constrained gam (bs=:mpi) ± 2SE", linewidth=2, color=:steelblue,
     xlabel="x", ylabel="f(x)",
-    title="Monotone Increasing: SCAM vs GAM vs Truth",
+    title="Monotone Increasing: constrained vs unconstrained fit",
     legend=:bottomright)
 plot!(p, x_grid, f_hat_gam;
-    label="GAM (unconstrained)", linewidth=2, color=:orange, linestyle=:dot)
+    label="Unconstrained gam", linewidth=2, color=:orange, linestyle=:dot)
 plot!(p, x_grid, f_true_grid;
     label="True f(x)", linewidth=2, color=:red, linestyle=:dash)
 scatter!(p, x, y;
@@ -145,7 +143,7 @@ f_true2 = 2.0 .* x_cx.^2
 ### Fit with convexity constraint
 
 ```{julia}
-m_cx = scam(@formulak(y ~ s(x, k=15, bs=:cx)), df2)
+m_cx = gam(@formula(y ~ s(x, k=15, bs=:cx)), df2)
 
 yhat_cx = predict(m_cx)
 rmse_cx = sqrt(mean((yhat_cx .- f_true2).^2))
@@ -168,15 +166,14 @@ println("All convex: ", all(second_diffs .>= -1e-10))
 ```{julia}
 #| fig-width: 8
 #| fig-height: 5
-se_cx = smooth_estimates(m_cx; n=200)
-x_grid_cx = se_cx.covariates[:x]
-f_hat_cx = se_cx.estimate
-f_se_cx = se_cx.se
+x_grid_cx = collect(range(minimum(x_cx), maximum(x_cx); length=200))
+grid_df_cx = DataFrame(x=x_grid_cx)
+f_hat_cx, f_se_cx = predict(m_cx, grid_df_cx; se=true)
 f_true2_grid = 2.0 .* x_grid_cx.^2
 
 p1 = plot(x_grid_cx, f_hat_cx;
     ribbon=2 .* f_se_cx, fillalpha=0.2, fillcolor=:steelblue,
-    label="SCAM (cx) ± 2SE", linewidth=2, color=:steelblue,
+    label="Constrained gam (bs=:cx) ± 2SE", linewidth=2, color=:steelblue,
     xlabel="x", ylabel="f(x)",
     title="Convex Constraint: Fit vs Truth",
     legend=:topleft)
@@ -223,7 +220,7 @@ f_true3 = 3.0 .* sqrt.(x_micv)
 ### Fit with monotone increasing + concave constraint
 
 ```{julia}
-m_micv = scam(@formulak(y ~ s(x, k=15, bs=:micv)), df3)
+m_micv = gam(@formula(y ~ s(x, k=15, bs=:micv)), df3)
 
 yhat_micv = predict(m_micv)
 rmse_micv = sqrt(mean((yhat_micv .- f_true3).^2))
@@ -246,15 +243,14 @@ println("Concave: ", all(second_diffs_micv .<= 1e-10))
 ```{julia}
 #| fig-width: 8
 #| fig-height: 5
-se_micv = smooth_estimates(m_micv; n=200)
-x_grid_micv = se_micv.covariates[:x]
-f_hat_micv = se_micv.estimate
-f_se_micv = se_micv.se
+x_grid_micv = collect(range(minimum(x_micv), maximum(x_micv); length=200))
+grid_df_micv = DataFrame(x=x_grid_micv)
+f_hat_micv, f_se_micv = predict(m_micv, grid_df_micv; se=true)
 f_true3_grid = 3.0 .* sqrt.(x_grid_micv)
 
 p = plot(x_grid_micv, f_hat_micv;
     ribbon=2 .* f_se_micv, fillalpha=0.2, fillcolor=:steelblue,
-    label="SCAM (micv) ± 2SE", linewidth=2, color=:steelblue,
+    label="Constrained gam (bs=:micv) ± 2SE", linewidth=2, color=:steelblue,
     xlabel="x", ylabel="f(x)",
     title="Monotone Increasing & Concave: Fit vs Truth",
     legend=:bottomright)
@@ -267,25 +263,24 @@ p
 
 ## SCAM fitting details
 
-The `scam` function accepts the same arguments as `gam`, with additional control via `scam_control`:
+The preferred interface is `gam(...)` with a shape-constrained basis and the usual `gam_control(...)` options:
 
 ```{julia}
-ctrl = scam_control(
+ctrl = gam_control(
     epsilon=1e-7,        # convergence tolerance
-    maxit=200,           # max Newton iterations
-    outer_maxit=200,     # max outer (smoothing parameter) iterations
+    maxit=200,           # max iterations
     trace=false,         # print iteration progress
-    gamma=1.0,           # GCV inflation factor
-    not_exp=false        # use exp() transform (default); true for softplus
 )
 
-m_ctrl = scam(@formulak(y ~ s(x, k=15, bs=:mpi)), df; control=ctrl)
+m_ctrl = gam(@formula(y ~ s(x, k=15, bs=:mpi)), df; control=ctrl)
 ```
 
-If no shape-constrained basis types are detected, `scam` automatically falls back to standard `gam` fitting:
+The compatibility wrapper `scam(...)` still exists for SCAM-specific options such as `scam_control(not_exp=true)`, but most users can stay on `gam(...)`.
+
+Ordinary unconstrained bases continue to use the same `gam(...)` interface:
 
 ```{julia}
-m_fallback = scam(@formulak(y ~ s(x, k=15, bs=:cr)), df)
+m_fallback = gam(@formula(y ~ s(x, k=15, bs=:cr)), df)
 ```
 
 ## Comparing all constraint types
@@ -310,10 +305,22 @@ y_data = Dict(
     :mpi => y_mpi, :mpd => y_mpd, :cx => y_cx, :cv => y_cv,
     :micx => y_cx, :micv => y_cv, :mdcx => y_mpd, :mdcv => (1.0 .- sqrt.(x_test)) .+ 0.1 .* randn(200)
 )
+constraint_formulas = Dict(
+    :mpi => @formula(y ~ s(x, k=10, bs=:mpi)),
+    :mpd => @formula(y ~ s(x, k=10, bs=:mpd)),
+    :cx => @formula(y ~ s(x, k=10, bs=:cx)),
+    :cv => @formula(y ~ s(x, k=10, bs=:cv)),
+    :micx => @formula(y ~ s(x, k=10, bs=:micx)),
+    :micv => @formula(y ~ s(x, k=10, bs=:micv)),
+    :mdcx => @formula(y ~ s(x, k=10, bs=:mdcx)),
+    :mdcv => @formula(y ~ s(x, k=10, bs=:mdcv)),
+)
+constraint_models = Dict{Symbol, Any}()
 
 for bs in basis_types
     df_test = DataFrame(y=y_data[bs], x=x_test)
-    m_test = scam(GamFormula(:y, Symbol[], true, [s(:x, k=10, bs=bs)]), df_test)
+    m_test = gam(constraint_formulas[bs], df_test)
+    constraint_models[bs] = m_test
     yhat = predict(m_test)
     println("bs=:$bs — EDF: $(round(sum(m_test.edf), digits=2)), range: [$(round(minimum(yhat), digits=2)), $(round(maximum(yhat), digits=2))]")
 end
@@ -347,12 +354,11 @@ constraint_labels = Dict(
 )
 
 plots = []
+x_g = collect(range(minimum(x_test), maximum(x_test); length=200))
+pred_df = DataFrame(x=x_g)
 for bs in basis_types
-    df_test = DataFrame(y=y_data[bs], x=x_test)
-    m_test = scam(GamFormula(:y, Symbol[], true, [s(:x, k=10, bs=bs)]), df_test)
-    se_test = smooth_estimates(m_test; n=200)
-    x_g = se_test.covariates[:x]
-    f_g = se_test.estimate
+    m_test = constraint_models[bs]
+    f_g = predict(m_test, pred_df)
 
     f_true_g = if bs in [:mpi, :cx, :micx]
         x_g.^2
@@ -367,7 +373,7 @@ for bs in basis_types
     end
 
     pi = plot(x_g, f_g;
-        label="SCAM", linewidth=2, color=:steelblue,
+        label="fit", linewidth=2, color=:steelblue,
         title=constraint_labels[bs] * " (:$bs)",
         xlabel="x", ylabel="f(x)", legend=:best, titlefontsize=9)
     plot!(pi, x_g, f_true_g;
@@ -382,9 +388,9 @@ plot(plots...; layout=(4, 2), size=(800, 900))
 
 ## Summary
 
-| Feature | GAM.jl (`scam`) | R `scam` |
+| Feature | GAM.jl | R `scam` |
 |---------|-----------------|----------|
-| Fitting function | `scam(formula, data)` | `scam(formula, data=dat)` |
+| Fitting function | `gam(@formula(y ~ s(x, bs=:mpi)), data)` | `scam(y ~ s(x, bs="mpi"), data=dat)` |
 | Monotone increasing | `bs=:mpi` | `bs="mpi"` |
 | Monotone decreasing | `bs=:mpd` | `bs="mpd"` |
 | Convex | `bs=:cx` | `bs="cx"` |
@@ -393,6 +399,6 @@ plot(plots...; layout=(4, 2), size=(800, 900))
 | Mono. inc. + concave | `bs=:micv` | `bs="micv"` |
 | Mono. dec. + convex | `bs=:mdcx` | `bs="mdcx"` |
 | Mono. dec. + concave | `bs=:mdcv` | `bs="mdcv"` |
-| Control parameters | `scam_control()` | `scam.control()` |
+| Control parameters | `gam_control()` | `scam.control()` |
 
-Shape constraints are enforced through the SCOP-spline reparameterization using the exponential function, ensuring constraints hold exactly at the spline knots and approximately between them.
+Shape constraints are enforced through the SCOP-spline reparameterization using the exponential function, ensuring constraints hold exactly at the spline knots and approximately between them. The legacy `scam()` and `scam_control()` helpers remain available for compatibility.

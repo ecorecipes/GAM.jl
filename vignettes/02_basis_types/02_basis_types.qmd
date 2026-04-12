@@ -50,6 +50,7 @@ x = df.x
 y = df.y
 n = nrow(df)
 f_true = sin.(2π .* x) .+ 0.5 .* sin.(6π .* x)
+ord = sortperm(x)
 ```
 
 ## Fitting models with different bases
@@ -58,11 +59,12 @@ We fit the same formula with each basis type, using `k = 20` basis functions:
 
 ```{julia}
 bases = [:tp, :cr, :ps, :gp]
-models = Dict{Symbol, GamModel}()
-
-for bs in bases
-    models[bs] = gam(GamFormula(:y, Symbol[], true, [s(:x, k=20, bs=bs)]), df)
-end
+models = Dict{Symbol, GamModel}(
+    :tp => gam(@formula(y ~ s(x, k=20, bs=:tp)), df),
+    :cr => gam(@formula(y ~ s(x, k=20, bs=:cr)), df),
+    :ps => gam(@formula(y ~ s(x, k=20, bs=:ps)), df),
+    :gp => gam(@formula(y ~ s(x, k=20, bs=:gp)), df),
+)
 ```
 
 ## Comparing EDF and deviance
@@ -97,7 +99,7 @@ for (i, bs) in enumerate(bases)
         color = colors[i])
 end
 
-plot!(p, x, f_true;
+plot!(p, x[ord], f_true[ord];
     label = "true f(x)",
     linestyle = :dash,
     linewidth = 2,
@@ -120,7 +122,7 @@ for (i, bs) in enumerate(bases)
         title = string(bs),
         xlabel = "x",
         ylabel = "f(x)")
-    plot!(pi, x, f_true;
+    plot!(pi, x[ord], f_true[ord];
         label = "truth",
         linestyle = :dash,
         color = :black)
@@ -135,8 +137,14 @@ To understand how each basis works, we can examine the model matrix columns for 
 
 ```{julia}
 plots_basis = []
+small_models = Dict{Symbol, GamModel}(
+    :tp => gam(@formula(y ~ s(x, k=8, bs=:tp)), df),
+    :cr => gam(@formula(y ~ s(x, k=8, bs=:cr)), df),
+    :ps => gam(@formula(y ~ s(x, k=8, bs=:ps)), df),
+    :gp => gam(@formula(y ~ s(x, k=8, bs=:gp)), df),
+)
 for (i, bs) in enumerate(bases)
-    m_small = gam(GamFormula(:y, Symbol[], true, [s(:x, k=8, bs=bs)]), df)
+    m_small = small_models[bs]
     X_smooth = m_small.smooths[1].X
     k_cols = size(X_smooth, 2)
     pi = plot(title = "$(bs) basis (k=8)", xlabel = "x", ylabel = "basis value",

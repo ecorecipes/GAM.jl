@@ -28,7 +28,7 @@ where $g_k$ is the link function for parameter $k$. This is useful when:
 - **Skewness or tail behavior** varies across the covariate space
 - You need a **distributional regression** rather than a mean regression
 
-GAM.jl's `gamlss()` function provides this capability using Distributions.jl types and GLM.jl link functions.
+GAM.jl provides this capability through the unified `gam(..., family)` interface for multi-parameter families, while the legacy `gamlss()` wrapper remains available for compatibility with direct `Distributions.jl` parameterizations.
 
 ## Setup
 
@@ -63,13 +63,13 @@ println("n = $(nrow(dat)), y range: [$(round(minimum(dat.y); digits=2)), $(round
 
 ### Fitting the model
 
-With `gamlss()`, pass `Normal()` directly — its parameters $(μ, σ)$ match the Distributions.jl parameterization. Each parameter gets its own formula:
+With the unified `gam(..., family)` interface, `GaussianLS()` models the mean and standard deviation directly. Each parameter gets its own formula:
 
 ```{julia}
-m = gamlss(
-    [@formulak(y ~ s(x, k=15, bs=:cr)),   # μ formula
-     @formulak(y ~ s(x, k=10, bs=:cr))],   # log(σ) formula
-    dat, Normal()
+m = gam(
+    [@formula(y ~ s(x, k=15, bs=:cr)),   # μ formula
+     @formula(y ~ s(x, k=10, bs=:cr))],   # log(σ) formula
+    dat, GaussianLS()
 )
 println("Converged: $(m.converged)")
 println("Negative log-likelihood: $(round(m.nll; digits=2))")
@@ -95,7 +95,7 @@ println("σ: cor with truth = $(round(cor(σ_fit, dat.sigma_true); digits=5))")
 A standard `gam()` assumes constant variance. Let's compare:
 
 ```{julia}
-m_gam = gam(@formulak(y ~ s(x, k=15, bs=:cr)), dat)
+m_gam = gam(@formula(y ~ s(x, k=15, bs=:cr)), dat)
 μ_gam = m_gam.fitted_values
 println("Standard GAM μ: cor = $(round(cor(μ_gam, dat.mu_true); digits=5))")
 println("GAMLSS μ:       cor = $(round(cor(μ_fit, dat.mu_true); digits=5))")
@@ -128,10 +128,10 @@ plot(p1, p2; layout=(1, 2), size=(700, 300))
 When $\sigma$ is modeled as intercept-only (`y ~ 1`), GAMLSS reduces to a standard GAM:
 
 ```{julia}
-m_const = gamlss(
-    [@formulak(y ~ s(x, k=15, bs=:cr)),
-     @formulak(y ~ 1)],
-    dat, Normal()
+m_const = gam(
+    [@formula(y ~ s(x, k=15, bs=:cr)),
+     @formula(y ~ 1)],
+    dat, GaussianLS()
 )
 σ_const = exp.(m_const.fitted_eta[2])
 println("σ range: [$(round(minimum(σ_const); digits=4)), $(round(maximum(σ_const); digits=4))]")
@@ -158,9 +158,9 @@ println("All positive: $(all(dat_g.y .> 0))")
 ### Fitting
 
 ```{julia}
-m_g = gamlss(
-    [@formulak(y ~ s(x, k=15, bs=:cr)),   # log(μ)
-     @formulak(y ~ s(x, k=10, bs=:cr))],   # log(σ)
+m_g = gam(
+    [@formula(y ~ s(x, k=15, bs=:cr)),   # log(μ)
+     @formula(y ~ s(x, k=10, bs=:cr))],   # log(σ)
     dat_g, GammaLocationScale()
 )
 println("Converged: $(m_g.converged)")
@@ -221,9 +221,9 @@ println("n = $(nrow(dat_b)), y range: [$(round(minimum(dat_b.y); digits=4)), $(r
 Here $\phi$ is constant (intercept-only), so we model only the mean as smooth:
 
 ```{julia}
-m_b = gamlss(
-    [@formulak(y ~ s(x, k=15, bs=:cr)),   # logit(μ)
-     @formulak(y ~ 1)],                     # log(φ)
+m_b = gam(
+    [@formula(y ~ s(x, k=15, bs=:cr)),   # logit(μ)
+     @formula(y ~ 1)],                   # log(φ)
     dat_b, BetaRegression()
 )
 println("Converged: $(m_b.converged)")
@@ -255,7 +255,7 @@ plot!(dat_b.x[idx_b], dat_b.mu_true[idx_b]; label="true", lw=2, ls=:dash, color=
 
 ## Custom Links
 
-Links are specified separately from the family, just like in GLM.jl. For `Normal()`, pass them via the `links` keyword:
+Most multi-parameter models can stay on the unified `gam(..., family)` surface. If you need the raw `Distributions.jl` parameterization, the compatibility wrapper `gamlss()` still accepts a distribution object plus explicit `links`:
 
 ```{julia}
 # Use log link for both μ and σ (e.g., when μ must be positive)
@@ -267,8 +267,8 @@ y_pos = max.(y_pos, 0.01)
 dat_pos = DataFrame(x=x_pos, y=y_pos)
 
 m_custom = gamlss(
-    [@formulak(y ~ s(x, k=10, bs=:cr)),
-     @formulak(y ~ 1)],
+    [@formula(y ~ s(x, k=10, bs=:cr)),
+     @formula(y ~ 1)],
     dat_pos, Normal();
     links=[LogLink(), LogLink()]  # both parameters on log scale
 )
@@ -279,9 +279,9 @@ println("Fitted μ range: [$(round(minimum(exp.(m_custom.fitted_eta[1])); digits
 For reparameterized families, pass links to the constructor:
 
 ```{julia}
-m_g2 = gamlss(
-    [@formulak(y ~ s(x, k=10, bs=:cr)),
-     @formulak(y ~ 1)],
+m_g2 = gam(
+    [@formula(y ~ s(x, k=10, bs=:cr)),
+     @formula(y ~ 1)],
     dat_g, GammaLocationScale(links=[LogLink(), LogLink()])
 )
 println("Converged: $(m_g2.converged)")
@@ -289,11 +289,11 @@ println("Converged: $(m_g2.converged)")
 
 ## Available Families
 
-GAM.jl's `gamlss()` supports several distribution families:
+GAM.jl's multi-parameter `gam(..., family)` interface supports several distribution families:
 
 | Family | Parameters | Default links | Type |
 |--------|-----------|---------------|------|
-| `Normal()` | μ (mean), σ (SD) | Identity, Log | Direct Distributions.jl |
+| `GaussianLS()` | μ (mean), σ (SD) | Identity, Log | Normal location-scale |
 | `GammaLocationScale()` | μ (mean), σ (CV) | Log, Log | Reparameterized |
 | `BetaRegression()` | μ (mean), φ (precision) | Logit, Log | Reparameterized |
 | `NegativeBinomialLocationScale()` | μ (mean), σ (overdispersion) | Log, Log | Reparameterized |
@@ -301,7 +301,7 @@ GAM.jl's `gamlss()` supports several distribution families:
 | `GEVFamily()` | μ, σ, ξ | Identity, Log, Identity | Extreme value |
 | `GPDFamily()` | σ, ξ | Log, Identity | Extreme value |
 
-Legacy aliases (`GaussianLS()`, `GammaLS()`, `BetaLS()`, `NegBinLS()`) are also available for backward compatibility.
+Compatibility aliases such as `GammaLS()`, `BetaLS()`, and `NegBinLS()` are also available for backward compatibility.
 
 ## Effective Degrees of Freedom
 
@@ -329,10 +329,10 @@ The R `gamlss` package (with `gamlss.add` for smooth terms) fits similar models.
 using RCall
 
 # Re-fit the Normal location-scale model for comparison
-m_norm = gamlss(
-    [@formulak(y ~ s(x, k=15, bs=:cr)),
-     @formulak(y ~ s(x, k=10, bs=:cr))],
-    dat, Normal())
+m_norm = gam(
+    [@formula(y ~ s(x, k=15, bs=:cr)),
+     @formula(y ~ s(x, k=10, bs=:cr))],
+    dat, GaussianLS())
 μ_fit_norm = m_norm.fitted_eta[1]
 σ_fit_norm = exp.(m_norm.fitted_eta[2])
 
@@ -374,9 +374,9 @@ end
 
 ## Summary
 
-- **`gamlss()`** fits distributional regression models where each parameter gets its own smooth predictor
-- Pass **Distributions.jl types** directly (`Normal()`) when parameters match, or use **reparameterized types** (`GammaLocationScale()`, `BetaRegression()`) when they don't
-- **Links** are always separate — via `links=` keyword for direct types, or in the family constructor for reparameterized types
+- **`gam(..., family)`** fits distributional regression models where each parameter gets its own smooth predictor
+- Use **multi-parameter family objects** such as `GaussianLS()`, `GammaLocationScale()`, and `BetaRegression()` for the main user-facing interface
+- **Links** live on the family object; the compatibility wrapper `gamlss()` still supports direct `Distributions.jl` parameterizations with explicit `links`
 - An intercept-only scale formula (`y ~ 1`) recovers the standard GAM as a special case
 - Smoothing parameters are estimated jointly via **REML**
 - Results can be compared against R's `gamlss` package with `gamlss.add` smooth terms
