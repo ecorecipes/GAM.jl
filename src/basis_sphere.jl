@@ -19,9 +19,6 @@ struct SphericalSpline <: AbstractBasisType end
 
 BASIS_TYPES[:sos] = SphericalSpline()
 
-# Module-level storage for prediction metadata
-const _SOS_INFO = Dict{UInt, Dict{Symbol, Any}}()
-
 """
     _geodesic_distance(lat1, lon1, lat2, lon2) -> Float64
 
@@ -178,16 +175,10 @@ function _smooth_construct(::SphericalSpline, spec::SmoothSpec, data, user_knots
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
-    )
-
-    # Store prediction metadata
-    _SOS_INFO[objectid(sm)] = Dict{Symbol, Any}(
-        :lat_k => lat_k,
-        :lon_k => lon_k,
-        :U_k => U_k,
-        :lambda_k => λ_k,
-        :m_order => m_order,
-        :k => k,
+        predict_cache = SOSPredictCache(
+            Float64.(lat_k), Float64.(lon_k), Matrix{Float64}(U_k),
+            Float64.(λ_k), m_order, k,
+        ),
     )
 
     return sm
@@ -201,16 +192,16 @@ function _predict_matrix(::SphericalSpline, smooth::ConstructedSmooth, newdata)
     lon_new = Float64.(Tables.getcolumn(newdata, lon_var))
     n_new = length(lat_new)
 
-    info = get(_SOS_INFO, objectid(smooth), nothing)
-    info !== nothing ||
+    info = smooth.predict_cache
+    info isa SOSPredictCache ||
         throw(ArgumentError("Cannot find spherical spline metadata for prediction"))
 
-    lat_k = info[:lat_k]
-    lon_k = info[:lon_k]
-    U_k = info[:U_k]
-    λ_k = info[:lambda_k]
-    m_order = info[:m_order]
-    k = info[:k]
+    lat_k = info.lat_k
+    lon_k = info.lon_k
+    U_k = info.U_k
+    λ_k = info.lambda_k
+    m_order = info.m_order
+    k = info.k
 
     # Compute distances from new points to knots
     D_new = _geodesic_distance_matrix(lat_new, lon_new, lat_k, lon_k)

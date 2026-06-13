@@ -20,6 +20,51 @@
 using SpecialFunctions: logbeta, lbeta
 using Distributions: Beta, cdf as dist_cdf, logpdf as dist_logpdf
 
+# Threshold below which |ξ| is treated as 0 (exponential limit of the GPD).
+# Used consistently by nll_obs AND the exact-derivative routines so the
+# objective and its derivatives agree on which branch is active.
+const _EGPD_XI_EPS = 1e-6
+
+"""
+    _egpd_zero_row!(out, j)
+
+Zero out row `j` of the per-observation derivative matrix. Used for
+out-of-support points (NLL is the constant 1e20 there, so all derivatives
+are finite zeros — consistent with how GPD handles out-of-support data).
+"""
+@inline function _egpd_zero_row!(out::Matrix{Float64}, j::Int)
+    @inbounds for c in 1:size(out, 2)
+        out[j, c] = 0.0
+    end
+    return nothing
+end
+
+"""
+    _egpd_ad_derivs_row!(out, j, fam, yj, ηv)
+
+Fill gradient + upper-triangle Hessian columns of `out` row `j` by
+ForwardDiff through `nll_obs` (which contains the small-|ξ| exponential-limit
+branch). Used as the small-|ξ| fallback for the hand-coded exact derivative
+routines: correctness over speed near ξ = 0.
+"""
+function _egpd_ad_derivs_row!(out::Matrix{Float64}, j::Int,
+                              fam::MultiParameterFamily, yj::Real,
+                              ηv::Vector{Float64})
+    K = length(ηv)
+    f = η -> nll_obs(fam, yj, η)
+    g = ForwardDiff.gradient(f, ηv)
+    H = ForwardDiff.hessian(f, ηv)
+    @inbounds for k in 1:K
+        out[j, k] = g[k]
+    end
+    col = K
+    @inbounds for c in 1:K, r in 1:c
+        col += 1
+        out[j, col] = H[r, c]
+    end
+    return nothing
+end
+
 # ============================================================================
 # EGPD Model 1 — Power transformation G(u) = u^κ
 # ============================================================================
@@ -56,7 +101,7 @@ function nll_obs(::EGPD1Family, yi::Real, η::AbstractVector)
     t = ξ * yi / σ
     t <= -1 && return oftype(η[1], 1e20)
 
-    if abs(ξ) < 1e-8
+    if abs(ξ) < _EGPD_XI_EPS
         z = yi / σ
         F_gpd = 1 - exp(-z)
         F_gpd <= 0 && return oftype(η[1], 1e20)
@@ -129,7 +174,7 @@ function nll_obs(::EGPD2Family, yi::Real, η::AbstractVector)
     t = ξ * yi / σ
     t <= -1 && return oftype(η[1], 1e20)
 
-    if abs(ξ) < 1e-8
+    if abs(ξ) < _EGPD_XI_EPS
         z = yi / σ
         F_gpd = 1 - exp(-z)
         nll_gpd = ψ + z
@@ -197,12 +242,9 @@ function nll_obs(::EGPD3Family, yi::Real, η::AbstractVector)
     t = ξ * yi / σ
     t <= -1 && return oftype(η[1], 1e20)
 
-    if abs(ξ) < 1e-8
+    if abs(ξ) < _EGPD_XI_EPS
+        # Exponential limit: (1+ξz)^(-1/ξ) → exp(-z) as ξ → 0
         z = yi / σ
-        inv_xi = 1 / 1e-8  # approximate
-        log1pt = z * 1e-8   # approximate
-        nll_base = ψ + (1 / 1e-8 + 1) * z * 1e-8
-        # Use full formula with small ξ
         nll_base = ψ + z
         surv_pow = exp(-δ * z)
     else
@@ -271,7 +313,7 @@ function nll_obs(::EGPD4Family, yi::Real, η::AbstractVector)
     t = ξ * yi / σ
     t <= -1 && return oftype(η[1], 1e20)
 
-    if abs(ξ) < 1e-8
+    if abs(ξ) < _EGPD_XI_EPS
         z = yi / σ
         nll_base = ψ + z
         s_delta_xi = exp(-δ * z)  # (1+t)^(-δ/ξ) ≈ exp(-δ·z) for small ξ
@@ -330,6 +372,18 @@ function egpd1_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
         lpsi = ψvec[j]
         xi = ξvec[j]
         lkappa = lκvec[j]
+
+        # Out-of-support: NLL is the constant 1e20, derivatives are zero
+        if yj <= 0 || 1 + xi * yj / exp(lpsi) <= 0
+            _egpd_zero_row!(out, j)
+            continue
+        end
+        # Small-|ξ| exponential-limit branch: AD through nll_obs (which uses
+        # the same _EGPD_XI_EPS threshold), avoiding 1/ξ blow-up
+        if abs(xi) < _EGPD_XI_EPS
+            _egpd_ad_derivs_row!(out, j, EGPD1Family(), yj, [lpsi, xi, lkappa])
+            continue
+        end
 
         ee1 = exp(lpsi)
         ee2 = xi * yj
@@ -392,6 +446,17 @@ function egpd3_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
         lpsi = ψvec[j]
         xi = ξvec[j]
         ldelta = lδvec[j]
+
+        # Out-of-support: NLL is the constant 1e20, derivatives are zero
+        if yj <= 0 || 1 + xi * yj / exp(lpsi) <= 0
+            _egpd_zero_row!(out, j)
+            continue
+        end
+        # Small-|ξ| exponential-limit branch via AD through nll_obs
+        if abs(xi) < _EGPD_XI_EPS
+            _egpd_ad_derivs_row!(out, j, EGPD3Family(), yj, [lpsi, xi, ldelta])
+            continue
+        end
 
         ee1 = exp(lpsi)
         ee2 = xi * yj
@@ -469,6 +534,18 @@ function egpd4_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
         xi = ξvec[j]
         ldelta = lδvec[j]
         lkappa = lκvec[j]
+
+        # Out-of-support: NLL is the constant 1e20, derivatives are zero
+        if yj <= 0 || 1 + xi * yj / exp(lpsi) <= 0
+            _egpd_zero_row!(out, j)
+            continue
+        end
+        # Small-|ξ| exponential-limit branch via AD through nll_obs
+        if abs(xi) < _EGPD_XI_EPS
+            _egpd_ad_derivs_row!(out, j, EGPD4Family(), yj,
+                                 [lpsi, xi, ldelta, lkappa])
+            continue
+        end
 
         ee1 = exp(ldelta)
         ee2 = exp(lpsi)

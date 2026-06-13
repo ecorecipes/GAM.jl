@@ -240,10 +240,19 @@ function _smooth_construct(basis::AbstractConstrainedBasis, spec::SmoothSpec, da
 
     penalties = Matrix{Float64}[S]
 
-    # All coefficients must be positive (exponentiated during fitting)
+    # Coefficients that must be positive (exponentiated during fitting).
+    # For pure convex (:cx) / concave (:cv) SCOP-splines the FIRST coefficient
+    # must remain unexponentiated (Pya & Wood, 2015): it sets the boundary
+    # slope sign, which exp() would force positive, making decreasing
+    # convex/concave functions unrepresentable.
     p_ident = trues(ncol_X)
+    if basis isa ConvexBasis || basis isa ConcaveBasis
+        p_ident[1] = false
+    end
 
-    pen_rank = ncol_X - 1
+    # Penalty rank: for drops_first types S = blkdiag(0, D₁ᵀD₁) with the
+    # inner block of size (ncol_X-1), so rank(S) = ncol_X - 2.
+    pen_rank = drops_first ? ncol_X - 2 : ncol_X - 1
     null_dim = 2  # unpenalized space: straight line (2 DoF)
 
     return ConstructedSmooth(

@@ -483,9 +483,12 @@ function estimate_theta!(family::NegBinFamily, y, mu, wt, scale)
             g1 += wi * (digamma(yi + θ) - digamma(θ) + log(θ) - log(mui + θ) +
                         (mui - yi) / (mui + θ))
 
-            # Second derivative for Hessian
+            # Second derivative for Hessian: dg1/dθ
+            # d/dθ [digamma(y+θ) - digamma(θ) + log(θ) - log(μ+θ) + (μ-y)/(μ+θ)]
+            # = trigamma(y+θ) - trigamma(θ) + 1/θ - 2/(μ+θ) + (θ+y)/(μ+θ)²
+            # (matches MASS::theta.ml's information matrix)
             g2 += wi * (trigamma(yi + θ) - trigamma(θ) + 1.0 / θ -
-                        2.0 / (mui + θ) + (mui - yi) / (mui + θ)^2)
+                        2.0 / (mui + θ) + (θ + yi) / (mui + θ)^2)
         end
 
         # Adjust for scale

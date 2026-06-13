@@ -11,6 +11,16 @@ struct GPSmooth <: AbstractBasisType end
 BASIS_TYPES[:gp] = GPSmooth()
 
 """
+Prediction cache for GP smooths: stores the length-scale used at fit time
+so prediction uses the identical correlation function. (At fit the scale is
+derived from the data range; the knot range differs because quantile knots
+exclude the extremes.)
+"""
+struct GPPredictCache <: AbstractSmoothPredictCache
+    scale::Float64
+end
+
+"""
     _gp_correlation(d, corfun, params)
 
 Compute GP correlation for distance `d` given correlation function type.
@@ -98,6 +108,7 @@ function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = GPPredictCache(scale),
     )
 end
 
@@ -107,8 +118,14 @@ function _predict_matrix(::GPSmooth, smooth::ConstructedSmooth, newdata)
     knots = smooth.knots
     nk = length(knots)
 
-    x_range = maximum(knots) - minimum(knots)
-    scale = x_range / (nk - 1)
+    # Use the same length-scale as at fit time (stored in the predict cache).
+    cache = smooth.predict_cache
+    scale = if cache isa GPPredictCache
+        cache.scale
+    else
+        # Fallback for smooths constructed without a cache
+        (maximum(knots) - minimum(knots)) / (nk - 1)
+    end
 
     corfun = :matern32
     params = Float64[]

@@ -385,6 +385,7 @@ function scasm_outer_iteration(
     beq = nothing,
     method::Symbol = :REML,
     weights::Vector{Float64} = ones(length(y)),
+    offset::Vector{Float64} = zeros(length(y)),
     control::GamControl = scasm_control(),
     start::Union{Vector{Float64}, Nothing} = nothing,
 )
@@ -395,7 +396,7 @@ function scasm_outer_iteration(
         S_total = zeros(p, p)
         result = scasm_pirls(X, y, S_total, family, link;
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq,
-            weights = weights, start = start, control = control)
+            weights = weights, offset = offset, start = start, control = control)
         return Float64[], result
     end
 
@@ -412,7 +413,7 @@ function scasm_outer_iteration(
         total_penalty!(S_total, penalty, log_sp, p)
         result = scasm_pirls(X, y, S_total, family, link;
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq,
-            weights = weights,
+            weights = weights, offset = offset,
             start = prev_result === nothing ? start : prev_result.coefficients,
             control = control)
 
@@ -481,17 +482,20 @@ function scasm_outer_iteration(
     total_penalty!(S_total, penalty, log_sp, p)
     final_result = scasm_pirls(X, y, S_total, family, link;
         Ain = Ain, bin = bin, Aeq = Aeq, beq = beq,
-        weights = weights,
+        weights = weights, offset = offset,
         start = prev_result === nothing ? start : prev_result.coefficients,
         control = control)
     return log_sp, final_result
 end
 
 function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, weights, control;
-                    start::Union{AbstractVector{<:Real}, Nothing} = nothing)
+                    start::Union{AbstractVector{<:Real}, Nothing} = nothing,
+                    offset = nothing)
     n, p = size(X)
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch("weights length $(length(wts)) ≠ data length $n"))
+    off = offset === nothing ? zeros(n) : Float64.(offset)
+    length(off) == n || throw(DimensionMismatch("offset length $(length(off)) ≠ data length $n"))
     control.sp_optimizer == :efs || throw(ArgumentError(
         "Linear-constraint fits currently support only control.sp_optimizer = :efs."
     ))
@@ -507,7 +511,7 @@ function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, 
 
     log_sp, result = scasm_outer_iteration(X, y, smooths, penalty, family, link;
         Ain = Ain, bin = bin, Aeq = Aeq, beq = beq,
-        method = method_eff, weights = wts, control = control,
+        method = method_eff, weights = wts, offset = off, control = control,
         start = start_vec)
 
     edf_per_smooth = smooth_edf(result.edf_vec, smooths)

@@ -13,7 +13,8 @@ Assigns parameter indices and creates block structure.
 - `smooths`: constructed smooth terms
 - `n_parametric`: number of parametric coefficients (including intercept)
 """
-function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int)
+function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int;
+    select::Bool = false)
     blocks = PenaltyBlock[]
     sp_all = Float64[]
     p_start = n_parametric + 1  # smooth params start after parametric
@@ -23,9 +24,26 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
         sm.first_para = p_start
         sm.last_para = p_start + k - 1
 
+        S_list = copy(sm.S)
+        block_rank = sm.rank
+
+        # select=TRUE (Marra & Wood 2011): append a penalty on the null space
+        # of the existing penalties so the unpenalized part of each smooth
+        # (the linear/polynomial null space) can be shrunk to zero, giving
+        # automatic term selection. Skip if the smooth is already full-rank
+        # penalized (e.g. random effects, or ts/cs which carry their own
+        # shrinkage penalty).
+        if select
+            S_null = _null_space_penalty(S_list, k)
+            if S_null !== nothing
+                push!(S_list, S_null)
+                block_rank = k  # combined penalty is now full rank
+            end
+        end
+
         # Square root penalties
         rS = Matrix{Float64}[]
-        for Si in sm.S
+        for Si in S_list
             # Compute matrix square root via eigen decomposition
             eig = eigen(Symmetric(Si))
             pos = eig.values .> eps() * maximum(abs.(eig.values))
@@ -37,12 +55,11 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
             end
         end
 
-        rank = sm.rank
-        block = PenaltyBlock(sm.S, rS, rank, p_start, p_start + k - 1, true)
+        block = PenaltyBlock(S_list, rS, block_rank, p_start, p_start + k - 1, true)
         push!(blocks, block)
 
         # Initial smoothing parameters (log scale) — one per penalty matrix
-        for _ in sm.S
+        for _ in S_list
             push!(sp_all, 0.0)  # log(1.0) = 0, will be optimized
         end
 
@@ -60,6 +77,40 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
     end
 
     return PenaltySetup(blocks, sp_all, E)
+end
+
+"""
+    _null_space_penalty(S_list, k) -> Union{Matrix{Float64}, Nothing}
+
+Build the null-space penalty for `select=TRUE` (Marra & Wood 2011). Given a
+smooth's existing penalty matrices, find the null space of their sum (the
+directions left unpenalized — typically the linear/polynomial part of the
+smooth) and return the projection onto that null space, scaled to the same
+order of magnitude as the existing penalty so the two smoothing parameters
+are comparable. Returns `nothing` if there is no null space to penalize.
+"""
+function _null_space_penalty(S_list::Vector{Matrix{Float64}}, k::Int)
+    isempty(S_list) && return nothing
+    S_sum = zeros(k, k)
+    for Si in S_list
+        S_sum .+= Si
+    end
+    eg = eigen(Symmetric(S_sum))
+    maxev = maximum(abs, eg.values)
+    maxev <= 0 && return nothing
+    tol = maxev * sqrt(eps())
+    null_idx = findall(<=(tol), eg.values)
+    isempty(null_idx) && return nothing
+    length(null_idx) == k && return nothing  # nothing is penalized — skip
+
+    U0 = eg.vectors[:, null_idx]
+    S_null = U0 * U0'                       # rank = length(null_idx), eigvals in {0,1}
+    # Scale to the mean nonzero eigenvalue of the existing penalty so the
+    # initial smoothing parameters are on a comparable footing.
+    pos = eg.values[eg.values .> tol]
+    scale = isempty(pos) ? 1.0 : sum(pos) / length(pos)
+    S_null .*= scale
+    return Symmetric(S_null) |> Matrix
 end
 
 """
@@ -228,9 +279,10 @@ function penalty_edf(X::Matrix{Float64}, W::Vector{Float64},
     # F = A^{-1} * X'WX — the influence/hat matrix in coef space
     F = A_chol_local \ XtWX_local
 
-    # EDF = trace(F) per parameter, hat diagonal = diag(X * F * X^{-})
+    # EDF = trace(F) per parameter; leverage h_i = w_i * x_i' A^{-1} x_i,
+    # so that sum(hat_diag) == total EDF.
     edf_vec = diag(F)
-    hat_diag = vec(sum((X / A_chol_local.U) .^ 2; dims = 2))
+    hat_diag = W .* vec(sum((X / A_chol_local.U) .^ 2; dims = 2))
 
     return edf_vec, hat_diag
 end

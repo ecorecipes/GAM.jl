@@ -115,6 +115,7 @@ export
     penalty_matrix,
     null_space_dim,
     ConstructedSmooth,
+    lpmatrix,
 
     # Diagnostics
     edf,

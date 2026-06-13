@@ -151,7 +151,12 @@ function _construct_cr(spec::SmoothSpec, data, user_knots;
         push!(penalties, S_shrink)
     end
 
-    pen_rank = k - null_dim
+    # Penalty rank = (number of basis columns before constraint absorption)
+    # minus the penalty null-space dimension. The cyclic basis has k-1
+    # columns (last knot ≡ first) with only the constant in the null space,
+    # so its rank is k-2; the non-cyclic basis has k columns and rank k-2.
+    n_col = cyclic ? k - 1 : k
+    pen_rank = n_col - null_dim
 
     # Absorb identifiability constraints
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)
@@ -195,7 +200,10 @@ function _cc_basis(x::AbstractVector{<:Real}, knots::Vector{Float64})
         ip = mod1(i + 1, q_int)
         im = mod1(i - 1, q_int)
         hi_cur = i <= length(h) ? h[i] : h[1]
-        hi_prev = i > 1 ? h[i - 1] : h[end - 1]
+        # Cyclic indexing: h_0 ≡ h_{q-1} (Wood 2017 §5.4.2). For i = 1 the
+        # wrap-around (previous) interval is the last one, h[end] =
+        # knots[end] - knots[end-1], since knots[end] ≡ knots[1].
+        hi_prev = i > 1 ? h[i - 1] : h[end]
 
         B[i, i] = (hi_prev + hi_cur) / 3.0
         B[i, ip] = hi_cur / 6.0

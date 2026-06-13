@@ -47,8 +47,15 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
         # Analytical gradient via IFT (matches mgcv's gdi1)
         mu = pirls_result.fitted_values
         grad = _gcv_gradient(X, y, w, beta, mu, S_total, A_chol, penalty, log_sp,
-            family, link, dev, edf_total, n, gamma)
+            family, link, dev, edf_total, n, gamma, weights)
         return score, grad
+
+    elseif method == :UBRE
+        # UBRE/AIC-type criterion for known scale σ² (mgcv's ubre):
+        #   dev/n + 2γ·edf·σ²/n − σ²
+        sigma2 = scale > 0 ? scale : 1.0
+        score = dev / n + 2 * gamma * edf_total * sigma2 / n - sigma2
+        return score, zeros(length(log_sp))
 
     elseif method == :REML || method == :ML
         # REML/ML score (Laplace approximate restricted/marginal log-likelihood).
@@ -57,11 +64,16 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
         #          - remlInd·(Mp/2)·(log(2πσ²) - log(γ))
         # where Dp = dev + β'Sβ, ls = log saturated likelihood.
 
-        # Estimate or use fixed scale
+        # Estimate or use fixed scale. Families with known dispersion
+        # (Poisson, Binomial) always use φ = 1, matching the criterion the
+        # outer iteration actually optimized.
         if scale < 0
-            # Estimate scale from Pearson statistic
-            scale_est = pirls_result.pearson / (n - edf_total)
-            scale_est = max(scale_est, 1e-10)
+            if _needs_scale_estimate(family)
+                scale_est = pirls_result.pearson / (n - edf_total)
+                scale_est = max(scale_est, 1e-10)
+            else
+                scale_est = 1.0
+            end
         else
             scale_est = scale
         end
@@ -69,9 +81,9 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
         # Log pseudo-determinant of penalty
         log_det_S = _log_penalty_det(penalty, log_sp)
 
-        # Penalty null space dimension
-        Mp = sum(b.stop - b.start + 1 - b.rank for b in penalty.blocks;
-            init = 0)
+        # Null space dimension of the total penalty over ALL p coefficients
+        # (unpenalized parametric terms included, as in mgcv)
+        Mp = p - sum(b.rank for b in penalty.blocks; init = 0)
 
         # Penalized deviance: dev + β'Sβ
         penalty_contrib = dot(beta, S_total * beta)
@@ -170,7 +182,7 @@ function _log_saturated_likelihood(::Poisson, y::Vector{Float64},
     @inbounds for i in eachindex(y)
         yi = y[i]
         if yi > 0
-            ls += weights[i] * (yi * log(yi) - yi) - logabsgamma(yi + 1)[1]
+            ls += weights[i] * (yi * log(yi) - yi - logabsgamma(yi + 1)[1])
         end
     end
     return ls
@@ -184,20 +196,29 @@ end
 
 function _log_saturated_likelihood(::Gamma, y::Vector{Float64},
     weights::Vector{Float64}, scale::Float64)
-    # Gamma: l_sat depends on scale (φ = scale).
-    # l(y;μ=y,φ) = Σ [(-1/φ)·(y/y - log(y/y) - 1) + log-normalizing]
-    # The deviance residual at saturation is 0, so:
-    # l_sat = Σ [-log(y) - log(φ) - lgamma(1/φ) + (1/φ-1)·log(y) + (1/φ)·log(1/φ)]
-    # Simplified: this depends on φ = scale and thus changes with sp.
-    # For simplicity, use the Gaussian approximation: l_sat ≈ -n/2·log(2πσ²)
-    n = length(y)
-    return -0.5 * n * log(2π * scale)
+    # Exact Gamma saturated log-likelihood. With shape αᵢ = wᵢ/φ and μ = y:
+    #   lᵢ = αᵢ·log(αᵢ) − αᵢ − log(yᵢ) − lgamma(αᵢ)
+    # Depends on φ = scale, which keeps the REML landscape correct when
+    # the scale is estimated.
+    phi = max(scale, 1e-10)
+    ls = 0.0
+    @inbounds for i in eachindex(y)
+        a = weights[i] / phi
+        ls += a * log(a) - a - log(max(y[i], eps())) - logabsgamma(a)[1]
+    end
+    return ls
 end
 
 function _log_saturated_likelihood(::InverseGaussian, y::Vector{Float64},
     weights::Vector{Float64}, scale::Float64)
-    n = length(y)
-    return -0.5 * n * log(2π * scale)
+    # Exact: at μ = y the IG exponent vanishes, leaving
+    #   lᵢ = 0.5·[log(wᵢ/φ) − log(2π·yᵢ³)]
+    phi = max(scale, 1e-10)
+    ls = 0.0
+    @inbounds for i in eachindex(y)
+        ls += 0.5 * (log(weights[i] / phi) - log(2π * max(y[i], eps())^3))
+    end
+    return ls
 end
 
 function _log_saturated_likelihood(::UnivariateDistribution, y::Vector{Float64},
@@ -268,7 +289,12 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
         idx = block.start:block.stop
         beta_block = beta[idx]
 
-        for Si in block.S
+        # λⱼ·tr(S_λ⁺Sⱼ) per penalty: equals block.rank for single-penalty
+        # blocks; differs per margin for multi-penalty (tensor) blocks.
+        ldet_derivs = _block_logdet_derivs(block,
+            view(log_sp, sp_idx:(sp_idx + length(block.S) - 1)))
+
+        for (j_pen, Si) in enumerate(block.S)
             λ = exp(log_sp[sp_idx])
             dS = zeros(p, p)
             dS[idx, idx] .= λ .* Si
@@ -318,8 +344,8 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
 
             trA1_j = trA1_explicit + trA1_implicit
 
-            # d(log|S+|)/d(log sp_j) = rank_j (for single penalty per block)
-            d_log_det_S = Float64(block.rank)
+            # d(log|S+|)/d(log sp_j) = λⱼ·tr(S_λ⁺Sⱼ)
+            d_log_det_S = ldet_derivs[j_pen]
 
             # REML1[j] = D1[j]/(2σ²γ) + trA1[j]/2 - det1[j]/2
             grad[sp_idx] = D1_j / (2 * scale * gamma) +
@@ -369,7 +395,8 @@ function _gcv_gradient(X::Matrix{Float64}, y::Vector{Float64},
     log_sp::Vector{Float64},
     family::UnivariateDistribution, link::GLM.Link,
     dev::Float64, edf::Float64,
-    n::Int, gamma::Real)
+    n::Int, gamma::Real,
+    prior_weights::Vector{Float64} = ones(length(y)))
 
     p = size(X, 2)
     n_sp = length(log_sp)
@@ -394,7 +421,7 @@ function _gcv_gradient(X::Matrix{Float64}, y::Vector{Float64},
     @inbounds for i in 1:n
         vi = _variance_scalar(family, mu[i])
         g1 = 1.0 / GLM.mueta(link, X[i, :]' * beta)
-        v[i] = -2.0 * (y[i] - mu[i]) / (max(vi, eps()) * g1)
+        v[i] = -2.0 * prior_weights[i] * (y[i] - mu[i]) / (max(vi, eps()) * g1)
     end
     dev_grad = X' * v
 
@@ -467,25 +494,9 @@ function _gcv_gradient(X::Matrix{Float64}, y::Vector{Float64},
                     dwdeta = (w_p - w_i) / h
                     T_j[i] = dwdeta * eta1_j[i] / max(w_i, eps())
                 end
-                # KK' diagonal: diag_KKt_i = Σ_j K_ij² where K = F_hat in obs space
-                # F_hat = X A⁻¹ X' W (hat matrix on η scale, with weights)
-                # Actually: trA = tr(KK') where K is sqrt(w)·X·P (P = chol(A)⁻¹)
-                # Simpler: the weight term is tr(T_j diag(h)) - tr(T_j diag(h)²)
-                # where h = diag(H) = diag(X A⁻¹ X' W)
-                H_diag = zeros(n)
-                for i in 1:n
-                    for j in 1:p
-                        s = 0.0
-                        for k in 1:p
-                            s += X[i, j] * F[j, k] * w[i]
-                        end
-                        # Wait, this isn't right...
-                    end
-                end
-                # Use the simpler formula: direct computation
-                # hat_diag = diag(X F X' diag(w)) with F = A⁻¹ X'WX A⁻¹
-                # Actually F_hat = W^{1/2} X A⁻¹ X' W^{1/2}
-                # diag(F_hat) = w .* diag(X A⁻¹ X')
+                # Weight term: tr(T_j diag(h)) - tr(T_j diag(h)²)
+                # where h = diag(F_hat), F_hat = W^{1/2} X A⁻¹ X' W^{1/2},
+                # i.e. diag(F_hat) = w .* diag(X A⁻¹ X')
                 XAinv = X * Ainv
                 hat_d = zeros(n)
                 @inbounds for i in 1:n

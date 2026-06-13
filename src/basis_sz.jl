@@ -19,21 +19,6 @@ struct ConstrainedFactorSmooth <: AbstractBasisType end
 
 BASIS_TYPES[:sz] = ConstrainedFactorSmooth()
 
-"""
-    ConstrainedFactorSmoothInfo
-
-Metadata for a constrained factor smooth, stored for prediction.
-"""
-struct ConstrainedFactorSmoothInfo
-    levels::Vector{Any}
-    marginal_smooth::ConstructedSmooth
-    factor_var::Symbol
-    k_constrained::Int  # basis dim per level after sum-to-zero constraint
-end
-
-# Module-level storage keyed by objectid
-const _SZ_INFO = Dict{UInt, ConstrainedFactorSmoothInfo}()
-
 function _smooth_construct(::ConstrainedFactorSmooth, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) >= 2 ||
         throw(ArgumentError("Constrained factor smooth (sz) requires at least 2 variables: " *
@@ -130,19 +115,17 @@ function _smooth_construct(::ConstrainedFactorSmooth, spec::SmoothSpec, data, us
         nothing, nothing, 0, 0,  # no additional global constraint
         nothing, nothing, nothing,
         Int[],
+        predict_cache = SZPredictCache(
+            collect(levels), marginal_sm, factor_var, k_constrained, Z_levels,
+        ),
     )
-
-    _SZ_INFO[objectid(sm)] = ConstrainedFactorSmoothInfo(
-        levels, marginal_sm, factor_var, k_constrained,
-    )
-    _SZ_Z_LEVELS[objectid(sm)] = Z_levels
 
     return sm
 end
 
 function _predict_matrix(::ConstrainedFactorSmooth, smooth::ConstructedSmooth, newdata)
-    info = get(_SZ_INFO, objectid(smooth), nothing)
-    info !== nothing ||
+    info = smooth.predict_cache
+    info isa SZPredictCache ||
         throw(ArgumentError("Cannot find constrained factor smooth metadata for prediction"))
 
     factor_col = Tables.getcolumn(newdata, info.factor_var)
@@ -159,17 +142,8 @@ function _predict_matrix(::ConstrainedFactorSmooth, smooth::ConstructedSmooth, n
     X = zeros(n_new, total_cols)
     level_map = Dict(lev => i for (i, lev) in enumerate(info.levels))
 
-    # Reconstruct per-level Z matrices from training data constraint info
-    # We need the same Z matrices used during construction.
-    # Rebuild from the stored marginal smooth and original factor data.
-    # Since we stored the marginal smooth, we recompute Z from its constraint matrix.
-    # Alternative: store Z_levels in info. Let's retrieve from _SZ_INFO.
-
-    # We need the Z matrices — retrieve from the stored info or recompute.
-    # For prediction we use the SAME Z as training. Store them in the dict.
-    Z_levels = get(_SZ_Z_LEVELS, objectid(smooth), nothing)
-    Z_levels !== nothing ||
-        throw(ArgumentError("Cannot find per-level Z matrices for prediction"))
+    # Use the SAME per-level Z matrices that were absorbed at construction time.
+    Z_levels = info.Z_levels
 
     for i in 1:n_new
         l = get(level_map, factor_col[i], 0)
@@ -186,6 +160,3 @@ function _predict_matrix(::ConstrainedFactorSmooth, smooth::ConstructedSmooth, n
 
     return X
 end
-
-# Additional storage for Z matrices needed at prediction time
-const _SZ_Z_LEVELS = Dict{UInt, Vector{Matrix{Float64}}}()

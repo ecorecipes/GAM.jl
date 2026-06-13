@@ -25,18 +25,31 @@ function Base.show(io::IO, ::MIME"text/plain", m::GamModel)
     println(io)
     println(io)
 
-    # Smooth terms summary
+    # Smooth terms summary (Wood 2013 approximate test)
     if m.n_smooth > 0
-        println(io, "Approximate significance of smooth terms:")
-        println(io, "─" ^ 50)
-        @printf(io, "%-20s %8s %8s\n", "Smooth", "edf", "Ref.df")
-        println(io, "─" ^ 50)
-        for (i, sm) in enumerate(m.smooths)
-            k_eff = size(sm.X, 2)
-            @printf(io, "%-20s %8.2f %8d\n",
-                sm.spec.label, m.edf[i], k_eff)
+        at = try
+            anova_gam(m)
+        catch
+            nothing
         end
-        println(io, "─" ^ 50)
+        println(io, "Approximate significance of smooth terms:")
+        println(io, "─" ^ 66)
+        stat_name = at !== nothing && at.test_type == :F ? "F" : "Chi.sq"
+        @printf(io, "%-20s %8s %8s %10s %10s\n",
+            "Smooth", "edf", "Ref.df", stat_name, "p-value")
+        println(io, "─" ^ 66)
+        for (i, sm) in enumerate(m.smooths)
+            if at !== nothing
+                t = at.smooth_table
+                @printf(io, "%-20s %8.2f %8.2f %10.3f %10.4g\n",
+                    sm.spec.label, t.edf[i], t.ref_df[i],
+                    t.statistic[i], t.p_value[i])
+            else
+                @printf(io, "%-20s %8.2f %8d\n",
+                    sm.spec.label, m.edf[i], size(sm.X, 2))
+            end
+        end
+        println(io, "─" ^ 66)
         println(io)
     end
 
@@ -54,6 +67,11 @@ function Base.show(io::IO, ::MIME"text/plain", m::GamModel)
         @printf(io, "Power = %.4f   ", m.family.p)
     end
     @printf(io, "n = %d\n", nobs(m))
+
+    if !m.converged
+        println(io)
+        println(io, "WARNING: fit did not converge — estimates may be unreliable")
+    end
 
     return nothing
 end

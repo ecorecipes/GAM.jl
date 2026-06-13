@@ -24,6 +24,69 @@ function smooth_construct(spec::SmoothSpec{B}, data, knots = nothing) where {B}
     end
     sm = _smooth_construct(spec.basis, spec, data, knots)
     _append_pc_constraints!(sm, data)
+    if spec.by !== nothing
+        _apply_by_variable!(sm, t)
+    end
+    return sm
+end
+
+"""
+    _apply_by_variable!(sm, t)
+
+Apply a `by=` variable to a constructed smooth (mgcv's varying-coefficient
+and factor-smooth machinery).
+
+- **Numeric by**: each row of the (constrained) basis is multiplied by the
+  by-variable, giving a varying-coefficient term `by · f(x)`. Note that the
+  smooth is centered, so include the by variable as a parametric main effect
+  if the model should contain `by · const`.
+- **Factor by**: the smooth is replicated once per level, each copy active
+  only on that level's rows and carrying its own penalty (and smoothing
+  parameter), as in mgcv. Include the factor main effect in the model for
+  level offsets.
+"""
+function _apply_by_variable!(sm::ConstructedSmooth, t)
+    by_sym = sm.spec.by
+    by_col = Tables.getcolumn(t, by_sym)
+    if eltype(by_col) <: Real
+        sm.X = sm.X .* Float64.(by_col)
+        return sm
+    end
+
+    # Factor by: replicate the smooth per level
+    if sm.Ain !== nothing || sm.Aeq !== nothing
+        throw(ArgumentError(
+            "factor by= is not supported for linear-constraint (scasm) smooths"))
+    end
+    levels = sort!(unique(collect(by_col)))
+    L = length(levels)
+    n, k = size(sm.X)
+    Xb = zeros(n, k * L)
+    S_new = Matrix{Float64}[]
+    for (l, lev) in enumerate(levels)
+        mask = by_col .== lev
+        cols = ((l - 1) * k + 1):(l * k)
+        Xb[mask, cols] .= sm.X[mask, :]
+        for Si in sm.S
+            Sfull = zeros(k * L, k * L)
+            Sfull[cols, cols] .= Si
+            push!(S_new, Sfull)
+        end
+    end
+    sm.X = Xb
+    sm.S = S_new
+    sm.null_dim *= L
+    sm.rank *= L
+    # Replicate the shape-constraint pattern per level so each level's smooth
+    # carries the same monotonicity/convexity constraint (SCAM factor-by).
+    # p_ident is read at fit time across the full k·L coefficient block; cmX
+    # and Sigma are left at the original width because the SCAM
+    # `_predict_matrix` rebuilds the per-level (k-wide) basis and the by-tiling
+    # in `predict_matrix` then replicates it.
+    if sm.p_ident !== nothing
+        sm.p_ident = repeat(sm.p_ident, L)
+    end
+    sm.spec.xt[:_by_levels] = levels
     return sm
 end
 
@@ -34,6 +97,32 @@ Construct the prediction matrix for `smooth` at new data points.
 """
 function predict_matrix(smooth::ConstructedSmooth{B}, newdata) where {B}
     Xp = _predict_matrix(smooth.spec.basis, smooth, newdata)
+    # Apply the by= transform with the SAME convention as fitting
+    # (before side-constraint column removal, which was determined on the
+    # post-by matrix)
+    if smooth.spec.by !== nothing
+        t = Tables.columntable(newdata)
+        by_col = Tables.getcolumn(t, smooth.spec.by)
+        if eltype(by_col) <: Real
+            Xp = Xp .* Float64.(by_col)
+        else
+            levels = smooth.spec.xt[:_by_levels]
+            k = size(Xp, 2)
+            Xb = zeros(size(Xp, 1), k * length(levels))
+            seen = falses(length(by_col))
+            for (l, lev) in enumerate(levels)
+                mask = by_col .== lev
+                seen .|= mask
+                Xb[mask, ((l - 1) * k + 1):(l * k)] .= Xp[mask, :]
+            end
+            if !all(seen)
+                unseen = unique(collect(by_col)[.!seen])
+                @warn "by= factor levels not seen during fitting get zero " *
+                      "contribution from $(smooth.spec.label): $(unseen)"
+            end
+            Xp = Xb
+        end
+    end
     # Apply side constraint column removal if needed
     if !isempty(smooth.del_index)
         keep = setdiff(1:size(Xp, 2), smooth.del_index)

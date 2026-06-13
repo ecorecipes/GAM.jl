@@ -48,14 +48,27 @@ edf(m::GamModel) = m.edf
 Log-likelihood of the fitted model.
 """
 function loglikelihood(m::GamModel)
-    n = nobs(m)
     dev = deviance(m)
     scale = m.scale
+    y = m.y
+    mu = m.fitted_values
+    w = m.weights
     if m.family isa TweedieFamily
-        return _tweedie_total_loglik(m.y, m.fitted_values, m.weights, m.family.p,
+        return _tweedie_total_loglik(y, mu, w, m.family.p,
             clamp(scale, 1e-8, 1e8))
-    elseif _needs_scale_estimate(m.family)
-        return -n / 2 * (log(2π * scale) + dev / (n * scale))
+    elseif m.family isa Normal
+        # Weighted Gaussian: -1/2 Σ [log(2πφ/wᵢ) + wᵢ(yᵢ-μᵢ)²/φ]
+        return -0.5 * (sum(log.(2π * scale ./ w)) + dev / scale)
+    elseif m.family isa Gamma
+        # shapeᵢ = wᵢ/φ, scale parameter μᵢφ/wᵢ (mean μᵢ, var μᵢ²φ/wᵢ)
+        phi = max(scale, 1e-10)
+        return sum(logpdf(Gamma(w[i] / phi, mu[i] * phi / w[i]), y[i])
+                   for i in eachindex(y))
+    elseif m.family isa InverseGaussian
+        # λᵢ = wᵢ/φ (mean μᵢ, var μᵢ³φ/wᵢ)
+        phi = max(scale, 1e-10)
+        return sum(logpdf(InverseGaussian(mu[i], w[i] / phi), y[i])
+                   for i in eachindex(y))
     elseif m.family isa ExtendedFamily
         return -dev / 2
     else
@@ -69,6 +82,7 @@ aic(m::GamModel) = -2loglikelihood(m) + 2dof(m)
 function aicc(m::GamModel)
     k = dof(m)
     n = nobs(m)
+    n - k - 1 > 0 || return Inf
     return -2loglikelihood(m) + 2k + 2k * (k + 1) / (n - k - 1)
 end
 
@@ -193,7 +207,15 @@ Predict at new data points.
 function _gam_parametric_matrix(m::GamModel, t)
     n_new = _table_nrows(t)
 
-    if m.formula isa GamFormula || m.formula isa FormulaTerm
+    if m.formula isa GamFormula
+        # Reuse the categorical factor levels from the training data so dummy
+        # coding is consistent even when newdata contains a subset of levels.
+        ref_levels = _parametric_ref_levels(m.formula, m.data)
+        X_para, _ = _build_parametric_matrix(m.formula, t; ref_levels = ref_levels)
+        size(X_para, 2) == m.n_parametric || throw(DimensionMismatch(
+            "Prediction parametric matrix has $(size(X_para, 2)) columns, expected $(m.n_parametric)"))
+        return X_para
+    elseif m.formula isa FormulaTerm
         X_para, _ = _build_parametric_matrix(m.formula, t)
         size(X_para, 2) == m.n_parametric || throw(DimensionMismatch(
             "Prediction parametric matrix has $(size(X_para, 2)) columns, expected $(m.n_parametric)"))
@@ -233,9 +255,20 @@ function _gam_prediction_matrix(m::GamModel, newdata)
     return X_new
 end
 
-function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false)
+function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false,
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing)
+    if type == :terms
+        return _predict_terms(m, newdata; se = se)
+    end
     X_new = _gam_prediction_matrix(m, newdata)
     eta = X_new * m.coefficients
+    # Models fit with an offset need the same offset supplied at prediction
+    # (mgcv requires the offset in newdata).
+    if offset !== nothing
+        length(offset) == length(eta) || throw(DimensionMismatch(
+            "offset length $(length(offset)) ≠ number of prediction rows $(length(eta))"))
+        eta = eta .+ Float64.(offset)
+    end
 
     if se
         # Standard errors of predictions
@@ -254,6 +287,65 @@ function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false)
     else
         return eta
     end
+end
+
+"""
+    lpmatrix(m::GamModel, newdata) -> Matrix{Float64}
+
+The linear-predictor (design) matrix `Xp` such that `Xp * coef(m)` gives the
+link-scale predictions at `newdata`. Equivalent to mgcv's
+`predict(m, newdata, type="lpmatrix")`; useful for building custom predictions
+and posterior intervals (`Xp * Vp * Xp'`).
+"""
+lpmatrix(m::GamModel, newdata) = _gam_prediction_matrix(m, newdata)
+
+"""
+    _predict_terms(m, newdata; se=false)
+
+Per-term contributions on the link scale (mgcv's `type="terms"`). Returns a
+`NamedTuple` of vectors, one per parametric column and one per smooth term
+(each already centered, as the smooths are sum-to-zero constrained). The
+intercept is reported separately as `:Intercept`. When `se=true`, returns
+`(terms, se_terms)`.
+"""
+function _predict_terms(m::GamModel, newdata; se::Bool = false)
+    t = Tables.columntable(newdata)
+    X_para = _gam_parametric_matrix(m, t)
+    β = m.coefficients
+    has_int = _gam_has_intercept(m)
+
+    labels = Symbol[]
+    cols = Vector{Float64}[]
+    se_cols = Vector{Float64}[]
+    Vp = m.Vp
+    np = m.n_parametric
+
+    para_names = _gam_parametric_names(m)
+    for j in 1:np
+        contrib = X_para[:, j] .* β[j]
+        nm = (has_int && j == 1) ? :Intercept : Symbol(para_names[j])
+        push!(labels, nm)
+        push!(cols, contrib)
+        if se
+            push!(se_cols,
+                sqrt.(max.(abs2.(X_para[:, j]) .* Vp[j, j], 0.0)))
+        end
+    end
+
+    for sm in m.smooths
+        X_sm = predict_matrix(sm, t)
+        idx = sm.first_para:sm.last_para
+        push!(labels, Symbol(sm.spec.label))
+        push!(cols, X_sm * β[idx])
+        if se
+            Vp_blk = Vp[idx, idx]
+            push!(se_cols,
+                sqrt.(max.(vec(sum((X_sm * Vp_blk) .* X_sm; dims = 2)), 0.0)))
+        end
+    end
+
+    terms = NamedTuple{Tuple(labels)}(Tuple(cols))
+    se ? (terms, NamedTuple{Tuple(labels)}(Tuple(se_cols))) : terms
 end
 
 function _mp_link(link::Symbol)
@@ -400,12 +492,8 @@ function residuals(m::GamModel; type::Symbol = :deviance)
     if type == :response
         return y .- mu
     elseif type == :pearson
-        if m.family isa ExtendedFamily
-            var_mu = _variance(m.family, mu)
-        else
-            var_mu = _variance(m.family, mu)
-        end
-        return (y .- mu) ./ sqrt.(max.(var_mu, eps()))
+        var_mu = _variance(m.family, mu)
+        return sqrt.(wt) .* (y .- mu) ./ sqrt.(max.(var_mu, eps()))
     elseif type == :deviance
         return _deviance_residuals(m.family, y, mu, wt)
     elseif type == :working
@@ -449,6 +537,28 @@ function _deviance_residuals(d::BinomialLike, y, mu, wt)
             di += (1 - yi) * log((1 - yi) / (1 - mui))
         end
         r[i] = sign(yi - mui) * sqrt(max(2 * wt[i] * di, 0))
+    end
+    return r
+end
+
+function _deviance_residuals(d::Gamma, y, mu, wt)
+    r = similar(y)
+    for i in eachindex(y, mu, wt)
+        mui = max(mu[i], eps())
+        yi = max(y[i], eps())
+        di = 2 * (-log(yi / mui) + (yi - mui) / mui)
+        r[i] = sign(y[i] - mu[i]) * sqrt(max(wt[i] * di, 0))
+    end
+    return r
+end
+
+function _deviance_residuals(d::InverseGaussian, y, mu, wt)
+    r = similar(y)
+    for i in eachindex(y, mu, wt)
+        mui = max(mu[i], eps())
+        yi = max(y[i], eps())
+        di = (yi - mui)^2 / (mui^2 * yi)
+        r[i] = sign(y[i] - mu[i]) * sqrt(max(wt[i] * di, 0))
     end
     return r
 end

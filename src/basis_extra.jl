@@ -27,9 +27,6 @@ struct MarkovRandomField <: AbstractBasisType end
 
 BASIS_TYPES[:mrf] = MarkovRandomField()
 
-# Module-level storage for MRF region labels (keyed by objectid of ConstructedSmooth)
-const _MRF_REGION_LABELS = Dict{UInt, Vector}()
-
 """
     _nb_to_adjacency(nb, n_regions) -> Matrix{Float64}
 
@@ -116,10 +113,8 @@ function _smooth_construct(::MarkovRandomField, spec::SmoothSpec, data, user_kno
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = MRFPredictCache(collect(levels)),
     )
-
-    # Store region labels for prediction
-    _MRF_REGION_LABELS[objectid(sm)] = levels
 
     return sm
 end
@@ -130,13 +125,10 @@ function _predict_matrix(::MarkovRandomField, smooth::ConstructedSmooth, newdata
     n_new = length(col)
 
     # Retrieve stored region labels
-    levels = get(_MRF_REGION_LABELS, objectid(smooth), nothing)
+    cache = smooth.predict_cache
     n_regions = length(smooth.knots)
 
-    if levels === nothing
-        # Fallback: use integer indices 1:n_regions
-        levels = collect(1:n_regions)
-    end
+    levels = cache isa MRFPredictCache ? cache.levels : collect(1:n_regions)
 
     level_map = Dict(lev => i for (i, lev) in enumerate(levels))
 
@@ -176,20 +168,6 @@ end
 struct FactorSmooth <: AbstractBasisType end
 
 BASIS_TYPES[:fs] = FactorSmooth()
-
-"""
-    FactorSmoothInfo
-
-Metadata for a factor-smooth interaction, stored for prediction.
-"""
-struct FactorSmoothInfo
-    levels::Vector{Any}
-    marginal_smooth::ConstructedSmooth
-    factor_var::Symbol
-end
-
-# Module-level storage for factor smooth metadata (keyed by objectid)
-const _FS_INFO = Dict{UInt, FactorSmoothInfo}()
 
 function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) >= 2 ||
@@ -254,15 +232,14 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         nothing, nothing, 0, 0,   # no additional constraint on the full fs smooth
         nothing, nothing, nothing,
         Int[],
+        predict_cache = FactorSmoothPredictCache(collect(levels), marginal_sm, factor_var),
     )
-
-    _FS_INFO[objectid(sm)] = FactorSmoothInfo(levels, marginal_sm, factor_var)
     return sm
 end
 
 function _predict_matrix(::FactorSmooth, smooth::ConstructedSmooth, newdata)
-    info = get(_FS_INFO, objectid(smooth), nothing)
-    info !== nothing ||
+    info = smooth.predict_cache
+    info isa FactorSmoothPredictCache ||
         throw(ArgumentError("Cannot find factor smooth metadata for prediction"))
 
     factor_col = Tables.getcolumn(newdata, info.factor_var)
@@ -307,9 +284,6 @@ end
 struct SoapFilm <: AbstractBasisType end
 
 BASIS_TYPES[:so] = SoapFilm()
-
-# Module-level storage for soap film prediction data (keyed by smooth label)
-const _SOAP_PREDICT_DATA = Dict{String, Dict{Symbol, Any}}()
 
 # ── Point-in-polygon (ray casting) ───────────────────────────────────────
 
@@ -705,7 +679,7 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
 
     # ── Cache for prediction ─────────────────────────────────────────────
     grid_basis = cat(grid_bnd, grid_int; dims = 3)
-    _SOAP_PREDICT_DATA[spec.label] = Dict{Symbol, Any}(
+    soap_cache = SoapPredictCache(Dict{Symbol, Any}(
         :bnd    => bnd,
         :x0     => x0,  :y0  => y0,
         :dx     => dx,  :dy  => dy,
@@ -713,7 +687,7 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
         :inside => inside,
         :grid_basis => grid_basis,
         :irng   => irng,
-    )
+    ))
 
     # ── Absorb identifiability constraints ───────────────────────────────
     null_dim = 1
@@ -727,16 +701,18 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = soap_cache,
     )
 end
 
 # ── Prediction ───────────────────────────────────────────────────────────
 
 function _predict_matrix(::SoapFilm, smooth::ConstructedSmooth, newdata)
-    sd = get(_SOAP_PREDICT_DATA, smooth.spec.label, nothing)
-    sd === nothing && throw(ArgumentError(
+    cache = smooth.predict_cache
+    cache isa SoapPredictCache || throw(ArgumentError(
         "No cached soap-film data for '$(smooth.spec.label)'. " *
-        "Was the smooth constructed in this session?"))
+        "Was the smooth constructed correctly?"))
+    sd = cache.data
 
     xv = Float64.(Tables.getcolumn(newdata, smooth.spec.term_vars[1]))
     yv = Float64.(Tables.getcolumn(newdata, smooth.spec.term_vars[2]))

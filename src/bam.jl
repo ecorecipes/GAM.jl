@@ -229,6 +229,27 @@ end
 # ============================================================================
 
 """
+    _bam_mustart(family, yi, wi) -> Float64
+
+Family-appropriate initial value for μ (following mgcv's `mustart`):
+- Binomial/Bernoulli: `(w*y + 0.5) / (w + 1)` (kept inside (0,1))
+- Poisson: `y + 0.1`
+- Gamma / InverseGaussian: `max(y, small positive)`
+- Gaussian (and default): `y`
+"""
+function _bam_mustart(family::UnivariateDistribution, yi::Real, wi::Real)
+    if family isa BinomialLike
+        return clamp((wi * yi + 0.5) / (wi + 1.0), 1e-4, 1.0 - 1e-4)
+    elseif family isa Poisson
+        return yi + 0.1
+    elseif family isa Gamma || family isa InverseGaussian
+        return max(yi, 1e-3)
+    else
+        return float(yi)
+    end
+end
+
+"""
     pirls_bam(X, y, S_total, family, link; weights, offset, start, control, chunk_size)
 
 Penalized IRLS using chunk-wise X'WX accumulation for large datasets.
@@ -264,10 +285,9 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         mul!(eta, X, beta)
         eta .+= offset
     else
-        mu_start_val = mean(y)
+        # Family-appropriate initial μ (mgcv mustart)
         @inbounds for i in 1:n
-            m = (y[i] + mu_start_val) / 2
-            eta[i] = GLM.linkfun(link, clamp(m, 0.001, 0.999))
+            eta[i] = GLM.linkfun(link, _bam_mustart(family, y[i], weights[i]))
         end
         beta[1] = mean(eta)
         mul!(eta, X, beta)
@@ -725,7 +745,7 @@ function bam(gf::GamFormula, data;
         link = GLM.canonicallink(family)
     end
 
-    y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
+    y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
     f = term(gf.response) ~ term(1)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
         method, weights, control, bam_ctrl)
