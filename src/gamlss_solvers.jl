@@ -133,7 +133,9 @@ function _local_ml_working_response_ad!(wk::Vector{Float64}, zk::Vector{Float64}
         dpdη = _link_dinv(linkk, ηk)
 
         function nll_of_pk(pval)
-            ηtmp = copy(η0)
+            # eltype must accommodate ForwardDiff.Dual values of pval
+            T = promote_type(eltype(η0), typeof(pval))
+            ηtmp = Vector{T}(η0)
             ηtmp[k] = GLM.linkfun(linkk, pval)
             return nll_obs(family, y[i], ηtmp)
         end

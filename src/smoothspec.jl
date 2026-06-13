@@ -240,15 +240,15 @@ function ti(vars::Union{Symbol, StatsModels.AbstractTerm}...; kwargs...)
     return ti(syms...; kwargs...)
 end
 
-# Module-level storage for marginal specs (keyed by objectid of SmoothSpec)
-const _MARGINAL_SPECS = Dict{UInt, Vector{SmoothSpec}}()
-
+# Marginal specs for tensor product smooths (te/ti/t2) are stored in the
+# spec's own `xt` Dict so they travel with the spec through serialization.
 function _register_marginals(spec::SmoothSpec, marginals::Vector{SmoothSpec})
-    _MARGINAL_SPECS[objectid(spec)] = marginals
+    spec.xt[:marginals] = marginals
+    return spec
 end
 
 function _get_marginals(spec::SmoothSpec)
-    return get(_MARGINAL_SPECS, objectid(spec), nothing)
+    return get(spec.xt, :marginals, nothing)
 end
 
 function _smooth_label(vars::Tuple, by, bs)

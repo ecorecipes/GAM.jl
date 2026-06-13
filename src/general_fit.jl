@@ -411,7 +411,14 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
     family::UnivariateDistribution, link::GLM.Link;
     method::Symbol = :REML,
     weights::Vector{Float64} = ones(length(y)),
+    offset::Vector{Float64} = zeros(length(y)),
     control::GamControl = gam_control())
+
+    if any(!=(0.0), offset)
+        throw(ArgumentError(
+            "offset is not supported with optimizer = :general; " *
+            "use the default optimizer = :pirls"))
+    end
 
     n, p = size(X)
     n_sp = length(penalty.sp)

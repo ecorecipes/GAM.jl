@@ -576,6 +576,7 @@ function scam_outer_iteration(
     p_ident::BitVector;
     method::Symbol = :GCV,
     weights::Vector{Float64} = ones(length(y)),
+    offset::Vector{Float64} = zeros(length(y)),
     control::ScamControl = scam_control(),
 )
     n, p = size(X)
@@ -584,7 +585,7 @@ function scam_outer_iteration(
     if n_sp == 0
         S_total = zeros(p, p)
         result = scam_pirls(X, y, S_total, family, link, p_ident;
-            weights = weights, control = control)
+            weights = weights, offset = offset, control = control)
         return Float64[], result
     end
 
@@ -597,7 +598,7 @@ function scam_outer_iteration(
         S_total = total_penalty(penalty, log_sp, p)
 
         result = scam_pirls(X, y, S_total, family, link, p_ident;
-            weights = weights,
+            weights = weights, offset = offset,
             start = prev_result === nothing ? nothing : prev_result.coefficients,
             control = control)
 
@@ -612,9 +613,16 @@ function scam_outer_iteration(
             scale_est = 1.0
         end
 
-        # EFS update (same formula as standard GAM outer iteration)
-        _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n, Xw_buf)
-        A_chol = cholesky(Symmetric(copy(A_buf)))
+        # EFS update (same formula as standard GAM outer iteration), but with
+        # the chain-rule-corrected effective design X_eff = X * diag(Cdiag)
+        # (matches the penalized information used for Vp post-fit).
+        X_eff_efs = X .* result.Cdiag'
+        _build_XtWX_plus_S!(A_buf, X_eff_efs, w, S_total, p, n, Xw_buf)
+        A_chol = try
+            cholesky(Symmetric(copy(A_buf)))
+        catch
+            cholesky(Symmetric(A_buf + 1e-8 * maximum(abs.(diag(A_buf))) * I))
+        end
         Ainv = inv(A_chol)
 
         log_sp_new = copy(log_sp)
@@ -658,7 +666,7 @@ function scam_outer_iteration(
     # Final fit at converged sp
     S_total = total_penalty(penalty, log_sp, p)
     final_result = scam_pirls(X, y, S_total, family, link, p_ident;
-        weights = weights,
+        weights = weights, offset = offset,
         start = prev_result === nothing ? nothing : prev_result.coefficients,
         control = control)
 
@@ -677,7 +685,8 @@ runs the SCAM outer iteration (EFS + constrained PIRLS), and assembles
 the `GamModel` result. Called by `gam()` when shape constraints are
 detected and by `scam()` directly.
 """
-function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, weights, control)
+function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, weights, control;
+    offset = nothing)
     n, p = size(X)
 
     # Build global p_ident
@@ -694,18 +703,21 @@ function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, w
                 outer_maxit = control.outer_maxit,
                 trace = control.trace,
                 gamma = control.gamma,
-            ))
+            ); offset = offset)
     end
 
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch(
         "weights length $(length(wts)) ≠ data length $n"))
+    off = offset === nothing ? zeros(n) : Float64.(offset)
+    length(off) == n || throw(DimensionMismatch(
+        "offset length $(length(off)) ≠ data length $n"))
 
     penalty = setup_penalties(smooths, n_parametric)
 
     # Outer iteration
     log_sp, result = scam_outer_iteration(X, y, smooths, penalty, family, link, p_ident;
-        method = method, weights = wts, control = control)
+        method = method, weights = wts, offset = off, control = control)
 
     # Post-processing
     edf_per_smooth = smooth_edf(result.edf_vec, smooths)

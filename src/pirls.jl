@@ -47,6 +47,38 @@ _clamp_mu_scalar(::Gamma, mu::Float64) = max(mu, eps())
 _clamp_mu_scalar(::InverseGaussian, mu::Float64) = max(mu, eps())
 _clamp_mu_scalar(::UnivariateDistribution, mu::Float64) = mu
 
+"""
+    _protected_cholesky!(A) -> Cholesky
+
+Cholesky factorization of `Symmetric(A)` (mutating `A`), with an escalating
+ridge fallback when `A` is numerically indefinite (rank deficiency,
+concurvity, or λ → 0 boundaries). Mirrors mgcv's use of regularized solves
+where plain Cholesky would abort the whole fit.
+"""
+function _protected_cholesky!(A::Matrix{Float64})
+    A_save = copy(A)
+    try
+        return cholesky!(Symmetric(A))
+    catch e
+        e isa LinearAlgebra.PosDefException || rethrow()
+    end
+    p = size(A_save, 1)
+    ridge = max(tr(A_save) / p, 1.0) * 1e-10
+    for _ in 1:8
+        copyto!(A, A_save)
+        @inbounds for i in 1:p
+            A[i, i] += ridge
+        end
+        try
+            return cholesky!(Symmetric(A))
+        catch e
+            e isa LinearAlgebra.PosDefException || rethrow()
+            ridge *= 100.0
+        end
+    end
+    throw(LinearAlgebra.PosDefException(1))
+end
+
 # Family-specific initialization (matches R's family$initialize)
 _mustart(::Normal, y::Float64, w::Float64) = y
 _mustart(::Poisson, y::Float64, w::Float64) = y + 0.1
@@ -132,8 +164,9 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         # Build A = X'WX + S_total using BLAS (in-place)
         _build_penalized_system!(A, XtWz, X, w, z, S_total, p, n, Xw, wz_buf)
 
-        # Solve via Cholesky
-        A_chol = cholesky!(Symmetric(A))
+        # Solve via Cholesky, with escalating ridge fallback for
+        # near-singular A (rank deficiency / λ → 0 boundaries)
+        A_chol = _protected_cholesky!(A)
         ldiv!(beta_new, A_chol, XtWz)
 
         # Update eta, mu
@@ -150,6 +183,7 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         # Step halving if penalized deviance increased (matches R's gam.fit3)
         div_thresh = 10.0 * (0.1 + abs(pdev_old)) * sqrt(eps())
         if pdev_new - pdev_old > div_thresh
+            step_ok = false
             for ii in 1:100
                 @inbounds for j in 1:p
                     beta_new[j] = (beta_new[j] + beta_old[j]) / 2.0
@@ -163,8 +197,23 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
                 penalty_new = dot(beta_new, penalty_buf)
                 pdev_new = dev_new + penalty_new
                 if pdev_new - pdev_old <= div_thresh
+                    step_ok = true
                     break
                 end
+            end
+            if !step_ok
+                # mgcv raises "step failure" here; keep the previous
+                # (best) iterate and stop rather than accepting divergence
+                copyto!(beta, beta_old)
+                copyto!(eta, eta_old)
+                @inbounds for i in 1:n
+                    mu[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta[i]))
+                end
+                @warn "P-IRLS step failure: penalized deviance could not be " *
+                      "reduced after 100 step halvings; returning last " *
+                      "stable iterate" maxlog = 1
+                converged = false
+                break
             end
         end
 
@@ -207,7 +256,7 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
     _build_XtWX_plus_S!(A, X, w, S_total, p, n, Xw)
 
     # Cholesky of A for R factor and EDF
-    A_chol_final = cholesky(Symmetric(A))
+    A_chol_final = _protected_cholesky!(copy(A))
 
     # Extract XtWX = A - S for EDF computation (avoid n×p allocation)
     XtWX = similar(A)

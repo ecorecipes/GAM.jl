@@ -79,7 +79,16 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
             @test sm.Sigma !== nothing
             @test sm.cmX !== nothing
             @test sm.p_ident !== nothing
-            @test all(sm.p_ident)  # all coefficients constrained
+            # Pya & Wood (2015): for pure convex/concave SCOP-splines the first
+            # coefficient sets the boundary slope and must stay unexponentiated,
+            # so it is NOT sign-constrained; all others are. Monotone and
+            # combined constraints sign-constrain every coefficient.
+            if bs in (:cx, :cv)
+                @test !sm.p_ident[1]
+                @test all(sm.p_ident[2:end])
+            else
+                @test all(sm.p_ident)
+            end
         end
     end
 

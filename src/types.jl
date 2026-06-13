@@ -178,6 +178,87 @@ end
 """Internal marker type for smooth-specific prediction caches."""
 abstract type AbstractSmoothPredictCache end
 
+# ----------------------------------------------------------------------------
+# Prediction caches for smooth types whose prediction needs construction-time
+# metadata. Stored in `ConstructedSmooth.predict_cache` so the data travels
+# with the model through serialization (rather than module-level objectid dicts).
+# The concrete `_predict_matrix` methods live alongside each basis constructor.
+# ----------------------------------------------------------------------------
+
+"""
+Prediction cache for tensor product smooths (te/ti/t2).
+
+Stores the raw (unconstrained) marginal bases so prediction can rebuild each
+marginal at new data. For ti() smooths, `marginal_Zs` holds the per-marginal
+sum-to-zero null-space bases that were absorbed into each marginal before the
+tensor product was formed (empty for te/t2).
+"""
+struct TensorPredictCache <: AbstractSmoothPredictCache
+    raw_marginals::Vector  # Vector{RawMarginalBasis} (defined in basis_tensor.jl)
+    marginal_Zs::Vector{Matrix{Float64}}
+end
+
+"""
+Prediction cache for Markov random field smooths (bs="mrf"): stores the
+region labels (in basis-column order) seen at construction time.
+"""
+struct MRFPredictCache <: AbstractSmoothPredictCache
+    levels::Vector
+end
+
+"""
+Prediction cache for factor-smooth interactions (bs="fs"): stores the factor
+levels, the marginal smooth, and the factor variable name.
+"""
+struct FactorSmoothPredictCache <: AbstractSmoothPredictCache
+    levels::Vector
+    marginal_smooth  # ConstructedSmooth
+    factor_var::Symbol
+end
+
+"""
+Prediction cache for constrained factor smooths (bs="sz"): stores the factor
+levels, the marginal smooth, the factor variable, the per-level constrained
+basis dimension, and the per-level constraint null-space bases `Z_levels`.
+"""
+struct SZPredictCache <: AbstractSmoothPredictCache
+    levels::Vector
+    marginal_smooth  # ConstructedSmooth
+    factor_var::Symbol
+    k_constrained::Int
+    Z_levels::Vector{Matrix{Float64}}
+end
+
+"""
+Prediction cache for splines-on-the-sphere smooths (bs="sos"): stores the knot
+lat/lon, knot eigenvectors, eigenvalues, penalty order, and basis dimension.
+"""
+struct SOSPredictCache <: AbstractSmoothPredictCache
+    lat_k::Vector{Float64}
+    lon_k::Vector{Float64}
+    U_k::Matrix{Float64}
+    lambda_k::Vector{Float64}
+    m_order::Int
+    k::Int
+end
+
+"""
+Prediction cache for SPDE Matérn smooths (bs="spde"): stores the mesh geometry
+and dimension info needed to rebuild the interpolation matrix at new data.
+`extra` carries the remaining metadata (e.g. mesh nodes, grid dims, L matrix).
+"""
+struct SPDEPredictCache <: AbstractSmoothPredictCache
+    info::Dict{Symbol, Any}
+end
+
+"""
+Prediction cache for soap-film smooths (bs="so"): stores the grid geometry and
+per-basis-function grid values needed to interpolate at new data.
+"""
+struct SoapPredictCache <: AbstractSmoothPredictCache
+    data::Dict{Symbol, Any}
+end
+
 """
     ConstructedSmooth{B<:AbstractBasisType}
 

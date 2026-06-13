@@ -208,19 +208,8 @@ function anova_gam(m::GamModel)
     Vp = m.Vp
 
     for (i, sm) in enumerate(m.smooths)
-        idx = sm.first_para:sm.last_para
-        β_i = β[idx]
-        V_i = Symmetric(Vp[idx, idx])
-
         edf_i = m.edf[i]
-
-        # Rank of the covariance sub-block
-        r = rank(V_i; atol=1e-10)
-        ref_df = min(Float64(r), edf_i)
-        ref_df = max(ref_df, 1.0)  # ensure at least 1
-
-        # Wald-type test statistic: β' * V⁻¹ * β using pseudoinverse
-        T_stat = dot(β_i, pinv(Matrix(V_i)) * β_i)
+        T_stat, ref_df = _wood_test_statistic(m, i)
 
         if use_f
             F_stat = T_stat / ref_df
@@ -241,6 +230,51 @@ function anova_gam(m::GamModel)
                     statistic=stats, p_value=p_vals)
 
     return AnovaGamResult(smooth_table, nothing, test_type, nothing)
+end
+
+"""
+    _wood_test_statistic(m, i) -> (T_stat, ref_df)
+
+Wood (2013, Biometrika) test statistic for smooth term `i`. The test is
+performed on the function scale: with `R` the triangular factor of the
+smooth's model-matrix columns, `f ∝ R β` has Bayesian covariance
+`V_f = R V_β R'`. The statistic is `Tᵣ = (Rβ)' V_f⁻ᵣ (Rβ)` where `V_f⁻ᵣ`
+is the eigendecomposition pseudo-inverse truncated at rank
+`r ≈ round(edf)`. Truncation at the effective (not nominal) dimension is
+what makes the χ²_r / F(r, ·) reference distribution approximately valid;
+inverting the full positive-definite block instead is anti-conservative
+for strongly penalized smooths.
+"""
+function _wood_test_statistic(m::GamModel, i::Int)
+    sm = m.smooths[i]
+    idx = sm.first_para:sm.last_para
+    β_i = coef(m)[idx]
+    V_i = Symmetric(Matrix(m.Vp[idx, idx]))
+    edf_i = m.edf[i]
+
+    # Function-space projection via QR of the model-matrix columns
+    R = Matrix(qr(m.X[:, idx]).R)
+    Vf = Symmetric(R * V_i * R')
+    bf = R * β_i
+
+    eg = eigen(Vf)
+    # Descending order
+    vals = reverse(eg.values)
+    vecs = reverse(eg.vectors; dims = 2)
+    tol = max(vals[1], 0.0) * eps()^0.9
+    r_est = count(>(tol), vals)
+    r_est >= 1 || return (0.0, 1.0)
+
+    # mgcv rounding rule: floor(edf), +1 when the fractional part is
+    # non-negligible (we use integer truncation; mgcv additionally treats
+    # the fractional eigenvalue specially)
+    frac = edf_i - floor(edf_i)
+    r = Int(floor(edf_i)) + (frac > 0.05 ? 1 : 0)
+    r = clamp(r, 1, r_est)
+
+    d = vecs[:, 1:r]' * bf
+    T_stat = sum(abs2, d ./ sqrt.(vals[1:r]))
+    return (T_stat, Float64(r))
 end
 
 """

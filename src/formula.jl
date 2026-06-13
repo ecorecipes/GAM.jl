@@ -368,17 +368,53 @@ function _formula_parametric_names(f::FormulaTerm)
     return names
 end
 
-function _build_parametric_matrix(gf::GamFormula, t)
+function _build_parametric_matrix(gf::GamFormula, t;
+    ref_levels::Union{Nothing, Dict{Symbol, Vector}} = nothing)
     n = _table_nrows(t)
     X_para = gf.has_intercept ? ones(n, 1) : Matrix{Float64}(undef, n, 0)
     para_names = gf.has_intercept ? String["(Intercept)"] : String[]
 
     for sym in gf.parametric
-        X_para = hcat(X_para, reshape(Float64.(Tables.getcolumn(t, sym)), n, 1))
-        push!(para_names, string(sym))
+        col = Tables.getcolumn(t, sym)
+        if eltype(col) <: Real
+            X_para = hcat(X_para, reshape(Float64.(col), n, 1))
+            push!(para_names, string(sym))
+        else
+            # Categorical / string parametric term: treatment (dummy) coding
+            # against the first sorted level (mgcv's default factor contrast),
+            # dropping the reference level when an intercept is present.
+            # Use ref_levels (the training levels) when supplied so prediction
+            # data with a subset of levels still produces the right columns.
+            levels = ref_levels !== nothing && haskey(ref_levels, sym) ?
+                     ref_levels[sym] : sort!(unique(collect(col)))
+            ref = gf.has_intercept ? levels[2:end] : levels
+            for lev in ref
+                X_para = hcat(X_para, Float64.(col .== lev))
+                push!(para_names, string(sym, ": ", lev))
+            end
+        end
     end
 
     return X_para, para_names
+end
+
+"""
+    _parametric_ref_levels(gf, data) -> Dict{Symbol, Vector}
+
+Collect the sorted unique levels of each non-numeric parametric term from the
+(training) `data`, so dummy coding can be reproduced consistently at
+prediction time regardless of which levels appear in the new data.
+"""
+function _parametric_ref_levels(gf::GamFormula, data)
+    t = Tables.columntable(data)
+    levels = Dict{Symbol, Vector}()
+    for sym in gf.parametric
+        col = Tables.getcolumn(t, sym)
+        if !(eltype(col) <: Real)
+            levels[sym] = sort!(unique(collect(col)))
+        end
+    end
+    return levels
 end
 
 function _build_parametric_matrix(para_terms::AbstractVector{<:StatsModels.AbstractTerm}, t)
@@ -411,17 +447,23 @@ function _build_smooth_call(ex::Expr)
     k_pos = nothing
     has_k_kw = false
 
+    # Keyword arguments that name a data column (so a bare identifier must be
+    # quoted into a Symbol, e.g. `by=g` → `by=:g`), matching the positional
+    # variable handling.
+    _quote_kw(name, val) =
+        (name in (:by, :id) && val isa Symbol) ? QuoteNode(val) : val
+
     for i in 2:length(ex.args)
         arg = ex.args[i]
         if arg isa Symbol
             push!(pos_args, QuoteNode(arg))
         elseif arg isa Expr && arg.head == :kw
-            push!(kw_args, Expr(:kw, arg.args[1], arg.args[2]))
+            push!(kw_args, Expr(:kw, arg.args[1], _quote_kw(arg.args[1], arg.args[2])))
             has_k_kw |= arg.args[1] == :k
         elseif arg isa Expr && arg.head == :parameters
             for kw in arg.args
                 if kw isa Expr && kw.head == :kw
-                    push!(kw_args, Expr(:kw, kw.args[1], kw.args[2]))
+                    push!(kw_args, Expr(:kw, kw.args[1], _quote_kw(kw.args[1], kw.args[2])))
                     has_k_kw |= kw.args[1] == :k
                 end
             end
