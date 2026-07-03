@@ -334,9 +334,30 @@ function _smooth2random_tensor(sm::ConstructedSmooth)
         Zs = [X_new[:, 1:p_rank]]
     end
 
-    # Build pen_ind and rind
+    # Build pen_ind and rind.
+    #
+    # NOTE: unlike t2 smooths (where each penalty's nonzero-eigenvalue columns
+    # are disjoint subsets of the *original* column space), a general tensor
+    # smooth's per-penalty subspaces are found by eigendecomposing each
+    # projected penalty independently in the *rotated* p_rank-dimensional
+    # basis. These per-penalty subspaces can legitimately overlap (a single
+    # rotated coefficient can be penalized by more than one marginal penalty
+    # at once), so `sum(size(Zi, 2) for Zi in Zs)` can exceed `p_rank`.
+    # `pen_ind` is advisory grouping metadata (see the struct docstring) —
+    # `s2r_predict` falls back to a single block for the tensor case and does
+    # not index by it — so we label the first `p_rank` rotated columns by the
+    # first penalty group that claims them, clamping at `p_rank` rather than
+    # assuming the per-penalty counts partition it exactly.
     pen_ind = zeros(Int, k)
-    pen_ind[1:p_rank] .= 1  # simplified: all penalized columns in first group
+    col_start = 1
+    for (i, Zi) in enumerate(Zs)
+        col_start > p_rank && break
+        col_stop = min(col_start + size(Zi, 2) - 1, p_rank)
+        if col_stop >= col_start
+            pen_ind[col_start:col_stop] .= i
+            col_start = col_stop + 1
+        end
+    end
     rind = collect(1:p_rank)
     D = ones(k)
 

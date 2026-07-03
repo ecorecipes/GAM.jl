@@ -184,20 +184,25 @@ end
 
 function _log_saturated_likelihood(::Gamma, y::Vector{Float64},
     weights::Vector{Float64}, scale::Float64)
-    # Gamma: l_sat depends on scale (φ = scale).
-    # l(y;μ=y,φ) = Σ [(-1/φ)·(y/y - log(y/y) - 1) + log-normalizing]
-    # The deviance residual at saturation is 0, so:
-    # l_sat = Σ [-log(y) - log(φ) - lgamma(1/φ) + (1/φ-1)·log(y) + (1/φ)·log(1/φ)]
-    # Simplified: this depends on φ = scale and thus changes with sp.
-    # For simplicity, use the Gaussian approximation: l_sat ≈ -n/2·log(2πσ²)
-    n = length(y)
-    return -0.5 * n * log(2π * scale)
+    φ = max(scale, eps(Float64))
+    α = 1 / φ
+    ls = 0.0
+    @inbounds for i in eachindex(y)
+        yi = max(y[i], eps(Float64))
+        ls += weights[i] * (-log(yi) - α - α * log(φ) - logabsgamma(α)[1])
+    end
+    return ls
 end
 
 function _log_saturated_likelihood(::InverseGaussian, y::Vector{Float64},
     weights::Vector{Float64}, scale::Float64)
-    n = length(y)
-    return -0.5 * n * log(2π * scale)
+    φ = max(scale, eps(Float64))
+    ls = 0.0
+    @inbounds for i in eachindex(y)
+        yi = max(y[i], eps(Float64))
+        ls += weights[i] * (-0.5 * (log(2π * φ) + 3 * log(yi)))
+    end
+    return ls
 end
 
 function _log_saturated_likelihood(::UnivariateDistribution, y::Vector{Float64},
@@ -267,8 +272,23 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
     for block in penalty.blocks
         idx = block.start:block.stop
         beta_block = beta[idx]
+        k_block = length(idx)
+        S_block = zeros(k_block, k_block)
+        for (offset, Sj) in enumerate(block.S)
+            S_block .+= exp(log_sp[sp_idx + offset - 1]) .* Sj
+        end
+        eig_block = eigen(Symmetric(S_block))
+        thresh_block = eps(Float64) * max(maximum(abs.(eig_block.values)), 1.0)
+        S_block_pinv = zeros(k_block, k_block)
+        for i in eachindex(eig_block.values)
+            λeig = eig_block.values[i]
+            if λeig > thresh_block
+                vi = eig_block.vectors[:, i]
+                S_block_pinv .+= (1 / λeig) .* (vi * vi')
+            end
+        end
 
-        for Si in block.S
+        for (offset, Si) in enumerate(block.S)
             λ = exp(log_sp[sp_idx])
             dS = zeros(p, p)
             dS[idx, idx] .= λ .* Si
@@ -318,8 +338,8 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
 
             trA1_j = trA1_explicit + trA1_implicit
 
-            # d(log|S+|)/d(log sp_j) = rank_j (for single penalty per block)
-            d_log_det_S = Float64(block.rank)
+            # d(log|S+|)/d(log sp_j) = λ_j * tr(S_λ^+ S_j)
+            d_log_det_S = λ * tr(S_block_pinv * Si)
 
             # REML1[j] = D1[j]/(2σ²γ) + trA1[j]/2 - det1[j]/2
             grad[sp_idx] = D1_j / (2 * scale * gamma) +

@@ -143,6 +143,28 @@ function _tps_multi_penalty_matrix(X_data::Matrix{Float64}, m::Int)
     return E
 end
 
+function _tps_multi_indices(d::Int, max_degree::Int)
+    indices = Vector{Vector{Int}}()
+    current = zeros(Int, d)
+
+    function rec!(pos::Int, remaining::Int)
+        if pos == d
+            current[pos] = remaining
+            push!(indices, copy(current))
+            return
+        end
+        for value in remaining:-1:0
+            current[pos] = value
+            rec!(pos + 1, remaining - value)
+        end
+    end
+
+    for degree in 0:max_degree
+        rec!(1, degree)
+    end
+    return indices
+end
+
 """
     _tps_multi_null_basis(X_data::Matrix{Float64}, m::Int) -> Matrix{Float64}
 
@@ -151,32 +173,22 @@ Dimension M = binomial(m + d - 1, d).
 """
 function _tps_multi_null_basis(X_data::Matrix{Float64}, m::Int)
     n, d = size(X_data)
-    # For m=2, d=2: M = 3 (1, x1, x2)
-    # General: all monomials of degree ≤ m-1
-    M = binomial(m + d - 1, d)
+    max_degree = m - 1
+    exponents = _tps_multi_indices(d, max_degree)
+    M = length(exponents)
     T = ones(n, M)
-    col = 1
-    # degree 0: constant (already 1)
-    col += 1
-    if m >= 2
-        # degree 1: linear terms
+    for (col, powers) in enumerate(exponents)
+        if all(iszero, powers)
+            continue
+        end
+        values = ones(n)
         for j in 1:d
-            if col > M
-                break
+            power = powers[j]
+            if power != 0
+                values .*= X_data[:, j] .^ power
             end
-            T[:, col] .= X_data[:, j]
-            col += 1
         end
-    end
-    if m >= 3
-        # degree 2: quadratic terms (for m ≥ 3)
-        for j in 1:d, j2 in j:d
-            if col > M
-                break
-            end
-            T[:, col] .= X_data[:, j] .* X_data[:, j2]
-            col += 1
-        end
+        T[:, col] .= values
     end
     return T
 end

@@ -4,13 +4,18 @@
 # This is equivalent to treating the smooth as a random effect with
 # iid normal prior. Useful for random intercepts/slopes in mixed models.
 
+struct RandomEffectPredictCache{T} <: AbstractSmoothPredictCache
+    levels::Vector{T}
+    level_map::Dict{T, Int}
+end
+
 function _smooth_construct(::RandomEffect, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) >= 1 ||
         throw(ArgumentError("Random effect requires at least one variable"))
 
     var = spec.term_vars[1]
     col = Tables.getcolumn(data, var)
-    levels = sort(unique(col))
+    levels = collect(unique(col))
     k = length(levels)
 
     # Dummy coding: one column per level
@@ -32,13 +37,15 @@ function _smooth_construct(::RandomEffect, spec::SmoothSpec, data, user_knots)
     # But we need sum-to-zero if there's also a fixed intercept
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)
 
+    predict_cache = RandomEffectPredictCache(levels, level_map)
     return ConstructedSmooth(
         spec, X_cons, S_cons,
         Float64.(1:k),
         null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
-        Int[],
+        Int[];
+        predict_cache = predict_cache,
     )
 end
 
@@ -47,13 +54,12 @@ function _predict_matrix(::RandomEffect, smooth::ConstructedSmooth, newdata)
     col = Tables.getcolumn(newdata, var)
     n_new = length(col)
 
-    # Reconstruct the level mapping from the knots
-    k = length(smooth.knots)
-    # For prediction, need to match levels — use the original dummy coding
-    # This is a simplified version; full implementation would store level labels
+    cache = smooth.predict_cache
+    cache isa RandomEffectPredictCache || throw(ArgumentError("random-effect smooth is missing training level metadata"))
+    k = length(cache.levels)
     X = zeros(n_new, k)
     for i in 1:n_new
-        j = findfirst(==(col[i]), 1:k)
+        j = get(cache.level_map, col[i], nothing)
         if j !== nothing
             X[i, j] = 1.0
         end
