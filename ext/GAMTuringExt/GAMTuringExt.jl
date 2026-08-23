@@ -98,6 +98,7 @@ function _build_gam_turing_model(
     is_identity = link isa IdentityLink
 
     # Resolve priors outside @model
+    b_prior = GAM.get_prior(priors, :b)
     sds_priors = [GAM.get_prior(priors, :sds, l) for l in smooth_block_labels]
     scale_prior = needs_scale ?
         GAM.get_prior(priors, family_tag == :gaussian ? :sigma : :phi) : nothing
@@ -109,12 +110,12 @@ function _build_gam_turing_model(
         y_obs, X_f, Z_comb, wts,
         n_f, n_blocks, total_random, block_starts, block_ends, block_dims,
         family_tag, is_identity, link,
-        sds_priors, scale_prior, all_sds_same, all_wts_one
+        b_prior, sds_priors, scale_prior, all_sds_same, all_wts_one
     )
         n_obs = length(y_obs)
 
-        # --- Fixed effects ---
-        β ~ MvNormal(zeros(n_f), 10.0 * I)
+        # --- Fixed effects (PriorSpec.b, default Normal(0, 10)) ---
+        β ~ filldist(b_prior, n_f)
 
         # --- Scale parameter (Gaussian σ, Gamma/IG ϕ) ---
         local σ_obs
@@ -191,7 +192,7 @@ function _build_gam_turing_model(
         y, X_fixed, Z_combined, wts,
         n_fixed, n_blocks, total_random, block_starts, block_ends, block_dims,
         family_tag, is_identity, link,
-        sds_priors, scale_prior, all_sds_same, all_wts_one
+        b_prior, sds_priors, scale_prior, all_sds_same, all_wts_one
     )
     return model, X_fixed, Zs_flat, smooth_block_labels
 end
@@ -556,7 +557,17 @@ function GAM._fit_gam_bayes(formula, data, family, link, priors::GAM.PriorSpec;
             push!(para_names, string(v))
         end
     else
-        para_names = ["(Intercept)"]  # FormulaTerm path always has intercept
+        para_names = ["(Intercept)"]
+    end
+    # Reconcile with the ACTUAL number of parametric design columns —
+    # dummy-coded factors (and the FormulaTerm path) can have more columns
+    # than variable names; a short name list would silently truncate the
+    # coefficient summaries downstream
+    np_actual = size(X_para, 2)
+    if length(para_names) != np_actual
+        base = para_names
+        para_names = String[j <= length(base) ? base[j] : "para_$j"
+                            for j in 1:np_actual]
     end
     for sm in smooths
         if size(sm.Xf, 2) > 0
@@ -847,10 +858,12 @@ function _build_gamlss_turing_model(
         push!(all_sds_priors, sds_p)
     end
 
+    b_prior = GAM.get_prior(priors, :b)
+
     DynamicPPL.@model function gamlss_model(
         y_obs, param_X, param_Z, param_block_dims,
         param_n_blocks, param_total_random,
-        all_sds_priors, family, links, K
+        b_prior, all_sds_priors, family, links, K
     )
         n_obs = length(y_obs)
 
@@ -858,7 +871,7 @@ function _build_gamlss_turing_model(
         # Each gets its own named β, σ_s, z to avoid dynamic symbol issues
 
         # Parameter 1 (always present)
-        β_1 ~ MvNormal(zeros(size(param_X[1], 2)), 10.0 * I)
+        β_1 ~ filldist(b_prior, size(param_X[1], 2))
         η_1 = param_X[1] * β_1
         if param_total_random[1] > 0
             nb1 = param_n_blocks[1]
@@ -876,7 +889,7 @@ function _build_gamlss_turing_model(
 
         # Parameter 2 (if K ≥ 2)
         if K >= 2
-            β_2 ~ MvNormal(zeros(size(param_X[2], 2)), 10.0 * I)
+            β_2 ~ filldist(b_prior, size(param_X[2], 2))
             η_2 = param_X[2] * β_2
             if param_total_random[2] > 0
                 nb2 = param_n_blocks[2]
@@ -893,7 +906,7 @@ function _build_gamlss_turing_model(
 
         # Parameter 3 (if K ≥ 3)
         if K >= 3
-            β_3 ~ MvNormal(zeros(size(param_X[3], 2)), 10.0 * I)
+            β_3 ~ filldist(b_prior, size(param_X[3], 2))
             η_3 = param_X[3] * β_3
             if param_total_random[3] > 0
                 nb3 = param_n_blocks[3]
@@ -910,7 +923,7 @@ function _build_gamlss_turing_model(
 
         # Parameter 4 (if K ≥ 4, rare)
         if K >= 4
-            β_4 ~ MvNormal(zeros(size(param_X[4], 2)), 10.0 * I)
+            β_4 ~ filldist(b_prior, size(param_X[4], 2))
             η_4 = param_X[4] * β_4
             if param_total_random[4] > 0
                 nb4 = param_n_blocks[4]
@@ -945,7 +958,7 @@ function _build_gamlss_turing_model(
     model = gamlss_model(
         y, param_X, param_Z, param_block_dims,
         param_n_blocks, param_total_random,
-        all_sds_priors, family, links, K
+        b_prior, all_sds_priors, family, links, K
     )
     return model
 end
@@ -1127,6 +1140,7 @@ function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
     X_con = total_con > 0 ? hcat(con_X...) : zeros(n, 0)
 
     # Resolve priors
+    b_prior = GAM.get_prior(priors, :b)
     uc_sds_priors = [GAM.get_prior(priors, :sds, l) for l in uc_labels]
     con_sds_priors = [GAM.get_prior(priors, :sds, l) for l in con_labels]
 
@@ -1143,12 +1157,12 @@ function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
         n_f, n_uc_blocks, uc_total_random, uc_block_dims,
         n_con_blocks, con_dims, total_con,
         family_tag, is_identity, link, wts, all_wts_one,
-        uc_sds_priors, con_sds_priors, scale_prior
+        b_prior, uc_sds_priors, con_sds_priors, scale_prior
     )
         n_obs = length(y_obs)
 
-        # Fixed effects
-        β ~ MvNormal(zeros(n_f), 10.0 * I)
+        # Fixed effects (PriorSpec.b, default Normal(0, 10))
+        β ~ filldist(b_prior, n_f)
         η = X_f * β
 
         # Unconstrained smooth random effects (standard non-centered)
@@ -1219,7 +1233,7 @@ function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
         n_fixed, n_uc_blocks, uc_total_random, uc_block_dims,
         n_con_blocks, con_dims, total_con,
         family_tag, is_identity, link, wts, all_wts_one,
-        uc_sds_priors, con_sds_priors, scale_prior
+        b_prior, uc_sds_priors, con_sds_priors, scale_prior
     )
 
     # Run MCMC
@@ -1368,6 +1382,7 @@ function _build_gamm_turing_model(
     is_identity = link isa IdentityLink
 
     # Resolve priors
+    b_prior = GAM.get_prior(priors, :b)
     sds_priors = [GAM.get_prior(priors, :sds, l) for l in smooth_block_labels]
     re_sd_priors = [GAM.get_prior(priors, :sds, l) for l in re_labels]
     scale_prior = needs_scale ?
@@ -1378,12 +1393,12 @@ function _build_gamm_turing_model(
         n_f, n_sm_blocks, total_sm, sm_block_starts, sm_block_ends, smooth_block_dims,
         n_re_blocks, total_re, re_block_starts, re_block_ends, re_block_dims,
         family_tag, is_identity, link,
-        sds_priors, re_sd_priors, scale_prior, all_wts_one
+        b_prior, sds_priors, re_sd_priors, scale_prior, all_wts_one
     )
         n_obs = length(y_obs)
 
-        # --- Fixed effects ---
-        β ~ MvNormal(zeros(n_f), 10.0 * I)
+        # --- Fixed effects (PriorSpec.b, default Normal(0, 10)) ---
+        β ~ filldist(b_prior, n_f)
 
         # --- Scale parameter ---
         local σ_obs
@@ -1480,7 +1495,7 @@ function _build_gamm_turing_model(
         n_re_blocks, total_re_random,
         re_block_starts, re_block_ends, re_block_dims,
         family_tag, is_identity, link,
-        sds_priors, re_sd_priors, scale_prior, all_wts_one
+        b_prior, sds_priors, re_sd_priors, scale_prior, all_wts_one
     )
     return model, X_fixed, Zs_smooth, smooth_block_labels, re_labels
 end
@@ -1556,8 +1571,11 @@ function _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
 
     # Build coefficient names
     coef_names = String[]
-    # Parametric fixed effects
-    para_names = ["(Intercept)"]
+    # Parametric fixed effects — one name per parametric design column
+    # (extra columns beyond the intercept get positional names, so downstream
+    # summaries are not silently truncated)
+    np_actual = size(X_para, 2)
+    para_names = String[j == 1 ? "(Intercept)" : "para_$j" for j in 1:np_actual]
     for sm in smooths
         if size(sm.Xf, 2) > 0
             for j in 1:size(sm.Xf, 2)
@@ -1660,13 +1678,14 @@ Turing.@model function GAM.smooth_prior(
         β_f ~ filldist(fixed_prior, n_fixed)
     end
 
-    # Sample smooth SD and random effects (non-centered parameterization)
+    # Sample smooth SDs (one per Z block, matching the built-in model
+    # builders) and random effects (non-centered parameterization)
     if n_random > 0
-        σ_s ~ sds_prior
+        σ_s ~ filldist(sds_prior, length(sm.Zs))
         z ~ MvNormal(zeros(n_random), I)
     end
 
-    # Evaluate: f = Xf * β_f + σ_s * Z * z
+    # Evaluate: f = Xf * β_f + Σᵢ σ_s[i] * Zs[i] * z_i
     n_obs = size(sm.Xf, 1)
     f = zeros(eltype(n_fixed > 0 ? β_f : [0.0]), n_obs)
 
@@ -1676,10 +1695,10 @@ Turing.@model function GAM.smooth_prior(
 
     if n_random > 0
         offset = 0
-        for Z in sm.Zs
+        for (bi, Z) in enumerate(sm.Zs)
             nz = size(Z, 2)
             z_block = z[(offset + 1):(offset + nz)]
-            f = f .+ σ_s .* (Z * z_block)
+            f = f .+ σ_s[bi] .* (Z * z_block)
             offset += nz
         end
     end
@@ -1709,7 +1728,7 @@ Turing.@model function GAM.smooth_predictive(
     end
 
     if n_random > 0
-        σ_s ~ sds_prior
+        σ_s ~ filldist(sds_prior, length(sm.Zs))
         z ~ MvNormal(zeros(n_random), I)
     end
 
@@ -1722,10 +1741,10 @@ Turing.@model function GAM.smooth_predictive(
 
     if n_random > 0
         offset = 0
-        for Z in Zs_new
+        for (bi, Z) in enumerate(Zs_new)
             nz = size(Z, 2)
             z_block = z[(offset + 1):(offset + nz)]
-            f = f .+ σ_s .* (Z * z_block)
+            f = f .+ σ_s[bi] .* (Z * z_block)
             offset += nz
         end
     end

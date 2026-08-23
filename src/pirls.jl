@@ -152,9 +152,15 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
     for iter in 1:(control.maxit)
         n_iter = iter
 
-        # Working weights and working response (in-place, scalar ops)
+        # Working weights and working response (in-place, scalar ops).
+        # dμ/dη is floored at eps() in magnitude (as in R's family$mu.eta),
+        # so saturated observations (|η| huge, dμ/dη underflowing to 0)
+        # cannot give z = ±Inf and poison X'Wz.
         @inbounds for i in 1:n
             dm = GLM.mueta(link, eta[i])
+            if abs(dm) < eps()
+                dm = dm < 0 ? -eps() : eps()
+            end
             dmu_deta[i] = dm
             vm = _variance_scalar(family, mu[i])
             w[i] = clamp(weights[i] * dm * dm / max(vm, eps()), eps(), 1e10)
@@ -311,9 +317,10 @@ function pirls_gaussian(X::Matrix{Float64}, y::Vector{Float64},
         XtWy = X' * (weights .* y)
     end
 
-    # A = X'WX + S, solve A β = X'Wy
+    # A = X'WX + S, solve A β = X'Wy (protected against numerically
+    # indefinite A at λ → 0 boundaries)
     A = XtWX + S_total
-    A_chol = cholesky(Symmetric(A))
+    A_chol = _protected_cholesky!(A)
     beta = A_chol \ XtWy
 
     # Fitted values and linear predictor

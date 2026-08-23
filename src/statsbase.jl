@@ -45,7 +45,11 @@ edf(m::GamModel) = m.edf
 """
     loglikelihood(m::GamModel)
 
-Log-likelihood of the fitted model.
+Log-likelihood of the fitted model, on the absolute scale (saturated-model
+constants included), so `aic(m)` is comparable with R's `AIC()` and across
+families/hyperparameters (e.g. two NegBin fits with different θ). Quasi
+families (QuasiPoisson, QuasiBinomial) have no true likelihood and return
+`NaN` (R reports `NA` for their AIC).
 """
 function loglikelihood(m::GamModel)
     dev = deviance(m)
@@ -69,10 +73,55 @@ function loglikelihood(m::GamModel)
         phi = max(scale, 1e-10)
         return sum(logpdf(InverseGaussian(mu[i], w[i] / phi), y[i])
                    for i in eachindex(y))
+    elseif m.family isa Poisson
+        ll = 0.0
+        @inbounds for i in eachindex(y)
+            mui = max(mu[i], eps())
+            ll += w[i] * (y[i] * log(mui) - mui - logabsgamma(y[i] + 1.0)[1])
+        end
+        return ll
+    elseif m.family isa BinomialLike
+        # wᵢ = number of trials, yᵢ = observed proportion. The binomial
+        # coefficient is included when the counts are integral (as in R's
+        # dbinom); for unit weights it is 0 (Bernoulli).
+        ll = 0.0
+        @inbounds for i in eachindex(y)
+            mui = clamp(mu[i], eps(), 1 - eps())
+            ll += w[i] * (y[i] * log(mui) + (1 - y[i]) * log(1 - mui))
+            ki = w[i] * y[i]
+            if w[i] != 1.0 && isinteger(w[i]) && isinteger(ki)
+                ll += logabsbinomial(round(Int, w[i]), round(Int, ki))[1]
+            end
+        end
+        return ll
+    elseif m.family isa NegBinFamily
+        # Full NB log-likelihood including the θ-dependent constants, so AIC
+        # is valid across fits with different (estimated) θ
+        θ = m.family.theta
+        ll = 0.0
+        @inbounds for i in eachindex(y)
+            mui = max(mu[i], eps())
+            ll += w[i] * (logabsgamma(y[i] + θ)[1] - logabsgamma(θ)[1] -
+                          logabsgamma(y[i] + 1.0)[1] +
+                          θ * log(θ / (θ + mui)) + y[i] * log(mui / (θ + mui)))
+        end
+        return ll
+    elseif m.family isa BetaFamily
+        phi = max(m.family.phi, 1e-10)
+        ll = 0.0
+        @inbounds for i in eachindex(y)
+            mui = clamp(mu[i], eps(), 1 - eps())
+            yi = clamp(y[i], eps(), 1 - eps())
+            ll += w[i] * logpdf(Beta(mui * phi, (1 - mui) * phi), yi)
+        end
+        return ll
+    elseif m.family isa Union{QuasiPoissonFamily, QuasiBinomialFamily}
+        # Quasi-likelihood families have no true likelihood
+        return NaN
     elseif m.family isa ExtendedFamily
         return -dev / 2
     else
-        # For non-Gaussian: -dev/2 (saturated model comparison)
+        # Fallback: -dev/2 (saturated model comparison)
         return -dev / 2
     end
 end
@@ -144,9 +193,6 @@ function coeftable(m::GamModel; level::Real = 0.95)
         end
     end
 
-    levstr = isinteger(level * 100) ? string(Integer(level * 100)) : string(level * 100)
-    ci = quantile(Normal(), (1 - level) / 2) .* se_para
-
     return CoefTable(
         hcat(cc_para, se_para, z, p_vals),
         ["Coef.", "Std. Error", test_stat_name, "Pr(>|$test_stat_name|)"],
@@ -155,6 +201,14 @@ function coeftable(m::GamModel; level::Real = 0.95)
 end
 
 function _gam_parametric_names(m::GamModel)
+    # One name per dummy-coded design-matrix column. Needs the training data
+    # to resolve factor levels; falls back to per-variable names without it.
+    if (m.formula isa GamFormula || m.formula isa FormulaTerm) && m.data !== nothing
+        colnames, _ = _parametric_term_groups(m.formula, m.data)
+        if length(colnames) == m.n_parametric
+            return colnames
+        end
+    end
     if m.formula isa GamFormula || m.formula isa FormulaTerm
         return _formula_parametric_names(m.formula)
     end
@@ -216,7 +270,10 @@ function _gam_parametric_matrix(m::GamModel, t)
             "Prediction parametric matrix has $(size(X_para, 2)) columns, expected $(m.n_parametric)"))
         return X_para
     elseif m.formula isa FormulaTerm
-        X_para, _ = _build_parametric_matrix(m.formula, t)
+        # Build the schema from the training data so categorical levels (and
+        # hence dummy columns) are consistent at prediction time.
+        X_para, _ = _build_parametric_matrix(m.formula, t;
+            schema_data = m.data === nothing ? t : m.data)
         size(X_para, 2) == m.n_parametric || throw(DimensionMismatch(
             "Prediction parametric matrix has $(size(X_para, 2)) columns, expected $(m.n_parametric)"))
         return X_para
@@ -303,8 +360,9 @@ lpmatrix(m::GamModel, newdata) = _gam_prediction_matrix(m, newdata)
     _predict_terms(m, newdata; se=false)
 
 Per-term contributions on the link scale (mgcv's `type="terms"`). Returns a
-`NamedTuple` of vectors, one per parametric column and one per smooth term
-(each already centered, as the smooths are sum-to-zero constrained). The
+`NamedTuple` of vectors, one per parametric *term* (a categorical variable's
+dummy columns are summed into a single entry, as in mgcv) and one per smooth
+term (each already centered, as the smooths are sum-to-zero constrained). The
 intercept is reported separately as `:Intercept`. When `se=true`, returns
 `(terms, se_terms)`.
 """
@@ -320,15 +378,28 @@ function _predict_terms(m::GamModel, newdata; se::Bool = false)
     Vp = m.Vp
     np = m.n_parametric
 
-    para_names = _gam_parametric_names(m)
-    for j in 1:np
-        contrib = X_para[:, j] .* β[j]
-        nm = (has_int && j == 1) ? :Intercept : Symbol(para_names[j])
+    # Group parametric columns by originating term (intercept, then one group
+    # per variable — a categorical term spans several dummy columns).
+    groups = if (m.formula isa GamFormula || m.formula isa FormulaTerm) &&
+                m.data !== nothing
+        _, grps = _parametric_term_groups(m.formula, m.data)
+        # Defensive: groups must tile exactly the np parametric columns
+        (isempty(grps) ? 0 : last(grps)[2][end]) == np ? grps :
+            [(has_int && j == 1 ? "(Intercept)" : "x$j", j:j) for j in 1:np]
+    else
+        [(has_int && j == 1 ? "(Intercept)" : "x$j", j:j) for j in 1:np]
+    end
+
+    for (name, idx) in groups
+        contrib = X_para[:, idx] * β[idx]
+        nm = name == "(Intercept)" ? :Intercept : Symbol(name)
         push!(labels, nm)
-        push!(cols, contrib)
+        push!(cols, vec(contrib))
         if se
+            Vp_blk = Vp[idx, idx]
+            Xg = X_para[:, idx]
             push!(se_cols,
-                sqrt.(max.(abs2.(X_para[:, j]) .* Vp[j, j], 0.0)))
+                sqrt.(max.(vec(sum((Xg * Vp_blk) .* Xg; dims = 2)), 0.0)))
         end
     end
 

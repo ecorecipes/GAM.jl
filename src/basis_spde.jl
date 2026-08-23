@@ -239,7 +239,7 @@ function _fem_matrices_2d_grid(x::AbstractVector{Float64},
             end
         end
 
-        if best_tri > 0 && A[j, :] == zeros(nk)
+        if best_tri > 0 && iszero(view(A, j, :))
             # Clamp to nearest triangle
             i1, i2, i3 = triangles[best_tri]
             l1 = max(best_lam[1], 0.0)
@@ -453,7 +453,7 @@ function _predict_matrix(::SPDESmooth, smooth::ConstructedSmooth, newdata)
                 end
             end
 
-            if best_tri > 0 && all(A_new[j, :] .== 0.0)
+            if best_tri > 0 && iszero(view(A_new, j, :))
                 i1, i2, i3 = triangles[best_tri]
                 l1 = max(best_lam[1], 0.0)
                 l2 = max(best_lam[2], 0.0)

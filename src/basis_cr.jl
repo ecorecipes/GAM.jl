@@ -81,7 +81,33 @@ function _cr_basis_eval(x::AbstractVector{<:Real}, knots::Vector{Float64},
     # We only need DD[j,l] and DD[j+1,l] for interval j
 
     @inbounds for i in 1:n
-        xi = clamp(x[i], knots[1], knots[end])
+        xi = x[i]
+
+        # Linear extrapolation beyond the boundary knots (natural-spline
+        # boundary condition f'' = 0 implies linear tails), matching mgcv's
+        # Predict.matrix.cr.smooth rather than clamping to a constant.
+        if xi < knots[1] || xi > knots[end]
+            at_lo = xi < knots[1]
+            j = at_lo ? 1 : q - 1
+            xb = at_lo ? knots[1] : knots[end]
+            hj = h[j]
+            for l in 1:q
+                # Basis value at the boundary knot
+                vb = (at_lo ? (l == 1 ? 1.0 : 0.0) : (l == q ? 1.0 : 0.0))
+                # First derivative at the boundary (from the boundary
+                # interval's cubic; DD is zero at the end knots)
+                if at_lo
+                    db = ((l == 2 ? 1.0 : 0.0) - (l == 1 ? 1.0 : 0.0)) / hj -
+                         hj * DD[2, l] / 6.0
+                else
+                    db = ((l == q ? 1.0 : 0.0) - (l == q - 1 ? 1.0 : 0.0)) / hj +
+                         hj * DD[q - 1, l] / 6.0
+                end
+                X[i, l] = vb + (xi - xb) * db
+            end
+            continue
+        end
+
         j = searchsortedlast(knots, xi)
         j = clamp(j, 1, q - 1)
         t = (xi - knots[j]) / h[j]
@@ -141,20 +167,21 @@ function _construct_cr(spec::SmoothSpec, data, user_knots;
         null_dim = 2  # constant + linear in null space
     end
 
-    penalties = Matrix{Float64}[S]
-
-    # Shrinkage: add penalty on null space
+    # Shrinkage (cs): as in mgcv, modify the SINGLE penalty by raising the
+    # null-space eigenvalues (one smoothing parameter, full-rank penalty),
+    # rather than appending a second penalty.
     if shrink && !cyclic
-        # Small penalty on full space to shrink toward zero
-        S_shrink = I(k) |> Matrix{Float64}
-        S_shrink .*= 1e-2 * tr(S) / k
-        push!(penalties, S_shrink)
+        S = _shrink_penalty(S)
+        null_dim = 0
     end
+
+    penalties = Matrix{Float64}[S]
 
     # Penalty rank = (number of basis columns before constraint absorption)
     # minus the penalty null-space dimension. The cyclic basis has k-1
     # columns (last knot ≡ first) with only the constant in the null space,
-    # so its rank is k-2; the non-cyclic basis has k columns and rank k-2.
+    # so its rank is k-2; the non-cyclic basis has k columns and rank k-2
+    # (k for the full-rank shrinkage variant).
     n_col = cyclic ? k - 1 : k
     pen_rank = n_col - null_dim
 
@@ -219,26 +246,27 @@ function _cc_basis(x::AbstractVector{<:Real}, knots::Vector{Float64})
     B_chol = cholesky(B_sym)
     S = Q' * (B_chol \ Q)
 
-    # Basis evaluation (simplified — use cardinal spline approach)
+    # Basis evaluation via cardinal splines. DD[:, l] holds the second
+    # derivatives at the knots for basis function l (all l at once via a
+    # single matrix solve), so the point loop is O(n·q) total.
+    DD = B_chol \ Q   # q_int × q_int
+    interior_knots = @view knots[1:(end - 1)]
     X = zeros(n, q_int)
-    for l in 1:q_int
-        e_l = zeros(q_int)
-        e_l[l] = 1.0
-        dd = B_chol \ (Q * e_l)
+    @inbounds for i in 1:n
+        xi = x_mod[i]
+        j = searchsortedlast(interior_knots, xi)
+        j = clamp(j, 1, q_int)
+        j_next = mod1(j + 1, q_int)
+        hj = h[j]
+        t = (xi - knots[j]) / hj
+        t1 = 1.0 - t
+        c_left = (t1 * t1 * t1 - t1) * hj^2 / 6.0
+        c_right = (t * t * t - t) * hj^2 / 6.0
 
-        for i in 1:n
-            xi = x_mod[i]
-            j = searchsortedlast(knots[1:(end - 1)], xi)
-            j = clamp(j, 1, q_int)
-            j_next = mod1(j + 1, q_int)
-            hj = j <= length(h) ? h[j] : period - knots[end - 1] + knots[1]
-            t = (xi - knots[j]) / hj
-
-            X[i, l] = (1 - t) * e_l[j] + t * e_l[j_next] +
-                       hj^2 * (
-                ((1 - t)^3 - (1 - t)) * dd[j] +
-                (t^3 - t) * dd[j_next]
-            ) / 6.0
+        X[i, j] += t1
+        X[i, j_next] += t
+        for l in 1:q_int
+            X[i, l] += c_left * DD[j, l] + c_right * DD[j_next, l]
         end
     end
 

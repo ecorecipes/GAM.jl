@@ -11,6 +11,17 @@ struct LoessSmooth <: AbstractBasisType end
 BASIS_TYPES[:lo] = LoessSmooth()
 
 """
+Prediction cache for loess smooths: stores the fit-time bandwidth, kernel,
+degree, and active-column filter (so the user's SmoothSpec is not mutated).
+"""
+struct LoessPredictCache <: AbstractSmoothPredictCache
+    bandwidth::Float64
+    kernel::Symbol
+    degree::Int
+    active::BitVector
+end
+
+"""
     _tricube_kernel(u)
 
 Tricube kernel: K(u) = (1 - |u|³)³ for |u| < 1, else 0.
@@ -109,14 +120,8 @@ function _smooth_construct(::LoessSmooth, spec::SmoothSpec, data, user_knots)
     S = Matrix{Float64}(I, ncol, ncol)
     penalties = Matrix{Float64}[S]
 
-    null_dim = 1  # constant function is approximately in the span
-    pen_rank = ncol - null_dim
-
-    # Store bandwidth and kernel info in xt for prediction
-    spec.xt[:_bandwidth] = bandwidth
-    spec.xt[:_kernel] = kernel
-    spec.xt[:_degree] = degree
-    spec.xt[:_active] = active
+    null_dim = 0  # the identity penalty is full rank: no unpenalized space
+    pen_rank = ncol
 
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)
 
@@ -127,6 +132,8 @@ function _smooth_construct(::LoessSmooth, spec::SmoothSpec, data, user_knots)
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = LoessPredictCache(bandwidth, kernel, degree,
+            BitVector(active)),
     )
 end
 
@@ -136,9 +143,12 @@ function _predict_matrix(::LoessSmooth, smooth::ConstructedSmooth, newdata)
     knots = smooth.knots
     nk = length(knots)
 
-    bandwidth = smooth.spec.xt[:_bandwidth]::Float64
-    kernel = smooth.spec.xt[:_kernel]::Symbol
-    degree = smooth.spec.xt[:_degree]::Int
+    cache = smooth.predict_cache
+    cache isa LoessPredictCache ||
+        throw(ArgumentError("Missing fitted loess prediction cache"))
+    bandwidth = cache.bandwidth
+    kernel = cache.kernel
+    degree = cache.degree
 
     # Build kernel basis at new points
     X_new = _loess_kernel_matrix(x_new, knots, bandwidth; kernel = kernel)
@@ -156,7 +166,7 @@ function _predict_matrix(::LoessSmooth, smooth::ConstructedSmooth, newdata)
     end
 
     # Apply same column filter as construction
-    active = smooth.spec.xt[:_active]::BitVector
+    active = cache.active
     if !all(active)
         X_new = X_new[:, active]
     end

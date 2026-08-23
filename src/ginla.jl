@@ -325,7 +325,7 @@ function ginla(model::GamModel;
         if approx == 0
             # Newton refinement of conditional modes
             db0 = zeros(p)
-            for i in [div(nk, 2):-1:1; div(nk, 2):nk]
+            for i in [div(nk, 2):-1:1; (div(nk, 2) + 1):nk]
                 beta0 = BM[:, i] .+ db0
                 nll, grad = _logf_for_ginla(beta0, model, X, Bi, use_transform; deriv = true)
 
@@ -442,10 +442,24 @@ function ginla(model::GamModel;
         bg0 = minimum(bg)
         bg1 = maximum(bg)
         ok = false
+        extend_iter = 0
         while !ok
+            extend_iter += 1
             beta_grid = range(bg0, bg1; length = nb) |> collect
             # Cubic spline interpolation of log density
             log_dens_grid = _cubic_interp(bg, dens0, beta_grid)
+            # Beyond the evaluated support the cubic extrapolation can curve
+            # UPWARD; clamp extrapolated tails so they never exceed the
+            # boundary log-density (guarantees decaying tails and that the
+            # extension loop terminates)
+            bg_lo, bg_hi = bg[1], bg[end]
+            @inbounds for gi in eachindex(beta_grid)
+                if beta_grid[gi] < bg_lo
+                    log_dens_grid[gi] = min(log_dens_grid[gi], dens0[1])
+                elseif beta_grid[gi] > bg_hi
+                    log_dens_grid[gi] = min(log_dens_grid[gi], dens0[end])
+                end
+            end
             dens_grid = exp.(log_dens_grid)
 
             # Normalize
@@ -455,16 +469,23 @@ function ginla(model::GamModel;
                 dens_grid ./= n_const
             end
 
-            # Check tails
+            # Check tails (bounded number of extensions — with clamped
+            # extrapolation the flat tail can only shrink relative to the
+            # normalized mode, but guard against pathological densities)
             maxd = maximum(dens_grid)
             ok = true
-            if dens_grid[1] > maxd * 5e-3
-                bg0 -= sd_gauss[k]
-                ok = false
-            end
-            if dens_grid[end] > maxd * 5e-3
-                bg1 += sd_gauss[k]
-                ok = false
+            if extend_iter < 30
+                if dens_grid[1] > maxd * 5e-3
+                    bg0 -= sd_gauss[k]
+                    ok = false
+                end
+                if dens_grid[end] > maxd * 5e-3
+                    bg1 += sd_gauss[k]
+                    ok = false
+                end
+            else
+                @warn "ginla: tail extension did not converge for coefficient $k; " *
+                      "returning the current grid" maxlog = 1
             end
 
             if ok

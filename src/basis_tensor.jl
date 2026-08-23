@@ -146,8 +146,9 @@ function _build_raw_marginal(::CubicShrink, spec::SmoothSpec, data, user_knots)
     knots = user_knots !== nothing ? Float64.(user_knots) : place_knots(x, k)
     k = length(knots)
     X, S = _cr_basis(x, knots)
-    S_shrink = Matrix{Float64}(I, k, k) .* (1e-2 * tr(S) / k)
-    return RawMarginalBasis(X, [S, S_shrink], 2, knots, spec)
+    # Single modified penalty (mgcv cs), consistent with _construct_cr
+    S = _shrink_penalty(S)
+    return RawMarginalBasis(X, [S], 0, knots, spec)
 end
 
 function _build_raw_marginal(::CyclicCubic, spec::SmoothSpec, data, user_knots)
@@ -160,7 +161,7 @@ function _build_raw_marginal(::CyclicCubic, spec::SmoothSpec, data, user_knots)
     return RawMarginalBasis(X, [S], 1, knots, spec)
 end
 
-# P-spline marginal
+# P-spline marginal — same knot construction as s(x, bs=:ps), no constraint
 function _build_raw_marginal(::PSpline, spec::SmoothSpec, data, user_knots)
     var = spec.term_vars[1]
     x = Float64.(Tables.getcolumn(data, var))
@@ -168,15 +169,9 @@ function _build_raw_marginal(::PSpline, spec::SmoothSpec, data, user_knots)
     k = min(spec.k, n)
     m_order = spec.m === nothing ? 2 : spec.m
     spline_order = m_order + 2
+    m2 = spline_order - 1
 
-    n_interior = k - spline_order
-    n_interior >= 1 || throw(ArgumentError(
-        "k=$k too small for P-spline of order $spline_order"))
-
-    lo, hi = minimum(x), maximum(x)
-    dx = (hi - lo) * 0.001
-    interior = user_knots !== nothing ? Float64.(user_knots) : knot_quantiles(x, n_interior)
-    knot_vec = vcat(fill(lo - dx, spline_order), interior, fill(hi + dx, spline_order))
+    knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)
 
     X = _bspline_basis(x, knot_vec, spline_order)
     actual_k = size(X, 2)
@@ -184,61 +179,15 @@ function _build_raw_marginal(::PSpline, spec::SmoothSpec, data, user_knots)
     return RawMarginalBasis(X, [S], m_order, knot_vec, spec)
 end
 
-# TPRS marginal — simplified 1d version
+# TPRS marginal — the real TPRS construction, without constraint absorption.
+# The returned template carries a working TPRSPredictCache so tensor smooths
+# with tp margins can be predicted at new data.
 function _build_raw_marginal(::Union{ThinPlateSpline, ThinPlateShrink},
                              spec::SmoothSpec, data, user_knots)
-    var = spec.term_vars[1]
-    x = Float64.(Tables.getcolumn(data, var))
-    n = length(x)
-    k = min(spec.k, n)
-    m_order = spec.m === nothing ? 2 : spec.m
-    M = m_order  # null space dim for 1d
-
-    xk = if user_knots !== nothing && length(user_knots) >= k
-        Float64.(user_knots[1:k])
-    elseif n > max(k * 3, 200)
-        place_knots(x, k)
-    else
-        x
-    end
-
-    E = _tps_penalty_matrix(xk, m_order)
-    T_null = _tps_null_space_basis(xk, m_order)
-
-    eig = eigen(Symmetric(E))
-    idx = sortperm(eig.values; rev=true)
-    n_basis = k - M
-    Uk = eig.vectors[:, idx[1:n_basis]]
-    Dk = eig.values[idx[1:n_basis]]
-
-    if length(xk) < n
-        E_nk = zeros(n, length(xk))
-        for j in eachindex(xk), i in 1:n
-            E_nk[i, j] = _tps_eta(abs(x[i] - xk[j]), m_order, 1)
-        end
-        X_eigbasis = E_nk * Uk * Diagonal(1.0 ./ Dk)
-        T_data = _tps_null_space_basis(x, m_order)
-    else
-        X_eigbasis = Uk
-        T_data = T_null
-    end
-
-    X_full = hcat(X_eigbasis, T_data)
-    S_diag = zeros(k)
-    S_diag[1:n_basis] .= 1.0 ./ max.(abs.(Dk), eps())
-    S_mat = Matrix(Diagonal(S_diag))
-
-    penalties = Matrix{Float64}[S_mat]
-    if spec.basis isa ThinPlateShrink
-        S_shrink = zeros(k, k)
-        for i in (n_basis + 1):k
-            S_shrink[i, i] = 1.0
-        end
-        push!(penalties, S_shrink)
-    end
-
-    knots_out = length(xk) > 0 ? Float64.(xk) : Float64[]
-    return RawMarginalBasis(X_full, penalties, M, knots_out, spec)
+    sm = _construct_tprs(spec, data, user_knots;
+        shrink = spec.basis isa ThinPlateShrink, absorb_cons = false)
+    return RawMarginalBasis(sm.X, sm.S, sm.null_dim, sm.knots, spec;
+        rank = sm.rank, template = sm)
 end
 
 # Fallback: build via the normal path (uses constraint absorption, less ideal)
@@ -323,6 +272,12 @@ end
 """
     _construct_tensor(spec, data, user_knots; interaction_only)
 
+!!! note
+    mgcv's default `np=TRUE` reparameterization of each te marginal to the
+    function-value parameterization (for smoothing-parameter scale
+    invariance) is NOT applied here; the model space is the same but
+    estimated smoothing parameters are on a different scale than mgcv's.
+
 Core tensor product smooth construction:
 1. Build unconstrained marginal bases
 2. For ti(): absorb a sum-to-zero constraint into each marginal (X̃ⱼ = Xⱼ Zⱼ,
@@ -337,6 +292,13 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
     marginal_specs = _get_marginals(spec)
     marginal_specs !== nothing ||
         throw(ArgumentError("No marginal specs registered. Use te() or ti()."))
+
+    # A single knot vector cannot be unambiguously assigned to multiple
+    # marginals; per-margin knots are not currently supported.
+    user_knots === nothing || throw(ArgumentError(
+        "user-supplied knots are not supported for tensor product smooths " *
+        "(they cannot be assigned unambiguously to the marginals); " *
+        "control the marginals via k= instead"))
 
     d = length(marginal_specs)
 
@@ -524,15 +486,27 @@ Construct a t2() tensor product smooth. The basis matrix is the same as te()
 For d marginals, each with penalties S_j^(m):
 - For each marginal m and each penalty j of that marginal:
   P = I_1 ⊗ ... ⊗ S_j^(m) ⊗ ... ⊗ I_d  (penalty in position m, identity elsewhere)
-- Plus a "full interaction" penalty: S_1^(1) ⊗ S_1^(2) ⊗ ... ⊗ S_1^(d)
+- Plus a "full interaction" penalty: S⁺_1 ⊗ S⁺_2 ⊗ ... ⊗ S⁺_d, where S⁺_m is
+  the positive-semidefinite part of the marginal's (first) penalty.
 
-For 2 marginals each with 1 penalty, this gives 3 penalties:
-  S^(1) ⊗ I_2, I_1 ⊗ S^(2), S^(1) ⊗ S^(2)
+!!! note
+    This is NOT mgcv's t2() construction (Wood, Scheipl & Faraway 2013),
+    which reparameterizes each marginal into orthogonal null/range parts and
+    builds non-overlapping subspace penalties. The construction here uses
+    overlapping penalties (the ⊗-identity terms also penalize the
+    interaction subspace) and therefore selects different smoothing
+    parameters than mgcv's t2 on the same model. It is a valid smoother,
+    but results are not directly comparable with mgcv's t2().
 """
 function _construct_t2(spec::SmoothSpec, data, user_knots)
     marginal_specs = _get_marginals(spec)
     marginal_specs !== nothing ||
         throw(ArgumentError("No marginal specs registered. Use t2()."))
+
+    user_knots === nothing || throw(ArgumentError(
+        "user-supplied knots are not supported for tensor product smooths " *
+        "(they cannot be assigned unambiguously to the marginals); " *
+        "control the marginals via k= instead"))
 
     d = length(marginal_specs)
 
@@ -565,11 +539,16 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
     Ain, bin = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Ain)
     Aeq, beq = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Aeq)
 
-    # Full interaction penalty: kronecker of first penalty from each marginal
+    # Full interaction penalty: kronecker of the PSD part of each marginal's
+    # first penalty. (TPRS marginal penalties can carry tiny negative
+    # eigenvalues from the truncated eigen construction; a Kronecker product
+    # of indefinite factors would not be a valid penalty.)
     P_full = Matrix{Float64}(I, 1, 1)
     for m in 1:d
         Sm = raw_marginals[m].S[1]
-        P_full = kron(P_full, Sm)
+        es = eigen(Symmetric(Sm))
+        S_psd = es.vectors * Diagonal(max.(es.values, 0.0)) * es.vectors'
+        P_full = kron(P_full, Matrix(Symmetric(S_psd)))
     end
     push!(penalties, P_full)
 

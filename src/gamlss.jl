@@ -851,7 +851,9 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
     nsp = length(Sl)
     Ain, bin, Aeq, beq = _global_linear_constraints(smooths_list, p)
     Ain_list, bin_list, Aeq_list, beq_list = _per_param_linear_constraints(smooths_list, param_offsets)
-    Mp = sum(1 + sum(sm.null_dim for sm in smooths; init = 0) for smooths in smooths_list)
+    # Null-space dimension for the REML constant (does not assume an
+    # intercept per parameter — see _penalty_null_dim in mpfit.jl)
+    Mp = _penalty_null_dim(Sl, p)
 
     η_init = initial_eta(family, y)
     β_init = zeros(p)
@@ -891,10 +893,9 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
         reml_val = nll_pen
         iterations = 0
     else
-        log_sp, β_opt, reml_val, iterations = mp_efs_outer(family, y, X_list, Sl, β_init,
+        log_sp, β_opt, reml_val, iterations, conv = mp_efs_outer(family, y, X_list, Sl, β_init,
             log_sp, param_offsets, ctrl; Mp = Mp,
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
-        conv = true
     end
 
     η_fit = _compute_eta(X_list, β_opt, param_offsets, K)

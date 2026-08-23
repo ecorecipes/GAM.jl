@@ -4,10 +4,34 @@
 # Equivalent to mgcv's Sl.setup and gam.reparam.
 
 """
+    _assign_smooth_indices!(smooths, n_parametric)
+
+Assign `first_para`/`last_para` coefficient indices to each smooth, starting
+after the parametric columns. Shared by `setup_gam` and `setup_penalties` so
+the index logic lives in one place.
+"""
+function _assign_smooth_indices!(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int)
+    p_start = n_parametric + 1
+    for sm in smooths
+        k = size(sm.X, 2)
+        sm.first_para = p_start
+        sm.last_para = p_start + k - 1
+        p_start += k
+    end
+    return p_start - 1
+end
+
+"""
     setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int)
 
 Build the [`PenaltySetup`](@ref) for a list of constructed smooth terms.
 Assigns parameter indices and creates block structure.
+
+Honors the per-smooth options from `s()`:
+- `fx=true` — the smooth is left unpenalized (no penalty block is created).
+- `sp=` — the smoothing parameter is fixed at the supplied value for every
+  penalty of the smooth and excluded from optimization.
+- `id=` — shared smoothing parameters are not yet supported and error.
 
 # Arguments
 - `smooths`: constructed smooth terms
@@ -17,12 +41,24 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
     select::Bool = false)
     blocks = PenaltyBlock[]
     sp_all = Float64[]
-    p_start = n_parametric + 1  # smooth params start after parametric
+    fixed_all = Bool[]
+
+    _assign_smooth_indices!(smooths, n_parametric)
 
     for sm in smooths
         k = size(sm.X, 2)
-        sm.first_para = p_start
-        sm.last_para = p_start + k - 1
+        p_start = sm.first_para
+
+        if sm.spec.id !== nothing
+            throw(ArgumentError(
+                "id= (shared smoothing parameters) is not yet supported; " *
+                "remove id from $(sm.spec.label)"))
+        end
+
+        # fx=true: fixed-df smooth — no penalty at all (mgcv's fx=TRUE)
+        if sm.spec.fx
+            continue
+        end
 
         S_list = copy(sm.S)
         block_rank = sm.rank
@@ -55,28 +91,26 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
             end
         end
 
-        block = PenaltyBlock(S_list, rS, block_rank, p_start, p_start + k - 1, true)
+        block = PenaltyBlock(S_list, rS, block_rank, p_start, p_start + k - 1)
         push!(blocks, block)
 
-        # Initial smoothing parameters (log scale) — one per penalty matrix
+        # Initial smoothing parameters (log scale) — one per penalty matrix.
+        # A user-supplied sp= fixes every penalty of the smooth at that value.
+        sp_fixed = sm.spec.sp
         for _ in S_list
-            push!(sp_all, 0.0)  # log(1.0) = 0, will be optimized
-        end
-
-        p_start += k
-    end
-
-    # Total penalty square root for rank detection
-    p_total = p_start - 1
-    E = zeros(p_total, p_total)
-    for block in blocks
-        idx = block.start:block.stop
-        for (i, Si) in enumerate(block.S)
-            E[idx, idx] .+= Si
+            if sp_fixed === nothing
+                push!(sp_all, 0.0)  # log(1.0) = 0, will be optimized
+                push!(fixed_all, false)
+            else
+                sp_fixed > 0 || throw(ArgumentError(
+                    "sp= must be positive for $(sm.spec.label), got $sp_fixed"))
+                push!(sp_all, log(sp_fixed))
+                push!(fixed_all, true)
+            end
         end
     end
 
-    return PenaltySetup(blocks, sp_all, E)
+    return PenaltySetup(blocks, sp_all, BitVector(fixed_all))
 end
 
 """
@@ -180,8 +214,9 @@ function _initial_sp(X::Matrix{Float64}, penalty::PenaltySetup)
         end
     end
 
-    # Store as log(sp)
+    # Store as log(sp); user-fixed smoothing parameters keep their values
     for i in 1:n_sp
+        penalty.fixed[i] && continue
         penalty.sp[i] = log(max(sp_init[i], 1e-15))
     end
 end

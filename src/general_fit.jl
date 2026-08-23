@@ -74,7 +74,6 @@ function general_fit(X::Matrix{Float64}, y::Vector{Float64},
         # Stabilization: handle indefinite Hessian (gam.fit5 strategy)
         # Diagonal preconditioning for numerical stability
         D = diag(Hp)
-        indefinite = false
 
         if any(!isfinite, D)
             @warn "Non-finite Hessian diagonal at iteration $iter"
@@ -86,7 +85,6 @@ function general_fit(X::Matrix{Float64}, y::Vector{Float64},
             ridge = max(abs(minimum(D)), sqrt(eps()) * maximum(D))
             Hp = Hp + Diagonal(fill(ridge, p))
             D = diag(Hp)
-            indefinite = true
         end
 
         # Diagonal preconditioning: D^{-1/2} Hp D^{-1/2}
@@ -320,82 +318,6 @@ function _loglik_eta_derivs(family::Gamma, link::InverseLink,
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# LAML objective for the general method
-# ═══════════════════════════════════════════════════════════════════════
-
-"""
-    laml_score(X, y, penalty, log_sp, family, link, weights, pirls_result, loglik, neg_hessian;
-               method=:REML, gamma=1.0) -> (neg_V, grad)
-
-Compute the Laplace Approximate Marginal Likelihood and its gradient.
-
-For general likelihoods (scale=1):
-  V(ρ) = ℓ(β̂) - ½ β̂'S^λ β̂ + ½ log|S^λ|_+ - ½ log|H| + Mp/2 log(2π)
-
-For Gaussian with unknown scale, uses profiled REML (equivalent to reml_score).
-
-Returns (neg_V, gradient_wrt_log_sp). neg_V is to be MINIMIZED.
-"""
-function laml_score(X::Matrix{Float64}, y::Vector{Float64},
-    penalty::PenaltySetup, log_sp::Vector{Float64},
-    family::UnivariateDistribution, link::GLM.Link,
-    weights::Vector{Float64}, result::PirlsResult,
-    loglik::Float64, neg_hessian::Matrix{Float64};
-    method::Symbol = :REML, gamma::Real = 1.0)
-
-    n, p = size(X)
-    beta = result.coefficients
-    n_sp = length(log_sp)
-
-    S_total = total_penalty(penalty, log_sp, p)
-
-    # Penalized Hessian: H = -∂²ℓ/∂β² + S^λ
-    H = neg_hessian + S_total
-    H_chol = cholesky(Symmetric(H))
-    log_det_H = logdet(H_chol)
-
-    # Log pseudo-determinant of penalty
-    log_det_S = _log_penalty_det(penalty, log_sp)
-
-    # Null space dimension
-    Mp = sum(b.stop - b.start + 1 - b.rank for b in penalty.blocks; init=0)
-
-    # Penalty contribution
-    pen = dot(beta, S_total * beta)
-
-    if _needs_scale_estimate(family)
-        # Profiled REML — equivalent to existing reml_score for Gaussian
-        edf_total = sum(result.edf_vec)
-        scale_est = max(result.pearson / (n - edf_total), 1e-10)
-        Dp = result.deviance + pen
-        ls = _log_saturated_likelihood(family, y, weights, scale_est)
-
-        neg_V = (Dp / (2 * scale_est) - ls) / gamma +
-                0.5 * log_det_H -
-                0.5 * log_det_S -
-                0.5 * Mp * (log(2π * scale_est) - log(gamma))
-
-        grad = _reml_gradient(X, result.working_weights, S_total, H_chol,
-            beta, result.fitted_values, y, penalty, log_sp,
-            result.deviance, scale_est, n, p, method, gamma,
-            family, link, weights)
-
-        return neg_V, grad
-    else
-        # General LAML (Poisson, Binomial, etc.)
-        V = loglik - 0.5 * pen + 0.5 * log_det_S - 0.5 * log_det_H + 0.5 * Mp * log(2π)
-        neg_V = -V
-
-        grad = _reml_gradient(X, result.working_weights, S_total, H_chol,
-            beta, result.fitted_values, y, penalty, log_sp,
-            result.deviance, 1.0, n, p, method, gamma,
-            family, link, weights)
-
-        return neg_V, grad
-    end
-end
-
-# ═══════════════════════════════════════════════════════════════════════
 # Outer iteration using general fit
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -423,15 +345,17 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
     n, p = size(X)
     n_sp = length(penalty.sp)
 
-    if n_sp == 0
-        S_total = zeros(p, p)
+    if n_sp == 0 || all(penalty.fixed)
+        S_total = total_penalty(penalty, penalty.sp, p)
         result, _, _ = general_fit(X, y, S_total, family, link;
             weights=weights, control=control)
-        return penalty.sp, result
+        return penalty.sp, result, true, 0
     end
 
     log_sp = copy(penalty.sp)
     prev_result = nothing
+    outer_converged = false
+    outer_iters = 0
 
     for outer_iter in 1:control.outer_maxit
         S_total = total_penalty(penalty, log_sp, p)
@@ -444,6 +368,7 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
             @warn "Newton inner did not converge at outer iteration $outer_iter"
         end
 
+        outer_iters = outer_iter
         beta = result.coefficients
         w = result.working_weights
 
@@ -455,40 +380,17 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
             scale_est = 1.0
         end
 
-        # EFS update — same approach as PIRLS outer iteration
+        # EFS update — delegated to _efs_sp_update, which handles the
+        # per-penalty log-det derivatives for multi-penalty blocks and
+        # user-fixed smoothing parameters (the inline variant here used
+        # block.rank for every penalty, which oversmooths tensor smooths).
         A = neg_hess .+ S_total
-        A_chol = cholesky(Symmetric(A))
+        A_chol = _protected_cholesky!(A)
         Ainv = inv(A_chol)
 
-        log_sp_new = copy(log_sp)
-        sp_idx = 1
-        max_change = 0.0
-
-        for block in penalty.blocks
-            idx = block.start:block.stop
-            beta_block = beta[idx]
-
-            for Si in block.S
-                λ = exp(log_sp[sp_idx])
-                rank_j = Float64(block.rank)
-
-                bSb = dot(beta_block, Si * beta_block)
-                Ainv_block = Ainv[idx, idx]
-                trVS = tr(Ainv_block * Si)
-
-                a = max(0.0, rank_j / λ - trVS)
-
-                if a > 0 && bSb > eps()
-                    r = scale_est * a / bSb
-                    log_sp_new[sp_idx] = clamp(
-                        log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
-                end
-
-                max_change = max(max_change,
-                    abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
-                sp_idx += 1
-            end
-        end
+        log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
+            scale_est, 1.0)
+        max_change = maximum(abs.(log_sp_new .- log_sp))
 
         if control.trace
             println("General outer $outer_iter: " *
@@ -500,6 +402,7 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
         prev_result = result
 
         if max_change < control.epsilon * 10
+            outer_converged = true
             break
         end
     end
@@ -512,5 +415,5 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
         start=prev_result === nothing ? nothing : prev_result.coefficients,
         control=control)
 
-    return log_sp, final_result
+    return log_sp, final_result, outer_converged, outer_iters
 end

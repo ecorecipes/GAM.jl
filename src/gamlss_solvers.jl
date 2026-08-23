@@ -374,7 +374,8 @@ function _efs_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}}
         rank_j = Float64(count(e -> e > 1e-10 * maximum(abs, eigs), eigs))
 
         bSb = dot(β_k, Sj_local * β_k)
-        trAS = tr(Ainv * Sj_local)
+        # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(p²), not O(p³)
+        trAS = sum(Ainv .* Sj_local)
 
         a = max(0.0, rank_j / λ - trAS)
         if a > 0 && bSb > eps()
@@ -671,8 +672,10 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
             @inbounds for i in 1:n
                 h = derivs[i, hk_col]
                 g = derivs[i, gk_col]
-                # Clamp diagonal Hessian to be positive (working weight)
-                w = clamp(h, 1e-10, 1e10)
+                # Use |h| for non-log-concave points (rather than clamping a
+                # negative curvature to 1e-10, which would produce a near-zero
+                # weight paired with an enormous pseudo-observation)
+                w = clamp(abs(h), 1e-10, 1e10)
                 wk[i] = w
                 # Working response: Newton step in η-space
                 zk[i] = η_list[k][i] - g / w
@@ -806,7 +809,8 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                     hk_col = hess_col(K, k, k)
 
                     @inbounds for i in 1:n
-                        h = clamp(derivs[i, hk_col], 1e-10, 1e10)
+                        # |h| guards non-log-concave points (see RS loop above)
+                        h = clamp(abs(derivs[i, hk_col]), 1e-10, 1e10)
                         g = derivs[i, gk_col]
                         w = h
                         z = η_start[k][i] - g / w
@@ -871,7 +875,8 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                 hk_col = hess_col(K, k, k)
 
                 @inbounds for i in 1:n
-                    h = clamp(derivs[i, hk_col], 1e-10, 1e10)
+                    # |h| guards non-log-concave points (see RS loop above)
+                    h = clamp(abs(derivs[i, hk_col]), 1e-10, 1e10)
                     g = derivs[i, gk_col]
                     wk[i] = h
                     zk[i] = η_list[k][i] - g / h
@@ -999,9 +1004,10 @@ function _gamlss_fit_rscg(method::Symbol, formulas, family::MultiParameterFamily
     edf = diag(Vp * H0)
     nll_val = nll_total(family, y, η_fit)
 
-    # REML / LAML
-    reml_val = dev / 2.0  # approximate REML from deviance
+    # REML = -LAML (the honest Laplace-approximate criterion; previously this
+    # field stored dev/2, which is not a REML score)
     laml = mp_laml(family, y, X_list, β_opt, S, Sl, log_sp, param_offsets; Mp=Mp)
+    reml_val = -laml
 
     idpars = Vector{Int}(undef, p)
     for k in 1:K

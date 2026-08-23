@@ -87,6 +87,10 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
                     continue
                 end
 
+                # Note the asymmetry when Deta2_i < 0: the weight is floored at
+                # eps() (Fisher-like) while the Newton step in z keeps the raw
+                # (clamped) ratio — a negative-curvature observation pushes the
+                # working response but carries ~zero weight.
                 denom = abs(Deta2_i) > eps() ? Deta2_i : copysign(eps(), Deta2_i == 0.0 ? 1.0 : Deta2_i)
                 w[i] = clamp(0.5 * Deta2_i, eps(), 1e10)
                 z[i] = eta[i] - offset[i] - clamp(Deta_i / denom, -40.0, 40.0)
@@ -172,7 +176,9 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
         mu .= mu_new
         feasible_old = _is_feasible(beta, Ain, bin, Aeq, beq)
 
-        # Estimate extra parameter periodically (every 3 iterations after burn-in)
+        # Estimate extra parameter periodically (every 3 iterations after burn-in).
+        # Scale uses n − p (not n − edf: the EDF is only available after the
+        # final factorization), which is conservative since p ≥ edf.
         if iter >= 3 && iter % 3 == 0 && _has_extra_param(family)
             scale = _estimates_scale(family) ? max(dev_new / (n - p), 1e-10) : 1.0
             estimate_theta!(family, y, mu, weights, scale)
@@ -231,7 +237,6 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
         end
         cholesky(Symmetric(A_reg))
     end
-    XtWX = similar(A)
     @inbounds for j in 1:p, k in 1:p
         XtWX[j, k] = A[j, k] - S_total[j, k]
     end

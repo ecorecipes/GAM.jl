@@ -22,10 +22,11 @@ estimated smooth values, and standard errors for one or more smooth terms.
 
 # Fields
 - `smooth`: smooth label per row (e.g. `"s(x)"`)
-- `covariates`: `Dict{Symbol, Vector{Float64}}` of covariate grid values
+- `covariates`: `Dict{Symbol, Vector{Float64}}` of covariate grid values.
+  Each vector has one entry per table ROW (aligned with `estimate`); rows
+  belonging to smooths that do not use a given covariate hold `NaN`.
 - `estimate`: estimated smooth effect f̂(x)
 - `se`: pointwise standard error of the estimate
-- `by_values`: optional by-variable values
 """
 struct SmoothEstimates
     smooth::Vector{String}
@@ -134,7 +135,8 @@ Evaluate estimated smooth terms on a grid of covariate values.
 - `n`: number of grid points per covariate
 - `data`: custom evaluation data (NamedTuple or Tables-compatible); if nothing,
   an evenly-spaced grid over the covariate range is generated
-- `unconditional`: if true, use unconditional covariance (currently same as Vp)
+- `unconditional`: NOT supported — no smoothing-parameter-corrected covariance
+  (mgcv's `Vc`) is computed by this package; passing `true` warns and uses `Vp`
 - `overall_uncertainty`: include uncertainty in the intercept
 
 # Returns
@@ -148,13 +150,15 @@ function smooth_estimates(m::GamModel;
     overall_uncertainty::Bool = true,
 )
     smooth_indices = _resolve_smooth_select(m, select)
+    _warn_unconditional(unconditional)
 
     all_labels = String[]
     all_estimates = Float64[]
     all_se = Float64[]
-    all_covariates = Dict{Symbol, Vector{Float64}}()
+    # per-smooth covariate values, assembled into row-aligned vectors below
+    smooth_cov_vals = Vector{Tuple{Vector{Symbol}, Dict{Symbol, Vector{Float64}}, Int}}()
 
-    Vcov = unconditional ? m.Vp : m.Vp
+    Vcov = m.Vp
 
     for si in smooth_indices
         sm = m.smooths[si]
@@ -190,17 +194,35 @@ function smooth_estimates(m::GamModel;
         append!(all_estimates, f_hat)
         append!(all_se, se_vec)
 
+        cov_dict = Dict{Symbol, Vector{Float64}}()
         for v in vars
-            vals = Float64.(collect(Tables.getcolumn(eval_data, v)))
-            if haskey(all_covariates, v)
-                append!(all_covariates[v], vals)
-            else
-                all_covariates[v] = copy(vals)
-            end
+            cov_dict[v] = Float64.(collect(Tables.getcolumn(eval_data, v)))
         end
+        push!(smooth_cov_vals, (collect(vars), cov_dict, n_pts))
+    end
+
+    # Assemble ROW-ALIGNED covariate vectors: one entry per table row, NaN
+    # for rows whose smooth does not use that covariate (so masking by the
+    # `smooth` column always lines up)
+    n_total = length(all_estimates)
+    all_covariates = Dict{Symbol, Vector{Float64}}()
+    row0 = 0
+    for (vars, cov_dict, n_pts) in smooth_cov_vals
+        for v in vars
+            haskey(all_covariates, v) || (all_covariates[v] = fill(NaN, n_total))
+            all_covariates[v][(row0 + 1):(row0 + n_pts)] .= cov_dict[v]
+        end
+        row0 += n_pts
     end
 
     return SmoothEstimates(all_labels, all_covariates, all_estimates, all_se)
+end
+
+function _warn_unconditional(unconditional::Bool)
+    if unconditional
+        @warn "unconditional=true is not supported: GAM.jl does not compute a " *
+              "smoothing-parameter-corrected covariance (mgcv's Vc); using Vp" maxlog = 1
+    end
 end
 
 # ============================================================================
@@ -217,7 +239,15 @@ Returns a Dict mapping smooth labels to (x_values, partial_resid_values).
 """
 function partial_residuals(m::GamModel; select = nothing)
     smooth_indices = _resolve_smooth_select(m, select)
-    resid = m.y .- m.fitted_values  # response residuals
+    # WORKING residuals (y - μ)·dη/dμ — on the link scale, where the smooth
+    # term contributions live (matching mgcv/gratia)
+    n = length(m.y)
+    resid = Vector{Float64}(undef, n)
+    @inbounds for i in 1:n
+        dm = GLM.mueta(m.link, m.linear_predictor[i])
+        dm = abs(dm) < eps() ? eps() : dm
+        resid[i] = (m.y[i] - m.fitted_values[i]) / dm
+    end
 
     result = Dict{String, Tuple{Vector{Float64}, Vector{Float64}}}()
     for si in smooth_indices
@@ -312,6 +342,9 @@ function derivatives(m::GamModel;
     all_x = Float64[]
     all_deriv = Float64[]
     all_se = Float64[]
+    # (finite-difference design matrix, coefficient index range) per smooth,
+    # kept for simulating simultaneous intervals
+    sim_blocks = Tuple{Matrix{Float64}, UnitRange{Int}}[]
 
     for si in smooth_indices
         sm = m.smooths[si]
@@ -324,23 +357,31 @@ function derivatives(m::GamModel;
 
         grid = _make_smooth_grid(m, sm, n)
         x_vals = Float64.(collect(Tables.getcolumn(grid, var)))
+        # Shift the boundary points inward so central/second differences never
+        # step outside the data range (basis extrapolation) — as gratia does
+        if length(x_vals) >= 2
+            x_vals[1] += eps
+            x_vals[end] -= eps
+            grid = merge(grid, NamedTuple{(var,)}((x_vals,)))
+        end
 
         if order == 1
-            d_hat, d_se = _fd_derivative_1(sm, grid, var, x_vals, beta_s, Vp_s, eps, type)
+            d_hat, d_se, dX = _fd_derivative_1(sm, grid, var, beta_s, Vp_s, eps, type)
         else
-            d_hat, d_se = _fd_derivative_2(sm, grid, var, x_vals, beta_s, Vp_s, eps, type)
+            d_hat, d_se, dX = _fd_derivative_2(sm, grid, var, beta_s, Vp_s, eps, type)
         end
 
         append!(all_labels, fill(spec.label, length(d_hat)))
         append!(all_x, x_vals)
         append!(all_deriv, d_hat)
         append!(all_se, d_se)
+        push!(sim_blocks, (dX, sm_idx))
     end
 
     # Confidence intervals
     if interval == :simultaneous && !isempty(all_deriv)
         rng = seed === nothing ? default_rng() : MersenneTwister(seed)
-        crit = _simultaneous_critical(all_se, Vcov, m, smooth_indices, n_sim, level, rng)
+        crit = _simultaneous_critical(sim_blocks, all_se, Vcov, n_sim, level, rng)
     else
         crit = dquantile(DNormal(), (1 + level) / 2)
     end
@@ -362,6 +403,9 @@ end
 Draw `n` samples from the posterior distribution of model coefficients
 β̃ ~ MVN(β̂, Vp).
 
+`unconditional=true` is NOT supported (no smoothing-parameter-corrected
+covariance is available); it warns and uses `Vp`.
+
 Returns an `n × p` matrix where each row is a posterior draw.
 """
 function posterior_samples(m::GamModel;
@@ -370,7 +414,8 @@ function posterior_samples(m::GamModel;
     unconditional::Bool = false,
 )
     rng = seed === nothing ? default_rng() : MersenneTwister(seed)
-    Vcov = unconditional ? m.Vp : m.Vp
+    _warn_unconditional(unconditional)
+    Vcov = m.Vp
     beta_hat = m.coefficients
     p = length(beta_hat)
 
@@ -502,10 +547,14 @@ Compute model diagnostic data for standard residual checking plots:
 QQ plot, residuals vs linear predictor, histogram of residuals,
 and observed vs fitted.
 
+`type` selects the residuals used for the QQ panel: `:deviance` (default),
+`:pearson`, or `:response`.
+
 Returns an [`AppraiseData`](@ref) struct.
 """
 function appraise(m::GamModel; type::Symbol = :deviance, seed = nothing)
-    rng = seed === nothing ? default_rng() : MersenneTwister(seed)
+    type in (:deviance, :pearson, :response) || throw(ArgumentError(
+        "type must be :deviance, :pearson, or :response, got :$type"))
 
     dev_resid = residuals(m; type = :deviance)
     prs_resid = residuals(m; type = :pearson)
@@ -513,11 +562,15 @@ function appraise(m::GamModel; type::Symbol = :deviance, seed = nothing)
     y = m.y
     mu = m.fitted_values
 
-    # QQ plot data — standardized deviance residuals vs normal quantiles
-    # Divide by sqrt(scale) so that well-specified models show points on y=x
-    n = length(dev_resid)
+    # QQ plot data — standardized residuals of the requested type vs normal
+    # quantiles. Divide by sqrt(scale) so that well-specified models show
+    # points on y=x
+    qq_resid = type == :deviance ? dev_resid :
+               type == :pearson ? prs_resid :
+               residuals(m; type = :response)
+    n = length(qq_resid)
     sc = max(m.scale, eps())
-    sorted = sort(dev_resid ./ sqrt(sc))
+    sorted = sort(qq_resid ./ sqrt(sc))
     theoretical = [dquantile(DNormal(), (i - 0.5) / n) for i in 1:n]
 
     return AppraiseData(dev_resid, prs_resid, eta, y, mu, theoretical, sorted)
@@ -526,11 +579,16 @@ end
 """
     rootogram(m::GamModel; max_count=nothing)
 
-Compute rootogram data for count models (Poisson, Negative Binomial).
+Compute rootogram data for count models (Poisson, quasi-Poisson,
+Negative Binomial). Other families throw an `ArgumentError`.
 
 Returns a [`RootogramData`](@ref) struct.
 """
 function rootogram(m::GamModel; max_count = nothing)
+    (m.family isa Poisson || m.family isa QuasiPoissonFamily ||
+     m.family isa NegBinFamily) || throw(ArgumentError(
+        "rootogram supports count families (Poisson, quasi-Poisson, NegBin); " *
+        "got $(typeof(m.family))"))
     y_int = round.(Int, m.y)
     mu = m.fitted_values
 
@@ -721,12 +779,9 @@ function _get_covariate_from_model(m::GamModel, sm::ConstructedSmooth, varname::
             return Float64.(collect(Tables.getcolumn(ct, varname)))
         end
     end
-    # Fallback: use column of X with highest variance as proxy
-    sm_idx = sm.first_para:sm.last_para
-    X_s = m.X[:, sm_idx]
-    col_vars = [Statistics.var(c) for c in eachcol(X_s)]
-    _, col = findmax(col_vars)
-    return X_s[:, col]
+    throw(ArgumentError(
+        "Covariate :$varname for smooth $(sm.spec.label) is not available in " *
+        "the model's stored data — supply the evaluation data explicitly"))
 end
 
 """Extract original data for a smooth's covariates."""
@@ -745,101 +800,78 @@ function _build_prediction_matrix(m::GamModel, newdata)
     return _gam_prediction_matrix(m, newdata)
 end
 
-"""First-order finite difference derivative."""
-function _fd_derivative_1(sm, grid, var, x_vals, beta_s, Vp_s, eps, type)
-    n = length(x_vals)
-    d_hat = Vector{Float64}(undef, n)
-    d_se = Vector{Float64}(undef, n)
-
-    for i in 1:n
-        if type == :forward
-            g_plus = _shifted_grid(grid, var, i, eps)
-            X_plus = predict_matrix(sm, g_plus)
-            X_base = predict_matrix(sm, _point_grid(grid, i))
-            dX = (X_plus .- X_base) ./ eps
-        elseif type == :backward
-            g_minus = _shifted_grid(grid, var, i, -eps)
-            X_base = predict_matrix(sm, _point_grid(grid, i))
-            X_minus = predict_matrix(sm, g_minus)
-            dX = (X_base .- X_minus) ./ eps
-        else  # central
-            g_plus = _shifted_grid(grid, var, i, eps)
-            g_minus = _shifted_grid(grid, var, i, -eps)
-            X_plus = predict_matrix(sm, g_plus)
-            X_minus = predict_matrix(sm, g_minus)
-            dX = (X_plus .- X_minus) ./ (2 * eps)
-        end
-
-        d_hat[i] = (dX * beta_s)[1]
-        d_se[i] = sqrt(max((dX * Vp_s * dX')[1], 0.0))
+"""First-order finite difference derivative (whole grid in one basis call)."""
+function _fd_derivative_1(sm, grid, var, beta_s, Vp_s, eps, type)
+    if type == :forward
+        X_plus = predict_matrix(sm, _shifted_grid_all(grid, var, eps))
+        X_base = predict_matrix(sm, grid)
+        dX = (X_plus .- X_base) ./ eps
+    elseif type == :backward
+        X_base = predict_matrix(sm, grid)
+        X_minus = predict_matrix(sm, _shifted_grid_all(grid, var, -eps))
+        dX = (X_base .- X_minus) ./ eps
+    else  # central
+        X_plus = predict_matrix(sm, _shifted_grid_all(grid, var, eps))
+        X_minus = predict_matrix(sm, _shifted_grid_all(grid, var, -eps))
+        dX = (X_plus .- X_minus) ./ (2 * eps)
     end
-    return d_hat, d_se
+
+    d_hat = dX * beta_s
+    d_se = sqrt.(max.(vec(sum((dX * Vp_s) .* dX; dims = 2)), 0.0))
+    return d_hat, d_se, dX
 end
 
-"""Second-order finite difference derivative."""
-function _fd_derivative_2(sm, grid, var, x_vals, beta_s, Vp_s, eps, type)
-    n = length(x_vals)
-    d_hat = Vector{Float64}(undef, n)
-    d_se = Vector{Float64}(undef, n)
+"""Second-order finite difference derivative (whole grid in one basis call)."""
+function _fd_derivative_2(sm, grid, var, beta_s, Vp_s, eps, type)
+    X_plus = predict_matrix(sm, _shifted_grid_all(grid, var, eps))
+    X_minus = predict_matrix(sm, _shifted_grid_all(grid, var, -eps))
+    X_base = predict_matrix(sm, grid)
+    dX = (X_plus .- 2 .* X_base .+ X_minus) ./ (eps^2)
 
-    for i in 1:n
-        g_plus = _shifted_grid(grid, var, i, eps)
-        g_minus = _shifted_grid(grid, var, i, -eps)
-        g_base = _point_grid(grid, i)
-        X_plus = predict_matrix(sm, g_plus)
-        X_minus = predict_matrix(sm, g_minus)
-        X_base = predict_matrix(sm, g_base)
-        dX = (X_plus .- 2 .* X_base .+ X_minus) ./ (eps^2)
-
-        d_hat[i] = (dX * beta_s)[1]
-        d_se[i] = sqrt(max((dX * Vp_s * dX')[1], 0.0))
-    end
-    return d_hat, d_se
+    d_hat = dX * beta_s
+    d_se = sqrt.(max.(vec(sum((dX * Vp_s) .* dX; dims = 2)), 0.0))
+    return d_hat, d_se, dX
 end
 
-"""Create a single-row grid shifted in one variable."""
-function _shifted_grid(grid, var, idx, shift)
-    result = Dict{Symbol, Vector{Float64}}()
-    for (k, v) in pairs(grid)
-        if k == var
-            result[k] = [v[idx] + shift]
-        else
-            result[k] = [v[idx]]
-        end
-    end
+"""Copy of `grid` with the column `var` shifted by `shift` (all rows at once)."""
+function _shifted_grid_all(grid, var, shift)
     keys_tuple = Tuple(keys(grid))
-    return NamedTuple{keys_tuple}(Tuple(result[k] for k in keys_tuple))
+    return NamedTuple{keys_tuple}(Tuple(
+        k == var ? grid[k] .+ shift : grid[k] for k in keys_tuple))
 end
 
-"""Create a single-row grid at the i-th point."""
-function _point_grid(grid, idx)
-    result = Dict{Symbol, Vector{Float64}}()
-    for (k, v) in pairs(grid)
-        result[k] = [v[idx]]
-    end
-    keys_tuple = Tuple(keys(grid))
-    return NamedTuple{keys_tuple}(Tuple(result[k] for k in keys_tuple))
-end
-
-"""Critical value for simultaneous confidence intervals via MVN simulation."""
-function _simultaneous_critical(se_vec, Vcov, m, smooth_indices, n_sim, level, rng)
-    # Simulate the max |derivative / se| distribution
-    # For simplicity, use the standard normal approximation with Bonferroni-like correction
-    n_tests = length(se_vec)
-    p = length(m.coefficients)
-    Vp_sym = Symmetric(Vcov)
+"""
+Critical value for simultaneous confidence intervals via MVN simulation
+(Ruppert–Wand–Carroll): draw b ~ MVN(0, Vp), form the derivative draws
+through the stored finite-difference matrices, and take the `level`
+quantile of maxᵢ |dᵢ| / seᵢ over the whole grid.
+"""
+function _simultaneous_critical(sim_blocks, se_all, Vcov, n_sim, level, rng)
+    p = size(Vcov, 1)
+    Vp_sym = Symmetric(Matrix(Vcov))
     eig = eigen(Vp_sym)
     eig_vals = max.(eig.values, 0.0)
     L = eig.vectors * Diagonal(sqrt.(eig_vals))
 
-    # We need to transform coefficient draws to derivative draws.
-    # Since this is complex (need the finite difference matrices), we use a
-    # conservative quantile correction based on the number of simultaneous tests.
-    # This is equivalent to the Šidák correction: α_adj = 1 - (1-α)^(1/n_tests)
-    alpha = 1 - level
-    alpha_adj = 1 - (1 - alpha)^(1 / n_tests)
-    crit = dquantile(DNormal(), 1 - alpha_adj / 2)
-    return crit
+    max_t = Vector{Float64}(undef, n_sim)
+    z = Vector{Float64}(undef, p)
+    b = Vector{Float64}(undef, p)
+    for s in 1:n_sim
+        randn!(rng, z)
+        mul!(b, L, z)
+        t = 0.0
+        pos = 0
+        for (dX, idxr) in sim_blocks
+            db = dX * view(b, idxr)
+            @inbounds for i in eachindex(db)
+                pos += 1
+                sei = max(se_all[pos], eps())
+                t = max(t, abs(db[i]) / sei)
+            end
+        end
+        max_t[s] = t
+    end
+    return quantile(max_t, level)
 end
 
 """Generate a random observation from the model family."""

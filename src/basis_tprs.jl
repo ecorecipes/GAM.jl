@@ -144,41 +144,66 @@ function _tps_multi_penalty_matrix(X_data::Matrix{Float64}, m::Int)
 end
 
 """
+    _tps_monomial_exponents(d::Int, m::Int) -> Vector{Vector{Int}}
+
+All monomial exponent vectors of total degree < m in d variables, in
+graded order. Their count is binomial(m + d - 1, d) — the TPS null-space
+dimension.
+"""
+function _tps_monomial_exponents(d::Int, m::Int)
+    exps = Vector{Vector{Int}}()
+    for deg in 0:(m - 1)
+        # Enumerate all d-vectors of nonnegative integers summing to deg
+        stack = [(Int[], deg)]
+        while !isempty(stack)
+            prefix, rem = pop!(stack)
+            if length(prefix) == d - 1
+                push!(exps, vcat(prefix, rem))
+            else
+                for e in rem:-1:0
+                    push!(stack, (vcat(prefix, e), rem - e))
+                end
+            end
+        end
+    end
+    return exps
+end
+
+"""
     _tps_multi_null_basis(X_data::Matrix{Float64}, m::Int) -> Matrix{Float64}
 
-Polynomial null space for d-dimensional TPS.
-Dimension M = binomial(m + d - 1, d).
+Polynomial null space for d-dimensional TPS: ALL monomials of total
+degree < m. Dimension M = binomial(m + d - 1, d).
 """
 function _tps_multi_null_basis(X_data::Matrix{Float64}, m::Int)
     n, d = size(X_data)
-    # For m=2, d=2: M = 3 (1, x1, x2)
-    # General: all monomials of degree ≤ m-1
+    exps = _tps_monomial_exponents(d, m)
     M = binomial(m + d - 1, d)
+    length(exps) == M || error("TPS null basis enumeration bug: got " *
+        "$(length(exps)) monomials, expected $M")
     T = ones(n, M)
-    col = 1
-    # degree 0: constant (already 1)
-    col += 1
-    if m >= 2
-        # degree 1: linear terms
+    for (col, e) in enumerate(exps)
         for j in 1:d
-            if col > M
-                break
+            if e[j] > 0
+                T[:, col] .*= X_data[:, j] .^ e[j]
             end
-            T[:, col] .= X_data[:, j]
-            col += 1
-        end
-    end
-    if m >= 3
-        # degree 2: quadratic terms (for m ≥ 3)
-        for j in 1:d, j2 in j:d
-            if col > M
-                break
-            end
-            T[:, col] .= X_data[:, j] .* X_data[:, j2]
-            col += 1
         end
     end
     return T
+end
+
+"""
+    _tps_default_m(d::Int) -> Int
+
+mgcv's default TPS penalty order: the smallest m with 2m > d + 1
+(m=2 for d ≤ 2, m=3 for d = 3, 4, ...).
+"""
+function _tps_default_m(d::Int)
+    m = 2
+    while 2m <= d + 1
+        m += 1
+    end
+    return m
 end
 
 function _tps_cross_matrix(X_new::Matrix{Float64}, centers::Matrix{Float64}, m::Int)
@@ -228,46 +253,66 @@ Steps (matching R exactly):
 5. Build S = Z'·diag(v)·Z (penalty has eigenvalues on diagonal before Z rotation)
 6. Column-wise RMS rescaling of X, S (R's lines 493-498)
 """
-function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
+function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
+    absorb_cons::Bool = true)
     vars = spec.term_vars
     d = length(vars)
-    m_order = spec.m === nothing ? 2 : spec.m
+    # mgcv default-order rule: smallest m with 2m > d + 1. A user-supplied m
+    # must satisfy 2m > d for the thin-plate kernel to exist.
+    m_order = spec.m === nothing ? _tps_default_m(d) : spec.m
+    2 * m_order > d || throw(ArgumentError(
+        "TPS penalty order m=$m_order invalid for d=$d covariates: " *
+        "need 2m > d (mgcv default is m=$(_tps_default_m(d)))"))
     k = spec.k
 
-    # Extract data
+    # Extract data and choose knots (subsampling data for large n, in any
+    # dimension, to avoid an O(n³) eigendecomposition)
     if d == 1
         x = Float64.(Tables.getcolumn(data, vars[1]))
-        n = length(x)
-        k = min(k, n)
-
-        # Use knots for basis if provided, otherwise use data
-        if knots !== nothing && length(knots) >= k
-            xk = Float64.(knots[1:k])
-        elseif n > max(k * 3, 200)
-            xk = place_knots(x, k)
-        else
-            xk = x
-        end
-
-        E = _tps_penalty_matrix(xk, m_order)
-        T_null = _tps_null_space_basis(xk, m_order)
-        M = size(T_null, 2)
+        Xd = reshape(x, :, 1)
     else
-        X_data = hcat([Float64.(Tables.getcolumn(data, v)) for v in vars]...)
-        n = size(X_data, 1)
-        k = min(k, n)
-
-        E = _tps_multi_penalty_matrix(X_data, m_order)
-        T_null = _tps_multi_null_basis(X_data, m_order)
-        M = size(T_null, 2)
-        xk = Float64[]
+        Xd = hcat([Float64.(Tables.getcolumn(data, v)) for v in vars]...)
     end
+    n = size(Xd, 1)
+    k = min(k, n)
+
+    if knots !== nothing
+        d == 1 || throw(ArgumentError(
+            "user-supplied knots are not supported for multi-dimensional " *
+            "TPS smooths"))
+        length(knots) >= k || throw(ArgumentError(
+            "user-supplied knots for a TPS smooth must have length ≥ k=$k, " *
+            "got $(length(knots))"))
+        XK = reshape(Float64.(knots[1:k]), :, 1)
+    elseif d == 1 && n > max(k * 3, 200)
+        XK = reshape(place_knots(vec(Xd), k), :, 1)
+    elseif d > 1 && n > max(k * 3, 200)
+        # Deterministic subsample of unique rows (evenly spaced in the
+        # lexicographic ordering) — caps the eigenproblem like mgcv's
+        # max.knots default
+        rows = unique(collect(eachrow(Xd)))
+        nk_target = min(length(rows), max(4 * k, 200))
+        sel = round.(Int, range(1, length(rows); length = nk_target))
+        XK = Matrix(reduce(hcat, rows[unique(sel)])')
+    else
+        XK = Xd
+    end
+    knots_are_data = XK === Xd || (size(XK) == size(Xd) && XK == Xd)
+
+    if d == 1
+        E = _tps_penalty_matrix(vec(XK), m_order)
+        T_null = _tps_null_space_basis(vec(XK), m_order)
+    else
+        E = _tps_multi_penalty_matrix(Matrix(XK), m_order)
+        T_null = _tps_multi_null_basis(Matrix(XK), m_order)
+    end
+    M = size(T_null, 2)
 
     k >= M + 1 || throw(ArgumentError(
         "basis dimension k=$k too small for penalty order m=$m_order " *
         "(need k ≥ $(M + 1) = null_dim + 1)"))
 
-    nk = d == 1 ? length(xk) : n
+    nk = size(XK, 1)
 
     # --- Step 2: Eigendecomposition of E ---
     # R uses Lanczos for top k eigenpairs sorted by ABSOLUTE value (tprs.c line 408).
@@ -280,8 +325,7 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
 
     # --- Step 3: Constraint handling via T'U null space ---
     # Form TU = T'U (M × k)
-    T_mat = d == 1 ? T_null : T_null
-    TU = T_mat' * U   # M × k
+    TU = T_null' * U   # M × k
 
     # QR factorize TU' to find null space Z of TU
     # TU·Z = 0 means Z spans the null space of TU (k × (k-M))
@@ -297,23 +341,14 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
     # --- Step 4: Build design matrix ---
     # R: X = U·diag(v)·Z ∪ T  (eigenvalues absorbed into eigenvector columns)
     # For data-as-knots case: X_eig = U·diag(v)·Z directly
-    # For knot-based case: need Nystrom extension
+    # For knot-based case: Nystrom extension X_eig = E_nk·U·Z (the Nystrom
+    # factor diag(1/v) cancels against the absorbed diag(v))
 
-    if d == 1 && length(xk) < n
-        # Knot-based: Nystrom extension to data points
-        # In R's tprs_setup, this is the knot-based path (lines 451-480)
-        # X_data = UZ' * tps_g(x_i) evaluated via UZ
-        # For now, use the simpler approach: map through E_new * U
-        E_nk = zeros(n, nk)
-        for j in 1:nk, i in 1:n
-            E_nk[i, j] = _tps_eta(abs(x[i] - xk[j]), m_order, 1)
-        end
-        # U_data = E_nk * U * diag(1./v) gives data-point eigenvectors (Nystrom)
-        # Then X_eig = U_data * diag(v) * Z = E_nk * U * Z
-        X_eig = E_nk * U * Diagonal(v) * Z  # Wait: Nystrom gives E_nk * U * diag(1/v),
-        # but we want to absorb v into X, so X = E_nk * U * diag(1/v) * diag(v) * Z = E_nk * U * Z
+    if !knots_are_data
+        E_nk = _tps_cross_matrix(Xd, Matrix(XK), m_order)
         X_eig = E_nk * (U * Z)
-        T_data = _tps_null_space_basis(x, m_order)
+        T_data = d == 1 ? _tps_null_space_basis(vec(Xd), m_order) :
+                          _tps_multi_null_basis(Xd, m_order)
     else
         # Data-as-knots: X_eig = U·diag(v)·Z
         X_eig = U * Diagonal(v) * Z   # nk × (k-M)
@@ -321,7 +356,7 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
     end
 
     # Full basis: [constrained eigenbasis | polynomial null space]
-    X_full = hcat(X_eig, T_data)  # n × k (or nk × k if data=knots and n=nk)
+    X_full = hcat(X_eig, T_data)  # n × k
 
     # --- Step 5: Build penalty matrix ---
     # S = Z'·diag(v)·Z with null space zeroed
@@ -329,17 +364,6 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
     S_full = zeros(k, k)
     S_full[1:n_basis, 1:n_basis] .= S_eigpart
     # Null space block (last M cols/rows) stays zero
-
-    penalties = Matrix{Float64}[S_full]
-
-    # For shrinkage (ts): add penalty on null space
-    if shrink
-        S_shrink = zeros(k, k)
-        for i in (n_basis + 1):k
-            S_shrink[i, i] = 1.0
-        end
-        push!(penalties, S_shrink)
-    end
 
     # --- Step 6: Column-wise RMS rescaling (R tprs.c lines 493-498) ---
     # Each column of X is rescaled to have RMS = 1.
@@ -355,45 +379,73 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false)
             X_full[:, j] ./= col_scales[j]
         end
     end
-    for si in eachindex(penalties)
-        for j in 1:k, i in 1:k
-            denom = col_scales[i] * col_scales[j]
-            if denom > 0
-                penalties[si][i, j] /= denom
+    for j in 1:k, i in 1:k
+        denom = col_scales[i] * col_scales[j]
+        if denom > 0
+            S_full[i, j] /= denom
+        end
+    end
+
+    # Shrinkage (ts): as in mgcv, modify the SINGLE penalty by raising the
+    # null-space eigenvalues (one smoothing parameter, full-rank penalty),
+    # rather than appending a second null-space penalty.
+    null_dim = M
+    pen_rank = n_basis
+    if shrink
+        S_full = _shrink_penalty(S_full)
+        null_dim = 0
+        pen_rank = k
+    end
+    penalties = Matrix{Float64}[S_full]
+
+    centers = Matrix(XK)
+    predict_cache = TPRSPredictCache(centers, U * Z, copy(col_scales))
+    knots_out = d == 1 ? vec(copy(XK)) : Float64[]
+
+    if !absorb_cons
+        # Raw (unconstrained) smooth for tensor-product marginals etc.
+        # The predict path applies no constraint (constraint === nothing),
+        # so predict_matrix reproduces this X exactly.
+        return ConstructedSmooth(
+            spec,
+            X_full,
+            penalties,
+            knots_out,
+            null_dim,
+            pen_rank,
+            nothing,
+            nothing,
+            0, 0,
+            nothing, nothing, nothing,
+            Int[],
+            predict_cache = predict_cache,
+        )
+    end
+
+    # --- Step 7: Penalty rescaling (R's smoothCon, smooth.r lines 3879-3886),
+    # applied BEFORE constraint absorption using the pre-absorption X and S,
+    # consistent with absorb_constraints! and mgcv ---
+    maXX = opnorm(X_full, Inf)^2
+    if maXX > 0
+        for i in eachindex(penalties)
+            nS = opnorm(penalties[i], 1)  # R's default norm() for matrices = "O" = 1-norm
+            if nS > 0
+                penalties[i] = penalties[i] * (maXX / nS)
             end
         end
     end
 
-    # Sum-to-zero constraint (C = column means of X, matching R's smoothCon)
-    C = sum(X_full; dims = 1)  # 1 × k (R uses sum, not mean, for C)
+    # Sum-to-zero constraint (C = column sums of X, matching R's smoothCon)
+    C = sum(X_full; dims = 1)  # 1 × k
     C_mat = Matrix(C)
 
-    # --- Step 7: Absorb sum-to-zero constraint (R's absorb.cons in smooth.r) ---
+    # --- Step 8: Absorb sum-to-zero constraint (R's absorb.cons in smooth.r) ---
     # R uses: qrc = qr(t(C)), Z = qr.Q(qrc, complete=TRUE)[, -(1:nrow(C))]
     # This gives a specific rotation that we must match exactly.
     qr_C = qr(C_mat')  # QR of C' (k × 1 matrix)
     Z_cons = (qr_C.Q * Matrix(I, k, k))[:, 2:k]  # k × (k-1), skip first column
     X_cons = X_full * Z_cons
     S_cons = [Z_cons' * Si * Z_cons for Si in penalties]
-
-    # --- Step 8: Penalty rescaling (R's smoothCon, smooth.r lines 3879-3886) ---
-    # R: for each S, rescale by norm(X,"I")^2 / norm(S,"O")
-    maXX = opnorm(X_cons, Inf)^2
-    if maXX > 0
-        for i in eachindex(S_cons)
-            nS = opnorm(S_cons[i], 1)  # R's default norm() for matrices = "O" = 1-norm
-            if nS > 0
-                S_cons[i] = S_cons[i] * (maXX / nS)
-            end
-        end
-    end
-
-    null_dim = M
-    pen_rank = n_basis
-
-    centers = d == 1 ? reshape(copy(xk), :, 1) : copy(X_data)
-    predict_cache = TPRSPredictCache(centers, U * Z, copy(col_scales))
-    knots_out = d == 1 ? (length(xk) > 0 ? xk : Float64[]) : Float64[]
 
     return ConstructedSmooth(
         spec,
@@ -416,7 +468,7 @@ function _predict_matrix(::Union{ThinPlateSpline, ThinPlateShrink},
     spec = smooth.spec
     vars = spec.term_vars
     d = length(vars)
-    m_order = spec.m === nothing ? 2 : spec.m
+    m_order = spec.m === nothing ? _tps_default_m(d) : spec.m
 
     cache = smooth.predict_cache
     cache isa TPRSPredictCache || throw(ArgumentError("Missing fitted TPRS prediction cache"))

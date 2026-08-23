@@ -59,13 +59,17 @@ the grouping factor levels, and the penalty/precision structure.
 
 # Fields
 - `spec::RandomEffectSpec`: original specification
-- `Z::Matrix{Float64}`: random-effect design matrix (n × q), possibly constrained
+- `Z::Matrix{Float64}`: random-effect design matrix (n × q)
 - `levels::Vector`: unique levels of the grouping factor
 - `n_levels::Int`: number of grouping levels
 - `n_terms::Int`: number of random effect terms per group (1 for intercept, more for slopes)
-- `penalty::Matrix{Float64}`: precision structure (identity for independent, block for correlated)
-- `block_dim::Int`: dimension of random effect vector (may be < n_levels*n_terms after constraints)
-- `constraint_basis::Union{Matrix{Float64}, Nothing}`: basis for back-transforming to per-level effects
+- `penalty::Matrix{Float64}`: total precision structure (sum of `penalties`)
+- `block_dim::Int`: dimension of random effect vector (n_levels*n_terms)
+- `constraint_basis::Union{Matrix{Float64}, Nothing}`: basis for back-transforming
+  to per-level effects (`nothing` — REs are unconstrained, as in mgcv/lme4)
+- `penalties::Vector{Matrix{Float64}}`: one identity-on-its-columns penalty per
+  RE term (intercept, each slope), giving each term its own variance component
+- `term_names::Vector{Symbol}`: name of each RE term, aligned with `penalties`
 """
 struct ConstructedRandomEffect
     spec::RandomEffectSpec
@@ -76,6 +80,8 @@ struct ConstructedRandomEffect
     penalty::Matrix{Float64}
     block_dim::Int
     constraint_basis::Union{Matrix{Float64}, Nothing}
+    penalties::Vector{Matrix{Float64}}
+    term_names::Vector{Symbol}
 end
 
 """
@@ -121,32 +127,33 @@ function construct_random_effect(spec::RandomEffectSpec, data)
         end
     end
 
-    # Penalty: identity (each random effect penalized equally)
-    S_re = Matrix{Float64}(I, q, q)
-    Zn_basis = nothing  # constraint basis for back-transformation
+    # Random effects are left UNCONSTRAINED (matching mgcv's s(g, bs="re") and
+    # lme4): the ridge penalty identifies them against the fixed intercept.
+    # One identity-on-its-own-columns penalty per RE term (intercept, each
+    # slope), so intercepts and slopes get separate variance components.
+    term_names = Symbol[]
+    spec.has_intercept && push!(term_names, :Intercept)
+    append!(term_names, spec.terms)
 
-    # Apply sum-to-zero constraint for random intercepts (identifiability with fixed intercept)
-    if spec.has_intercept && n_re_terms == 1
-        C = ones(1, n_levels)
-        Zn = nullspace(C)  # n_levels × (n_levels - 1)
-        Z = Z * Zn
-        S_re = Zn' * S_re * Zn
-        Zn_basis = Zn
-        q = size(Z, 2)
-    elseif spec.has_intercept && n_re_terms > 1
-        int_cols = 1:n_re_terms:q
-        C = zeros(1, q)
-        for ic in int_cols
-            C[1, ic] = 1.0
+    penalties = Matrix{Float64}[]
+    for t_idx in 1:n_re_terms
+        St = zeros(q, q)
+        for j in 1:n_levels
+            c = (j - 1) * n_re_terms + t_idx
+            St[c, c] = 1.0
         end
-        Zn = nullspace(C)
-        Z = Z * Zn
-        S_re = Zn' * S_re * Zn
-        Zn_basis = Zn
-        q = size(Z, 2)
+        push!(penalties, St)
+    end
+    S_re = sum(penalties)
+
+    if spec.correlated && n_re_terms > 1
+        @warn "Random-effect terms in $(spec.label) are fitted with independent " *
+              "variance components; correlations between intercept and slopes are " *
+              "assumed zero (not estimable in the penalized-smooth parameterization)" maxlog = 1
     end
 
-    return ConstructedRandomEffect(spec, Z, levels, n_levels, n_re_terms, S_re, q, Zn_basis)
+    return ConstructedRandomEffect(spec, Z, levels, n_levels, n_re_terms, S_re, q,
+        nothing, penalties, term_names)
 end
 
 """
@@ -212,14 +219,15 @@ random effects information.
 # Additional fields beyond GamModel
 - `random_effects`: constructed random effect terms
 - `random_coefs`: estimated BLUPs for each random effect
-- `random_vars`: estimated variance components (σ² per RE block)
+- `random_vars`: estimated variance components — one vector per random effect,
+  with one σ² entry per RE term (intercept, each slope)
 - `gam_model`: the underlying GamModel with smooth + fixed effects
 """
 mutable struct GammModel{D, L<:GLM.Link}
     gam_model::GamModel{D, L}
     random_effects::Vector{ConstructedRandomEffect}
     random_coefs::Vector{Vector{Float64}}
-    random_vars::Vector{Float64}
+    random_vars::Vector{Vector{Float64}}
 end
 
 # Forward StatsAPI methods to underlying gam_model
@@ -314,15 +322,18 @@ a clean variance component table and supports indexing.
 function VarCorr(m::GammModel)
     vc = NamedTuple[]
     for (i, cre) in enumerate(m.random_effects)
-        v = max(m.random_vars[i], 0.0)
-        push!(vc, (
-            group = cre.spec.grouping,
-            label = cre.spec.label,
-            variance = v,
-            std = sqrt(v),
-            n_levels = cre.n_levels,
-            n_terms = cre.n_terms,
-        ))
+        vars_i = m.random_vars[i]
+        for (j, tn) in enumerate(cre.term_names)
+            v = max(j <= length(vars_i) ? vars_i[j] : vars_i[end], 0.0)
+            push!(vc, (
+                group = cre.spec.grouping,
+                label = string(tn),
+                variance = v,
+                std = sqrt(v),
+                n_levels = cre.n_levels,
+                n_terms = cre.n_terms,
+            ))
+        end
     end
 
     # Add residual variance
@@ -402,15 +413,16 @@ function _fit_gamm_lams(y, X_gam, smooths, n_parametric,
             false, nothing,
             cre.spec.label)
 
-        # The Z matrix IS the design matrix, penalty is cre.penalty (≈I after constraint)
+        # The Z matrix IS the design matrix; one identity penalty per RE term
+        # so intercepts and slopes get separate variance components
         re_sm = ConstructedSmooth(
             re_spec,
             cre.Z,                          # design matrix
-            [cre.penalty],                  # identity penalty
+            copy(cre.penalties),            # per-term identity penalties
             Float64.(1:cre.block_dim),      # dummy knots
             0,                              # no null space (all penalized)
-            cre.block_dim,                  # full rank penalty
-            nothing, nothing,               # no constraints (already absorbed)
+            cre.block_dim,                  # full rank penalty (sum over terms)
+            nothing, nothing,               # no constraints
             0, 0,                           # first/last_para — set below
             nothing, nothing, nothing,
             Int[])      # no SCAM metadata, no side constraints
@@ -444,42 +456,38 @@ function _fit_gamm_lams(y, X_gam, smooths, n_parametric,
 
     # Extract RE information from the fitted model
     re_coefs = Vector{Float64}[]
-    re_vars = Float64[]
-    n_gam_smooths = length(smooths)
+    re_vars = Vector{Float64}[]
     β = StatsAPI.coef(gam_model)
+
+    # Map each smooth to its range of smoothing-parameter indices: sp holds
+    # one entry per PENALTY, concatenated over penalty blocks (a smooth with
+    # multiple penalties — e.g. te, or the per-term RE penalties here —
+    # occupies several consecutive entries)
+    sp_ranges = UnitRange{Int}[]
+    sp_off = 0
+    for blk in gam_model.penalty.blocks
+        nS = length(blk.S)
+        push!(sp_ranges, (sp_off + 1):(sp_off + nS))
+        sp_off += nS
+    end
 
     for (i, re_sm) in enumerate(re_smooths)
         b = β[re_sm.first_para:re_sm.last_para]
         push!(re_coefs, b)
 
-        # Variance = scale / λ where λ = exp(log_sp)
-        # GamModel.sp stores log-scale smoothing parameters
-        # Find the sp index for this smooth
-        sp_idx = 0
-        for (j, sm) in enumerate(all_smooths)
-            if sm === re_sm
-                sp_idx = j
-                break
-            end
-        end
-        if sp_idx > 0 && sp_idx <= length(gam_model.sp)
-            λ = exp(gam_model.sp[sp_idx])
-            push!(re_vars, gam_model.scale / λ)
+        # Variance per RE term = scale / λ_term, where the λ's live in this
+        # smooth's penalty block (indexed by penalty, not by smooth position)
+        sm_idx = findfirst(sm -> sm === re_sm, all_smooths)
+        cre = random_effects[i]
+        if sm_idx !== nothing && sm_idx <= length(sp_ranges) &&
+           last(sp_ranges[sm_idx]) <= length(gam_model.sp)
+            λs = exp.(gam_model.sp[sp_ranges[sm_idx]])
+            push!(re_vars, gam_model.scale ./ λs)
         else
-            push!(re_vars, gam_model.scale)
+            push!(re_vars, fill(gam_model.scale, length(cre.penalties)))
         end
     end
 
-    # Rebuild GamModel with only the GAM part (strip RE columns)
-    p_gam = size(X_gam, 2)
-    β_gam = β[1:p_gam]
-    η_gam = X_gam * β_gam
-    for (i, cre) in enumerate(random_effects)
-        η_gam .+= cre.Z * re_coefs[i]
-    end
-    μ_gam = GLM.linkinv.(Ref(link), η_gam)
-
-    # Keep the full model for now but wrap it
     return GammModel(gam_model, random_effects, re_coefs, re_vars)
 end
 
@@ -533,6 +541,7 @@ function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
 
     prev_coefs = Float64[]
     gamm_result = nothing
+    pql_converged = false
 
     for pql_iter in 1:max_pql_iter
         # Step 1: Compute working response and weights
@@ -579,6 +588,7 @@ function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
             if max_change < pql_tol
                 η .= η_new
                 μ .= μ_new
+                pql_converged = true
                 break
             end
         end
@@ -586,6 +596,10 @@ function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
         prev_coefs = copy(current_coefs)
         η .= η_new
         μ .= μ_new
+    end
+
+    if !pql_converged
+        @warn "PQL did not converge in $max_pql_iter iterations"
     end
 
     # Final result: update fitted values to response scale
@@ -600,13 +614,19 @@ function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
         end
         μ_final = GLM.linkinv.(Ref(link), η_final)
 
-        # Create a new GamModel with correct family, link, and fitted values
+        # Deviance on the actual family/response scale (NOT the Gaussian
+        # working-model deviance, which is what the inner LAMS fit reports)
+        dev_final = _deviance(family, y, μ_final, w_prior)
+        null_dev_final = _null_deviance(family, y, w_prior)
+
+        # Create a new GamModel with correct family, link, fitted values,
+        # and family-scale deviances
         gm_pql = GamModel(
             gm.formula, y, gm.X, gm.coefficients,
             μ_final, η_final, gm.weights,
             family, link,
             gm.smooths, gm.penalty, gm.sp, gm.edf, gm.edf_total,
-            gm.scale, gm.deviance_val, gm.null_deviance, gm.reml,
+            gm.scale, dev_final, null_dev_final, gm.reml,
             gm.method, gm.Vp, gm.Ve, gm.hat_matrix_diag, gm.R,
             gm.converged, gm.iterations, gm.n_smooth, gm.n_parametric,
             gm.control, gm.data)
@@ -1048,6 +1068,9 @@ gamm(@formula(y ~ s(x, k=20) + re(subject)), data)
 - `family=Normal()`: response distribution
 - `link=nothing`: link function (default: canonical link for family)
 - `method=:REML`: smoothing parameter estimation method
+- `backend=:LAMS`: fitting backend — `:LAMS` (penalized-smooth REs; non-Gaussian
+  families automatically use `:PQL`) or `:PQL`. The `:MixedModels` backend is
+  disabled (statistically incorrect encoding) and throws.
 - `weights=nothing`: prior weights
 - `control=gam_control()`: fitting control parameters
 - `priors=nothing`: if provided, triggers Bayesian fitting via Turing.jl
@@ -1092,14 +1115,31 @@ function gamm(gf::GammFormula, data;
 
     f = term(gf.gam_formula.response) ~ term(1)
 
-    # Backend dispatch
-    if backend == :MixedModels
-        return _fit_gamm_mm(y, X, smooths, n_parametric, random_effects,
+    # Backend dispatch (same routing as the FormulaTerm front-end)
+    _gamm_check_backend(backend)
+
+    if backend == :PQL || (backend == :LAMS && !(family isa Normal))
+        return _fit_gamm_pql(y, X, smooths, n_parametric, random_effects,
             f, data, family, link_eff, method, weights, control)
     end
 
     return _fit_gamm_lams(y, X, smooths, n_parametric, random_effects,
         f, data, family, link_eff, method, weights, control)
+end
+
+# The MixedModels.jl backend is gated off: its smooth-to-random-effect
+# encoding is statistically incorrect and its predict/inference paths are
+# broken. Fail fast whether or not the extension is loaded.
+function _gamm_check_backend(backend::Symbol)
+    if backend == :MixedModels
+        throw(ErrorException(
+            "The MixedModels backend is disabled: its smooth-to-random-effect " *
+            "encoding is statistically incorrect and its predict/inference paths " *
+            "are broken. Use the default :LAMS backend (or :PQL for non-Gaussian)."))
+    end
+    backend in (:LAMS, :PQL) ||
+        throw(ArgumentError("backend must be :LAMS or :PQL, got :$backend"))
+    return backend
 end
 
 # @formula dispatch: detect FunctionTerm{typeof(|)} as random effects
@@ -1189,11 +1229,7 @@ function gamm(f::FormulaTerm, data;
             sampler = sampler, nsamples = nsamples, nchains = nchains, weights = weights)
     end
 
-    # MixedModels.jl backend dispatch
-    if backend == :MixedModels
-        return _fit_gamm_mm(y, X, smooths, n_parametric, random_effects,
-            f, data, family, link_eff, method, weights, control)
-    end
+    _gamm_check_backend(backend)
 
     # PQL backend: use for non-Gaussian, or when explicitly requested
     if backend == :PQL || (backend == :LAMS && !(family isa Normal))

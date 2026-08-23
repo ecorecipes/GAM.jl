@@ -64,9 +64,11 @@ unpenalized components. The random effects have identity penalty.
 All columns are penalized (null_dim = 0), so Xf is empty.
 
 # Multi-penalty smooths (te, ti, t2)
-Sum all penalties, eigendecompose to find null space. Each original penalty
-is projected into the penalized subspace, giving one random effect block
-per penalty with its own SD parameter.
+t2-style smooths (diagonal, non-overlapping penalties) get one random-effect
+block per penalty. Overlapping-penalty tensors (te/ti) are decomposed via the
+SUMMED penalty into a single random-effect block — per-margin smoothing is
+approximated by one variance component in mixed-model form (see
+[`_smooth2random_tensor`](@ref)).
 
 # Examples
 ```julia
@@ -193,14 +195,23 @@ function _smooth2random_multi(sm::ConstructedSmooth)
     end
 end
 
-"""Check if penalties have non-overlapping diagonal supports (t2 pattern)."""
+"""Check if penalties are diagonal with non-overlapping supports (t2 pattern)."""
 function _is_t2_style(sm::ConstructedSmooth)
     k = size(sm.X, 2)
     # For each column, count how many penalties have nonzero diagonal entry
     pen_count = zeros(Int, k)
     for S in sm.S
+        dmax = max(maximum(abs.(diag(S))), eps())
+        # The diag-rescaling in _smooth2random_t2 is only valid for genuinely
+        # DIAGONAL penalties — diagonal support alone is not enough
+        off_max = 0.0
+        for j in 1:k, i in 1:k
+            i == j && continue
+            off_max = max(off_max, abs(S[i, j]))
+        end
+        off_max > 1e-10 * dmax && return false
         for j in 1:k
-            if abs(S[j, j]) > eps() * maximum(abs.(diag(S)))
+            if abs(S[j, j]) > eps() * dmax
                 pen_count[j] += 1
             end
         end
@@ -257,15 +268,25 @@ end
 """
     _smooth2random_tensor(sm) -> SmoothMixedModel
 
-For te smooths: sum all (normalized) penalties, eigendecompose,
-split into null space (fixed) and range space (random).
-Follows mgcv's `smooth2random.tensor.smooth`.
+For te-style smooths with overlapping penalties: sum all penalties (each
+normalized by its mean absolute value, i.e. equal initial weights) and
+decompose the SUMMED penalty exactly like a single-penalty smooth — the
+range space becomes ONE random-effect block with identity covariance, the
+null space becomes fixed effects.
+
+Note: a te smooth has one smoothing parameter per margin, but overlapping
+penalties cannot be represented as independent i.i.d. random-effect blocks
+(mgcv's `gamm` needs the special `pdTens` class for this). In mixed-model
+form the per-margin smoothing is therefore approximated by a SINGLE
+variance component (isotropic smoothing of the summed penalty). The
+transform metadata (trans_U, trans_D) exactly reassembles
+`β_original = U * (D .* [b; β_f])`, and `s2r_predict` reproduces the
+training decomposition at new data.
 """
 function _smooth2random_tensor(sm::ConstructedSmooth)
     k = size(sm.X, 2)
-    n_pen = length(sm.S)
 
-    # Sum penalties (each normalized by its mean absolute value)
+    # Sum penalties (each normalized by its mean absolute value — equal weights)
     sum_S = zeros(k, k)
     for Si in sm.S
         m_abs = mean(abs.(Si))
@@ -285,15 +306,22 @@ function _smooth2random_tensor(sm::ConstructedSmooth)
     end
 
     null_rank = sm.null_dim
-    p_rank = k - null_rank
-    if p_rank > k
-        p_rank = k
-    end
+    p_rank = clamp(k - null_rank, 0, k)
 
     U = vecs  # k × k
 
-    # Transform model matrix
-    X_new = sm.X * U
+    # Rescale range-space columns to identity covariance (as in the
+    # single-penalty path)
+    D = Vector{Float64}(undef, k)
+    for j in 1:p_rank
+        D[j] = 1.0 / sqrt(max(vals[j], eps()))
+    end
+    for j in (p_rank + 1):k
+        D[j] = 1.0
+    end
+
+    UD = U * Diagonal(D)
+    X_new = sm.X * UD
 
     # Fixed effect columns (null space)
     if p_rank < k
@@ -302,43 +330,12 @@ function _smooth2random_tensor(sm::ConstructedSmooth)
         Xf = Matrix{Float64}(undef, size(sm.X, 1), 0)
     end
 
-    # Project each penalty into the penalized subspace
-    # and build random effect matrices
-    Zs = Matrix{Float64}[]
-    U_pen = U[:, 1:p_rank]  # k × p_rank
+    # ONE random-effect block spanning the whole range space
+    Zs = [X_new[:, 1:p_rank]]
 
-    for Si in sm.S
-        # Project penalty: S_proj = U_pen' * S * U_pen (p_rank × p_rank)
-        S_proj = U_pen' * Si * U_pen
-        S_proj = (S_proj + S_proj') / 2  # ensure symmetry
-
-        # Eigendecompose projected penalty for rescaling
-        eig_p = eigen(Symmetric(S_proj))
-        # Reverse to descending order
-        idx_p = size(S_proj, 1):-1:1
-        vals_p = eig_p.values[idx_p]
-        vecs_p = eig_p.vectors[:, idx_p]
-
-        # Columns with nonzero eigenvalues belong to this penalty's random effect
-        pos = vals_p .> eps() * maximum(abs.(vals_p))
-        if any(pos)
-            D_inv = 1.0 ./ sqrt.(vals_p[pos])
-            Z_i = X_new[:, 1:p_rank] * vecs_p[:, pos] * Diagonal(D_inv)
-            push!(Zs, Z_i)
-        end
-    end
-
-    # If no individual random effects could be extracted,
-    # fall back to single block with all penalized columns
-    if isempty(Zs)
-        Zs = [X_new[:, 1:p_rank]]
-    end
-
-    # Build pen_ind and rind
     pen_ind = zeros(Int, k)
-    pen_ind[1:p_rank] .= 1  # simplified: all penalized columns in first group
+    pen_ind[1:p_rank] .= 1
     rind = collect(1:p_rank)
-    D = ones(k)
 
     return SmoothMixedModel(Xf, Zs, U, D, pen_ind, rind, sm.spec.label, false)
 end
@@ -376,15 +373,9 @@ function s2r_predict(smm::SmoothMixedModel, sm::ConstructedSmooth, newdata)
             Xf = Matrix{Float64}(undef, size(X_new, 1), 0)
         end
 
-        # For tensor smooths with multiple Zs, we need the projected matrices
-        if length(smm.Zs) == 1
-            Zs = [X_trans[:, 1:p_rank]]
-        else
-            # Re-derive from the transformation
-            # For multi-penalty, we need the sub-decompositions
-            # Fall back to single block for now
-            Zs = [X_trans[:, 1:p_rank]]
-        end
+        # Single-penalty and tensor smooths both use exactly one Zs block in
+        # the transformed basis, so this reproduces the training decomposition
+        Zs = [X_trans[:, 1:p_rank]]
     else
         # t2-style: use pen_ind to split columns
         Xf_cols = findall(smm.pen_ind .== 0)
