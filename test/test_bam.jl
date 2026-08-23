@@ -209,4 +209,32 @@
         @test X_full[4, :] == [1.0, 2.0]
         @test X_full[3, :] == [5.0, 6.0]
     end
+
+    @testset "Near-singular design is ridge-recovered (round-3 fix)" begin
+        rng_ns = StableRNG(7)
+        n_ns = 400
+        x1 = randn(rng_ns, n_ns)
+        x2 = x1 .+ 1e-13 .* randn(rng_ns, n_ns)
+        y_g = sin.(x1) .+ 0.3 .* randn(rng_ns, n_ns)
+        df_g = DataFrame(x1 = x1, x2 = x2, y = y_g)
+        m_g = bam(GAM.@formula(y ~ s(x1, k = 8) + s(x2, k = 8)), df_g)
+        @test all(isfinite, m_g.fitted_values)
+        y_p = Float64.(rand.(rng_ns, Poisson.(exp.(0.3 .+ 0.5 .* sin.(x1)))))
+        df_p = DataFrame(x1 = x1, x2 = x2, y = y_p)
+        m_p = bam(GAM.@formula(y ~ s(x1, k = 8) + s(x2, k = 8)), df_p;
+            family = Poisson())
+        @test all(isfinite, m_p.fitted_values)
+    end
+
+    @testset "Score-based convergence avoids the sp clamp (round-3 fix)" begin
+        rng_te = StableRNG(11)
+        n_te = 800
+        a = rand(rng_te, n_te); b = rand(rng_te, n_te)
+        y_te = sin.(2π .* a) .* cos.(π .* b) .+ 0.2 .* randn(rng_te, n_te)
+        df_te = DataFrame(a = a, b = b, y = y_te)
+        m_te = bam(GAM.@formula(y ~ te(a, b, k = 5)), df_te)
+        m_gte = gam(GAM.@formula(y ~ te(a, b, k = 5)), df_te)
+        @test all(<(14.9), m_te.sp)          # no flat-ridge walk to the clamp
+        @test cor(fitted(m_te), fitted(m_gte)) > 0.9999
+    end
 end

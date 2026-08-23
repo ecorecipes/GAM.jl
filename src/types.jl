@@ -487,7 +487,9 @@ A fitted generalized additive model. Implements the StatsBase interface
 - `scale`: estimated or fixed scale parameter
 - `deviance_val`: model deviance
 - `null_deviance`: null model deviance
-- `reml`: REML/ML/GCV score at convergence
+- `reml`: REML/ML score at convergence (NaN when no such score is computed)
+- `criterion`: optimized GCV/UBRE criterion value for fits selected by direct
+  criterion optimization (currently SCAM GCV/UBRE); NaN otherwise
 - `method`: smoothing method used (:REML, :ML, :GCV, :UBRE)
 - `Vp`: Bayesian posterior covariance of parameters
 - `Ve`: frequentist covariance of parameters
@@ -518,6 +520,7 @@ mutable struct GamModel{D, L<:GLM.Link}
     deviance_val::Float64
     null_deviance::Float64
     reml::Float64
+    criterion::Float64
     method::Symbol
     Vp::Matrix{Float64}
     Ve::Matrix{Float64}

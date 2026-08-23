@@ -277,4 +277,22 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         sm_u = smooth_construct(spec_u, data)
         @test !GAM.has_shape_constraints([sm_u])
     end
+
+    @testset "Criterion field semantics (round-3)" begin
+        rng_c = StableRNG(5)
+        n_c = 150
+        x_c = sort(rand(rng_c, n_c)) .* 5
+        y_c = 2.0 ./ (1 .+ exp.(-(x_c .- 2.5))) .+ 0.3 .* randn(rng_c, n_c)
+        df_c = DataFrame(x = x_c, y = y_c)
+        m_gcv = scam(GAM.@formulak(y ~ s(x, bs = :mpi, k = 10)), df_c)  # :GCV default
+        @test isfinite(m_gcv.criterion)
+        @test isnan(m_gcv.reml)
+        # the stored criterion matches its definition at the stored fit
+        @test m_gcv.criterion ≈ n_c * m_gcv.deviance_val /
+                                (n_c - m_gcv.edf_total)^2 rtol = 1e-6
+        m_reml = scam(GAM.@formulak(y ~ s(x, bs = :mpi, k = 10)), df_c;
+            method = :REML)
+        @test isnan(m_reml.criterion)
+        @test m_gcv.iterations > 0 && m_reml.iterations > 0
+    end
 end

@@ -14,7 +14,8 @@ codebase stays consistent.
   types, a leading underscore for internal (unexported) helpers.
 - **Unicode**: Greek identifiers (`β`, `η`, `λ`, `ζ`, `σ`, …) are used for
   estimation-theory quantities in the specialized fitting code
-  (`gamlss*.jl`, `mpfit.jl`, `qgam.jl`, `nested.jl`); the core engine and
+  (`gamlss*.jl`, `mpfit.jl`, `nested.jl`; `qgam.jl` keeps ASCII identifiers
+  with Greek confined to docstring math); the core engine and
   basis files use ASCII identifiers (`beta`, `eta`, `lambda`). Match the file
   you are editing; do not mix ASCII and Greek names for the same quantity in
   one file.

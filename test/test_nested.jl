@@ -271,6 +271,37 @@ using StableRNGs
         @test predict(m, df; type = :response) ≈ fitted(m) atol = 1e-8
     end
 
+    @testset "te() + nested effect: overlapping-group EFS converges" begin
+        rng = StableRNG(42)
+        n = 400
+        X = randn(rng, n, 3)
+        a_true = normalize([0.6, 0.35, 0.15])
+        u = X * a_true
+        x1 = rand(rng, n); x2 = rand(rng, n)
+        y = sin.(2π .* x1) .* cos.(π .* x2) .+ 0.8 .* tanh.(2 .* u) .+
+            0.2 .* randn(rng, n)
+        df = (y = y, x1 = x1, x2 = x2, l1 = X[:, 1], l2 = X[:, 2], l3 = X[:, 3])
+        m = gam_nl(GAM.@formula(y ~ te(x1, x2, k = 5) +
+                                    s_nest(l1, l2, l3, trans = trans_linear(), k = 10)), df)
+        @test m.converged
+        @test abs(cor(X * inner_coef(m), u)) > 0.98
+        @test deviance_explained(m) > 0.7
+    end
+
+    @testset "Constant offset absorbed by the intercept" begin
+        rng = StableRNG(31)
+        n = 300
+        X = randn(rng, n, 3)
+        u = X * normalize([0.7, 0.5, 0.2])
+        y = sin.(1.5 .* u) .+ 0.2 .* randn(rng, n)
+        df = (y = y, l1 = X[:, 1], l2 = X[:, 2], l3 = X[:, 3])
+        m0 = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3, trans = trans_linear(), k = 10)), df)
+        mc = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3, trans = trans_linear(), k = 10)), df;
+            offset = fill(2.5, n))
+        @test coef(m0)[1] - coef(mc)[1] ≈ 2.5 atol = 1e-6
+        @test maximum(abs.(fitted(m0) .- fitted(mc))) < 1e-6
+    end
+
     @testset "Fixed outer sp is honored" begin
         rng = StableRNG(21)
         n = 300

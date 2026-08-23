@@ -89,7 +89,9 @@ Diagnostic data from [`appraise`](@ref) for creating model checking plots.
 - `linear_predictor`: η values
 - `observed`: observed response y
 - `fitted`: fitted values μ̂
-- `qq_theoretical`: theoretical N(0,1) quantiles for QQ plot
+- `qq_theoretical`: reference quantiles for the QQ plot (simulated envelope
+  midpoints under `method = :simulate`, the default; theoretical N(0,1)
+  quantiles under `method = :normal`)
 - `qq_sample`: sorted standardized deviance residuals (divided by √scale)
 """
 struct AppraiseData
@@ -157,6 +159,13 @@ Evaluate estimated smooth terms on a grid of covariate values.
 
 # Returns
 A [`SmoothEstimates`](@ref) struct.
+
+# Example
+```julia
+m = gam(@formula(y ~ s(x, k = 10)), df)
+se = smooth_estimates(m; n = 200)
+se.estimate, se.se          # fitted smooth and pointwise SEs on the grid
+```
 """
 function smooth_estimates(m::GamModel;
     select = nothing,
@@ -253,6 +262,13 @@ Partial residuals = f̂_j(x) + ε̂, where ε̂ are the working residuals.
 
 Returns a [`PartialResiduals`](@ref) struct in long format (one row per
 smooth × observation), with a Plots.jl recipe for scatter overlays.
+
+# Example
+```julia
+pr = partial_residuals(m)
+mask = pr.smooth .== "s(x)"
+scatter(pr.x[mask], pr.residual[mask])   # overlay on smooth_estimates
+```
 """
 function partial_residuals(m::GamModel; select = nothing)
     smooth_indices = _resolve_smooth_select(m, select)
@@ -302,6 +318,12 @@ Create an evaluation grid for `var` with `n` points, holding all other
 covariates at their typical (median for numeric, mode for categorical) values.
 
 Additional keyword arguments fix specific covariate values.
+
+# Example
+```julia
+ds = data_slice(m; var = :x, n = 100)    # grid over x, other vars at medians
+predict(m, ds)
+```
 """
 function data_slice(m::GamModel; var::Symbol, n::Int = 100, kwargs...)
     sm = nothing
@@ -341,6 +363,12 @@ Compute derivatives of estimated smooth terms via finite differences.
 
 # Returns
 A [`DerivativeEstimates`](@ref) struct.
+
+# Example
+```julia
+d = derivatives(m; select = 1, order = 1, n = 200)
+d.derivative, d.lower, d.upper           # slope with 95% CI over d.x
+```
 """
 function derivatives(m::GamModel;
     select = nothing,
@@ -430,6 +458,12 @@ Draw `n` samples from the posterior distribution of model coefficients
 covariance is available); it warns and uses `Vp`.
 
 Returns an `n × p` matrix where each row is a posterior draw.
+
+# Example
+```julia
+ps = posterior_samples(m; n = 1000, seed = 1)   # draws from N(β̂, Vp)
+size(ps)                                        # (n_coef, 1000)
+```
 """
 function posterior_samples(m::GamModel;
     n::Int = 1000,
@@ -466,6 +500,12 @@ computes Xβ̃ (on the link or response scale).
 
 # Returns
 An `n_obs × n_draws` matrix of fitted value draws.
+
+# Example
+```julia
+fs = fitted_samples(m; n = 100, seed = 1)   # posterior draws of μ̂
+mean(fs; dims = 2)
+```
 """
 function fitted_samples(m::GamModel;
     n::Int = 100,
@@ -503,6 +543,11 @@ Draw posterior samples of smooth functions evaluated on a grid.
 # Returns
 A Dict mapping smooth labels to `(x_grid, samples_matrix)` where
 `samples_matrix` is `n_grid × n_draws`.
+
+# Example
+```julia
+ss = smooth_samples(m; select = 1, n = 50)  # posterior draws of one smooth
+```
 """
 function smooth_samples(m::GamModel;
     select = nothing,
@@ -540,6 +585,11 @@ Draw posterior predictive samples (fitted values + observation noise).
 
 # Returns
 An `n_obs × n_draws` matrix of predicted values.
+
+# Example
+```julia
+ys = predicted_samples(m; n = 100, seed = 1)  # new-response draws
+```
 """
 function predicted_samples(m::GamModel;
     n::Int = 100,
@@ -579,6 +629,13 @@ for Normal, Poisson, Bernoulli/Binomial, Gamma, NegBin, and the quasi
 families; other families require `method=:normal`.
 
 Returns an [`AppraiseData`](@ref) struct.
+
+# Example
+```julia
+ad = appraise(m)                       # simulated reference bands (default)
+ad = appraise(m; method = :normal)     # normal-theory reference
+plot(ad)                               # with Plots.jl loaded
+```
 """
 function appraise(m::GamModel; type::Symbol = :deviance,
     method::Symbol = :simulate, n_sim::Int = 50, seed = nothing)
@@ -642,6 +699,13 @@ Compute rootogram data for count models (Poisson, quasi-Poisson,
 Negative Binomial). Other families throw an `ArgumentError`.
 
 Returns a [`RootogramData`](@ref) struct.
+
+# Example
+```julia
+m = gam(@formula(y ~ s(x)), df, Poisson())
+rg = rootogram(m)
+rg.observed, rg.expected
+```
 """
 function rootogram(m::GamModel; max_count = nothing)
     (m.family isa Poisson || m.family isa QuasiPoissonFamily ||
@@ -689,6 +753,11 @@ end
 
 Overall effective degrees of freedom of the model (sum of all smooth EDFs
 plus parametric terms).
+
+# Example
+```julia
+model_edf(m)     # total effective degrees of freedom
+```
 """
 model_edf(m::GamModel) = m.edf_total
 
@@ -699,6 +768,11 @@ Tidy summary table of all smooth terms, their types, dimensions,
 basis sizes, and effective degrees of freedom.
 
 Returns an [`OverviewTable`](@ref) struct.
+
+# Example
+```julia
+overview(m)      # per-smooth basis, k, EDF, and EDF/k table
+```
 """
 function overview(m::GamModel)
     labels = String[]
@@ -982,3 +1056,30 @@ function _short_type_name(full_name::String)
     m = match(r"(\w+)$", full_name)
     m === nothing ? full_name : m.captures[1]
 end
+
+# ============================================================================
+# Tables.jl interface — diagnostics results as column tables
+# ============================================================================
+# The long-format result structs are directly consumable by DataFrame(...) and
+# any Tables.jl sink. Scalar metadata fields (e.g. DerivativeEstimates.order)
+# are not columns.
+
+Tables.istable(::Type{PartialResiduals}) = true
+Tables.columnaccess(::Type{PartialResiduals}) = true
+Tables.columns(pr::PartialResiduals) =
+    (smooth = pr.smooth, xname = pr.xname, x = pr.x, residual = pr.residual)
+
+Tables.istable(::Type{SmoothEstimates}) = true
+Tables.columnaccess(::Type{SmoothEstimates}) = true
+function Tables.columns(se::SmoothEstimates)
+    cov_syms = sort(collect(keys(se.covariates)))
+    names = (:smooth, cov_syms..., :estimate, :se)
+    vals = (se.smooth, (se.covariates[v] for v in cov_syms)..., se.estimate, se.se)
+    return NamedTuple{names}(vals)
+end
+
+Tables.istable(::Type{DerivativeEstimates}) = true
+Tables.columnaccess(::Type{DerivativeEstimates}) = true
+Tables.columns(d::DerivativeEstimates) =
+    (smooth = d.smooth, x = d.x, derivative = d.derivative,
+     se = d.se, lower = d.lower, upper = d.upper)

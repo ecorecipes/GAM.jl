@@ -86,7 +86,7 @@ use `GAM.@formula(...)` or `using GAM: @formula`.
 | `s(lat, lon, bs=:sos)` | Spherical spline | Smoothing on the sphere; approximation of mgcv's spline-on-the-sphere kernels |
 | `s(x, bs=:spde)` | SPDE Matérn | Stochastic PDE Matérn field |
 | `s(x, bs=:lo)` | Loess | Local regression basis |
-| `s(x, bs=:ad)` | Adaptive | Spatially adaptive smoothness (approximation: Gaussian-bump penalty weights) |
+| `s(x, bs=:ad)` | Adaptive | Spatially adaptive smoothness (mgcv-style B-spline penalty weights) |
 | `s(x, bs=:sc)` | Shape-constrained B-spline | Linear-constraint (SCASM) B-spline basis |
 | `s(x, bs=:scad)` | Shape-constrained adaptive | Linear-constraint (SCASM) adaptive basis |
 | `s(x, bs=:fp)` | Fractional polynomial | Fractional-polynomial basis |
@@ -229,7 +229,9 @@ following the paper. `predict(m, newdata; se=true)` returns delta-method
 standard errors that propagate the joint uncertainty of all coefficients —
 inner transformation parameters included — through the composition.
 `trans_mgks(nn=50)` uses fixed nearest-neighbor sets (as in the paper) for
-O(n·nn) evaluation. Supported families: `Normal`, `Poisson`,
+O(n·nn) evaluation. `gam_nl` accepts `offset=` and `weights=` like `gam()`
+(supply the same offset again at `predict`); unsupported options error
+rather than being ignored. Supported families: `Normal`, `Poisson`,
 `Bernoulli`/`Binomial`, `Gamma`. `gam()` routes formulas containing `s_nest`
 to `gam_nl` automatically, and the test suite compares fits against R's
 gamFactory live when it is installed.
@@ -286,7 +288,11 @@ w.waic
 gam_check(m)          # text diagnostics: convergence, k-index with p-values
                       # (plots via appraise(m) with Plots.jl loaded)
 k_check(m)            # basis dimension check (mgcv-style k-index + p-value)
-concurvity(m)         # concurvity indices
+concurvity(m)         # concurvity indices (worst/observed/estimate)
+appraise(m)           # residual QQ with simulated reference bands
+                      # (default method=:simulate; :normal for normal theory)
+leverage(m)           # hat diagonals (sums to the model EDF)
+cooksdistance(m)      # Cook's distances (influence)
 
 # Smooth estimates (gratia-style)
 se = smooth_estimates(m)
@@ -410,14 +416,14 @@ The key difference from mgcv: GAM.jl's model-fitting code is written in Julia ra
 
 ## Testing
 
-GAM.jl has roughly 2,250 test assertion macros across 53 test files, including:
+GAM.jl has roughly 2,300 test assertion macros across 53 test files, including:
 
 - Unit tests for all basis types, families, and link functions
 - End-to-end tests for GAM, BAM, SCAM, QGAM, GAMLSS, GAMM, evgam, GINLA
 - R comparison tests validating fitted values, EDF, deviance, and smoothing parameters against mgcv, scam, qgam, gamlss, and evgam reference output
 - Bayesian inference tests with Turing.jl
 - Side constraint tests validated against mgcv's `gam.side`
-- Live nested-effects comparisons against gamFactory, and elementwise parity checks (smoothing parameters, coefficients, prediction SEs, AIC) against mgcv
+- Live nested-effects comparisons against gamFactory, and elementwise parity checks (smoothing parameters, coefficients, prediction SEs, AIC) against mgcv. On numerically flat REML ridges the smoothing parameter is only weakly identified, so the suite compares fitted values/EDF/criterion there rather than raw smoothing parameters
 - Aqua.jl static quality checks (ambiguities, piracy, stale deps, exports)
 
 R-comparison tests that require a live R installation (via RCall) are skipped automatically when R or the relevant R package is unavailable, or when `GAM_SKIP_RCALL=true`. The GAMLSS, side-constraint, and SPDE comparisons run against checked-in reference output and do not need R. Run the suite with `julia --project=. -e 'using Pkg; Pkg.test()'`.

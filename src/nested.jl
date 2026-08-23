@@ -403,7 +403,11 @@ end
 # ============================================================================
 
 _nested_linkinv(::IdentityLink, η) = η
-_nested_linkinv(::LogLink, η) = exp(η)
+# The ±30 clamp guards exp overflow at extreme η during step-halving
+# excursions; _nested_mueta(::LogLink) returns 0 outside the same band so the
+# hand-coded chain-rule gradient stays exactly consistent with (AD of) this
+# clamped objective. LogitLink is overflow-safe as written.
+_nested_linkinv(::LogLink, η) = exp(clamp(η, -30.0, 30.0))
 _nested_linkinv(::LogitLink, η) = 1.0 / (1.0 + exp(-η))
 
 function _nested_unit_dev(::Normal, y, μ)
@@ -432,7 +436,7 @@ _nested_default_link(::Gamma) = LogLink()
 # dμ/dη and the variance function, for the exact chain-rule gradient and the
 # Gauss–Newton (expected-information) Hessian
 _nested_mueta(::IdentityLink, η) = 1.0
-_nested_mueta(::LogLink, η) = exp(η)
+_nested_mueta(::LogLink, η) = -30.0 <= η <= 30.0 ? exp(η) : 0.0
 function _nested_mueta(::LogitLink, η)
     p = 1.0 / (1.0 + exp(-η))
     return p * (1.0 - p)
@@ -512,9 +516,16 @@ convention.
 - `family`: `Normal` (default), `Poisson`, `Bernoulli`/`Binomial`, or `Gamma`
 - `link`: `IdentityLink`, `LogLink`, or `LogitLink` (default: canonical-ish
   per family — identity, log, logit, log)
-- `weights`: optional non-negative prior observation weights
+- `weights`: optional non-negative prior observation weights. Zero-weight
+  rows are excluded from the deviance but still influence the fit slightly
+  through the inner-output standardization (its mean/sd are computed over
+  all rows) and, for `trans_mgks`, the fixed training neighborhoods —
+  subset equivalence is close (fitted correlation ≈ 0.9996) but not exact
 - `offset`: optional known additive term on the link scale (e.g.
-  log-exposure); supply the matching `offset` to `predict` as well
+  log-exposure); supply the matching `offset` to `predict` as well. A
+  constant offset is absorbed by the intercept up to solver tolerance
+  (fitted values match the no-offset fit to ~1e-9 after the final
+  gradient-stopped polish)
 - `outer_maxit`, `newton_maxit`, `tol`: iteration controls
 
 Categorical parametric covariates are dummy-coded with a schema built from
@@ -700,6 +711,37 @@ function gam_nl(gf::GamFormula, data;
             end
         end
         return v
+    end
+
+    # Per-penalty derivatives λ_g·∂log|S_λ|₊/∂λ_g, group-aware: exact
+    # pen_ranks for disjoint (singleton-group) penalties, and a local
+    # eigendecomposition on each overlapping group's support (e.g. a te()
+    # smooth's margins in the standard part) — the per-group analogue of the
+    # core engine's _block_logdet_derivs, whose comment records that using
+    # the raw rank per overlapping penalty systematically oversmooths.
+    function _group_ldet_derivs(lsp)
+        d = copy(pen_ranks)
+        for (gs, idx) in zip(pen_groups, group_idx)
+            length(gs) == 1 && continue
+            Sl = zeros(length(idx), length(idx))
+            for g in gs
+                Sl .+= exp(lsp[g]) .* penalties[g][idx, idx]
+            end
+            E = eigen(Symmetric(Sl))
+            thr = maximum(abs, E.values) * 1e-12
+            for g in gs
+                Sg = penalties[g][idx, idx]
+                acc = 0.0
+                for k in eachindex(E.values)
+                    e = E.values[k]
+                    e > thr || continue
+                    v = view(E.vectors, :, k)
+                    acc += dot(v, Sg * v) / e
+                end
+                d[g] = exp(lsp[g]) * acc
+            end
+        end
+        return d
     end
 
     # ── Objective: 0.5·Σ wᵢ·unit_dev + 0.5·ζ\'S_λ ζ  (deviance scale) ──────
@@ -894,10 +936,11 @@ function gam_nl(gf::GamFormula, data;
             max(dev_cur / max(n_eff_obs - edf, 1.0), 1e-10)
 
         target = copy(log_sp)
+        ld_derivs = _group_ldet_derivs(log_sp)
         for g in 1:nsp
             sp_fixed[g] && continue
             bSb = dot(ζ, penalties[g] * ζ)
-            rank_g = pen_ranks[g]
+            rank_g = ld_derivs[g]
             if scale_free_pen[g]
                 a_g = ζ[scale_free_rng[g]]
                 bSb /= max(dot(a_g, a_g), 1e-300)   # direction-only curvature
@@ -945,23 +988,49 @@ function gam_nl(gf::GamFormula, data;
     # standardization regularizer), so normalize for a well-conditioned
     # delta method, then polish with a few Newton steps at the new
     # parameterization; the final covariance is computed there.
-    renormed = false
     for j in 1:n_eff
         trans_list[j] isa TransLinear || continue
         s_a = norm(ζ[inner_ranges[j]])
         if s_a > 1e-10 && abs(s_a - 1.0) > 1e-12
             ζ[inner_ranges[j]] ./= s_a
-            renormed = true
         end
     end
-    if renormed
-        for it in 1:20
+
+    # ── Final polish at the converged λ ────────────────────────────────────
+    # A gradient-stopped Newton pass (GN Hessian, promoted to the exact AD
+    # Hessian if a GN step stalls) so the returned ζ is a stationary point of
+    # the final penalized objective rather than wherever the EFS loop's last
+    # inner pass stopped. For trans_linear effects the index scale is
+    # unidentified (standardized away), so the scale component is projected
+    # out of both the step and the stopping gradient, and the unit norm is
+    # re-imposed after each accepted step (no-ops for other transforms).
+    function _project_scale!(v)
+        for j in 1:n_eff
+            trans_list[j] isa TransLinear || continue
+            rj = inner_ranges[j]
+            aj = ζ[rj]
+            na2 = dot(aj, aj)
+            na2 > 1e-300 || continue
+            v[rj] .-= (dot(v[rj], aj) / na2) .* aj
+        end
+        return v
+    end
+    let use_ad = false
+        for it in 1:50
             obj0 = _pen_obj(ζ, log_sp)
             grad, Hgn, _ = _gn_parts(ζ, log_sp)
-            maximum(abs, grad) < tol * (1.0 + abs(obj0)) && break
-            F = _ridge_chol(Hgn)
+            # Project the scale component out of the gradient BEFORE the
+            # Newton solve: −(Pg)'F⁻¹(Pg) is a guaranteed descent direction,
+            # while solving against the raw gradient (whose radial ridge
+            # component is large at unit norm) and projecting afterwards is
+            # not.
+            gproj = _project_scale!(copy(grad))
+            maximum(abs, gproj) < tol * (1.0 + abs(obj0)) && break
+            Hcur = use_ad ? ForwardDiff.hessian(z -> _pen_obj(z, log_sp), ζ) :
+                   Hgn
+            F = _ridge_chol(Hcur)
             F === nothing && break
-            δ = F \ grad
+            δ = _project_scale!(F \ gproj)
             step = 1.0
             ζ_new = ζ .- step .* δ
             obj1 = _pen_obj(ζ_new, log_sp)
@@ -972,15 +1041,21 @@ function gam_nl(gf::GamFormula, data;
                 obj1 = _pen_obj(ζ_new, log_sp)
                 halves += 1
             end
-            (isfinite(obj1) && obj1 <= obj0) || break
-            # keep the unit-norm parameterization exactly
+            if !(isfinite(obj1) && obj1 <= obj0)
+                use_ad && break        # exact Hessian cannot improve either
+                use_ad = true          # promote and retry
+                continue
+            end
             ζ .= ζ_new
             for j in 1:n_eff
                 trans_list[j] isa TransLinear || continue
                 s_a = norm(ζ[inner_ranges[j]])
                 s_a > 1e-10 && (ζ[inner_ranges[j]] ./= s_a)
             end
-            (obj0 - obj1) < tol * (abs(obj0) + 0.1) && break
+            if (obj0 - obj1) < tol * (abs(obj0) + 0.1)
+                use_ad && break        # stalled under the exact Hessian too
+                use_ad = true          # gradient still large: promote
+            end
         end
     end
 

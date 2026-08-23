@@ -414,7 +414,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     @inbounds for j in 1:p, k in 1:p
         A[j, k] = XtWX[j, k] + S_total[j, k]
     end
-    A_chol = cholesky(Symmetric(A))
+    A_chol = _protected_cholesky!(A)
     F = A_chol \ XtWX
     edf_vec = diag(F)
 
@@ -499,7 +499,7 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         if is_gaussian
             # Fast Gaussian path: solve (X'X + S) β = X'y directly
             A = XtWX_cached + S_total
-            A_chol = cholesky(Symmetric(A))
+            A_chol = _protected_cholesky!(A)
             beta = A_chol \ Xty_cached
 
             # Deviance via O(p²) formula: ||y-Xβ||² = y'Wy - 2β'X'Wy + β'X'WXβ
@@ -540,10 +540,11 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         if is_gaussian
             # A_chol is already available from inner solve (same XtWX + S_total)
             A_fact = A_chol
+            XtWX_cur = XtWX_cached
         else
-            A_efs = zeros(p, p)
-            _accumulate_XtWX_chunked!(A_efs, X, w, chunk_size)
-            A_efs .+= S_total
+            XtWX_cur = zeros(p, p)
+            _accumulate_XtWX_chunked!(XtWX_cur, X, w, chunk_size)
+            A_efs = XtWX_cur + S_total
             A_fact = _protected_cholesky!(A_efs)
         end
 
@@ -600,6 +601,24 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
                     ", edf=$(round(edf_total; digits=2))")
         end
 
+        # Score-based convergence (as in the core EFS loop): once the
+        # conditional criterion stops moving, declare convergence even if the
+        # smoothing parameters still wander along a flat ridge — otherwise a
+        # flat λ→∞ direction walks to the log-sp clamp.
+        if outer_iter > 1 && max_change > control.epsilon
+            ls = _log_saturated_likelihood(family, y, weights, scale_est)
+            reml_old = _conditional_reml(log_sp, XtWX_cur, beta, result.deviance,
+                penalty, scale_est, n, p, edf_total, method,
+                control.gamma, ls)
+            reml_new = _conditional_reml(log_sp_new, XtWX_cur, beta, result.deviance,
+                penalty, scale_est, n, p, edf_total, method,
+                control.gamma, ls)
+            if abs(reml_new - reml_old) <
+               control.epsilon * (abs(reml_old) + 0.1)
+                max_change = 0.0
+            end
+        end
+
         log_sp .= log_sp_new
         prev_result = result
 
@@ -617,7 +636,7 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
 
     if is_gaussian
         A = XtWX_cached + S_total
-        A_chol = cholesky(Symmetric(A))
+        A_chol = _protected_cholesky!(A)
         beta = A_chol \ Xty_cached
         eta = X * beta
         eta .+= offset
@@ -888,6 +907,7 @@ function _fit_bam(y, X, smooths, n_parametric, f, data,
         result.deviance,
         null_dev,
         reml_val,
+        NaN,
         method,
         Vp, Ve,
         result.hat_diag,
