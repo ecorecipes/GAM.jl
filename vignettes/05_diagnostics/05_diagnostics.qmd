@@ -133,7 +133,8 @@ for (i, xvar) in enumerate(x_vars)
     se_vals = se_i.se
 
     label_key = m.smooths[i].spec.label
-    xvals, resids = pr[label_key]
+    mask = pr.smooth .== label_key
+    xvals, resids = pr.x[mask], pr.residual[mask]
 
     p = plot(xgrid, est;
         ribbon=2 .* se_vals, fillalpha=0.2, color=:steelblue,
