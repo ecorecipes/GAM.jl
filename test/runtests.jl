@@ -1031,6 +1031,9 @@ end
 # General fit (WPS algorithm) tests
 @eval include("test_general_fit.jl")
 
+# Nested effects (s_nest / gam_nl, gamFactory-style)
+@eval include("test_nested.jl")
+
 # GAMLSS tests
 @eval include("test_gamlss.jl")
 

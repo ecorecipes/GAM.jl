@@ -207,6 +207,18 @@ export
     QGamCheck,
     quantile_residuals,
 
+    # Nested effects (gamFactory-style)
+    gam_nl,
+    s_nest,
+    trans_linear,
+    trans_nexpsm,
+    trans_mgks,
+    inner_coef,
+    NestedGamModel,
+    NestedBasis,
+    NestedTransform,
+    has_nested_effects,
+
     # Shape-constrained smooths (SCAM)
     MonoIncBasis,
     MonoDecBasis,
@@ -316,6 +328,7 @@ include("priors.jl")
 include("bayes_types.jl")
 include("gamlss.jl")
 include("gamlss_solvers.jl")
+include("nested.jl")
 include("gamfit.jl")
 include("gamm.jl")
 include("bam.jl")

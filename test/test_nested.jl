@@ -1,0 +1,176 @@
+# Nested effects (s_nest / gam_nl) — gamFactory-style smooths of estimated
+# covariate transformations (Fasiolo et al. 2025, arXiv:2511.19234)
+
+using Test
+using GAM
+using GAM: TransLinear, TransExpSmooth, TransMGKS, NestedOuterBasis,
+    _nested_outer_basis, _nested_design_row, _bspline_row_interior,
+    _nested_outer_penalty
+using StatsAPI: coef, fitted, predict, deviance, nulldeviance, nobs
+using Random, Statistics, LinearAlgebra
+using StableRNGs
+
+@testset "Nested effects (s_nest / gam_nl)" begin
+
+    @testset "Spec construction and errors" begin
+        sp = s_nest(:l1, :l2, :l3; trans = trans_linear(), k = 12)
+        @test sp.basis isa NestedBasis
+        @test sp.basis.trans isa TransLinear
+        @test sp.k == 12
+        @test sp.term_vars == [:l1, :l2, :l3]
+        @test has_nested_effects([sp])
+        @test !has_nested_effects([s(:x)])
+
+        @test_throws ArgumentError s_nest()
+        @test_throws ArgumentError s_nest(:x; trans = trans_mgks())     # needs coords
+        @test_throws ArgumentError s_nest(:x; k = 3)
+        @test_throws ArgumentError s_nest(:x; by = :g)
+        @test_throws ArgumentError trans_linear(penalty = :nope)
+        # nested specs cannot go through the standard construction pipeline
+        @test_throws ArgumentError smooth_construct(sp, (l1 = [1.0], l2 = [1.0], l3 = [1.0]))
+    end
+
+    @testset "Outer basis: s(0)=0 and linear extrapolation" begin
+        k = 10
+        ob = _nested_outer_basis(k)
+        row0 = _bspline_row_interior(0.0, ob.knots, 4, k)
+        @test ob.ncols == k - 1
+        # design row at u = 0 is exactly zero (s(0) = 0)
+        @test maximum(abs, _nested_design_row(ob, 0.0, row0, k)) < 1e-14
+        # partition of unity inside the range
+        rowu = _bspline_row_interior(1.3, ob.knots, 4, k)
+        @test sum(rowu) ≈ 1.0 atol = 1e-10
+        # linear extrapolation beyond the boundary: second differences vanish
+        us = [3.5, 3.7, 3.9]
+        vals = [_nested_design_row(ob, u, row0, k) for u in us]
+        second_diff = vals[1] .- 2 .* vals[2] .+ vals[3]
+        @test maximum(abs, second_diff) < 1e-10
+        # penalty: symmetric PSD
+        S = _nested_outer_penalty(k, ob.drop)
+        @test issymmetric(S)
+        @test minimum(eigvals(Symmetric(S))) > -1e-10
+    end
+
+    @testset "Single-index (trans_linear): direction recovery" begin
+        rng = StableRNG(7)
+        n = 400
+        X = randn(rng, n, 3)
+        a_true = normalize([0.7, 0.5, 0.2])
+        u = X * a_true
+        f_true = sin.(1.5 .* u)
+        y = f_true .+ 0.2 .* randn(rng, n)
+        df = (y = y, l1 = X[:, 1], l2 = X[:, 2], l3 = X[:, 3])
+
+        m = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3, trans = trans_linear(), k = 10)), df)
+        @test m isa NestedGamModel
+        @test m.converged
+        a_hat = inner_coef(m)
+        @test length(a_hat) == 3
+        @test norm(a_hat) ≈ 1.0 atol = 1e-8
+        @test abs(cor(X * a_hat, u)) > 0.99
+        @test cor(fitted(m), f_true) > 0.98
+        @test deviance(m) < nulldeviance(m)
+        @test 0.8 < deviance_explained(m) < 1.0
+        @test nobs(m) == n
+
+        # prediction reproduces training fit; response/link types work
+        p_link = predict(m, df)
+        p_resp = predict(m, df; type = :response)
+        @test p_resp ≈ fitted(m) atol = 1e-10
+        @test p_link ≈ p_resp atol = 1e-10   # identity link
+        @test_throws ArgumentError predict(m, df; type = :terms)
+
+        # prediction at new data (including mild extrapolation) is finite
+        newdf = (l1 = [0.0, 2.5, -2.5], l2 = [0.0, 2.5, -2.5], l3 = [0.0, 2.5, -2.5])
+        @test all(isfinite, predict(m, newdf; type = :response))
+    end
+
+    @testset "gam() auto-routing, mixed smooths, Poisson" begin
+        rng = StableRNG(11)
+        n = 500
+        X = randn(rng, n, 3)
+        a_true = normalize([0.6, 0.35, 0.15])
+        u = X * a_true
+        x0 = rand(rng, n) .* 2
+        η = 0.3 .+ 0.5 .* cos.(π .* x0) .+ 0.8 .* tanh.(2 .* u)
+        y = Float64.(rand.(rng, Poisson.(exp.(η))))
+        df = (y = y, x0 = x0, l1 = X[:, 1], l2 = X[:, 2], l3 = X[:, 3])
+
+        m = gam(GAM.@formula(y ~ s(x0, k = 8, bs = :cr) +
+                                 s_nest(l1, l2, l3, trans = trans_linear(), k = 10)),
+            df, Poisson())
+        @test m isa NestedGamModel          # auto-routed
+        @test m.converged
+        @test length(m.smooths) == 1        # the standard s(x0) smooth
+        @test abs(cor(X * inner_coef(m), u)) > 0.98
+        @test all(predict(m, df; type = :response) .> 0)
+        @test deviance_explained(m) > 0.2
+
+        # extended families are rejected with a clear error
+        @test_throws ArgumentError gam(
+            GAM.@formula(y ~ s_nest(l1, l2, l3, trans = trans_linear())),
+            df, NegBinFamily(theta = 1.0))
+    end
+
+    @testset "Adaptive exponential smoothing (trans_nexpsm)" begin
+        rng = StableRNG(12)
+        n = 600
+        x = randn(rng, n)
+        ω_true = 0.8
+        st = similar(x)
+        st[1] = x[1]
+        for i in 2:n
+            st[i] = ω_true * st[i - 1] + (1 - ω_true) * x[i]
+        end
+        y = sin.(2 .* st ./ std(st)) .+ 0.15 .* randn(rng, n)
+        df = (y = y, x = x)
+
+        m = gam_nl(GAM.@formula(y ~ s_nest(x, trans = trans_nexpsm(), k = 8)), df)
+        @test m.converged
+        ω_hat = 1.0 / (1.0 + exp(-coef(m)[m.inner_ranges[1]][1]))
+        @test abs(ω_hat - ω_true) < 0.1
+        @test cor(fitted(m), y) > 0.9
+    end
+
+    @testset "Kernel smoothing (trans_mgks)" begin
+        rng = StableRNG(13)
+        n = 200
+        cx, cy = rand(rng, n), rand(rng, n)
+        z = sin.(3 .* cx) .+ cos.(3 .* cy) .+ 0.1 .* randn(rng, n)
+        y = 2 .* (sin.(3 .* cx) .+ cos.(3 .* cy)) .+ 0.2 .* randn(rng, n)
+        df = (y = y, z = z, cx = cx, cy = cy)
+
+        m = gam_nl(GAM.@formula(y ~ s_nest(z, cx, cy, trans = trans_mgks(), k = 8)), df)
+        @test cor(fitted(m), y) > 0.9
+        # prediction at new coordinates smooths over the stored training data
+        newdf = (z = zeros(5), cx = collect(range(0.1, 0.9; length = 5)),
+            cy = fill(0.5, 5))
+        @test all(isfinite, predict(m, newdf; type = :response))
+    end
+
+    @testset "gam_nl argument validation" begin
+        df = (y = randn(10), x = randn(10))
+        @test_throws ArgumentError gam_nl(GAM.@formula(y ~ s(x, k = 5)), df)  # no s_nest
+        df2 = (y = randn(50), l1 = randn(50), l2 = randn(50))
+        @test_throws ArgumentError gam_nl(
+            GAM.@formula(y ~ s_nest(l1, l2, trans = trans_linear())), df2;
+            family = InverseGaussian())
+    end
+
+    @testset "Fixed outer sp is honored" begin
+        rng = StableRNG(21)
+        n = 300
+        X = randn(rng, n, 2)
+        u = X * normalize([0.8, 0.6])
+        y = sin.(u) .+ 0.2 .* randn(rng, n)
+        df = (y = y, l1 = X[:, 1], l2 = X[:, 2])
+        m_fix = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, trans = trans_linear(),
+            k = 8, sp = 1000.0)), df)
+        m_free = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, trans = trans_linear(),
+            k = 8)), df)
+        # the outer log-sp of the fixed fit stays at log(1000)
+        n_std = length(m_fix.sp) - 2
+        @test m_fix.sp[n_std + 1] ≈ log(1000.0) atol = 1e-12
+        @test m_fix.sp[n_std + 1] != m_free.sp[n_std + 1]
+    end
+end

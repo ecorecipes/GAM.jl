@@ -19,7 +19,7 @@ end
 
 # Populated after basis-alias definitions in smoothspec.jl
 const _SMOOTH_ALIASES = Set{Function}()
-const _RAW_SMOOTH_FUNCTION_NAMES = (:s, :te, :ti, :t2, :cr, :tp, :ts, :cs, :cc, :ps, :cps)
+const _RAW_SMOOTH_FUNCTION_NAMES = (:s, :te, :ti, :t2, :cr, :tp, :ts, :cs, :cc, :ps, :cps, :s_nest)
 
 """
     _functionterm_to_smoothspec(ft::FunctionTerm) → SmoothSpec

@@ -24,6 +24,7 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 - **`by` variables** — varying-coefficient smooths (numeric `by`) and factor-`by` smooths (one penalized smooth per level), including factor-`by` for shape-constrained (SCAM) smooths
 - **Offsets** — `gam(...; offset=...)` for known additive terms on the link scale (e.g. log-exposure in rate models), supported for ordinary, extended-family, and shape-constrained fits
 - **Term selection** — `gam(...; select=true)` adds a null-space penalty to every smooth (Marra & Wood 2011) so whole terms can be shrunk out of the model
+- **Nested effects** — gamFactory-style `s_nest()` smooths of estimated covariate transformations: single-index/distributed-lag (`trans_linear`), adaptive exponential smoothing (`trans_nexpsm`), and kernel smoothing (`trans_mgks`), fitted by joint penalized Newton with EFS smoothing selection via `gam_nl()` (or `gam()`, which routes automatically)
 
 ## Installation
 
@@ -113,10 +114,10 @@ gam(@formula(y ~ s(x)), df)
 gam(@formula(y ~ s(x)), df, Poisson(), LogLink())
 
 # Negative binomial
-gam(@formula(y ~ s(x)), df, NegBinFamily(1.0))
+gam(@formula(y ~ s(x)), df, NegBinFamily(theta=1.0))
 
 # Tweedie
-gam(@formula(y ~ s(x)), df, TweedieFamily(1.5))
+gam(@formula(y ~ s(x)), df, TweedieFamily(p=1.5))
 
 # Beta regression
 gam(@formula(y ~ s(x)), df, BetaFamily())
@@ -203,6 +204,30 @@ m = evgam(
     GEVFamily(),
 )
 ```
+
+## Nested Effects
+
+Smooths of *estimated* covariate transformations (Fasiolo et al. 2025; R's
+[gamFactory](https://github.com/mfasiolo/gamFactory)): the inner parameters
+are fitted jointly with the outer spline.
+
+```julia
+# Single-index effect over lagged covariates: s(a'x), a estimated
+m = gam_nl(@formula(y ~ s(x0) + s_nest(l1, l2, l3, trans=trans_linear(), k=10)), df)
+inner_coef(m)                      # estimated index direction (unit norm)
+
+# Adaptive exponential smoothing of a time-ordered series
+m = gam_nl(@formula(y ~ s_nest(x, trans=trans_nexpsm())), df)
+
+# Gaussian-kernel smoothing of z over coordinates
+m = gam_nl(@formula(y ~ s_nest(z, cx, cy, trans=trans_mgks())), df)
+```
+
+The inner output is standardized and the outer cubic spline uses a fixed
+symmetric knot range with an `s(0) = 0` constraint and linear extrapolation,
+following the paper. Supported families: `Normal`, `Poisson`,
+`Bernoulli`/`Binomial`, `Gamma`. `gam()` routes formulas containing `s_nest`
+to `gam_nl` automatically.
 
 ## Large-Scale Fitting (BAM)
 
@@ -378,6 +403,7 @@ GAMM fitting uses the built-in pure-Julia backend; no MixedModels.jl dependency 
 - Rigby, R.A. & Stasinopoulos, D.M. (2005). Generalized additive models for location, scale and shape. *Journal of the Royal Statistical Society Series C*, 54(3), 507–554.
 - Fasiolo, M., Wood, S.N., Zaffran, M., Nedellec, R., & Goude, Y. (2021). Fast calibrated additive quantile regression. *Journal of the American Statistical Association*, 116(535), 1402–1413.
 - Pya, N. & Wood, S.N. (2015). Shape constrained additive models. *Statistics and Computing*, 25(3), 543–559.
+- Fasiolo, M., et al. (2025). Scalable smoothing with nested models. *arXiv:2511.19234*.
 
 ## Author
 

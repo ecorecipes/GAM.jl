@@ -215,6 +215,13 @@ function gam(f::FormulaTerm, data;
     optimizer in (:pirls, :general) ||
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
+    # Nested effects (s_nest) use the dedicated joint Newton/EFS fitter
+    if _formula_has_nested(f)
+        family isa ExtendedFamily && throw(ArgumentError(
+            "s_nest supports Normal, Poisson, Bernoulli/Binomial, and Gamma families"))
+        return gam_nl(f, data; family = family, link = link)
+    end
+
     if family isa ExtendedFamily
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
         _validate_response(y, family)
@@ -276,6 +283,14 @@ function gam(gf::GamFormula, data;
     # Input validation
     _validate_data_lengths(data)
     _validate_response_in_data(gf.response, data)
+
+    # Nested effects (s_nest) use the dedicated joint Newton/EFS fitter
+    if has_nested_effects(gf.smooth_specs)
+        family isa ExtendedFamily && throw(ArgumentError(
+            "s_nest supports Normal, Poisson, Bernoulli/Binomial, and Gamma families"))
+        return gam_nl(gf, data; family = family, link = link)
+    end
+
     _validate_has_smooths(gf.smooth_specs)
     _validate_formula_smooths(gf.smooth_specs, data)
     _validate_gam_family(family)
