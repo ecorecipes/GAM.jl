@@ -57,7 +57,9 @@ jobs:
         with:
           use-public-rspm: true
       - name: Install R packages
-        run: Rscript -e 'install.packages(c("mgcv", "scam", "qgam", "gamlss", "evd", "evgam", "gratia", "nlme"))'
+        run: |
+          Rscript -e 'install.packages(c("mgcv", "scam", "qgam", "gamlss", "evd", "evgam", "gratia", "nlme", "remotes"))'
+          Rscript -e 'remotes::install_github("mfasiolo/gamFactory")' || echo "gamFactory install failed (comparison tests will be skipped)"
       - uses: actions/cache@v4
         env:
           cache-name: cache-artifacts

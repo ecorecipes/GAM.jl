@@ -73,13 +73,23 @@ trans_nexpsm() = TransExpSmooth()
 Multivariate Gaussian-kernel smoothing inner transformation for
 [`s_nest`](@ref). The first variable given to `s_nest` is the covariate `z`
 to smooth; the remaining variables are the coordinates. For observation `i`,
-`s̃ᵢ = Σⱼ≠ᵢ K_a(cᵢ,cⱼ) zⱼ / Σⱼ≠ᵢ K_a(cᵢ,cⱼ)` with a Gaussian kernel whose
+`s̃ᵢ = Σⱼ∈Nᵢ K_a(cᵢ,cⱼ) zⱼ / Σⱼ∈Nᵢ K_a(cᵢ,cⱼ)` with a Gaussian kernel whose
 per-coordinate log-bandwidths are the inner parameters `a` (ridge penalty).
-Prediction smooths over the stored training `(c, z)`. Cost is O(n²) in the
-training size.
+`Nᵢ` is the neighborhood of the `nn` nearest training points (excluding `i`
+during fitting), fixed at setup as in Fasiolo et al. (2025), giving O(n·nn)
+evaluation; `nn = 0` uses all points (O(n²)). Prediction smooths over the
+stored training `(c, z)`.
+
+    trans_mgks(; nn = 50)
 """
-struct TransMGKS <: NestedTransform end
-trans_mgks() = TransMGKS()
+struct TransMGKS <: NestedTransform
+    nn::Int    # neighborhood size (0 = use all training points)
+    function TransMGKS(nn::Int)
+        nn >= 0 || throw(ArgumentError("trans_mgks nn must be >= 0, got $nn"))
+        new(nn)
+    end
+end
+trans_mgks(; nn::Int = 50) = TransMGKS(nn)
 
 # Number of inner parameters for a transform given the s_nest data columns
 _n_inner(::TransLinear, ncols::Int) = ncols
@@ -137,7 +147,8 @@ end
 # coordinates in columns 2:end of Xq. `exclude_self=true` performs
 # leave-one-out smoothing (training); prediction uses all training points.
 function _mgks_smooth(a::AbstractVector, Xq::AbstractMatrix,
-    Ctr::AbstractMatrix, z::AbstractVector; exclude_self::Bool)
+    Ctr::AbstractMatrix, z::AbstractVector; exclude_self::Bool,
+    neigh::Union{Nothing, Matrix{Int}} = nothing)
     nq = size(Xq, 1)
     ntr = size(Ctr, 1)
     d = size(Ctr, 2)
@@ -147,7 +158,8 @@ function _mgks_smooth(a::AbstractVector, Xq::AbstractMatrix,
     for i in 1:nq
         num = zero(T)
         den = zero(T)
-        for j in 1:ntr
+        cand = neigh === nothing ? (1:ntr) : view(neigh, i, :)
+        for j in cand
             exclude_self && i == j && continue
             q = zero(T)
             for l in 1:d
@@ -161,6 +173,32 @@ function _mgks_smooth(a::AbstractVector, Xq::AbstractMatrix,
         out[i] = num / (den + 1e-300)
     end
     return out
+end
+
+# Fixed nearest-neighbor sets (std-scaled Euclidean metric on coordinates),
+# computed once at setup: query rows of Cq against training rows of Ctr.
+# `exclude_self=true` skips index i (training leave-one-out).
+function _mgks_neighbors(Cq::AbstractMatrix, Ctr::AbstractMatrix, nn::Int;
+    exclude_self::Bool)
+    nq, d = size(Cq, 1), size(Cq, 2)
+    ntr = size(Ctr, 1)
+    scale = [max(std(view(Ctr, :, l)), 1e-12) for l in 1:d]
+    nn_eff = min(nn, exclude_self ? ntr - 1 : ntr)
+    neigh = Matrix{Int}(undef, nq, nn_eff)
+    d2 = Vector{Float64}(undef, ntr)
+    for i in 1:nq
+        for j in 1:ntr
+            q = 0.0
+            for l in 1:d
+                δ = (Cq[i, l] - Ctr[j, l]) / scale[l]
+                q += δ * δ
+            end
+            d2[j] = q
+        end
+        exclude_self && (d2[i] = Inf)
+        neigh[i, :] .= partialsortperm(d2, 1:nn_eff)
+    end
+    return neigh
 end
 
 # ============================================================================
@@ -396,6 +434,7 @@ struct NestedGamModel
     X_fixed::Matrix{Float64}              # parametric + standard smooth design
     nested_specs::Vector{SmoothSpec}
     nested_data::Vector{Matrix{Float64}}  # training columns per nested effect
+    nested_aux::Vector{Union{Nothing, Matrix{Int}}}  # e.g. mgks neighborhoods
     outer_bases::Vector{NestedOuterBasis}
     inner_ranges::Vector{UnitRange{Int}}  # ranges of a within ζ
     outer_ranges::Vector{UnitRange{Int}}  # ranges of b within ζ
@@ -474,10 +513,19 @@ function gam_nl(gf::GamFormula, data;
     # ── Nested blocks ──────────────────────────────────────────────────────
     n_eff = length(nested_specs)
     nested_data = Matrix{Float64}[]
+    nested_aux = Union{Nothing, Matrix{Int}}[]
     outer_bases = NestedOuterBasis[]
     for sp in nested_specs
         cols = [Float64.(Tables.getcolumn(tbl, v)) for v in sp.term_vars]
-        push!(nested_data, reduce(hcat, cols))
+        Xin = reduce(hcat, cols)
+        push!(nested_data, Xin)
+        t = sp.basis.trans
+        if t isa TransMGKS && t.nn > 0
+            C = Xin[:, 2:end]
+            push!(nested_aux, _mgks_neighbors(C, C, t.nn; exclude_self = true))
+        else
+            push!(nested_aux, nothing)
+        end
         push!(outer_bases, _nested_outer_basis(sp.k))
     end
 
@@ -541,12 +589,23 @@ function gam_nl(gf::GamFormula, data;
              for (j, ob) in enumerate(outer_bases)]
     k_outer = [sp.k for sp in nested_specs]
 
+    function _train_st(j, a)
+        t = trans_list[j]
+        if t isa TransMGKS
+            return _mgks_smooth(a, nested_data[j],
+                view(nested_data[j], :, 2:size(nested_data[j], 2)),
+                view(nested_data[j], :, 1);
+                exclude_self = true, neigh = nested_aux[j])
+        end
+        return _trans_eval(t, a, nested_data[j])
+    end
+
     function _eta(ζ)
         η = X_fixed * ζ[1:(p_para + p_std)]
         for j in 1:n_eff
             a = ζ[inner_ranges[j]]
             b = ζ[outer_ranges[j]]
-            st = _trans_eval(trans_list[j], a, nested_data[j])
+            st = _train_st(j, a)
             μs = sum(st) / n
             σs = sqrt(sum(abs2, st .- μs) / n + 1e-12)
             ob = outer_bases[j]
@@ -724,7 +783,7 @@ function gam_nl(gf::GamFormula, data;
     # standardization constants at the optimum, for prediction
     standardize = Tuple{Float64, Float64}[]
     for j in 1:n_eff
-        st = _trans_eval(trans_list[j], ζ[inner_ranges[j]], nested_data[j])
+        st = _train_st(j, ζ[inner_ranges[j]])
         μs = sum(st) / n
         σs = sqrt(sum(abs2, st .- μs) / n + 1e-12)
         push!(standardize, (μs, σs))
@@ -738,9 +797,9 @@ function gam_nl(gf::GamFormula, data;
         :parametric => 1:p_para, :smooth => (p_para + 1):(p_para + p_std))
 
     return NestedGamModel(gf, family, link_eff, y, ζ, coef_ranges, smooths,
-        X_fixed, nested_specs, nested_data, outer_bases, inner_ranges,
-        outer_ranges, standardize, log_sp, penalties, edf_total, φ,
-        dev_final, null_dev, Vp, converged, iterations)
+        X_fixed, nested_specs, nested_data, nested_aux, outer_bases,
+        inner_ranges, outer_ranges, standardize, log_sp, penalties,
+        edf_total, φ, dev_final, null_dev, Vp, converged, iterations)
 end
 
 """Convert a plain StatsModels formula (possibly containing `s_nest`/`s`
@@ -792,30 +851,46 @@ end
 # Prediction and accessors
 # ============================================================================
 
-function _nested_eta_newdata(m::NestedGamModel, tbl, n_new::Int)
-    X_para = _parametric_design(
-        GamFormula(m.formula.response, m.formula.parametric,
-            m.formula.has_intercept, SmoothSpec[]), tbl, n_new)
-    η = X_para * m.ζ[m.coef_ranges[:parametric]]
-    col = m.coef_ranges[:smooth].start
-    for sm in m.smooths
-        Xp = predict_matrix(sm, tbl)
-        nb = size(Xp, 2)
-        η .+= Xp * m.ζ[col:(col + nb - 1)]
-        col += nb
+"""Training-style inner-transform evaluation for effect `j` at parameters
+`a`, using the stored data and (for mgks) the fixed training neighborhoods."""
+function _model_train_st(m::NestedGamModel, j::Int, a::AbstractVector)
+    t = m.nested_specs[j].basis.trans
+    if t isa TransMGKS
+        return _mgks_smooth(a, m.nested_data[j],
+            view(m.nested_data[j], :, 2:size(m.nested_data[j], 2)),
+            view(m.nested_data[j], :, 1);
+            exclude_self = true, neigh = m.nested_aux[j])
     end
+    return _trans_eval(t, a, m.nested_data[j])
+end
+
+# η at new data as a function of the coefficient vector ζ (AD-generic in ζ,
+# for delta-method standard errors). Design pieces that do not depend on ζ
+# (parametric/standard-smooth matrices, mgks prediction neighborhoods) are
+# passed in precomputed.
+function _nested_eta_newdata_ζ(m::NestedGamModel, ζ::AbstractVector,
+    X_lin::Matrix{Float64}, Xins::Vector{Matrix{Float64}},
+    pred_neighs::Vector{Union{Nothing, Matrix{Int}}}, n_new::Int)
+    η = X_lin * ζ[1:(m.coef_ranges[:smooth].stop)]
     for (j, sp) in enumerate(m.nested_specs)
-        cols = [Float64.(Tables.getcolumn(tbl, v)) for v in sp.term_vars]
-        Xin = reduce(hcat, cols)
-        a = m.ζ[m.inner_ranges[j]]
+        a = ζ[m.inner_ranges[j]]
         t = sp.basis.trans
         st = t isa TransMGKS ?
-             _mgks_smooth(a, Xin,
+             _mgks_smooth(a, Xins[j],
                 view(m.nested_data[j], :, 2:size(m.nested_data[j], 2)),
-                view(m.nested_data[j], :, 1); exclude_self = false) :
-             _trans_eval(t, a, Xin)
-        μs, σs = m.standardize[j]
-        b = m.ζ[m.outer_ranges[j]]
+                view(m.nested_data[j], :, 1);
+                exclude_self = false, neigh = pred_neighs[j]) :
+             _trans_eval(t, a, Xins[j])
+        # Standardization constants recomputed from the training data as a
+        # function of `a` (matching the fitting objective): at ζ = ζ̂ they
+        # equal the stored values, and differentiating through them keeps the
+        # delta-method Jacobian invariant to the standardization-unidentified
+        # directions of the inner parameters.
+        st_tr = _model_train_st(m, j, a)
+        ntr = length(st_tr)
+        μs = sum(st_tr) / ntr
+        σs = sqrt(sum(abs2, st_tr .- μs) / ntr + 1e-12)
+        b = ζ[m.outer_ranges[j]]
         ob = m.outer_bases[j]
         row0 = _bspline_row_interior(0.0, ob.knots, 4, sp.k)
         for i in 1:n_new
@@ -826,13 +901,63 @@ function _nested_eta_newdata(m::NestedGamModel, tbl, n_new::Int)
     return η
 end
 
-function StatsAPI.predict(m::NestedGamModel, newdata; type::Symbol = :link)
+# Precompute the ζ-independent prediction pieces for a new table
+function _nested_predict_pieces(m::NestedGamModel, tbl, n_new::Int)
+    X_para = _parametric_design(
+        GamFormula(m.formula.response, m.formula.parametric,
+            m.formula.has_intercept, SmoothSpec[]), tbl, n_new)
+    Xs = Matrix{Float64}[predict_matrix(sm, tbl) for sm in m.smooths]
+    X_lin = isempty(Xs) ? X_para : hcat(X_para, Xs...)
+    Xins = Matrix{Float64}[]
+    pred_neighs = Union{Nothing, Matrix{Int}}[]
+    for sp in m.nested_specs
+        cols = [Float64.(Tables.getcolumn(tbl, v)) for v in sp.term_vars]
+        Xin = reduce(hcat, cols)
+        push!(Xins, Xin)
+        t = sp.basis.trans
+        if t isa TransMGKS && t.nn > 0
+            j = length(Xins)
+            Ctr = m.nested_data[j][:, 2:end]
+            push!(pred_neighs, _mgks_neighbors(Xin[:, 2:end], Ctr, t.nn;
+                exclude_self = false))
+        else
+            push!(pred_neighs, nothing)
+        end
+    end
+    return X_lin, Xins, pred_neighs
+end
+
+"""
+    predict(m::NestedGamModel, newdata; type = :link, se = false)
+
+Predictions from a nested-effect GAM. `type = :link` (default) or
+`:response`. With `se = true`, returns `(predictions, standard_errors)`
+where the standard errors propagate the joint uncertainty of all
+coefficients — inner transformation parameters included — through the
+composition by the delta method: `se² = diag(J Vp J')` with
+`J = ∂η/∂ζ` computed by ForwardDiff (response-scale errors are scaled by
+`|dμ/dη|`).
+"""
+function StatsAPI.predict(m::NestedGamModel, newdata; type::Symbol = :link,
+    se::Bool = false)
+    type in (:link, :response) ||
+        throw(ArgumentError("type must be :link or :response, got :$type"))
     tbl = Tables.columntable(newdata)
     n_new = length(Tables.getcolumn(tbl, first(Tables.columnnames(tbl))))
-    η = _nested_eta_newdata(m, tbl, n_new)
-    type == :link && return η
-    type == :response && return [_nested_linkinv(m.link, e) for e in η]
-    throw(ArgumentError("type must be :link or :response, got :$type"))
+    X_lin, Xins, pred_neighs = _nested_predict_pieces(m, tbl, n_new)
+    η = _nested_eta_newdata_ζ(m, m.ζ, X_lin, Xins, pred_neighs, n_new)
+    μ = [_nested_linkinv(m.link, e) for e in η]
+    pred = type == :link ? η : μ
+    se || return pred
+    J = ForwardDiff.jacobian(
+        z -> _nested_eta_newdata_ζ(m, z, X_lin, Xins, pred_neighs, n_new), m.ζ)
+    se_eta = [sqrt(max(dot(view(J, i, :), m.Vp * view(J, i, :)), 0.0))
+              for i in 1:n_new]
+    if type == :response
+        dμdη = [abs(GLM.mueta(m.link, e)) for e in η]
+        return pred, se_eta .* dμdη
+    end
+    return pred, se_eta
 end
 
 StatsAPI.coef(m::NestedGamModel) = m.ζ
@@ -845,7 +970,7 @@ function StatsAPI.fitted(m::NestedGamModel)
     n = length(m.y)
     for (j, sp) in enumerate(m.nested_specs)
         a = m.ζ[m.inner_ranges[j]]
-        st = _trans_eval(sp.basis.trans, a, m.nested_data[j])
+        st = _model_train_st(m, j, a)
         μs, σs = m.standardize[j]
         b = m.ζ[m.outer_ranges[j]]
         ob = m.outer_bases[j]

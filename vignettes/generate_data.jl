@@ -108,9 +108,42 @@ function gen_poisson_gamm()
         ["x" => x, "y" => y, "site" => site, "eta_true" => eta_true, "re_true" => re_true])
 end
 
+# ── 12_nested_effects: data_si.csv, data_expsm.csv ──────────────────────────
+# Single-index data: u = X·a with a ∝ (0.7, 0.5, 0.2) (unit norm),
+#   y = sin(1.5·u) + ε,  ε ~ N(0, 0.2²)
+# Exponential-smoothing data: s̃ᵢ = ω s̃ᵢ₋₁ + (1−ω) xᵢ with ω = 0.8,
+#   y = sin(2·s̃/sd(s̃)) + ε,  ε ~ N(0, 0.15²)
+function gen_nested()
+    rng = MersenneTwister(20260823)
+    n = 400
+    X = randn(rng, n, 3)
+    a = [0.7, 0.5, 0.2]
+    a ./= sqrt(sum(abs2, a))
+    u = X * a
+    f = sin.(1.5 .* u)
+    y = f .+ 0.2 .* randn(rng, n)
+    write_csv(joinpath(VIGNETTES, "12_nested_effects", "data_si.csv"),
+        ["y" => y, "l1" => X[:, 1], "l2" => X[:, 2], "l3" => X[:, 3],
+         "u_true" => u, "f_true" => f])
+
+    n2 = 600
+    x = randn(rng, n2)
+    ω = 0.8
+    st = similar(x)
+    st[1] = x[1]
+    for i in 2:n2
+        st[i] = ω * st[i - 1] + (1 - ω) * x[i]
+    end
+    sdst = sqrt(sum(abs2, st .- sum(st) / n2) / (n2 - 1))
+    y2 = sin.(2 .* st ./ sdst) .+ 0.15 .* randn(rng, n2)
+    write_csv(joinpath(VIGNETTES, "12_nested_effects", "data_expsm.csv"),
+        ["y" => y2, "x" => x, "st_true" => st])
+end
+
 gen_gpd()
 gen_cx()
 gen_micv()
 gen_gaussian_gamm()
 gen_poisson_gamm()
+gen_nested()
 println("done")
