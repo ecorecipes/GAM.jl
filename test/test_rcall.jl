@@ -901,4 +901,24 @@ end
         @test maximum(abs.(m.fitted_values .- f_r)) < 0.1
     end
 
-end  # R Integration Tests
+
+    @testset "Fletcher scale — quasipoisson vs mgcv" begin
+        # Both sides default to Fletcher (2012); observed rel diff 0.017.
+        rng_fs = StableRNG(77)
+        n_fs = 400
+        x_fs = rand(rng_fs, n_fs) .* 3
+        mu_fs = exp.(0.5 .+ 0.6 .* sin.(x_fs .* 2))
+        y_fs = Float64[rand(rng_fs, Distributions.NegativeBinomial(1.4, 1.4 / (1.4 + m))) for m in mu_fs]
+        m_fs = gam(GAM.@formulak(y ~ s(x, k = 10, bs = :cr)),
+            DataFrame(x = x_fs, y = y_fs); family = QuasiPoissonFamily())
+        @rput y_fs x_fs
+        RCall.reval("""
+        dat_fs <- data.frame(x = x_fs, y = y_fs)
+        m_fsr <- mgcv::gam(y ~ s(x, k = 10, bs = "cr"), data = dat_fs,
+                           family = quasipoisson(), method = "REML")
+        sc_fsr <- summary(m_fsr)[["scale"]]
+        """)
+        sc_r = rcopy(R"sc_fsr")
+        @test m_fs.scale ≈ sc_r rtol = 0.05
+    end
+end
