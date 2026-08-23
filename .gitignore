@@ -2,4 +2,11 @@
 docs/build/
 docs/Manifest.toml
 vignettes/Manifest.toml
+Manifest.toml
 *.cov
+# Rendered vignette outputs (build artifacts of the .qmd sources)
+vignettes/**/*.md
+vignettes/**/*.html
+vignettes/**/*.pdf
+vignettes/**/*_files/
+!vignettes/README.md

@@ -21,7 +21,7 @@ GAMs represent smooth functions as linear combinations of **basis functions**. T
 | `:tp` | Thin plate regression spline | Default. Optimal in a certain sense; no knot placement needed |
 | `:cr` | Cubic regression spline | Cubic spline with knots at data quantiles; efficient for 1D |
 | `:ps` | P-spline | B-spline basis with difference penalty |
-| `:gp` | Gaussian process | Squared-exponential covariance as a basis |
+| `:gp` | Gaussian process | Matérn 3/2 covariance as a basis |
 
 This vignette fits the same data with each basis and compares the results.
 
@@ -76,7 +76,7 @@ for bs in bases
     m = models[bs]
     e = round(edf(m)[1]; digits = 2)
     d = round(deviance(m); digits = 2)
-    de = round(r2(m) * 100; digits = 1)
+    de = round(GAM.deviance_explained(m) * 100; digits = 1)
     println("$(rpad(bs, 8))$(lpad(string(e), 8))  $(lpad(string(d), 10))  $(lpad(string(de), 10))")
 end
 ```
@@ -166,7 +166,7 @@ plot(plots_basis...; layout = (2, 2), size = (800, 600))
 
 - **P-spline (`:ps`)**: B-spline basis with a difference penalty on adjacent coefficients. Evenly spaced knots. Computationally efficient and well-behaved, especially for evenly sampled data.
 
-- **Gaussian process (`:gp`)**: Uses a squared-exponential covariance kernel. Produces very smooth curves. Useful when the underlying function is believed to be infinitely differentiable.
+- **Gaussian process (`:gp`)**: Uses a Matérn 3/2 covariance kernel, whose sample paths are once-differentiable — smoother than an exponential kernel but deliberately rougher than a squared-exponential. A good choice when the underlying function is smooth but not analytically so.
 
 ## Summary
 

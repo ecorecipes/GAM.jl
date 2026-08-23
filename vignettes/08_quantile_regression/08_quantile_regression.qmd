@@ -133,9 +133,11 @@ end
 current()
 ```
 
-### Using `mqgam` for simultaneous fitting
+### Fitting multiple quantiles with `mqgam`
 
-`mqgam` fits all quantiles simultaneously, sharing the preliminary variance estimate for efficiency:
+`mqgam` is a convenience wrapper that loops over the requested quantiles,
+fitting an independent `qgam` (with its own calibration) for each and
+collecting the results in one object:
 
 ```{julia}
 mq = mqgam(@formula(y ~ s(x, k=20, bs=:cr)), df, quantiles)
@@ -273,7 +275,7 @@ bar(xs, losses, color=:teal, alpha=0.8, legend=false,
 | Multiple quantiles | `mqgam(formula, data, [τ₁, τ₂, ...])` | `mqgam(formula, data=dat, qu=c(...))` |
 | Loss function | ELF (Extended Log-F) | ELF |
 | Smoothing | Automatic (REML-based) | Automatic |
-| Pinball loss | `pinball_loss(r, τ)` | `pinLoss(...)` |
+| Pinball loss | `pinball_loss(y, μ̂, τ)` | `pinLoss(...)` |
 | Formula syntax | `@formula(y ~ s(x, k=20))` | `y ~ s(x, k=20)` |
 
 Quantile GAMs extend the GAM framework to model the full conditional distribution, making them especially valuable for heteroscedastic data where the spread changes with covariates.

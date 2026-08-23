@@ -73,7 +73,7 @@ The model summary shows parametric coefficients, smooth term EDF, deviance expla
 ```{julia}
 println("Number of observations: ", nobs(m))
 println("EDF per smooth:         ", round.(edf(m); digits = 2))
-println("Deviance explained:     ", round(r2(m) * 100; digits = 1), "%")
+println("Deviance explained:     ", round(GAM.deviance_explained(m) * 100; digits = 1), "%")
 println("Scale estimate:         ", round(m.scale; digits = 4))
 ```
 
@@ -146,6 +146,7 @@ The fitted model stores the estimated smoothing parameters:
 
 ```{julia}
 println("Estimation method: ", m.method)
+println("Log smoothing parameters: ", round.(m.sp; digits = 3))
 ```
 
 ## Model diagnostics
