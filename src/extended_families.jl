@@ -118,6 +118,13 @@ _has_extra_param(::QuasiBinomialFamily) = false
 _has_extra_param(f::TweedieFamily) = f.estimate_p
 _has_extra_param(f::BetaFamily) = f.estimate_phi
 
+"""Current value of the family's estimated extra parameter (NB θ, Tweedie p,
+Beta φ, ELF log σ), for convergence checks of the alternating estimation."""
+_extra_param_value(f::NegBinFamily) = f.theta
+_extra_param_value(f::TweedieFamily) = f.p
+_extra_param_value(f::BetaFamily) = f.phi
+_extra_param_value(f::ExtendedFamily) = hasproperty(f, :theta) ? f.theta : 0.0
+
 """Whether the family provides Dd derivatives for proper PIRLS working weights."""
 _has_Dd(::ExtendedFamily) = false
 _has_Dd(::TweedieFamily) = true
@@ -190,6 +197,15 @@ end
 function _variance(f::BetaFamily, mu)
     return mu .* (1.0 .- mu) ./ (1.0 + f.phi)
 end
+
+# Scalar variance and dV/dμ for the Fletcher scale estimator
+# (mirrors _variance_scalar/_dvariance_scalar_mu for standard families)
+_variance_scalar(f::ExtendedFamily, mu::Float64) = float(_variance(f, mu))
+_dvariance_scalar_mu(f::NegBinFamily, mu::Float64) = 1.0 + 2.0 * mu / f.theta
+_dvariance_scalar_mu(::QuasiPoissonFamily, mu::Float64) = 1.0
+_dvariance_scalar_mu(::QuasiBinomialFamily, mu::Float64) = 1.0 - 2.0 * mu
+_dvariance_scalar_mu(f::TweedieFamily, mu::Float64) = f.p * mu^(f.p - 1.0)
+_dvariance_scalar_mu(f::BetaFamily, mu::Float64) = (1.0 - 2.0 * mu) / (1.0 + f.phi)
 
 # ============================================================================
 # Deviance functions

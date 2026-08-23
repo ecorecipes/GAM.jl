@@ -51,7 +51,8 @@ using Tables
     CauchitLink, CloglogLink, SqrtLink
 
 import Base: show, size
-import StatsAPI: coef, coeftable, coefnames, confint, deviance, nulldeviance,
+import StatsAPI: coef, coeftable, coefnames, confint, cooksdistance, deviance,
+    leverage, nulldeviance,
     aic, aicc, bic, dof, dof_residual, loglikelihood, nobs, stderror, vcov, residuals,
     predict, fitted, fit, response, r2, adjr2
 import StatsModels: apply_schema, modelcols, schema, hasintercept
@@ -121,6 +122,8 @@ export
     edf,
     k_check,
     concurvity,
+    cooksdistance,
+    leverage,
     anova_gam,
     AnovaGamResult,
 
@@ -238,6 +241,7 @@ export
     smooth_estimates,
     SmoothEstimates,
     partial_residuals,
+    PartialResiduals,
     data_slice,
     derivatives,
     DerivativeEstimates,

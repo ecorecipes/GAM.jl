@@ -601,7 +601,7 @@ function scam_outer_iteration(
         S_total = zeros(p, p)
         result = scam_pirls(X, y, S_total, family, link, p_ident;
             weights = weights, offset = offset, control = control)
-        return Float64[], result
+        return Float64[], result, 0
     end
 
     if method == :GCV || method == :UBRE
@@ -615,7 +615,9 @@ function scam_outer_iteration(
     Xw_buf = similar(X)
     A_buf = zeros(p, p)
 
+    n_outer = 0
     for outer in 1:control.outer_maxit
+        n_outer = outer
         S_total = total_penalty(penalty, log_sp, p)
 
         result = scam_pirls(X, y, S_total, family, link, p_ident;
@@ -696,7 +698,7 @@ function scam_outer_iteration(
         start = prev_result === nothing ? nothing : prev_result.coefficients,
         control = control)
 
-    return log_sp, final_result
+    return log_sp, final_result, n_outer
 end
 
 """
@@ -744,7 +746,9 @@ function _scam_criterion_outer(
     end
 
     invphi = (sqrt(5.0) - 1.0) / 2.0
+    n_cycles = 0
     for cycle in 1:min(control.outer_maxit, 6)
+        n_cycles = cycle
         max_change = 0.0
         for j in 1:n_sp
             penalty.fixed[j] && continue
@@ -781,7 +785,7 @@ function _scam_criterion_outer(
     end
 
     final_result = fit_at(log_sp)
-    return log_sp, final_result
+    return log_sp, final_result, n_cycles
 end
 
 # ============================================================================
@@ -828,7 +832,7 @@ function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, w
     penalty = setup_penalties(smooths, n_parametric)
 
     # Outer iteration
-    log_sp, result = scam_outer_iteration(X, y, smooths, penalty, family, link, p_ident;
+    log_sp, result, outer_iters = scam_outer_iteration(X, y, smooths, penalty, family, link, p_ident;
         method = method, weights = wts, offset = off, control = control)
 
     # Post-processing
@@ -871,8 +875,9 @@ function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, w
 
     null_dev = _null_deviance(family, y, wts)
 
-    # REML/GCV score
-    gcv_score = n * result.deviance / (n - control.gamma * edf_total_val)^2
+    # No REML/LAML score is computed for SCAM fits: the reml slot is NaN
+    # rather than a mislabeled criterion. The GCV score, if wanted, is
+    # n·deviance/(n − γ·edf)² from the stored fields.
 
     return GamModel(
         f,
@@ -890,13 +895,13 @@ function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, w
         scale_est,
         result.deviance,
         null_dev,
-        gcv_score,
+        NaN,
         method,
         Vp, Ve,
         result.hat_diag,
         result.R,
         result.converged,
-        0,
+        outer_iters,
         length(smooths),
         n_parametric,
         gam_control(
@@ -937,6 +942,15 @@ use the SCAM fitting algorithm.
 
 Unconstrained smooth types (`:tp`, `:cr`, `:ps`, etc.) can also be used
 alongside constrained ones.
+
+# Notes
+- Standard errors are conditional on the estimated smoothing parameters and
+  constraints; in simulations they can understate full-refit variability
+  (a parametric bootstrap gave reported-SE/empirical-sd ratios around 0.6,
+  similar to R's scam).
+- SCAM fits store `NaN` in the model's `reml` field — no REML/LAML score is
+  computed. The GCV criterion can be recomputed as
+  `nobs(m) * deviance(m) / (nobs(m) − γ·edf)²`.
 
 # Example
 ```julia

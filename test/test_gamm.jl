@@ -313,6 +313,13 @@ using LinearAlgebra
         df_unknown = DataFrame(x = [0.0], group = [999])
         ŷ_unk = predict(m, df_unknown)
         @test length(ŷ_unk) == 1
+
+        # type=/se= kwargs
+        @test predict(m, df; type = :link) ≈ ŷ
+        p_se, se_vals = predict(m, df; se = true)
+        @test p_se ≈ ŷ
+        @test all(isfinite, se_vals) && all(>(0.0), se_vals)
+        @test_throws ArgumentError predict(m, df; type = :terms)
         @test isfinite(ŷ_unk[1])  # should get zero RE contribution
     end
 
@@ -609,3 +616,24 @@ using LinearAlgebra
         end
     end
 end
+
+@testset "GammModel predict: response scale (Poisson PQL)" begin
+    rng_p = MersenneTwister(88)
+    n_g, n_per = 6, 50
+    n = n_g * n_per
+    group = repeat(1:n_g; inner = n_per)
+    x = rand(rng_p, n) .* 2
+    b = 0.4 .* randn(rng_p, n_g)
+    η = 0.5 .+ 0.7 .* sin.(π .* x) .+ b[group]
+    y = Float64.(rand.(rng_p, Poisson.(exp.(η))))
+    dfp = DataFrame(x = x, y = y, group = group)
+
+    mp = gamm(@formula(y ~ s(x, k = 8) + (1 | group)), dfp; family = Poisson())
+    μ̂ = predict(mp, dfp; type = :response)
+    @test all(μ̂ .> 0)
+    @test cor(μ̂, y) > 0.5
+    p_resp, se_resp = predict(mp, dfp; type = :response, se = true)
+    @test p_resp ≈ μ̂
+    @test all(isfinite, se_resp) && all(>(0.0), se_resp)
+end
+

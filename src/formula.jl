@@ -89,6 +89,13 @@ function StatsModels.apply_schema(t::SmoothTerm, sch, ::Type{<:Any})
     return AppliedSmoothTerm(t.spec, nothing)
 end
 
+# Disambiguation vs StatsModels' apply_schema(::AbstractTerm, ::FullRank, ::Type)
+# (the untyped-sch method above is otherwise ambiguous with it for SmoothTerm)
+function StatsModels.apply_schema(t::SmoothTerm, sch::StatsModels.FullRank,
+    ::Type{<:Any})
+    return AppliedSmoothTerm(t.spec, nothing)
+end
+
 # Schema application: FunctionTerm{typeof(smooth_f)} → AppliedSmoothTerm
 # This makes the standard StatsModels pipeline (apply_schema → modelcols)
 # work seamlessly for smooth terms created by @formula(y ~ s(x, 10)).
@@ -653,6 +660,16 @@ function setup_gam(f::FormulaTerm, data;
     end
 
     _assign_smooth_indices!(smooths, n_parametric)
+
+    # Apply side constraints for identifiability (mgcv's gam.side), exactly
+    # as on the GamFormula path — without this, overlapping smooths (e.g.
+    # s(x) + te(x, z)) leave an unconstrained direction in the design.
+    if length(smooths) > 1
+        modified = side_constrain!(smooths, X_para)
+        if modified
+            _assign_smooth_indices!(smooths, n_parametric)
+        end
+    end
 
     X_smooth_parts = [sm.X for sm in smooths]
     X_full = isempty(X_smooth_parts) ? X_para :

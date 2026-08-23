@@ -75,18 +75,23 @@ using Distributions
 
     @testset "partial_residuals" begin
         pr = partial_residuals(m)
-        @test pr isa Dict{String, Tuple{Vector{Float64}, Vector{Float64}}}
-        @test haskey(pr, "s(x,bs=cr)")
-        x_vals, p_resid = pr["s(x,bs=cr)"]
-        @test length(x_vals) == n
-        @test length(p_resid) == n
-        @test all(isfinite, p_resid)
+        @test pr isa PartialResiduals
+        @test "s(x,bs=cr)" in pr.smooth
+        mask = pr.smooth .== "s(x,bs=cr)"
+        @test count(mask) == n
+        @test all(isfinite, pr.residual[mask])
+        @test pr.xname[findfirst(mask)] == "x"
+        @test length(pr.x) == length(pr.residual) == length(pr.smooth)
 
-        # Multi-smooth
+        # Multi-smooth: long format with one block per smooth
         pr2 = partial_residuals(m2)
-        @test length(pr2) == 2
-        @test haskey(pr2, "s(x1,bs=cr)")
-        @test haskey(pr2, "s(x2,bs=cr)")
+        @test sort(unique(pr2.smooth)) == sort(["s(x1,bs=cr)", "s(x2,bs=cr)"])
+        @test length(pr2.residual) == 2 * n2
+
+        # show method
+        buf = IOBuffer()
+        show(buf, pr)
+        @test occursin("PartialResiduals", String(take!(buf)))
     end
 
     # ─── data_slice ──────────────────────────────────────────────────────
@@ -221,7 +226,8 @@ using Distributions
     # ─── appraise ────────────────────────────────────────────────────────
 
     @testset "appraise" begin
-        ad = appraise(m)
+        # default is the gratia-style simulated reference envelope
+        ad = appraise(m; seed = 42)
         @test ad isa AppraiseData
         @test length(ad.residuals_deviance) == n
         @test length(ad.residuals_pearson) == n
@@ -242,6 +248,17 @@ using Distributions
         buf = IOBuffer()
         show(buf, ad)
         @test occursin("AppraiseData", String(take!(buf)))
+
+        # simulated reference quantiles track the sample closely for a
+        # well-specified Gaussian model, and are reproducible under a seed
+        @test cor(ad.qq_theoretical, ad.qq_sample) > 0.95
+        ad_rep = appraise(m; seed = 42)
+        @test ad_rep.qq_theoretical ≈ ad.qq_theoretical
+
+        # normal-theory fallback still available
+        ad_n = appraise(m; method = :normal)
+        @test issorted(ad_n.qq_theoretical)
+        @test_throws ArgumentError appraise(m; method = :bogus)
     end
 
     # ─── rootogram ───────────────────────────────────────────────────────

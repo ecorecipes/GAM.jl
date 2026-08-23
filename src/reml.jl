@@ -297,12 +297,9 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
             # V'(μ)
             dvm = _dvariance_scalar_mu(family, mu_i)
 
-            # w = weights * g1² / V
-            # dw/dη = weights * (2 g1 g2 V - g1² V' g1) / V²
-            #       = weights * g1/V * (2 g2 - g1² V'/V)
-            # Wait, need to be more careful:
-            # dw/dη = d(g1²/V)/dη = (2g1·dg1/dη·V - g1²·dV/dη) / V²
-            # where dg1/dη = g2 and dV/dη = V'(μ)·g1
+            # Working weight w = weights·g1²/V with g1 = dμ/dη. By the
+            # quotient rule, with dg1/dη = g2 and dV/dη = V′(μ)·g1:
+            #   dw/dη = weights·(2·g1·g2·V − g1³·V′(μ)) / V²
             dw_deta[i] = weights[i] * (2.0 * g1 * g2 * vm - g1^2 * dvm * g1) / (vm * vm)
         end
     end

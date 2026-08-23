@@ -241,7 +241,21 @@ StatsAPI.loglikelihood(m::GammModel) = loglikelihood(m.gam_model)
 StatsAPI.dof(m::GammModel) = dof(m.gam_model) + sum(length.(m.random_coefs))
 StatsAPI.response(m::GammModel) = response(m.gam_model)
 
-function StatsAPI.predict(m::GammModel, newdata)
+"""
+    predict(m::GammModel, newdata; type=:link, se=false)
+
+Predictions from a GAMM at `newdata`, including the BLUP contributions of
+any random effects whose group levels appear in `newdata` (unknown levels
+contribute zero). `type = :link` (default) returns the linear predictor,
+`:response` applies the inverse link. With `se = true`, returns
+`(predictions, standard_errors)` from the fixed + smooth part of the model
+(conditional on the estimated random effects and smoothing parameters);
+response-scale errors are scaled by |dμ/dη|.
+"""
+function StatsAPI.predict(m::GammModel, newdata; type::Symbol = :link,
+    se::Bool = false)
+    type in (:link, :response) ||
+        throw(ArgumentError("type must be :link or :response, got :$type"))
     t = Tables.columntable(newdata)
     gm = m.gam_model
     n_re = length(m.random_effects)
@@ -262,15 +276,30 @@ function StatsAPI.predict(m::GammModel, newdata)
     # Fixed + smooth coefficients (exclude RE coefficients)
     n_fixed_smooth = size(X_new, 2)
     β_fs = gm.coefficients[1:n_fixed_smooth]
-    ŷ = X_new * β_fs
+    η = X_new * β_fs
 
     # Add random effect contributions via predict_re_matrix
     # (handles missing/unknown groups gracefully)
     for (i, cre) in enumerate(m.random_effects)
         Z_new = predict_re_matrix(cre, newdata)
-        ŷ .+= Z_new * m.random_coefs[i]
+        η .+= Z_new * m.random_coefs[i]
     end
-    return ŷ
+
+    link = gm.link
+    pred = type == :link ? η : GLM.linkinv.(Ref(link), η)
+    se || return pred
+
+    Vp = gm.Vp
+    (size(Vp, 1) >= n_fixed_smooth && any(!iszero, Vp)) || throw(ArgumentError(
+        "predict(se=true) requires a coefficient covariance; this GammModel " *
+        "does not carry one"))
+    V_fs = @view Vp[1:n_fixed_smooth, 1:n_fixed_smooth]
+    se_eta = [sqrt(max(dot(view(X_new, i, :), V_fs * view(X_new, i, :)), 0.0))
+              for i in 1:size(X_new, 1)]
+    if type == :response
+        return pred, se_eta .* abs.(GLM.mueta.(Ref(link), η))
+    end
+    return pred, se_eta
 end
 
 """

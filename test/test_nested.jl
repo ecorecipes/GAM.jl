@@ -67,6 +67,8 @@ using StableRNGs
         a_hat = inner_coef(m)
         @test length(a_hat) == 3
         @test norm(a_hat) ≈ 1.0 atol = 1e-8
+        # the fitter reparameterizes the stored coefficients to unit norm
+        @test norm(m.ζ[m.inner_ranges[1]]) ≈ 1.0 atol = 1e-8
         @test abs(cor(X * a_hat, u)) > 0.99
         @test cor(fitted(m), f_true) > 0.98
         @test deviance(m) < nulldeviance(m)
@@ -182,6 +184,91 @@ using StableRNGs
         @test_throws ArgumentError gam_nl(
             GAM.@formula(y ~ s_nest(l1, l2, trans = trans_linear())), df2;
             family = InverseGaussian())
+    end
+
+    @testset "Offset support" begin
+        rng = StableRNG(31)
+        n = 250
+        X = randn(rng, n, 3)
+        u = X * normalize([0.7, 0.5, 0.2])
+        f_true = sin.(1.5 .* u)
+        y = f_true .+ 0.2 .* randn(rng, n)
+        df = (y = y, l1 = X[:, 1], l2 = X[:, 2], l3 = X[:, 3])
+
+        # identity link + free intercept: a constant offset is absorbed by
+        # the intercept — fitted values identical, intercept shifted by −c
+        c = 5.0
+        m0 = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df)
+        m_off = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df; offset = fill(c, n))
+        @test maximum(abs, fitted(m_off) .- fitted(m0)) < 1e-3
+        @test (coef(m0)[1] - coef(m_off)[1]) ≈ c atol = 1e-3
+        # predict must be given the offset to reproduce fitted
+        @test predict(m_off, df; offset = fill(c, n), type = :response) ≈
+              fitted(m_off) atol = 1e-8
+        # without the offset, predictions differ by exactly c on the link scale
+        @test predict(m_off, df) .+ c ≈ predict(m_off, df; offset = fill(c, n)) atol = 1e-10
+        @test_throws ArgumentError gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df; offset = ones(3))
+
+        # Poisson rate model with log-exposure offset recovers the rate
+        expo = rand(rng, n) .* 4 .+ 0.5
+        rate = exp.(0.3 .+ 0.8 .* tanh.(2 .* u))
+        ycnt = Float64.(rand.(rng, Poisson.(rate .* expo)))
+        dfp = (y = ycnt, l1 = X[:, 1], l2 = X[:, 2], l3 = X[:, 3])
+        mp = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), dfp;
+            family = Poisson(), offset = log.(expo))
+        @test cor(predict(mp, dfp; type = :response), rate) > 0.9
+    end
+
+    @testset "Weights support" begin
+        rng = StableRNG(32)
+        n = 250
+        X = randn(rng, n, 3)
+        u = X * normalize([0.7, 0.5, 0.2])
+        f_true = sin.(1.5 .* u)
+        y = f_true .+ 0.2 .* randn(rng, n)
+        y_bad = copy(y)
+        y_bad[1:20] .+= 10.0
+        df = (y = y_bad, l1 = X[:, 1], l2 = X[:, 2], l3 = X[:, 3])
+        w0 = ones(n); w0[1:20] .= 0.0
+        m_w = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df; weights = w0)
+        m_u = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df)
+        # downweighting the corrupted rows recovers the clean signal
+        @test cor(fitted(m_w)[21:end], f_true[21:end]) > 0.98
+        @test cor(fitted(m_w)[21:end], f_true[21:end]) >
+              cor(fitted(m_u)[21:end], f_true[21:end])
+        @test_throws ArgumentError gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df; weights = -ones(n))
+        @test_throws ArgumentError gam_nl(GAM.@formula(y ~ s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df; weights = ones(5))
+    end
+
+    @testset "Categorical parametric covariates" begin
+        rng = StableRNG(33)
+        n = 240
+        X = randn(rng, n, 3)
+        u = X * normalize([0.7, 0.5, 0.2])
+        f_true = sin.(1.5 .* u)
+        g = repeat(["a", "b", "c"], inner = 80)
+        shift = Dict("a" => 0.0, "b" => 1.0, "c" => -0.5)
+        y = f_true .+ [shift[gi] for gi in g] .+ 0.2 .* randn(rng, n)
+        df = (y = y, g = g, l1 = X[:, 1], l2 = X[:, 2], l3 = X[:, 3])
+        m = gam_nl(GAM.@formulak(y ~ g + s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df)
+        @test m.converged
+        # intercept + 2 dummy columns
+        @test m.coef_ranges[:parametric] == 1:3
+        @test cor(fitted(m), y) > 0.95
+        # level contrasts recovered (b−a = 1.0, c−a = −0.5 up to noise)
+        @test coef(m)[2] ≈ 1.0 atol = 0.2
+        @test coef(m)[3] ≈ -0.5 atol = 0.2
+        # prediction reuses the training schema
+        @test predict(m, df; type = :response) ≈ fitted(m) atol = 1e-8
     end
 
     @testset "Fixed outer sp is honored" begin

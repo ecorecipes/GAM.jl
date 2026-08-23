@@ -36,6 +36,22 @@ struct SmoothEstimates
 end
 
 """
+    PartialResiduals
+
+Tabular result from [`partial_residuals`](@ref), in long format: one row per
+(smooth, observation). `smooth` is the smooth's label, `xname` the covariate
+name, `x` the covariate value, and `residual` the partial residual
+f̂ⱼ(xᵢ) + ε̂ᵢ (working residuals, link scale). Plots.jl recipes overlay the
+residuals as scatter panels per smooth.
+"""
+struct PartialResiduals
+    smooth::Vector{String}
+    xname::Vector{String}
+    x::Vector{Float64}
+    residual::Vector{Float64}
+end
+
+"""
     DerivativeEstimates
 
 Tabular result from [`derivatives`](@ref). Contains estimated derivatives of
@@ -235,7 +251,8 @@ end
 Compute partial residuals for selected smooth terms.
 Partial residuals = f̂_j(x) + ε̂, where ε̂ are the working residuals.
 
-Returns a Dict mapping smooth labels to (x_values, partial_resid_values).
+Returns a [`PartialResiduals`](@ref) struct in long format (one row per
+smooth × observation), with a Plots.jl recipe for scatter overlays.
 """
 function partial_residuals(m::GamModel; select = nothing)
     smooth_indices = _resolve_smooth_select(m, select)
@@ -249,7 +266,10 @@ function partial_residuals(m::GamModel; select = nothing)
         resid[i] = (m.y[i] - m.fitted_values[i]) / dm
     end
 
-    result = Dict{String, Tuple{Vector{Float64}, Vector{Float64}}}()
+    labels = String[]
+    xnames = String[]
+    xs = Float64[]
+    residuals_out = Float64[]
     for si in smooth_indices
         sm = m.smooths[si]
         spec = sm.spec
@@ -263,9 +283,12 @@ function partial_residuals(m::GamModel; select = nothing)
         var = spec.term_vars[1]
         x_vals = Float64.(collect(Tables.getcolumn(Tables.columntable(
             _extract_original_data(m, sm)), var)))
-        result[spec.label] = (x_vals, partial_r)
+        append!(labels, fill(spec.label, n))
+        append!(xnames, fill(string(var), n))
+        append!(xs, x_vals)
+        append!(residuals_out, partial_r)
     end
-    return result
+    return PartialResiduals(labels, xnames, xs, residuals_out)
 end
 
 # ============================================================================
@@ -541,20 +564,28 @@ end
 # ============================================================================
 
 """
-    appraise(m::GamModel; type=:deviance, seed=nothing)
+    appraise(m::GamModel; type=:deviance, method=:simulate, n_sim=50, seed=nothing)
 
 Compute model diagnostic data for standard residual checking plots:
 QQ plot, residuals vs linear predictor, histogram of residuals,
 and observed vs fitted.
 
 `type` selects the residuals used for the QQ panel: `:deviance` (default),
-`:pearson`, or `:response`.
+`:pearson`, or `:response`. `method` selects the QQ reference quantiles:
+`:simulate` (default, matching gratia) simulates `n_sim` response sets from
+the fitted model and uses the mean of the sorted simulated residuals as the
+reference; `:normal` uses normal-theory quantiles. Simulation is available
+for Normal, Poisson, Bernoulli/Binomial, Gamma, NegBin, and the quasi
+families; other families require `method=:normal`.
 
 Returns an [`AppraiseData`](@ref) struct.
 """
-function appraise(m::GamModel; type::Symbol = :deviance, seed = nothing)
+function appraise(m::GamModel; type::Symbol = :deviance,
+    method::Symbol = :simulate, n_sim::Int = 50, seed = nothing)
     type in (:deviance, :pearson, :response) || throw(ArgumentError(
         "type must be :deviance, :pearson, or :response, got :$type"))
+    method in (:simulate, :normal) || throw(ArgumentError(
+        "method must be :simulate or :normal, got :$method"))
 
     dev_resid = residuals(m; type = :deviance)
     prs_resid = residuals(m; type = :pearson)
@@ -562,19 +593,47 @@ function appraise(m::GamModel; type::Symbol = :deviance, seed = nothing)
     y = m.y
     mu = m.fitted_values
 
-    # QQ plot data — standardized residuals of the requested type vs normal
-    # quantiles. Divide by sqrt(scale) so that well-specified models show
-    # points on y=x
+    # QQ plot data — standardized residuals of the requested type. Divide by
+    # sqrt(scale) so that well-specified models show points on y=x
     qq_resid = type == :deviance ? dev_resid :
                type == :pearson ? prs_resid :
                residuals(m; type = :response)
     n = length(qq_resid)
     sc = max(m.scale, eps())
     sorted = sort(qq_resid ./ sqrt(sc))
-    theoretical = [dquantile(DNormal(), (i - 0.5) / n) for i in 1:n]
+
+    if method == :simulate
+        _appraise_can_simulate(m.family) || throw(ArgumentError(
+            "appraise(method=:simulate) does not support $(nameof(typeof(m.family))); " *
+            "use method=:normal"))
+        rng = seed === nothing ? default_rng() : MersenneTwister(seed)
+        # Reference quantiles: mean of sorted simulated standardized
+        # residuals under the fitted model (mgcv qq.gam / gratia convention)
+        acc = zeros(n)
+        ysim = Vector{Float64}(undef, n)
+        wt = m.weights
+        for _ in 1:n_sim
+            @inbounds for i in 1:n
+                ysim[i] = _random_from_family(rng, m.family, mu[i], m.scale)
+            end
+            r = type == :deviance ? _deviance_residuals(m.family, ysim, mu, wt) :
+                type == :pearson ?
+                sqrt.(wt) .* (ysim .- mu) ./ sqrt.(max.(_variance(m.family, mu), eps())) :
+                ysim .- mu
+            acc .+= sort(r ./ sqrt(sc))
+        end
+        theoretical = acc ./ n_sim
+    else
+        theoretical = [dquantile(DNormal(), (i - 0.5) / n) for i in 1:n]
+    end
 
     return AppraiseData(dev_resid, prs_resid, eta, y, mu, theoretical, sorted)
 end
+
+"""Families for which `appraise(method=:simulate)` can draw responses."""
+_appraise_can_simulate(family) =
+    family isa Union{Normal, Poisson, Bernoulli, Binomial, Gamma,
+        NegBinFamily, QuasiPoissonFamily, QuasiBinomialFamily}
 
 """
     rootogram(m::GamModel; max_count=nothing)
@@ -681,6 +740,12 @@ end
 function Base.show(io::IO, de::DerivativeEstimates)
     unique_smooths = unique(de.smooth)
     println(io, "DerivativeEstimates (order=$(de.order), type=$(de.type)): $(length(unique_smooths)) smooth(s)")
+end
+
+function Base.show(io::IO, pr::PartialResiduals)
+    n_smooth = length(unique(pr.smooth))
+    println(io, "PartialResiduals: $(length(pr.residual)) rows across $n_smooth smooth(s)")
+    print(io, "  smooths: ", join(unique(pr.smooth), ", "))
 end
 
 function Base.show(io::IO, ad::AppraiseData)
@@ -881,9 +946,13 @@ function _random_from_family(rng::AbstractRNG, family, mu, scale)
     elseif family isa Poisson || family isa QuasiPoissonFamily
         lam = max(mu, 1e-10)
         return Float64(rand(rng, DPoisson(lam)))
-    elseif family isa Binomial || family isa QuasiBinomialFamily
+    elseif family isa Bernoulli || family isa Binomial || family isa QuasiBinomialFamily
         p = clamp(mu, 1e-10, 1 - 1e-10)
         return Float64(rand(rng) < p)
+    elseif family isa NegBinFamily
+        theta = family.theta
+        p_nb = theta / (theta + max(mu, 1e-10))
+        return Float64(rand(rng, DNegBin(theta, p_nb)))
     elseif family isa Gamma
         shape = 1.0 / scale
         sc = mu / shape

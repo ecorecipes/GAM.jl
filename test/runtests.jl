@@ -34,6 +34,25 @@ function simulate_tweedie(rng, mu::AbstractVector{<:Real}, p::Real, phi::Real)
     return y
 end
 
+# ─── Outer wrapper ──────────────────────────────────────────────────────────
+# Everything below runs inside ONE outer testset: a bare top-level @testset
+# throws at its `end` when it contains failures, which previously aborted the
+# suite at the first failing section and skipped everything after it. With
+# the wrapper, failures are recorded, all sections still run, and the wrapper
+# reports the full summary (and throws, failing CI) once at the very end.
+# The body is deliberately not re-indented to keep diffs reviewable.
+@testset "GAM.jl test suite" begin
+
+# Static quality checks
+@eval using Aqua
+@testset "Aqua static checks" begin
+    Aqua.test_unbound_args(GAM)
+    Aqua.test_undefined_exports(GAM)
+    Aqua.test_piracies(GAM)
+    Aqua.test_stale_deps(GAM)
+    Aqua.test_ambiguities(GAM)
+end
+
 @testset "GAM.jl" begin
     @testset "SmoothSpec construction" begin
         sp = s(:x)
@@ -1162,3 +1181,5 @@ catch
     false
 end
 _plots_available && @eval include("test_plots.jl")
+
+end # @testset "GAM.jl test suite"

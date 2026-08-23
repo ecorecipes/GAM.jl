@@ -40,7 +40,10 @@ function _gp_correlation(d::Float64, corfun::Symbol, params::Vector{Float64})
         p = isempty(params) ? 1.5 : params[1]
         return exp(-d^p)
     else
-        error("Unknown GP correlation function: $corfun")
+        throw(ArgumentError(
+            "Unknown GP correlation function :$corfun; valid options are " *
+            ":matern32 (default), :matern52, :exponential, :gaussian/:sqexp, " *
+            ":power_exp"))
     end
 end
 
