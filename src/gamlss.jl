@@ -649,7 +649,7 @@ end
     gamlss_control(; c_crit=0.001, n_cyc=20, i_cc=0.001, i_cyc=50,
                      mu_step=1.0, sigma_step=1.0, nu_step=1.0, tau_step=1.0,
                      autostep=true, gd_tol=Inf, trace=false,
-                     sp_method=:efs, gaic_k=2.0)
+                     method=:efs, gaic_k=2.0)
 
 Construct a [`GamlssControl`](@ref) with default or custom fitting parameters.
 
@@ -662,7 +662,8 @@ Construct a [`GamlssControl`](@ref) with default or custom fitting parameters.
 - `autostep`: enable automatic step halving when deviance increases
 - `gd_tol`: global deviance tolerance
 - `trace`: print iteration progress
-- `sp_method`: smoothing parameter method — `:efs`, `:local_ml`, `:local_gaic`, or `:local_gcv`
+- `method`: smoothing parameter method — `:efs`, `:local_ml`, `:local_gaic`, or
+  `:local_gcv` (`sp_method=` is accepted as a deprecated alias)
 - `gaic_k`: penalty multiplier for GAIC (`2.0` = AIC, `log(n)` = BIC)
 
 # Returns
@@ -680,13 +681,29 @@ function gamlss_control(; c_crit::Real=0.001, n_cyc::Int=20,
                           nu_step::Real=1.0, tau_step::Real=1.0,
                           autostep::Bool=true, gd_tol::Real=Inf,
                           trace::Bool=false,
-                          sp_method::Symbol=:efs, gaic_k::Real=2.0)
-    sp_method in (:efs, :local_ml, :local_gaic, :local_gcv) ||
-        throw(ArgumentError("sp_method must be :efs, :local_ml, :local_gaic, or :local_gcv"))
+                          method::Union{Symbol, Nothing}=nothing,
+                          sp_method::Union{Symbol, Nothing}=nothing,
+                          gaic_k::Real=2.0)
+    # `method` is canonical (matching gam()'s kwarg name); `sp_method` is a
+    # deprecated alias kept for backward compatibility.
+    m = if method !== nothing && sp_method !== nothing
+        method == sp_method || throw(ArgumentError(
+            "conflicting method=:$method and sp_method=:$sp_method; use method= only"))
+        method
+    elseif sp_method !== nothing
+        @warn "gamlss_control(sp_method=...) is deprecated; use method=..." maxlog = 1
+        sp_method
+    elseif method !== nothing
+        method
+    else
+        :efs
+    end
+    m in (:efs, :local_ml, :local_gaic, :local_gcv) ||
+        throw(ArgumentError("method must be :efs, :local_ml, :local_gaic, or :local_gcv"))
     GamlssControl(Float64(c_crit), n_cyc, Float64(i_cc), i_cyc,
                   Float64(mu_step), Float64(sigma_step), Float64(nu_step),
                   Float64(tau_step), autostep, Float64(gd_tol), trace,
-                  sp_method, Float64(gaic_k))
+                  m, Float64(gaic_k))
 end
 
 """Get step size for parameter k from GamlssControl."""
@@ -738,6 +755,12 @@ Fit a Generalized Additive Model for Location, Scale, and Shape (GAMLSS).
 - `control`: fitting control (see [`mp_control`](@ref))
 - `sp`: fixed log smoothing parameters (default: estimate via REML)
 - `trace`: print iteration progress
+- `offset`: known additive terms for the linear predictors
+  (η_k = X_k β_k + off_k). A single length-`n` vector applies to the FIRST
+  linear predictor (location — e.g. log-exposure); a length-`K` vector of
+  entries (`nothing` or length-`n` vectors) sets per-parameter offsets.
+  Stored on the model and used for training-data prediction; supply
+  `offset=` to `predict` for new data. Not supported for Bayesian fits.
 
 # Examples
 ```julia
@@ -770,6 +793,7 @@ function gamlss(formulas, data, family::UnivariateDistribution;
     control::MPFitControl = mp_control(),
     gamlss_ctrl::GamlssControl = gamlss_control(),
     sp = nothing, trace::Bool = false,
+    offset = nothing,
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
@@ -786,11 +810,14 @@ function gamlss(formulas, data, family::UnivariateDistribution;
     df = DistFamily(family, actual_links, pnames)
 
     if priors !== nothing
+        offset === nothing || throw(ArgumentError(
+            "offsets are not supported for Bayesian gamlss fits"))
         return _fit_gamlss_bayes(formulas, data, df, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains)
     end
     return gamlss(formulas, data, df; method = method, control = control,
-                  gamlss_ctrl = gamlss_ctrl, sp = sp, trace = trace)
+                  gamlss_ctrl = gamlss_ctrl, sp = sp, trace = trace,
+                  offset = offset)
 end
 
 function gamlss(formulas, data, family::MultiParameterFamily;
@@ -799,6 +826,7 @@ function gamlss(formulas, data, family::MultiParameterFamily;
     control::MPFitControl = mp_control(),
     gamlss_ctrl::GamlssControl = gamlss_control(),
     sp = nothing, trace::Bool = false,
+    offset = nothing,
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
@@ -808,6 +836,8 @@ function gamlss(formulas, data, family::MultiParameterFamily;
     _validate_gamlss_formulas(formulas, family)
 
     if priors !== nothing
+        offset === nothing || throw(ArgumentError(
+            "offsets are not supported for Bayesian gamlss fits"))
         return _fit_gamlss_bayes(formulas, data, family, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains)
     end
@@ -817,13 +847,14 @@ function gamlss(formulas, data, family::MultiParameterFamily;
         control.step_max, trace)
 
     return _gamlss_fit(formulas, data, family, ctrl, sp, trace; method = method,
-                       gamlss_ctrl = gamlss_ctrl)
+                       gamlss_ctrl = gamlss_ctrl, offset = offset)
 end
 
 """Internal fitting function shared by all gamlss paths."""
 function _gamlss_fit(formulas, data, family::MultiParameterFamily,
     ctrl::MPFitControl, sp, trace::Bool;
-    method::Symbol = :efs, gamlss_ctrl::GamlssControl = gamlss_control())
+    method::Symbol = :efs, gamlss_ctrl::GamlssControl = gamlss_control(),
+    offset = nothing)
 
     K = nparams(family)
 
@@ -835,17 +866,20 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
 
     X_list = Vector{Matrix{Float64}}(undef, K)
     smooths_list = Vector{Vector{ConstructedSmooth}}(undef, K)
-    offset = 0
+    col_count = 0
 
     for k in 1:K
-        Xk, smoothsk = _build_design_matrix(formulas[k], cols, n, offset)
+        Xk, smoothsk = _build_design_matrix(formulas[k], cols, n, col_count)
         X_list[k] = Xk
         smooths_list[k] = smoothsk
-        offset += size(Xk, 2)
+        col_count += size(Xk, 2)
     end
 
-    p = offset
+    p = col_count
     param_offsets = cumsum([0; [size(X, 2) for X in X_list]])
+
+    # Normalize the user offset (η_k = X_k β_k + off_k)
+    off_list = _normalize_mp_offset(offset, K, n)
 
     Sl = build_penalty_matrices(smooths_list, param_offsets)
     nsp = length(Sl)
@@ -859,10 +893,12 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
     β_init = zeros(p)
     for k in 1:K
         s = param_offsets[k] + 1
+        init_k = off_list === nothing ? mean(η_init[k]) :
+                 mean(η_init[k]) - mean(off_list[k])
         if formulas[k] isa GamFormula || formulas[k] isa FormulaTerm
-            _formula_has_intercept(formulas[k]) && (β_init[s] = mean(η_init[k]))
+            _formula_has_intercept(formulas[k]) && (β_init[s] = init_k)
         else
-            β_init[s] = mean(η_init[k])
+            β_init[s] = init_k
         end
     end
 
@@ -871,7 +907,8 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
     elseif gamlss_ctrl.sp_method == :local_ml
         log_sp = fill(log(10.0), nsp)
     else
-        log_sp = _init_log_sp_hessian(family, y, X_list, Sl, β_init, param_offsets, nsp)
+        log_sp = _init_log_sp_hessian(family, y, X_list, Sl, β_init, param_offsets, nsp;
+                                      off_list = off_list)
     end
 
     # Dispatch to solver
@@ -879,7 +916,8 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
         return _gamlss_fit_rscg(method, formulas, family, y, X_list, smooths_list, Sl,
                                 β_init, log_sp, param_offsets, ctrl, gamlss_ctrl,
                                 nsp, Mp, p, n, sp,
-                                Ain_list, bin_list, Aeq_list, beq_list)
+                                Ain_list, bin_list, Aeq_list, beq_list;
+                                off_list = off_list)
     end
 
     # Default: EFS solver
@@ -889,16 +927,16 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
             S .+= exp(log_sp[j]) .* Sj
         end
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl;
-            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq, off_list = off_list)
         reml_val = nll_pen
         iterations = 0
     else
         log_sp, β_opt, reml_val, iterations, conv = mp_efs_outer(family, y, X_list, Sl, β_init,
             log_sp, param_offsets, ctrl; Mp = Mp,
-            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq, off_list = off_list)
     end
 
-    η_fit = _compute_eta(X_list, β_opt, param_offsets, K)
+    η_fit = _compute_eta(X_list, β_opt, param_offsets, K, off_list)
 
     S = zeros(p, p)
     for (j, Sj) in enumerate(Sl)
@@ -907,12 +945,14 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
         end
     end
 
-    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets)
+    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets;
+                               off_list = off_list)
     edf = diag(Vp * H0)
     nll_val = nll_total(family, y, η_fit)
 
     # Compute LAML for model comparison
-    laml = mp_laml(family, y, X_list, β_opt, S, Sl, log_sp, param_offsets; Mp = Mp)
+    laml = mp_laml(family, y, X_list, β_opt, S, Sl, log_sp, param_offsets;
+                   Mp = Mp, off_list = off_list)
 
     idpars = Vector{Int}(undef, p)
     for k in 1:K
@@ -923,5 +963,6 @@ function _gamlss_fit(formulas, data, family::MultiParameterFamily,
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas)
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas,
+        off_list)
 end

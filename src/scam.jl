@@ -566,7 +566,8 @@ end
 Outer iteration for SCAM smoothing-parameter selection.
 
 - `method = :GCV` (default) or `:UBRE`: direct minimization of the GCV/UBRE
-  criterion by cyclic golden-section search over each log smoothing parameter
+  criterion by a cyclic coarse global scan over each log smoothing parameter
+  followed by golden-section refinement inside the bracketing interval
   (matching R scam, which optimizes GCV/UBRE rather than REML).
 - `method = :REML` or `:EFS`: Extended Fellner-Schall updates (REML-flavored),
   with inner Newton loop using `scam_pirls`.
@@ -631,7 +632,7 @@ function scam_outer_iteration(
         # Scale estimation
         edf_total = sum(result.edf_vec)
         if _needs_scale_estimate(family)
-            scale_est = max(result.pearson / (n - edf_total), 1e-10)
+            scale_est = max(result.pearson / (n - edf_total), _scale_floor(y))
         else
             scale_est = 1.0
         end
@@ -656,22 +657,28 @@ function scam_outer_iteration(
             idx = block.start:block.stop
             beta_block = beta[idx]
 
-            for Si in block.S
+            # Per-penalty λⱼ·∂log|S_λ|₊/∂λⱼ: equals block.rank only for
+            # single-penalty blocks (all current SCAM smooths); the general
+            # form future-proofs multi-penalty constrained blocks the same
+            # way the core and bam EFS loops were fixed.
+            ldet_derivs = _block_logdet_derivs(block,
+                view(log_sp, sp_idx:(sp_idx + length(block.S) - 1)))
+
+            for (jS, Si) in enumerate(block.S)
                 if penalty.fixed[sp_idx]
                     sp_idx += 1
                     continue
                 end
                 λ = exp(log_sp[sp_idx])
-                rank_j = Float64(block.rank)
 
                 bSb = dot(beta_block, Si * beta_block)
                 Ainv_block = Ainv[idx, idx]
                 # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(p²), not O(p³)
                 trVS = sum(Ainv_block .* Si)
 
-                a = max(0.0, rank_j / λ - trVS)
+                a = max(0.0, ldet_derivs[jS] / λ - trVS)
 
-                if a > 0 && bSb > eps()
+                if a > 0 && bSb > eps() * max(sum(abs2, beta_block), eps())
                     r = scale_est * a / bSb
                     log_sp_new[sp_idx] = clamp(
                         log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
@@ -984,7 +991,8 @@ alongside constrained ones.
   (a parametric bootstrap gave reported-SE/empirical-sd ratios around 0.6,
   similar to R's scam).
 - SCAM fits store `NaN` in the model's `reml` field — no REML/LAML score is
-  computed. The GCV criterion can be recomputed as
+  computed. For `method = :GCV`/`:UBRE` the optimized criterion value is
+  stored in the model's `criterion` field; it can also be recomputed as
   `nobs(m) * deviance(m) / (nobs(m) − γ·edf)²`.
 
 # Example

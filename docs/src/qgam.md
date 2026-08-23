@@ -54,8 +54,11 @@ Returns a `MultiParameterModel`.
 mqgam(formula, data, [0.1, 0.25, 0.5, 0.75, 0.9])
 ```
 
-Fits all specified quantiles efficiently, sharing basis construction.
-Returns a `MqgamResult` from which individual models can be extracted.
+Fits each quantile by an **independent** `qgam` call (including its own
+calibration); unlike R qgam's `mqgam`, no preliminary fit is shared across
+quantiles, and fitted curves for different quantiles may cross — use
+`cqcheck` to diagnose. Returns a result from which individual models can be
+extracted with `qdo`.
 
 ### Extract Individual Quantile
 
@@ -138,9 +141,12 @@ same shape.
 ## Calibration
 
 QGAM includes an automatic calibration step that selects the learning rate
-(smoothing of the ELF loss) to achieve correct coverage. This is performed
-internally during fitting. The calibration ensures that the estimated quantile
-has the correct nominal coverage probability.
+(the ELF loss scale) by bootstrap out-of-bag pinball loss, following qgam's
+`loss="pin"` variant. The smoothing-bias budget `err` defaults to `0.05`
+(matching R qgam). One documented shortcut relative to R: smoothing
+parameters are frozen at their Gaussian-fit values during the calibration
+bootstrap rather than re-solved per candidate scale; pass `lsig=` or `co=`
+to bypass calibration entirely.
 
 ## See Also
 

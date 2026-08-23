@@ -1,8 +1,9 @@
 # [Large Data (BAM)](@id bam)
 
-`bam()` is the large-dataset counterpart to `gam()`. It uses discretization
-and efficient matrix operations to handle datasets with hundreds of thousands
-to millions of observations.
+`bam()` is the large-dataset counterpart to `gam()`. It accumulates the
+normal equations in row chunks, so peak memory beyond the design matrix is
+bounded by the chunk size, and reuses the same EFS smoothing-parameter
+machinery as `gam()`.
 
 ```@setup bam
 using GAM, DataFrames, Random, Distributions
@@ -34,19 +35,24 @@ df_pois = DataFrame(x=x_pois, y=y_pois)
 | n < 10,000 | `gam()` |
 | n > 10,000 | `bam()` — faster, lower memory |
 
-BAM produces equivalent results to `gam()` but with substantially reduced
-computation time and memory usage on large datasets.
+BAM produces results equivalent to `gam()` (fitted-value agreement is asserted
+in the test suite) with reduced peak memory on large datasets.
 
 ## How It Works
 
-BAM discretizes each covariate into a grid and works with the discretized
-representation. This avoids forming the full n × p model matrix, reducing
-both memory and computation from O(n) to O(grid size).
+BAM builds the dense n × p design matrix once, then accumulates `X'WX` and
+`X'Wz` in row chunks (BLAS `syrk` per chunk), never forming the full weighted
+design. Unlike mgcv's `bam(discrete=TRUE)`, covariates are **not**
+discretized — that machinery is a possible future addition. Note also that
+solving the normal equations squares the condition number relative to mgcv's
+QR updating; poorly scaled bases are less stable here than in `gam()`-grade
+QR approaches, though near-singular models are protected by ridge recovery.
 
-Key optimizations:
-- **Discretized covariates**: covariates are binned; basis evaluation happens on unique values
-- **Fast Gaussian path**: for Gaussian family, uses precomputed X'X and X'y
+Key features:
 - **Chunked accumulation**: processes data in chunks to limit memory
+- **Fast Gaussian path**: for Gaussian identity models, precomputed `X'X` and `X'y`
+- **Same EFS smoothing selection as `gam()`**, including score-based convergence
+- **`offset=` and `select=` supported** as in `gam()`
 
 ## Interface
 
@@ -54,19 +60,18 @@ Key optimizations:
 bam(formula, data;
     family = Gaussian(),
     link = IdentityLink(),
-    method = :REML,
+    method = :REML,        # :REML or :ML (:GCV/:UBRE are not supported by bam)
     bam_ctrl = bam_control(),
 )
 ```
 
 ## BamControl Options
 
+`bam_control` takes a single option, the accumulation chunk size. (The former
+`discrete`, `max_unique`, and `nthreads` keywords are deprecated no-ops.)
+
 ```@example bam
-ctrl = bam_control(
-    chunk_size = 4000,
-    discrete = true,
-    nthreads = 1,
-)
+ctrl = bam_control(chunk_size = 4000)
 
 m_ctrl = bam(@formula(y ~ s(x, k=20, bs=:cr)), df; bam_ctrl=ctrl);
 nothing

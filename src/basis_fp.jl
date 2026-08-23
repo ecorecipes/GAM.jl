@@ -188,10 +188,15 @@ function _smooth_construct(::FractionalPolynomial, spec::SmoothSpec, data, user_
         X = hcat(col1, col2)
     end
 
-    # No penalty for fractional polynomials — model selection is via power choice
+    # No penalty for fractional polynomials — model selection is via power
+    # choice, so the smooth is auto-unpenalized: the stored spec carries
+    # fx=true so the penalty machinery skips it entirely (an empty penalty
+    # block would otherwise break the REML log-determinant bookkeeping).
     penalties = Matrix{Float64}[]
     null_dim = 0
     pen_rank = size(X, 2)
+    spec = SmoothSpec(spec.term_vars, spec.basis, spec.k, spec.by, spec.id,
+        spec.sp, true, spec.m, spec.label, spec.xt)
 
     # For FP, skip constraint absorption — these are parametric-like terms
     # with very few columns, and sum-to-zero doesn't apply well.

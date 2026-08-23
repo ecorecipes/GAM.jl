@@ -93,7 +93,7 @@ m
       Formula: y ~ 1 + s_nest(l1,l2,l3)
       Standard smooths: 0   Nested effects: 1
         s_nest(l1,l2,l3)  [trans_linear, k=10]
-      Deviance: 15.1453   Deviance explained: 92.7%
+      Deviance: 15.1459   Deviance explained: 92.7%
       Total EDF: 10.46   Scale: 0.03888
       Converged: true (5 outer iterations)
 
@@ -111,7 +111,7 @@ println("|cos angle|:     ", round(abs(dot(a_hat, a_true)); digits = 4))
 ```
 
     true index:      [0.793, 0.566, 0.226]
-    estimated index: [0.789, 0.573, 0.221]
+    estimated index: [0.79, 0.572, 0.221]
     |cos angle|:     1.0
 
 ### The outer smooth, with uncertainty
@@ -139,7 +139,7 @@ println("cor(fitted, truth): ", round(cor(fitted(m), df.f_true); digits = 4))
 println("deviance explained: ", round(GAM.deviance_explained(m); digits = 3))
 ```
 
-    cor(fitted, truth): 0.9992
+    cor(fitted, truth): 0.9993
     deviance explained: 0.927
 
 ## Example 2: Adaptive exponential smoothing

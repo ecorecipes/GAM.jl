@@ -4,18 +4,22 @@
 
 GAM.jl is a comprehensive Julia port of R's [mgcv](https://cran.r-project.org/package=mgcv) ecosystem, providing
 penalized regression spline GAMs with automatic smoothness estimation. It also implements
-functionality from gamlss, scam, qgam, and evgam — all in pure Julia with a **9.81x**
-geometric-mean speedup over R in the latest checked-in benchmark snapshot.
+functionality from gamlss, scam, qgam, evgam, and gamFactory — with an **11.16x**
+geometric-mean speedup over R in the latest checked-in benchmark snapshot
+(fitting time; correctness is verified separately by elementwise comparisons
+against the R packages in the test suite).
 
 ## Features
 
-- **28 smooth basis types**: thin plate (`:tp`, `:ts`), cubic (`:cr`, `:cs`, `:cc`),
+- **30 registered smooth basis types**: thin plate (`:tp`, `:ts`), cubic (`:cr`, `:cs`, `:cc`),
   P-splines (`:ps`), cyclic P-splines (`:cps`), B-splines (`:bs`), Gaussian process (`:gp`),
   loess (`:lo`), fractional polynomial (`:fp`), Duchon splines (`:ds`), adaptive (`:ad`),
   spherical splines (`:sos`), SPDE Matérn (`:spde`), Markov random fields (`:mrf`),
   soap film (`:so`), factor-smooth interactions (`:fs`), constrained factor smooth (`:sz`),
   random effects (`:re`), tensor products (`te`/`ti`/`t2`),
-  and 8 SCAM shape-constrained bases (`:mpi`, `:mpd`, `:cx`, `:cv`, `:micx`, `:micv`, `:mdcx`, `:mdcv`)
+  linear-constraint bases (`:sc`, `:scad`),
+  and 8 SCAM shape-constrained bases (`:mpi`, `:mpd`, `:cx`, `:cv`, `:micx`, `:micv`, `:mdcx`, `:mdcv`).
+  A few (`:sos`, `:so`, `:ds`, `t2`) are documented approximations of their mgcv namesakes
 - **Automatic smoothing**: REML, ML, and GCV smoothing parameter estimation via
   Extended Fellner-Schall (EFS) method
 - **Multiple families**: Gaussian, Poisson, Binomial, Gamma, Inverse Gaussian,
@@ -25,7 +29,8 @@ geometric-mean speedup over R in the latest checked-in benchmark snapshot.
 - **SCAM**: shape-constrained additive models (monotonicity, convexity)
 - **QGAM**: quantile regression GAMs via extended log-F likelihood
 - **evgam**: extreme value GAMs (GEV, GPD, EGPD families)
-- **BAM**: `bam()` for memory-efficient fitting of large datasets with discretization
+- **BAM**: `bam()` for large datasets via chunked accumulation of the normal
+  equations (bounded memory beyond the design matrix; no covariate discretization)
 - **GAMM**: `gamm()` for mixed-effects GAMs with `GAM.@formula` syntax, including
   PQL estimation for non-Gaussian families (Poisson, Binomial, Gamma)
 - **ANOVA for GAMs**: `anova_gam()` for smooth significance testing and nested
@@ -33,11 +38,17 @@ geometric-mean speedup over R in the latest checked-in benchmark snapshot.
 - **GINLA**: integrated nested Laplace approximation for posterior inference
 - **Bayesian inference**: Turing.jl integration via `smooth2random` conversion
 - **Side constraints**: `gam.side` identifiability constraints for overlapping smooths
+- **Nested effects**: gamFactory-style `s_nest()` smooths of estimated covariate
+  transformations (single-index, adaptive exponential smoothing, kernel smoothing)
+  fitted by `gam_nl()` — see [Nested Effects](@ref nested-effects)
 - **Gratia-style diagnostics**: `smooth_estimates`, `derivatives`, `partial_residuals`,
-  `appraise`, `rootogram`, `posterior_samples`, `fitted_samples`, `data_slice`
+  `appraise` (simulated reference bands), `rootogram`, `posterior_samples`,
+  `fitted_samples`, `data_slice`, plus influence measures (`leverage`, `cooksdistance`)
 - **JuliaStats integration**: follows StatsModels.jl/GLM.jl conventions with
   `@formula` syntax and full StatsBase interface
-- **Tested against R**: comprehensive integration tests comparing results against mgcv
+- **Tested against R**: elementwise comparisons against mgcv, scam, qgam, evgam,
+  gratia, and gamFactory — on the reference Gaussian model, smoothing parameters,
+  coefficients, and prediction standard errors match mgcv to ~7 significant figures
 
 ## Quick Start
 
@@ -77,6 +88,7 @@ Pages = [
     "formulas.md",
     "families.md",
     "gamlss.md",
+    "nested.md",
     "scam.md",
     "qgam.md",
     "evgam.md",
@@ -85,6 +97,7 @@ Pages = [
     "bayesian.md",
     "diagnostics.md",
     "mgcv.md",
+    "vignettes.md",
     "api.md",
 ]
 Depth = 2

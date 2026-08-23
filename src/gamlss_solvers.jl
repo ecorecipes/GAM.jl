@@ -629,14 +629,15 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
                     ctrl::MPFitControl, gamlss_ctrl::GamlssControl,
                     nsp::Int, Mp::Int, p::Int, n::Int;
                     Ain_list, bin_list, Aeq_list, beq_list,
-                    sp_fixed::Bool=false)
+                    sp_fixed::Bool=false,
+                    off_list = nothing)
     K = nparams(family)
     ncols = deriv_ncols(K)
     derivs = Matrix{Float64}(undef, n, ncols)
 
-    # Initialize coefficients and linear predictors
+    # Initialize coefficients and linear predictors (η_k = X_k β_k + off_k)
     β = copy(β_init)
-    η_list = _compute_eta(X_list, β, param_offsets, K)
+    η_list = _compute_eta(X_list, β, param_offsets, K, off_list)
 
     # Per-parameter coefficient views
     β_list = [Vector{Float64}(undef, size(X_list[k], 2)) for k in 1:K]
@@ -687,10 +688,12 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
             Aeq_k = Aeq_list[k]
             beq_k = beq_list[k]
             feasible_k = _is_feasible(β_list[k], Ain_k, bin_k, Aeq_k, beq_k)
-            β_new = _penalized_wls(X_list[k], wk, zk, S_list[k];
+            zk_model = off_list === nothing ? zk : zk .- off_list[k]
+            β_new = _penalized_wls(X_list[k], wk, zk_model, S_list[k];
                 Ain = Ain_k, bin = bin_k, Aeq = Aeq_k, beq = beq_k,
                 warm_start = β_list[k])
             η_new = X_list[k] * β_new
+            off_list === nothing || (η_new .+= off_list[k])
 
             # Step halving
             step = _get_step(gamlss_ctrl, k)
@@ -711,8 +714,9 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
                 if gamlss_ctrl.sp_method == :local_ml
                     _local_ml_working_response!(wk, zk, family, y, η_list, k)
                 end
+                zk_sp = off_list === nothing ? zk : zk .- off_list[k]
                 _sp_update_param!(gamlss_ctrl, log_sp, Sl, β_list[k], X_list[k],
-                                   wk, zk, S_list[k], smooths_list[k], param_offsets, k)
+                                   wk, zk_sp, S_list[k], smooths_list[k], param_offsets, k)
                 S_list = _per_param_penalties(Sl, log_sp, param_offsets, K)
             end
         end
@@ -761,14 +765,15 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                     ctrl::MPFitControl, gamlss_ctrl::GamlssControl,
                     nsp::Int, Mp::Int, p::Int, n::Int;
                     Ain_list, bin_list, Aeq_list, beq_list,
-                    sp_fixed::Bool=false)
+                    sp_fixed::Bool=false,
+                    off_list = nothing)
     K = nparams(family)
     ncols = deriv_ncols(K)
     derivs = Matrix{Float64}(undef, n, ncols)
 
-    # Initialize
+    # Initialize (η_k = X_k β_k + off_k)
     β = copy(β_init)
-    η_list = _compute_eta(X_list, β, param_offsets, K)
+    η_list = _compute_eta(X_list, β, param_offsets, K, off_list)
 
     β_list = [Vector{Float64}(undef, size(X_list[k], 2)) for k in 1:K]
     for k in 1:K
@@ -838,13 +843,15 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                     Aeq_k = Aeq_list[k]
                     beq_k = beq_list[k]
                     feasible_k = _is_feasible(β_list[k], Ain_k, bin_k, Aeq_k, beq_k)
-                    β_new = _penalized_wls(X_list[k], wk, zk, S_list[k];
+                    zk_model = off_list === nothing ? zk : zk .- off_list[k]
+                    β_new = _penalized_wls(X_list[k], wk, zk_model, S_list[k];
                         Ain = Ain_k, bin = bin_k, Aeq = Aeq_k, beq = beq_k,
                         warm_start = β_list[k])
                     if any(!isfinite, β_new)
                         continue
                     end
                     η_new = X_list[k] * β_new
+                    off_list === nothing || (η_new .+= off_list[k])
 
                     # Step with step-halving
                     step = _get_step(gamlss_ctrl, k)
@@ -887,10 +894,12 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                 Aeq_k = Aeq_list[k]
                 beq_k = beq_list[k]
                 feasible_k = _is_feasible(β_list[k], Ain_k, bin_k, Aeq_k, beq_k)
-                β_new = _penalized_wls(X_list[k], wk, zk, S_list[k];
+                zk_model = off_list === nothing ? zk : zk .- off_list[k]
+                β_new = _penalized_wls(X_list[k], wk, zk_model, S_list[k];
                     Ain = Ain_k, bin = bin_k, Aeq = Aeq_k, beq = beq_k,
                     warm_start = β_list[k])
                 η_new = X_list[k] * β_new
+                off_list === nothing || (η_new .+= off_list[k])
 
                 step = _get_step(gamlss_ctrl, k)
                 dev_base = dev
@@ -923,8 +932,9 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
                         zk[i] = η_list[k][i] - derivs[i, gk_col] / h
                     end
                 end
+                zk_sp = off_list === nothing ? zk : zk .- off_list[k]
                 _sp_update_param!(gamlss_ctrl, log_sp, Sl, β_list[k], X_list[k],
-                                   wk, zk, S_list[k], smooths_list[k], param_offsets, k)
+                                   wk, zk_sp, S_list[k], smooths_list[k], param_offsets, k)
             end
             S_list = _per_param_penalties(Sl, log_sp, param_offsets, K)
         end
@@ -973,7 +983,8 @@ function _gamlss_fit_rscg(method::Symbol, formulas, family::MultiParameterFamily
                           ctrl::MPFitControl, gamlss_ctrl::GamlssControl,
                           nsp::Int, Mp::Int, p::Int, n::Int,
                           sp_fixed_input,
-                          Ain_list, bin_list, Aeq_list, beq_list)
+                          Ain_list, bin_list, Aeq_list, beq_list;
+                          off_list = nothing)
     K = nparams(family)
     sp_fixed = sp_fixed_input !== nothing || nsp == 0
 
@@ -983,13 +994,13 @@ function _gamlss_fit_rscg(method::Symbol, formulas, family::MultiParameterFamily
             family, y, X_list, smooths_list, Sl, β_init, log_sp,
             param_offsets, ctrl, gamlss_ctrl, nsp, Mp, p, n;
             Ain_list = Ain_list, bin_list = bin_list, Aeq_list = Aeq_list, beq_list = beq_list,
-            sp_fixed=sp_fixed)
+            sp_fixed=sp_fixed, off_list=off_list)
     else  # :cg
         β_opt, log_sp, η_fit, dev, conv, iterations = gamlss_cg!(
             family, y, X_list, smooths_list, Sl, β_init, log_sp,
             param_offsets, ctrl, gamlss_ctrl, nsp, Mp, p, n;
             Ain_list = Ain_list, bin_list = bin_list, Aeq_list = Aeq_list, beq_list = beq_list,
-            sp_fixed=sp_fixed)
+            sp_fixed=sp_fixed, off_list=off_list)
     end
 
     # Build final penalty for covariance computation
@@ -1000,13 +1011,15 @@ function _gamlss_fit_rscg(method::Symbol, formulas, family::MultiParameterFamily
         end
     end
 
-    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets)
+    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets;
+                               off_list = off_list)
     edf = diag(Vp * H0)
     nll_val = nll_total(family, y, η_fit)
 
     # REML = -LAML (the honest Laplace-approximate criterion; previously this
     # field stored dev/2, which is not a REML score)
-    laml = mp_laml(family, y, X_list, β_opt, S, Sl, log_sp, param_offsets; Mp=Mp)
+    laml = mp_laml(family, y, X_list, β_opt, S, Sl, log_sp, param_offsets;
+                   Mp=Mp, off_list=off_list)
     reml_val = -laml
 
     idpars = Vector{Int}(undef, p)
@@ -1018,5 +1031,6 @@ function _gamlss_fit_rscg(method::Symbol, formulas, family::MultiParameterFamily
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas)
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas,
+        off_list)
 end

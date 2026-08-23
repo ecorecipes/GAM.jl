@@ -522,10 +522,12 @@ convention.
   all rows) and, for `trans_mgks`, the fixed training neighborhoods —
   subset equivalence is close (fitted correlation ≈ 0.9996) but not exact
 - `offset`: optional known additive term on the link scale (e.g.
-  log-exposure); supply the matching `offset` to `predict` as well. A
-  constant offset is absorbed by the intercept up to solver tolerance
-  (fitted values match the no-offset fit to ~1e-9 after the final
-  gradient-stopped polish)
+  log-exposure); supply the matching `offset` to `predict` as well. Under
+  the identity link a constant offset is absorbed by the intercept up to
+  solver tolerance (fitted values match the no-offset fit to ~1e-9 after
+  the final gradient-stopped polish); for nonlinear links the absorption
+  is exact only in the linear predictor, so response-scale fits can differ
+  by the smoothing-path tolerance (~1e-3 relative for Poisson/log)
 - `outer_maxit`, `newton_maxit`, `tol`: iteration controls
 
 Categorical parametric covariates are dummy-coded with a schema built from

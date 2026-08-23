@@ -279,6 +279,7 @@ struct MultiParameterModel{F<:MultiParameterFamily}
     idpars::Vector{Int}              # maps each coefficient to its parameter index
     param_offsets::Vector{Int}       # cumulative column counts [0, p1, p1+p2, ...]
     formulas::Vector{Any}            # original formulas per parameter
+    offsets::Union{Nothing, Vector{Vector{Float64}}}  # per-parameter η offsets (nothing = none)
 end
 
 """Number of distribution parameters."""

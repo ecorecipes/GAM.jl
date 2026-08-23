@@ -276,6 +276,18 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
     n = size(Xd, 1)
     k = min(k, n)
 
+    # mgcv-style guard: the basis needs at least k distinct covariate
+    # combinations; with fewer, knot selection either fails outright or
+    # produces a silently rank-deficient (edf ≈ 0) basis.
+    if knots === nothing
+        n_unique = d == 1 ? length(unique(vec(Xd))) :
+                   length(unique(collect(eachrow(Xd))))
+        k <= n_unique || throw(ArgumentError(
+            "s($(join(vars, ","))) has fewer unique covariate combinations " *
+            "($n_unique) than the basis dimension k=$k; reduce k (mgcv " *
+            "raises the same error)"))
+    end
+
     if knots !== nothing
         d == 1 || throw(ArgumentError(
             "user-supplied knots are not supported for multi-dimensional " *

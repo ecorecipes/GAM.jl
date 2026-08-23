@@ -47,6 +47,17 @@ _clamp_mu_scalar(::Gamma, mu::Float64) = max(mu, eps())
 _clamp_mu_scalar(::InverseGaussian, mu::Float64) = max(mu, eps())
 _clamp_mu_scalar(::UnivariateDistribution, mu::Float64) = mu
 
+# Family-domain validity of an (unclamped) mean, mirroring mgcv's validmu():
+# used to force step-halving away from iterates whose linear predictor maps
+# outside the family's mean domain (e.g. Gamma with the canonical inverse
+# link when η crosses zero).
+_valid_mu_scalar(::Normal, mu::Float64) = isfinite(mu)
+_valid_mu_scalar(::BinomialLike, mu::Float64) = isfinite(mu) && 0.0 < mu < 1.0
+_valid_mu_scalar(::Poisson, mu::Float64) = isfinite(mu) && mu > 0.0
+_valid_mu_scalar(::Gamma, mu::Float64) = isfinite(mu) && mu > 0.0
+_valid_mu_scalar(::InverseGaussian, mu::Float64) = isfinite(mu) && mu > 0.0
+_valid_mu_scalar(::UnivariateDistribution, mu::Float64) = isfinite(mu)
+
 """
     _protected_cholesky!(A) -> Cholesky
 
@@ -148,6 +159,9 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
     # R initializes these to null.coef/null.eta, not mustart
     beta_old = copy(null_coef)
     eta_old = copy(null_eta)
+    # Validity (mgcv validmu) of the previous iterate's unclamped means:
+    # enforcement below only halves toward iterates that are themselves valid.
+    prev_valid = all(_valid_mu_scalar(family, GLM.linkinv(link, e)) for e in null_eta)
 
     for iter in 1:(control.maxit)
         n_iter = iter
@@ -175,34 +189,42 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         A_chol = _protected_cholesky!(A)
         ldiv!(beta_new, A_chol, XtWz)
 
-        # Update eta, mu
+        # Update eta, mu (tracking family-domain validity, mgcv's validmu)
         mul!(eta_new, X, beta_new)
         eta_new .+= offset
+        valid_new = true
         @inbounds for i in 1:n
-            mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
+            li = GLM.linkinv(link, eta_new[i])
+            valid_new &= _valid_mu_scalar(family, li)
+            mu_new[i] = _clamp_mu_scalar(family, li)
         end
         dev_new = _deviance(family, y, mu_new, weights)
         mul!(penalty_buf, S_total, beta_new)
         penalty_new = dot(beta_new, penalty_buf)
         pdev_new = dev_new + penalty_new
 
-        # Step halving if penalized deviance increased (matches R's gam.fit3)
+        # Step halving if the penalized deviance increased (R's gam.fit3), or
+        # if the proposal left the family's mean domain while the previous
+        # iterate was valid (mgcv halves on !validmu(mu) the same way).
         div_thresh = 10.0 * (0.1 + abs(pdev_old)) * sqrt(eps())
-        if pdev_new - pdev_old > div_thresh
+        if pdev_new - pdev_old > div_thresh || (prev_valid && !valid_new)
             step_ok = false
             for ii in 1:100
                 @inbounds for j in 1:p
                     beta_new[j] = (beta_new[j] + beta_old[j]) / 2.0
                 end
+                valid_new = true
                 @inbounds for i in 1:n
                     eta_new[i] = (eta_new[i] + eta_old[i]) / 2.0
-                    mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
+                    li = GLM.linkinv(link, eta_new[i])
+                    valid_new &= _valid_mu_scalar(family, li)
+                    mu_new[i] = _clamp_mu_scalar(family, li)
                 end
                 dev_new = _deviance(family, y, mu_new, weights)
                 mul!(penalty_buf, S_total, beta_new)
                 penalty_new = dot(beta_new, penalty_buf)
                 pdev_new = dev_new + penalty_new
-                if pdev_new - pdev_old <= div_thresh
+                if pdev_new - pdev_old <= div_thresh && !(prev_valid && !valid_new)
                     step_ok = true
                     break
                 end
@@ -233,11 +255,23 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         copyto!(eta, eta_new)
         copyto!(mu, mu_new)
         pdev_old = pdev_new
+        prev_valid = valid_new
 
         if crit < control.epsilon
             converged = true
             break
         end
+    end
+
+    # Warn if the final iterate still contains boundary-clamped means
+    # (unclamped linkinv outside the family domain) — mirrors mgcv, which
+    # warns when validmu enforcement cannot be fully satisfied.
+    n_invalid = count(i -> !_valid_mu_scalar(family, GLM.linkinv(link, eta[i])), 1:n)
+    if n_invalid > 0
+        @warn "P-IRLS converged with $n_invalid observation(s) whose linear " *
+              "predictor maps outside the $(nameof(typeof(family))) mean domain " *
+              "under $(nameof(typeof(link))); fitted values are clamped to the " *
+              "boundary there. Consider a different link (e.g. LogLink)." maxlog = 1
     end
 
     # Final unpenalized deviance
@@ -520,3 +554,7 @@ end
 function _clamp_mu(::UnivariateDistribution, mu)
     return mu
 end
+
+# Extended families (non-UnivariateDistribution): no generic clamp
+_clamp_mu(::Any, mu) = mu
+

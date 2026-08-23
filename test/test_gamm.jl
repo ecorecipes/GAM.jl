@@ -105,7 +105,7 @@ using LinearAlgebra
         @testset "Random intercept Z dimensions" begin
             spec = RandomEffectSpec(:g, Symbol[], true, true, "(1|g)")
             df = DataFrame(g = repeat(1:5, 20), x = randn(100))
-            cre = construct_random_effect(spec, df)
+            cre = GAM.construct_random_effect(spec, df)
             @test cre.n_levels == 5
             @test cre.n_terms == 1
             # Unconstrained REs (mgcv/lme4 convention): one column per level,
@@ -119,7 +119,7 @@ using LinearAlgebra
         @testset "Random slope Z" begin
             spec = RandomEffectSpec(:g, [:x], false, true, "(0+x|g)")
             df = DataFrame(g = repeat(1:3, 30), x = randn(90))
-            cre = construct_random_effect(spec, df)
+            cre = GAM.construct_random_effect(spec, df)
             @test cre.n_levels == 3
             @test cre.n_terms == 1
             @test size(cre.Z, 1) == 90
@@ -130,17 +130,17 @@ using LinearAlgebra
         @testset "Prediction Z for new groups" begin
             spec = RandomEffectSpec(:g, Symbol[], true, true, "(1|g)")
             df_train = DataFrame(g = repeat(1:5, 20), x = randn(100))
-            cre = construct_random_effect(spec, df_train)
+            cre = GAM.construct_random_effect(spec, df_train)
 
             # Known group
             df_known = DataFrame(g = [1, 2, 3])
-            Z_known = predict_re_matrix(cre, df_known)
+            Z_known = GAM.predict_re_matrix(cre, df_known)
             @test size(Z_known, 1) == 3
             @test size(Z_known, 2) == size(cre.Z, 2)
 
             # Unknown group → zeros
             df_new = DataFrame(g = [99, 100])
-            Z_new = predict_re_matrix(cre, df_new)
+            Z_new = GAM.predict_re_matrix(cre, df_new)
             @test all(Z_new .== 0.0)
         end
     end
@@ -637,3 +637,35 @@ end
     @test all(isfinite, se_resp) && all(>(0.0), se_resp)
 end
 
+
+@testset "gamm offset support" begin
+    rng_off = StableRNG(88)
+    n_g, n_per = 10, 30
+    n = n_g * n_per
+    g = repeat(1:n_g, inner = n_per)
+    b = 0.5 .* randn(rng_off, n_g)
+    x = rand(rng_off, n) .* 2π
+    expos = exp.(randn(rng_off, n) .* 0.8)
+    rate = exp.(0.4 .+ 0.7 .* sin.(x) .+ b[g])
+    y = Float64.(rand.(rng_off, Poisson.(rate .* expos)))
+    df = DataFrame(y = y, x = x, g = g)
+
+    # Poisson rate model: offset fit recovers the rate structure
+    m_off = gamm(GAM.@formula(y ~ s(x, k = 10) + (1 | g)), df;
+        family = Poisson(), offset = log.(expos))
+    m_no = gamm(GAM.@formula(y ~ s(x, k = 10) + (1 | g)), df; family = Poisson())
+    eta_rate = log.(max.(fitted(m_off.gam_model), 1e-10)) .- log.(expos)
+    @test cor(eta_rate, log.(rate)) > 0.9
+    @test !isapprox(fitted(m_off.gam_model), fitted(m_no.gam_model))
+
+    # Gaussian LAMS: constant offset exactly absorbed
+    y2 = sin.(x) .+ 0.3 .* randn(rng_off, n) .+ 0.4 .* b[g]
+    df2 = DataFrame(y = y2, x = x, g = g)
+    mc = gamm(GAM.@formula(y ~ s(x, k = 10) + (1 | g)), df2; offset = fill(3.0, n))
+    m0 = gamm(GAM.@formula(y ~ s(x, k = 10) + (1 | g)), df2)
+    @test maximum(abs.(fitted(mc.gam_model) .- fitted(m0.gam_model))) < 1e-8
+
+    # Length validation
+    @test_throws ArgumentError gamm(GAM.@formula(y ~ s(x, k = 10) + (1 | g)), df2;
+        offset = [1.0])
+end

@@ -530,8 +530,9 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         beta = result.coefficients
         w = result.working_weights
 
-        # Scale estimate
-        scale_est = _needs_scale_estimate(family) ? max(result.pearson / (n - edf_total), 1e-10) : 1.0
+        # Scale estimate (response-relative floor, matching the core loops)
+        scale_est = _needs_scale_estimate(family) ?
+            max(result.pearson / (n - edf_total), _scale_floor(y)) : 1.0
 
         # EFS update — reuse Cholesky from inner solve for Gaussian.
         # Only the per-block diagonal blocks of A⁻¹ are needed for the EFS
@@ -732,6 +733,15 @@ end
 # Main bam() function
 # ============================================================================
 
+function _bam_check_method(method::Symbol)
+    method in (:GCV, :UBRE) && throw(ArgumentError(
+        "bam() estimates smoothing parameters by EFS on the REML/ML criterion; " *
+        "method :$method is not implemented for bam — use gam() for GCV/UBRE"))
+    method in (:REML, :ML) ||
+        throw(ArgumentError("method must be :REML or :ML, got :$method"))
+    return method
+end
+
 """
     bam(formula, data; family=Normal(), link=nothing, method=:REML,
         weights=nothing, offset=nothing, select=false,
@@ -779,15 +789,6 @@ df = DataFrame(x=x, y=y)
 m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 ```
 """
-function _bam_check_method(method::Symbol)
-    method in (:GCV, :UBRE) && throw(ArgumentError(
-        "bam() estimates smoothing parameters by EFS on the REML/ML criterion; " *
-        "method :$method is not implemented for bam — use gam() for GCV/UBRE"))
-    method in (:REML, :ML) ||
-        throw(ArgumentError("method must be :REML or :ML, got :$method"))
-    return method
-end
-
 function bam(f::FormulaTerm, data;
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,

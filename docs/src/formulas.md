@@ -45,6 +45,16 @@ Smooth terms are specified with `s()`:
 )
 ```
 
+### Nested Effects
+
+`s_nest()` terms — smooths of *estimated* covariate transformations — also go
+directly in the formula and are fitted by `gam_nl()` (or `gam()`, which routes
+automatically); see [Nested Effects](@ref nested-effects):
+
+```text
+@formula(y ~ s(x0) + s_nest(l1, l2, l3, trans=trans_linear(), k=10))
+```
+
 ### Tensor Products
 
 For smooth interactions between variables:

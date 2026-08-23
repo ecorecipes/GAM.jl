@@ -334,7 +334,7 @@ function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false,
         # Standard errors of predictions
         se_eta = sqrt.(max.(vec(sum((X_new * m.Vp) .* X_new; dims = 2)), 0.0))
         if type == :response
-            mu = GLM.linkinv.(Ref(m.link), eta)
+            mu = _response_predictions(m.family, m.link, eta)
             dmu = GLM.mueta.(Ref(m.link), eta)
             return mu, abs.(dmu) .* se_eta
         else
@@ -343,10 +343,29 @@ function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false,
     end
 
     if type == :response
-        return GLM.linkinv.(Ref(m.link), eta)
+        return _response_predictions(m.family, m.link, eta)
     else
         return eta
     end
+end
+
+"""
+Response-scale predictions with the family's mean-domain clamp applied,
+matching the clamping used during fitting (mgcv's validmu convention).
+Without this, a link whose inverse can leave the mean domain (e.g. the
+canonical inverse link for Gamma when η crosses zero) returns invalid
+values — negative means for a strictly positive family — that are
+inconsistent with the clamped `fitted` values.
+"""
+function _response_predictions(family, link, eta)
+    mu = GLM.linkinv.(Ref(link), eta)
+    mu_c = _clamp_mu(family, mu)
+    if mu_c !== mu && any(i -> mu_c[i] != mu[i], eachindex(mu))
+        @warn "Response predictions outside the $(nameof(typeof(family))) mean " *
+              "domain were clamped to the boundary (link $(nameof(typeof(link))) " *
+              "inverse left the valid range); consider a different link." maxlog = 1
+    end
+    return mu_c
 end
 
 """
@@ -475,7 +494,8 @@ function _mp_prediction_matrix(m::MultiParameterModel, k::Int, t)
 end
 
 function _predict_multiparameter(m::MultiParameterModel, X_list::Vector{Matrix{Float64}};
-                                 type::Symbol = :link, se::Bool = false)
+                                 type::Symbol = :link, se::Bool = false,
+                                 off_list = nothing)
     type in (:link, :response) || throw(ArgumentError("type must be :link or :response"))
 
     K = nparams(m)
@@ -497,6 +517,7 @@ function _predict_multiparameter(m::MultiParameterModel, X_list::Vector{Matrix{F
 
         βk = @view m.coefficients[s:e]
         ηk = Xk * βk
+        off_list === nothing || (ηk .+= off_list[k])
 
         if se
             Vk = @view m.Vp[s:e, s:e]
@@ -523,7 +544,7 @@ end
 
 """
     predict(m::MultiParameterModel; type=:link, se=false)
-    predict(m::MultiParameterModel, newdata; type=:link, se=false)
+    predict(m::MultiParameterModel, newdata; type=:link, se=false, offset=nothing)
 
 Predict each parameter of a fitted multi-parameter model. The returned matrix has
 one column per parameter, ordered as `param_names(m.family)`.
@@ -533,18 +554,29 @@ one column per parameter, ordered as `param_names(m.family)`.
 
 With `se=true`, returns `(fit, se_fit)` where `se_fit` contains pointwise
 standard errors derived from `m.Vp`.
+
+Offsets: training-data predictions include the offsets the model was fitted
+with (stored on the model). For new data, supply `offset=` in the same
+shapes accepted at fitting time — a single length-`n` vector (first linear
+predictor) or a length-`K` per-parameter vector; the default is no offset,
+mirroring `GamModel`'s supply-at-predict convention.
 """
 function predict(m::MultiParameterModel; type::Symbol = :link, se::Bool = false)
-    return _predict_multiparameter(m, m.X_list; type = type, se = se)
+    return _predict_multiparameter(m, m.X_list; type = type, se = se,
+                                   off_list = m.offsets)
 end
 
-function predict(m::MultiParameterModel, newdata; type::Symbol = :link, se::Bool = false)
+function predict(m::MultiParameterModel, newdata; type::Symbol = :link, se::Bool = false,
+                 offset = nothing)
     t = Tables.columntable(newdata)
     X_list = Matrix{Float64}[]
     for k in 1:nparams(m)
         push!(X_list, _mp_prediction_matrix(m, k, t))
     end
-    return _predict_multiparameter(m, X_list; type = type, se = se)
+    n_new = size(X_list[1], 1)
+    off_list = _normalize_mp_offset(offset, nparams(m), n_new)
+    return _predict_multiparameter(m, X_list; type = type, se = se,
+                                   off_list = off_list)
 end
 
 fitted(m::MultiParameterModel) = predict(m; type = :response)

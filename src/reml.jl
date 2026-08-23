@@ -78,7 +78,10 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
         if scale < 0
             if _needs_scale_estimate(family)
                 scale_est = pirls_result.pearson / (n - edf_total)
-                scale_est = max(scale_est, 1e-10)
+                # Response-relative floor (see _scale_floor): an absolute
+                # 1e-10 clip distorts the REML surface itself for responses
+                # on tiny scales, moving the optimum.
+                scale_est = max(scale_est, _scale_floor(y))
             else
                 scale_est = 1.0
             end
@@ -223,7 +226,7 @@ function _log_saturated_likelihood(::Gamma, y::Vector{Float64},
     #   lᵢ = αᵢ·log(αᵢ) − αᵢ − log(yᵢ) − lgamma(αᵢ)
     # Depends on φ = scale, which keeps the REML landscape correct when
     # the scale is estimated.
-    phi = max(scale, 1e-10)
+    phi = max(scale, _scale_floor(y))
     ls = 0.0
     @inbounds for i in eachindex(y)
         a = weights[i] / phi
@@ -236,7 +239,7 @@ function _log_saturated_likelihood(::InverseGaussian, y::Vector{Float64},
     weights::Vector{Float64}, scale::Float64)
     # Exact: at μ = y the IG exponent vanishes, leaving
     #   lᵢ = 0.5·[log(wᵢ/φ) − log(2π·yᵢ³)]
-    phi = max(scale, 1e-10)
+    phi = max(scale, _scale_floor(y))
     ls = 0.0
     @inbounds for i in eachindex(y)
         ls += 0.5 * (log(weights[i] / phi) - log(2π * max(y[i], eps())^3))

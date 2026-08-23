@@ -449,4 +449,60 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         @test pred_link ≈ vec(X_mu * param_coef(fit, 1)) atol=1e-8
         @test pred_link[1] != pred_link[3]
     end
+
+    @testset "Smooth-fit quantile calibration (round-4 regression)" begin
+        # Regression for the round-4 defect: ELF smooth fits converged to
+        # non-stationary (mean-fit) points, so frac(y ≤ q̂) ≈ 0.5 for every
+        # τ. With _has_Dd(::ELFFamily) = true and the stationarity polish,
+        # fitted quantiles must track τ.
+        rng_c = StableRNG(44)
+        n = 250
+        x = sort(rand(rng_c, n)) .* 2π
+        y = sin.(x) .+ 0.3 .* randn(rng_c, n)
+        df = (y = y, x = x)
+
+        fits = Dict{Float64, Any}()
+        for τ in (0.02, 0.1, 0.25, 0.5, 0.75, 0.9, 0.98)
+            m = qgam(GAM.@formula(y ~ s(x, k = 12, bs = :cr)), df, τ)
+            fits[τ] = m
+            @test m.converged
+            # observed |frac − τ| ≤ 0.017 across the grid; 0.06 is ~4×
+            @test abs(mean(y .<= fitted(m)) - τ) < 0.06
+        end
+
+        # Shift probe: no constant shift of the fit may reduce the ELF
+        # deviance materially (stationarity along the intercept direction).
+        m9 = fits[0.9]
+        dev0 = GAM._deviance(m9.family, y, fitted(m9), ones(n))
+        best_shift = minimum(
+            GAM._deviance(m9.family, y, fitted(m9) .+ s, ones(n))
+            for s in -0.5:0.02:0.5)
+        @test dev0 <= best_shift + 1e-3 * (1.0 + abs(dev0))
+
+        # mqgam: extreme-quantile fits must not cross materially
+        # (observed 0/250 post-fix; was ~145/250)
+        mq = mqgam(GAM.@formula(y ~ s(x, k = 12, bs = :cr)), df, [0.1, 0.9])
+        q10 = fitted(qdo(mq, 0.1))
+        q90 = fitted(qdo(mq, 0.9))
+        @test count(q10 .> q90) <= 5
+
+        # Heteroskedastic calibration
+        rng_h = StableRNG(45)
+        xh = sort(rand(rng_h, n)) .* 2π
+        yh = sin.(xh) .+ (0.1 .+ 0.4 .* xh ./ (2π)) .* randn(rng_h, n)
+        for τ in (0.1, 0.9)
+            mh = qgam(GAM.@formula(y ~ s(x, k = 12, bs = :cr)),
+                (y = yh, x = xh), τ)
+            @test abs(mean(yh .<= fitted(mh)) - τ) < 0.06
+        end
+
+        # Method-symbol aliasing on the ELFLSS entry point
+        rng_m = StableRNG(46)
+        xm = sort(rand(rng_m, 120)) .* 2
+        ym = xm .+ 0.2 .* randn(rng_m, 120)
+        fmls = [GAM.@formula(y ~ s(x, k = 8, bs = :cr)), GAM.@formula(y ~ 1)]
+        m_lower = qgam(fmls, (y = ym, x = xm), 0.5; co = 0.2, method = :efs)
+        m_upper = qgam(fmls, (y = ym, x = xm), 0.5; co = 0.2, method = :EFS)
+        @test fitted(m_lower) ≈ fitted(m_upper) atol = 1e-10
+    end
 end
