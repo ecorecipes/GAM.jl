@@ -314,19 +314,43 @@ predict(m, newdata; offset=off)        # supply the offset used at fitting
 Xp = lpmatrix(m, newdata)
 ```
 
+## Vignettes
+
+Twelve Quarto vignettes walk through the package, each with an R companion in
+its `R/` subdirectory running the equivalent analysis (mgcv, scam, qgam,
+gamlss, evgam, gamFactory) on the same checked-in data:
+
+1. [Introduction](vignettes/01_introduction/01_introduction.qmd)
+2. [Basis types](vignettes/02_basis_types/02_basis_types.qmd)
+3. [Multiple smooths and concurvity](vignettes/03_multiple_smooths/03_multiple_smooths.qmd)
+4. [Families and links](vignettes/04_families/04_families.qmd)
+5. [Diagnostics](vignettes/05_diagnostics/05_diagnostics.qmd)
+6. [Extreme values (GEV/GPD)](vignettes/06_extreme_values/06_extreme_values.qmd)
+7. [Shape constraints (SCAM)](vignettes/07_shape_constraints/07_shape_constraints.qmd)
+8. [Quantile regression (QGAM)](vignettes/08_quantile_regression/08_quantile_regression.qmd)
+9. [GAMLSS](vignettes/09_gamlss/09_gamlss.qmd)
+10. [Mixed models (GAMM)](vignettes/10_gamm/10_gamm.qmd)
+11. [Bayesian GAMs](vignettes/11_bayesian_gam/11_bayesian_gam.qmd)
+12. [Nested effects](vignettes/12_nested_effects/12_nested_effects.qmd)
+
+Rendered GFM versions (`.md`) are checked in alongside the sources; see
+[vignettes/README.md](vignettes/README.md) for rendering and data-generation
+details.
+
 ## Performance
 
-The latest checked-in benchmark snapshot (`benchmark/results.txt`, 2026-04-01) shows an overall geometric mean speedup of **9.81x** over R on Julia 1.12.5 / R 4.5.2 / macOS ARM64. Both sides use the same data, knot count `k`, and `method="REML"`; Julia timings exclude JIT compilation (warm-up runs) and R timings exclude interpreter startup. The harness measures *fitting time*, not fit equivalence — it does not assert that the two implementations return identical coefficients (correctness is covered by the R-comparison tests instead). The BAM row compares Julia's chunked QR against mgcv's `bam(method="fREML")` without `discrete=TRUE`, i.e. different algorithms; the BAM and SCAM "families" are each a single benchmark.
+<!-- BENCH-REFRESH -->
+The latest checked-in benchmark snapshot (`benchmark/results.txt`, 2026-08-23) shows an overall geometric mean speedup of **11.16x** over R on Julia 1.12.5 / R 4.6.1 / macOS ARM64. Both sides use the same data, knot count `k`, and `method="REML"`; Julia timings exclude JIT compilation (warm-up runs) and R timings exclude interpreter startup. The harness measures *fitting time*, not fit equivalence — it does not assert that the two implementations return identical coefficients (correctness is covered by the elementwise R-comparison tests instead). The BAM row compares Julia's chunked accumulation against mgcv's `bam(method="fREML")` without `discrete=TRUE`, i.e. different algorithms; the BAM and SCAM "families" are each a single benchmark, and the SCAM figure reflects that `scam()` now performs full GCV criterion optimization (matching R scam's method) rather than the faster REML-flavored EFS updates.
 
 | Benchmark family | Speedup |
 |-----------|---------|
-| GAM fitting | 9.84x |
-| BAM | 4.66x |
-| Prediction | 20.17x |
-| Basis construction | 6.72x |
-| SCAM | 6.81x |
-| QGAM | 4.74x |
-| GAMLSS | 14.20x |
+| GAM fitting | 19.99x |
+| BAM | 4.62x |
+| Prediction | 7.51x |
+| Basis construction | 9.81x |
+| SCAM | 1.98x |
+| QGAM | 4.77x |
+| GAMLSS | 12.82x |
 
 Regenerate the checked-in benchmark snapshot with:
 
@@ -344,14 +368,20 @@ GAM.jl is not a line-for-line port of mgcv. Notable mgcv features that are **not
 - Linear functional terms / the summation convention (matrix arguments to `s()`)
 - `na.action`-style missing-data handling (rows with missing/non-finite values must be removed before fitting)
 - AR1 residual correlation in `bam`; `bam`'s covariate discretization (`discrete=TRUE`) — `bam` uses chunked accumulation of the normal equations only
-- mgcv's Fletcher (2012) scale estimator (scale is estimated as Pearson/(n − EDF))
-- mgcv's `concurvity` "observed" and "estimate" measures (only the worst-case measure is implemented)
+- Smoothing-parameter-uncertainty corrections (mgcv's `Vc`); `unconditional=true` in `smooth_estimates`/`posterior_samples` warns and uses the conditional covariance
+- Smooth-term test statistics use a documented simplification of mgcv's `testStat` (EDFs and p-value conclusions match mgcv; the statistics themselves can differ for heavily penalized smooths)
+
+Some behaviors differ from R by design: quasi families report `NaN`
+log-likelihood/AIC (R's `NA` convention), and nested effects (`s_nest`) support
+the `Normal`, `Poisson`, `Bernoulli`/`Binomial`, and `Gamma` families with
+identity/log/logit links. The optional MixedModels.jl GAMM backend is disabled
+(the pure-Julia backend is the supported path).
 
 Some basis types are documented approximations rather than exact ports of their
 mgcv namesakes: `:sos` (planar kernel on great-circle distances), `:so` (grid-PDE
-soap film), `:ad` (Gaussian-bump penalty weights), `:ds` (alias of `:tp`), and
-`:t2` (an alternative tensor construction, not Wood–Scheipl–Faraway). Fits with
-these bases will differ from mgcv's.
+soap film), `:ds` (alias of `:tp`), and `:t2` (an alternative tensor
+construction, not Wood–Scheipl–Faraway). Fits with these bases will differ from
+mgcv's.
 
 `offset` and `by` variables work for ordinary, extended-family, and shape-constrained (SCAM) fits; factor-`by` is not supported for the linear-constraint (SCASM) solver, and `select=true` applies to ordinary and extended-family GAMs (not the constrained solvers).
 
@@ -380,13 +410,15 @@ The key difference from mgcv: GAM.jl's model-fitting code is written in Julia ra
 
 ## Testing
 
-GAM.jl has roughly 2,150 test assertions across 51 test files, including:
+GAM.jl has roughly 2,250 test assertion macros across 53 test files, including:
 
 - Unit tests for all basis types, families, and link functions
 - End-to-end tests for GAM, BAM, SCAM, QGAM, GAMLSS, GAMM, evgam, GINLA
 - R comparison tests validating fitted values, EDF, deviance, and smoothing parameters against mgcv, scam, qgam, gamlss, and evgam reference output
 - Bayesian inference tests with Turing.jl
 - Side constraint tests validated against mgcv's `gam.side`
+- Live nested-effects comparisons against gamFactory, and elementwise parity checks (smoothing parameters, coefficients, prediction SEs, AIC) against mgcv
+- Aqua.jl static quality checks (ambiguities, piracy, stale deps, exports)
 
 R-comparison tests that require a live R installation (via RCall) are skipped automatically when R or the relevant R package is unavailable, or when `GAM_SKIP_RCALL=true`. The GAMLSS, side-constraint, and SPDE comparisons run against checked-in reference output and do not need R. Run the suite with `julia --project=. -e 'using Pkg; Pkg.test()'`.
 
