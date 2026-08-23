@@ -207,6 +207,8 @@ export
 
     # Nested effects (gamFactory-style)
     gam_nl,
+    NestedControl,
+    nested_control,
     s_nest,
     trans_linear,
     trans_nexpsm,
