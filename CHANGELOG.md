@@ -2,9 +2,10 @@
 
 ## 0.2.0 (2026-08-23)
 
-A full review-and-fix release: two deep code reviews, a package-wide fix pass,
-live validation against R (mgcv 1.9.4, scam, qgam, evgam, gratia, gamFactory),
-and a new nested-effects feature. Commits `ff81e2c..d6e72f9`.
+A full review-and-fix release: three deep code reviews, two package-wide fix
+passes, live validation against R (mgcv 1.9.4, scam, qgam, evgam, gratia,
+egpd, gamFactory), and a new nested-effects feature. Commits
+`ff81e2c..738cb5a`.
 
 ### Breaking / behavior changes
 
@@ -29,7 +30,12 @@ and a new nested-effects feature. Commits `ff81e2c..d6e72f9`.
 - **`qgam` default `err = 0.05`** (R qgam's default; previously an n-dependent
   heuristic reaching 0.5), and quantile residuals use the exact ELF CDF.
 - **`partial_residuals` returns working residuals** (previously response
-  residuals on the wrong scale for non-identity links).
+  residuals on the wrong scale for non-identity links), and now returns a
+  typed **`PartialResiduals` struct** (long format: `smooth`, `xname`, `x`,
+  `residual`; Tables.jl-compatible, with a plot recipe) instead of a `Dict`.
+- **`appraise` defaults to simulated reference bands** (`method = :simulate`,
+  the gratia/`qq.gam` convention); `method = :normal` retains the previous
+  normal-theory behavior.
 - **`concurvity(full=true)` returns all three mgcv measures**
   (`worst`/`observed`/`estimate`) as a NamedTuple.
 - **`gam_check`/`k_check` use a real mgcv-style k-index** (differenced
@@ -43,6 +49,24 @@ and a new nested-effects feature. Commits `ff81e2c..d6e72f9`.
   producing invalid fits.
 
 ### Fixed
+- `scam(method=:GCV)` optimizer: warm-started PIRLS evaluations across large
+  smoothing-parameter jumps could report inconsistent (deviance, edf) pairs,
+  making the cyclic golden-section search converge to a criterion-worse point
+  than R scam's optimum. The optimizer now cold-starts a coarse global scan
+  per coordinate, refines within the bracket, and guards against unconverged
+  warm evaluations; the selected criterion now matches or beats R scam's on
+  the reference model, and the live-R comparison asserts it.
+- `bam()`: the three remaining unprotected Cholesky factorizations (hat/edf
+  helper, Gaussian fast path, final rebuild) now use the escalating-ridge
+  recovery, so near-singular models fit through `bam()` wherever `gam()`
+  succeeds; the bam outer loop also gained the core loop's score-based EFS
+  convergence, eliminating flat-ridge walks to the smoothing-parameter clamp.
+- `gam_nl`: the EFS update target now uses per-group log-determinant
+  derivatives for overlapping penalties (te margins), fixing data-dependent
+  slow convergence; a final gradient-stopped Newton polish (with the index
+  scale direction projected out) runs after smoothing-parameter convergence,
+  restoring exact constant-offset absorption; LogLink helpers are
+  overflow-guarded.
 
 - Core engine: `predict(type=:terms)` and coefficient names with categorical
   parametric terms; per-penalty EFS log-determinant derivatives in all
@@ -61,7 +85,16 @@ and a new nested-effects feature. Commits `ff81e2c..d6e72f9`.
   handling in GAMLSS; indefinite-Hessian recovery in the multiparameter EFS
   loop and the constrained (OSQP) inner Newton.
 - BAM: `Ve`, REML score comparability with `gam()`, step halving,
-  `offset`/`select` support.
+  `offset`/`select` support; protected Cholesky in the inner P-IRLS loop and
+  EFS traces computed by per-block solves instead of full inverses.
+- `scam` records real outer-iteration counts and stores `NaN` (not a
+  mislabeled GCV score) in the `reml` slot; extended families honor
+  `gam_control(scale_est=...)` (analytic Fletcher) and reach a stationary
+  NB θ on fixed-smoothing-parameter paths; Fletcher's correction uses prior
+  weights.
+- The plain-`@formula` (FormulaTerm) path applies side-identifiability
+  constraints identically to `@formulak` (previously skipped, leaving
+  overlapping tensor margins unconstrained).
 - Bayes: `PriorSpec.b` wired to the samplers; canonical PSIS-LOO estimator;
   coefficient summaries with parametric covariates.
 - gratia/diagnostics/plots: genuinely simulated simultaneous intervals;
@@ -69,15 +102,39 @@ and a new nested-effects feature. Commits `ff81e2c..d6e72f9`.
   recipes.
 
 ### Added
+- `GamModel.criterion` field storing the optimized GCV/UBRE criterion value
+  for criterion-fitted models (NaN otherwise; note this adds a positional
+  field to `GamModel`).
 
 - **Nested effects** (Fasiolo et al. 2025 / gamFactory): `s_nest()` with
   `trans_linear`, `trans_nexpsm`, and `trans_mgks` inner transformations,
   fitted by `gam_nl()` (with `gam()` auto-routing); delta-method
   `predict(se=true)`; O(n·nn) kernel smoothing via fixed neighborhoods;
-  `inner_coef`; live gamFactory comparison tests.
+  `inner_coef`; live gamFactory comparison tests. `gam_nl` accepts
+  `offset=` and `weights=` (forwarded by `gam()`; unsupported options
+  error), handles categorical parametric terms, and fits with a
+  Gauss–Newton/Fisher Hessian built from one η-Jacobian (exact chain-rule
+  gradient, AD fallback) — roughly 5× faster per outer iteration cold and
+  ~0.5 s warm on the three-effect benchmark, with adaptive EFS damping,
+  scale-aware inner-ridge updates, and a unit-norm index reparameterization
+  for well-conditioned standard errors.
+- Influence measures: `StatsAPI.leverage` and `StatsAPI.cooksdistance` for
+  `GamModel` fits.
+- `predict(::GammModel, newdata; type=:link/:response, se=true)` with
+  delta-method standard errors (conditional on BLUPs and smoothing
+  parameters).
+- `ginla(select=...)` convenience for per-smooth coefficient selection.
 - Elementwise R-parity tests: smoothing parameters, coefficients, prediction
   SEs, and AIC vs mgcv; new `bs=:cc` and `bs=:fs` comparisons (Gaussian-CR
-  agreement: sp log-diff 0.0000, coefficients 8.7e-8, SEs 5.1e-7).
+  agreement: sp log-diff 0.0000, coefficients 8.7e-8, SEs 5.1e-7); Fletcher
+  scale vs `summary(m)$scale` (1.7%), GAMM prediction SEs vs `mgcv::gamm`
+  (cor 0.966), and `appraise` reference bands vs
+  `gratia::qq_plot(method="simulate")` (4.1e-6). A known scam-GCV optimizer
+  divergence is pinned with `@test_broken` (see Fixed in later releases).
+- Benchmarks regenerated against the fixed code (`benchmark/results.txt`,
+  2026-08-23): overall geometric-mean speedup 11.16× vs R, with SCAM at
+  1.98× reflecting that `scam()` now performs full GCV optimization like
+  R's scam.
 - Vignette 12 (nested effects) with a gamFactory R companion on shared data;
   seeded data-generation script (`vignettes/generate_data.jl`) for all
   narrated datasets; re-rendered vignette suite.

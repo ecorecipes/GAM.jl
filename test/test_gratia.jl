@@ -347,4 +347,27 @@ using Distributions
         ps0 = posterior_samples(m; n = 1, seed = 42)
         @test size(ps0) == (1, length(m.coefficients))
     end
+
+    # ─── Tables.jl interface ─────────────────────────────────────────────
+
+    @testset "Tables.jl interface" begin
+        using Tables
+        pr = partial_residuals(m)
+        @test Tables.istable(typeof(pr))
+        df_pr = DataFrame(pr)
+        @test names(df_pr) == ["smooth", "xname", "x", "residual"]
+        @test nrow(df_pr) == length(pr.x)
+        @test df_pr.residual == pr.residual
+
+        se_t = smooth_estimates(m; n = 25)
+        df_se = DataFrame(se_t)
+        @test "estimate" in names(df_se) && "se" in names(df_se)
+        @test nrow(df_se) == length(se_t.estimate)
+
+        d_t = derivatives(m; select = 1, n = 25)
+        df_d = DataFrame(d_t)
+        @test names(df_d) == ["smooth", "x", "derivative", "se", "lower", "upper"]
+        @test df_d.derivative == d_t.derivative
+    end
+
 end

@@ -466,7 +466,7 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
     if _needs_scale_estimate(family)
         scale_est = _estimate_scale(family, y, result.fitted_values, wts,
             result.pearson, result.deviance, n, edf_total_val,
-            control.scale_est)
+            control.scale_est; trace = control.trace)
         Vp .*= scale_est
         Ve .*= scale_est
     else
@@ -498,6 +498,7 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
         result.deviance,
         null_dev,
         reml_val,
+        NaN,
         method,
         Vp, Ve,
         result.hat_diag,
@@ -521,7 +522,7 @@ Scale (dispersion) estimator for the reported scale and covariance scaling.
   φ̂_P/(1 + s̄), s̄ = mean(V′(μ)(y − μ)/V(μ))
 """
 function _estimate_scale(family, y, mu, wts, pearson::Float64, dev::Float64,
-    n::Int, edf::Float64, method::Symbol)
+    n::Int, edf::Float64, method::Symbol; trace::Bool = false)
     denom = max(n - edf, 1.0)
     method === :deviance && return max(dev / denom, 1e-10)
     phi = pearson / denom
@@ -539,6 +540,8 @@ function _estimate_scale(family, y, mu, wts, pearson::Float64, dev::Float64,
         s_bar = s_num / max(s_den, eps())
         if isfinite(s_bar) && 1.0 + s_bar > 0
             phi /= 1.0 + s_bar
+        elseif trace
+            @info "Fletcher scale correction degenerate (s̄ = $s_bar); using the Pearson estimate"
         end
     end
     return max(phi, 1e-10)
@@ -652,7 +655,7 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
     if _estimates_scale(family)
         scale_est = _estimate_scale(family, y, result.fitted_values, wts,
             result.pearson, result.deviance, n, edf_total_val,
-            control.scale_est)
+            control.scale_est; trace = control.trace)
         Vp .*= scale_est
         Ve .*= scale_est
     else
@@ -689,6 +692,7 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
         result.deviance,
         null_dev,
         reml_val,
+        NaN,
         method,
         Vp, Ve,
         result.hat_diag,

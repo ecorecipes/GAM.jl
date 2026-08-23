@@ -206,7 +206,7 @@ plot(d2.x, d2.derivative;
 
 ## Model diagnostics with `appraise`
 
-`appraise` returns diagnostic data for the four standard residual plots: QQ plot, residuals vs linear predictor, histogram of residuals, and observed vs fitted values.
+`appraise` returns diagnostic data for the four standard residual plots: QQ plot, residuals vs linear predictor, histogram of residuals, and observed vs fitted values. By default the QQ reference quantiles are a **simulated envelope** (`method=:simulate`, matching gratia and mgcv's `qq.gam`); pass `method=:normal` for normal-theory quantiles.
 
 ```{julia}
 diag_data = appraise(m)
@@ -216,7 +216,7 @@ diag_data = appraise(m)
 #| fig-width: 8
 #| fig-height: 8
 p1 = scatter(diag_data.qq_theoretical, diag_data.qq_sample;
-    xlabel="Theoretical quantiles", ylabel="Standardized deviance residuals",
+    xlabel="Reference quantiles (simulated)", ylabel="Standardized deviance residuals",
     title="QQ plot", label="", markersize=2, alpha=0.5, color=:steelblue)
 lims = extrema(vcat(diag_data.qq_theoretical, diag_data.qq_sample))
 plot!(p1, [lims[1], lims[2]], [lims[1], lims[2]];

@@ -655,7 +655,7 @@ function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
             μ_final, η_final, gm.weights,
             family, link,
             gm.smooths, gm.penalty, gm.sp, gm.edf, gm.edf_total,
-            gm.scale, dev_final, null_dev_final, gm.reml,
+            gm.scale, dev_final, null_dev_final, gm.reml, gm.criterion,
             gm.method, gm.Vp, gm.Ve, gm.hat_matrix_diag, gm.R,
             gm.converged, gm.iterations, gm.n_smooth, gm.n_parametric,
             gm.control, gm.data)

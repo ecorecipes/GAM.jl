@@ -601,7 +601,7 @@ function scam_outer_iteration(
         S_total = zeros(p, p)
         result = scam_pirls(X, y, S_total, family, link, p_ident;
             weights = weights, offset = offset, control = control)
-        return Float64[], result, 0
+        return Float64[], result, 0, NaN
     end
 
     if method == :GCV || method == :UBRE
@@ -698,17 +698,21 @@ function scam_outer_iteration(
         start = prev_result === nothing ? nothing : prev_result.coefficients,
         control = control)
 
-    return log_sp, final_result, n_outer
+    return log_sp, final_result, n_outer, NaN
 end
 
 """
     _scam_criterion_outer(X, y, penalty, family, link, p_ident; kwargs...)
 
-Direct GCV/UBRE smoothing-parameter selection for SCAM: cyclic golden-section
-search on each log smoothing parameter, evaluating the criterion by a full
-constrained PIRLS fit at each trial value (warm-started from the incumbent).
-This is the honest analogue of R scam's GCV/UBRE optimization (which uses
-BFGS with analytic derivatives); golden section trades speed for simplicity.
+Direct GCV/UBRE smoothing-parameter selection for SCAM, cycled over the log
+smoothing parameters. Each coordinate is optimized by a coarse global scan
+over the full log-sp range (bracketing the global minimum — the criterion
+along a coordinate need not be unimodal, and pure golden section from cold
+brackets has been observed to converge to a criterion-worse point than
+R scam's optimum) followed by golden-section refinement inside the bracket.
+Every criterion evaluation is a full constrained PIRLS fit, warm-started
+from the incumbent coefficients. Returns
+`(log_sp, final_result, n_cycles, criterion)`.
 """
 function _scam_criterion_outer(
     X::Matrix{Float64},
@@ -727,12 +731,26 @@ function _scam_criterion_outer(
     log_sp = copy(penalty.sp)
     warm = Ref{Union{Nothing, Vector{Float64}}}(nothing)
 
-    fit_at = function (ls::Vector{Float64})
+    # `cold = true` ignores the warm start. Warm starts are only safe for
+    # LOCAL moves: warm-starting a distant sp evaluation can terminate the
+    # constrained PIRLS prematurely and report an inconsistent (deviance, edf)
+    # pair, i.e. a spuriously low criterion (observed: the warm evaluation at
+    # a huge sp reported the wiggly fit's deviance with the linear fit's edf).
+    # Unconverged warm evaluations are refit cold, and only converged results
+    # update the warm start.
+    fit_at = function (ls::Vector{Float64}; cold::Bool = false)
         S_total = total_penalty(penalty, ls, p)
         result = scam_pirls(X, y, S_total, family, link, p_ident;
-            weights = weights, offset = offset, start = warm[],
+            weights = weights, offset = offset,
+            start = cold ? nothing : warm[],
             control = control)
-        warm[] = result.coefficients
+        if !cold && !result.converged
+            result = scam_pirls(X, y, S_total, family, link, p_ident;
+                weights = weights, offset = offset, control = control)
+        end
+        if result.converged
+            warm[] = result.coefficients
+        end
         return result
     end
 
@@ -747,17 +765,27 @@ function _scam_criterion_outer(
 
     invphi = (sqrt(5.0) - 1.0) / 2.0
     n_cycles = 0
+    grid = collect(range(-15.0, 15.0; length = 13))
     for cycle in 1:min(control.outer_maxit, 6)
         n_cycles = cycle
         max_change = 0.0
         for j in 1:n_sp
             penalty.fixed[j] && continue
-            score_j = function (ls_j::Float64)
+            score_j = function (ls_j::Float64; cold::Bool = false)
                 ls = copy(log_sp)
                 ls[j] = ls_j
-                return score_of(fit_at(ls))
+                return score_of(fit_at(ls; cold = cold))
             end
-            a, b = -15.0, 15.0
+            # Coarse global scan with COLD starts (independent fits give the
+            # honest criterion landscape; incumbent included so a cycle can
+            # never move to a worse point), then warm-started golden-section
+            # refinement in the bracket around the scan minimum.
+            cand = sort(unique(vcat(grid, log_sp[j])))
+            scores = [score_j(v; cold = true) for v in cand]
+            ibest = argmin(scores)
+            xbest, fbest = cand[ibest], scores[ibest]
+            a = cand[max(ibest - 1, 1)]
+            b = cand[min(ibest + 1, length(cand))]
             c = b - invphi * (b - a)
             d = a + invphi * (b - a)
             fc = score_j(c)
@@ -774,9 +802,12 @@ function _scam_criterion_outer(
                 end
                 (b - a) < 0.05 && break
             end
-            new_j = fc < fd ? c : d
-            max_change = max(max_change, abs(new_j - log_sp[j]))
-            log_sp[j] = new_j
+            xg, fg = fc < fd ? (c, fc) : (d, fd)
+            if fg < fbest
+                xbest, fbest = xg, fg
+            end
+            max_change = max(max_change, abs(xbest - log_sp[j]))
+            log_sp[j] = xbest
         end
         if control.trace
             @info "SCAM $method cycle $cycle: log_sp=$(round.(log_sp, digits=3)), max_change=$(round(max_change, sigdigits=3))"
@@ -785,7 +816,10 @@ function _scam_criterion_outer(
     end
 
     final_result = fit_at(log_sp)
-    return log_sp, final_result, n_cycles
+    if !final_result.converged
+        final_result = fit_at(log_sp; cold = true)
+    end
+    return log_sp, final_result, n_cycles, score_of(final_result)
 end
 
 # ============================================================================
@@ -832,7 +866,7 @@ function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, w
     penalty = setup_penalties(smooths, n_parametric)
 
     # Outer iteration
-    log_sp, result, outer_iters = scam_outer_iteration(X, y, smooths, penalty, family, link, p_ident;
+    log_sp, result, outer_iters, criterion_val = scam_outer_iteration(X, y, smooths, penalty, family, link, p_ident;
         method = method, weights = wts, offset = off, control = control)
 
     # Post-processing
@@ -875,9 +909,9 @@ function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, w
 
     null_dev = _null_deviance(family, y, wts)
 
-    # No REML/LAML score is computed for SCAM fits: the reml slot is NaN
-    # rather than a mislabeled criterion. The GCV score, if wanted, is
-    # n·deviance/(n − γ·edf)² from the stored fields.
+    # No REML/LAML score is computed for SCAM fits, so the reml slot is NaN.
+    # For :GCV/:UBRE fits the optimized criterion value is stored in the
+    # model's `criterion` field (NaN for the EFS/:REML path).
 
     return GamModel(
         f,
@@ -896,6 +930,7 @@ function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, w
         result.deviance,
         null_dev,
         NaN,
+        criterion_val,
         method,
         Vp, Ve,
         result.hat_diag,

@@ -55,6 +55,11 @@ residual plots).
 
 The k-index column is mgcv's residual-autocorrelation measure: values well
 BELOW 1 (with small p-value) suggest the basis dimension k is too small.
+
+# Example
+```julia
+gam_check(m)     # convergence, k-index and p-value per smooth
+```
 """
 function gam_check(m::GamModel; n_rep::Int = 200, seed = nothing)
     println("GAM checking results")
@@ -116,6 +121,13 @@ where `k_index` is the mgcv-style differenced-residual variance ratio and
 `p_value` its permutation p-value (`n_rep` shuffles). A LOW k-index with a
 small p-value suggests the basis dimension may be too small. `k_index` and
 `p_value` are `NaN` when the smooth's covariate is unavailable.
+
+# Example
+```julia
+for (label, k, edf, kidx, p) in k_check(m)
+    p < 0.05 && @warn "basis may be too small" label k edf
+end
+```
 """
 function k_check(m::GamModel; n_rep::Int = 200, seed = nothing)
     rng = seed === nothing ? _diag_default_rng() : _DiagMT(seed)
@@ -153,6 +165,12 @@ one entry per smooth (each in [0, 1]), matching mgcv's three measures:
   Frobenius norm) explainable by the other terms
 
 If `full=false`, returns the pairwise worst-case concurvity matrix.
+
+# Example
+```julia
+c = concurvity(m; full = true)
+c.worst, c.observed, c.estimate    # one value per smooth, in [0, 1]
+```
 """
 function concurvity(m::GamModel; full::Bool = true)
     n_smooth = m.n_smooth
@@ -288,6 +306,12 @@ statistic on the Bayesian posterior covariance, with reference degrees
 of freedom based on the effective degrees of freedom.
 
 Returns an `AnovaGamResult` with the smooth significance table.
+
+# Example
+```julia
+anova_gam(m)                  # Wald tests for each smooth
+anova_gam(m0, m1)             # nested-model comparison
+```
 """
 function anova_gam(m::GamModel)
     use_f = _needs_scale_estimate(m.family) ||
@@ -388,6 +412,12 @@ Models are sorted by increasing total EDF. For scale-estimated
 families an F-test is used; for known-scale families a χ² test is used.
 
 `test` may be `:F`, `:Chisq`, or `:auto` (default).
+
+# Example
+```julia
+anova_gam(m)                  # Wald tests for each smooth
+anova_gam(m0, m1)             # nested-model comparison
+```
 """
 function anova_gam(m1::GamModel, m2::GamModel, models::GamModel...; test::Symbol=:auto)
     all_models = [m1, m2, models...]

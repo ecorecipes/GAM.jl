@@ -290,7 +290,9 @@ plot(d2.x, d2.derivative;
 
 `appraise` returns diagnostic data for the four standard residual plots:
 QQ plot, residuals vs linear predictor, histogram of residuals, and
-observed vs fitted values.
+observed vs fitted values. By default the QQ reference quantiles are a
+**simulated envelope** (`method=:simulate`, matching gratia and mgcv’s
+`qq.gam`); pass `method=:normal` for normal-theory quantiles.
 
 ``` julia
 diag_data = appraise(m)
@@ -301,7 +303,7 @@ diag_data = appraise(m)
 
 ``` julia
 p1 = scatter(diag_data.qq_theoretical, diag_data.qq_sample;
-    xlabel="Theoretical quantiles", ylabel="Standardized deviance residuals",
+    xlabel="Reference quantiles (simulated)", ylabel="Standardized deviance residuals",
     title="QQ plot", label="", markersize=2, alpha=0.5, color=:steelblue)
 lims = extrema(vcat(diag_data.qq_theoretical, diag_data.qq_sample))
 plot!(p1, [lims[1], lims[2]], [lims[1], lims[2]];
@@ -426,10 +428,10 @@ kc = k_check(m)
 ```
 
     4-element Vector{@NamedTuple{label::String, k::Int64, edf::Float64, k_index::Float64, p_value::Float64}}:
-     (label = "s(x0,bs=cr)", k = 9, edf = 3.4262656464864105, k_index = 1.0449332110085794, p_value = 0.73)
-     (label = "s(x1,bs=cr)", k = 9, edf = 3.202964845843242, k_index = 1.0172236314355263, p_value = 0.625)
-     (label = "s(x2,bs=cr)", k = 9, edf = 7.833821589051949, k_index = 1.0396460061058748, p_value = 0.76)
-     (label = "s(x3,bs=cr)", k = 9, edf = 1.8871672259901553, k_index = 0.9732144202730096, p_value = 0.33)
+     (label = "s(x0,bs=cr)", k = 9, edf = 3.4262656464864105, k_index = 1.0449332110085794, p_value = 0.755)
+     (label = "s(x1,bs=cr)", k = 9, edf = 3.202964845843242, k_index = 1.0172236314355263, p_value = 0.615)
+     (label = "s(x2,bs=cr)", k = 9, edf = 7.833821589051949, k_index = 1.0396460061058748, p_value = 0.775)
+     (label = "s(x3,bs=cr)", k = 9, edf = 1.8871672259901553, k_index = 0.9732144202730096, p_value = 0.28)
 
 ## Summary
 
