@@ -553,7 +553,7 @@ custom_chains = sample(my_gam(dat.y, sm), NUTS(), MCMCThreads(), 2000, 2; progre
 ```{julia}
 #| echo: false
 σ_custom = mean(vec(custom_chains[:σ].data))
-σ_s_custom = mean(vec(custom_chains[Symbol("f.s_x.σ_s")].data))
+σ_s_custom = mean(vec(custom_chains[Symbol("f.s_x.σ_s[1]")].data))
 @printf("Custom model σ posterior mean: %.4f (compare to %.4f from gam())\n",
     σ_custom, mean(vec(m_bayes.chains[Symbol("σ_obs")].data)))
 @printf("Custom model σ_s: %.4f (compare to %.4f from gam())\n",
@@ -577,7 +577,7 @@ Zs_c = sm.Zs[1]
 for i in 1:n_draws_c
     β0_i = custom_chains[Symbol("β0")].data[i]
     βf_i = custom_chains[Symbol("f.s_x.β_f[1]")].data[i]
-    σ_s_i = custom_chains[Symbol("f.s_x.σ_s")].data[i]
+    σ_s_i = custom_chains[Symbol("f.s_x.σ_s[1]")].data[i]
     z_i = [custom_chains[Symbol("f.s_x.z[$j]")].data[i] for j in 1:size(Zs_c, 2)]
     η_custom[i, :] = β0_i .+ Xf_c * [βf_i] .+ σ_s_i .* (Zs_c * z_i)
 end
@@ -660,7 +660,7 @@ plot(p1, p2, p3, p4; layout=(2, 2), size=(900, 700))
 
 # Compare σ_s posteriors
 σs_gam_samples = vec(m_bayes.chains[Symbol("σ_s[1]")].data)
-σs_sp_samples = vec(custom_chains[Symbol("f.s_x.σ_s")].data)
+σs_sp_samples = vec(custom_chains[Symbol("f.s_x.σ_s[1]")].data)
 @printf("σ_s posterior: gam() mean=%.4f sd=%.4f  |  smooth_prior mean=%.4f sd=%.4f\n",
     mean(σs_gam_samples), std(σs_gam_samples), mean(σs_sp_samples), std(σs_sp_samples))
 ```
