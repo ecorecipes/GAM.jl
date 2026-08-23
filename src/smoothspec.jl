@@ -443,5 +443,5 @@ end
 
 # Register aliases so _is_smooth_function recognizes them
 function _register_smooth_aliases()
-    push!(_SMOOTH_ALIASES, cr, tp, ts, cs, cc, ps, cps)
+    push!(_SMOOTH_ALIASES, cr, tp, ts, cs, cc, ps, cps, s_nest)
 end
