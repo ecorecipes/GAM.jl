@@ -170,8 +170,6 @@ export
     param_coef,
     param_eta,
     nll_total,
-    nll_derivs!,
-    nll_obs,
 
     # GAMLSS families and interface
     DistFamily,
@@ -186,9 +184,6 @@ export
     gamlss,
     GamlssControl,
     gamlss_control,
-    gamlss_rs!,
-    gamlss_cg!,
-    mp_laml,
 
     # EGPD families
     EGPD1Family,
@@ -234,7 +229,6 @@ export
     scam,
     scam_control,
     ScamControl,
-    softplus,
     has_shape_constraints,
 
     # Gratia-like diagnostics & visualization
@@ -264,8 +258,6 @@ export
     @gamm_formula,
     RandomEffectSpec,
     ConstructedRandomEffect,
-    construct_random_effect,
-    predict_re_matrix,
     ranef,
     VarCorr,
     VarCorrResult,
@@ -285,7 +277,6 @@ export
     gam_smooth,
     smooth_prior,
     smooth_predictive,
-    s2r_predict,
     pointwise_loglikelihood,
     psis_loo,
     pareto_k_diagnostic,

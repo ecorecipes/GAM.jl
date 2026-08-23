@@ -101,7 +101,13 @@ _default_link(::ELFFamily) = IdentityLink()
 _family_name(::ELFFamily) = "ELF"
 _has_extra_param(f::ELFFamily) = f.estimate_theta
 _estimates_scale(::ELFFamily) = false
-_has_Dd(::ELFFamily) = false
+# ELF must use the Dd (deviance-derivative) working quantities: the Fisher
+# fallback's working response z = η + (y − μ) targets the *mean*, so with
+# _has_Dd = false every quantile level τ produced the same (mean) fit — the
+# round-4 non-stationarity defect. The Dd path uses the R-verified elf_Dd
+# gradient/curvature, and pirls_extended's stationarity polish handles the
+# low-curvature tails.
+_has_Dd(::ELFFamily) = true
 _family_Dd(f::ELFFamily, y, mu, wt; level=0) = elf_Dd(f, y, mu, wt; level=level)
 
 function _null_deviance(f::ELFFamily, y, wt)
@@ -573,6 +579,11 @@ function qgam(formulas::AbstractVector, data, qu::Real;
               gamlss_ctrl::GamlssControl=gamlss_control(),
               kwargs...)
     0.0 < qu < 1.0 || throw(ArgumentError("qu must be in (0, 1)"))
+    # Canonicalize the method symbol: the gamlss-family entry points use
+    # lowercase (:efs, :local_ml, ...); accept uppercase spellings and treat
+    # :REML as the EFS default (EFS is the REML-flavored update).
+    method = Symbol(lowercase(String(method)))
+    method === :reml && (method = :efs)
     length(formulas) == 2 || throw(ArgumentError(
         "ELFLSS qgam expects exactly 2 formulas (mu and sigma), got $(length(formulas))."))
     length(links) == 2 || throw(ArgumentError(

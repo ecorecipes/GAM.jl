@@ -18,7 +18,10 @@ df = DataFrame(x=x, y=y)
 
 ### `gam_check`
 
-Produces residual diagnostic information similar to R's `gam.check()`:
+Prints a text diagnostic summary similar to R's `gam.check()` — convergence
+information, deviance explained, and a per-smooth basis-dimension table with
+mgcv-style k-index values and permutation p-values (for residual plots, use
+[`appraise`](@ref appraise-section) with the Plots extension):
 
 ```@example diagnostics
 m = gam(@formula(y ~ s(x, k=20, bs=:cr)), df);
@@ -26,23 +29,24 @@ gc = gam_check(m);
 nothing
 ```
 
-Returns a `GamCheck` object with:
-- QQ plot data (theoretical vs observed quantiles)
-- Residuals vs fitted values
-- Histogram of residuals
-- Response vs fitted values
+The k-index is the mgcv statistic (variance of covariate-ordered differenced
+residuals relative to the residual variance): values well **below 1** with
+small p-values indicate the basis dimension `k` may be too small.
 
 ### `k_check`
 
-Tests whether the basis dimension `k` is adequate for each smooth term:
+Tests whether the basis dimension `k` is adequate for each smooth term,
+returning `(label, k′, edf, k_index, p_value)` tuples:
 
 ```@example diagnostics
 kc = k_check(m);
 nothing
 ```
 
-A significant p-value suggests that `k` should be increased. Rule of thumb:
-if the effective degrees of freedom (EDF) is close to `k - 1`, increase `k`.
+A small p-value (with k-index below 1) suggests that `k` should be
+increased. A complementary heuristic: if the effective degrees of freedom
+(EDF) is close to `k - 1`, the smooth is using all its basis freedom and
+`k` should be raised.
 
 ### `concurvity`
 
@@ -58,8 +62,10 @@ c = concurvity(m2);
 nothing
 ```
 
-Returns worst-case and observed concurvity measures for each smooth.
-Values close to 1 indicate potential identifiability issues.
+With `full=true` (the default) returns a NamedTuple with mgcv's three
+measures per smooth — `worst`, `observed`, and `estimate` — all in [0, 1];
+values close to 1 indicate potential identifiability issues. With
+`full=false` returns the pairwise worst-case matrix.
 
 ## ANOVA for GAMs (`anova_gam`)
 
@@ -160,8 +166,9 @@ se = smooth_estimates(m);
 nothing
 ```
 
-Returns a DataFrame with columns for the covariate value, estimated smooth
-value, standard error, and confidence bounds. Useful for plotting.
+Returns a `SmoothEstimates` struct (Tables.jl-compatible — `DataFrame(se)`
+works) with the smooth labels, covariate grids, estimates, standard errors,
+and confidence bounds. A Plots recipe is provided by the Plots extension.
 
 ### `derivatives`
 
@@ -178,16 +185,18 @@ Useful for identifying regions of significant change.
 
 ### `partial_residuals`
 
-Computes partial residuals for each smooth term — the residuals plus the
-smooth contribution:
+Computes partial residuals for each smooth term — the working residuals plus
+the smooth contribution, on the link scale:
 
 ```@example diagnostics
 pr = partial_residuals(m);
 nothing
 ```
 
-Useful for assessing smooth fit: plot partial residuals against the covariate
-and overlay the estimated smooth.
+Returns a `PartialResiduals` struct in long format (fields `smooth`, `xname`,
+`x`, `residual`; Tables.jl-compatible, with a scatter Plots recipe). Useful
+for assessing smooth fit: plot partial residuals against the covariate and
+overlay the estimated smooth.
 
 ## Posterior Inference
 
@@ -214,7 +223,7 @@ Useful for computing posterior credible intervals on predictions.
 
 ## Summary Diagnostics
 
-### `appraise`
+### [`appraise`](@id appraise-section)
 
 Produces a multi-panel diagnostic summary (analogous to gratia's `appraise`):
 
@@ -224,10 +233,24 @@ nothing
 ```
 
 Returns data for four diagnostic panels:
-1. QQ plot of residuals
+1. QQ plot of residuals — by default the reference quantiles are a
+   **simulated envelope** (`method=:simulate`, matching gratia and mgcv's
+   `qq.gam`; seed-reproducible via `seed=`); pass `method=:normal` for
+   normal-theory quantiles
 2. Residuals vs linear predictor
 3. Histogram of residuals
 4. Observed vs fitted values
+
+### Influence measures
+
+`leverage` (hat diagonals, summing to the model EDF) and `cooksdistance`
+(GLM Cook's distance) extend the StatsAPI generics:
+
+```@example diagnostics
+h = GAM.leverage(m);
+cd = GAM.cooksdistance(m);
+(sum(h), maximum(cd))
+```
 
 ### `rootogram`
 

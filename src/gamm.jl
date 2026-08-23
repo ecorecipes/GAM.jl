@@ -425,7 +425,8 @@ RE variance (1/λ_re) alongside the smooth penalties.
 """
 function _fit_gamm_lams(y, X_gam, smooths, n_parametric,
     random_effects::Vector{ConstructedRandomEffect},
-    f, data, family, link, method, weights, control)
+    f, data, family, link, method, weights, control;
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing)
 
     n = length(y)
     n_re = length(random_effects)
@@ -477,10 +478,11 @@ function _fit_gamm_lams(y, X_gam, smooths, n_parametric,
 
     gam_model = if has_linear_constraints(all_smooths)
         _fit_scasm(y, X_aug, all_smooths, n_parametric,
-            f, data, family, link, method, weights, control)
+            f, data, family, link, method, weights, control; offset = offset)
     else
         _fit_gam(y, X_aug, all_smooths, n_parametric,
-            f, data, family, link, method, :pirls, weights, control)
+            f, data, family, link, method, :pirls, weights, control;
+            offset = offset)
     end
 
     # Extract RE information from the fitted model
@@ -542,10 +544,12 @@ Reference: Breslow & Clayton (1993). JASA 88:9-25.
 """
 function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
     random_effects::Vector{ConstructedRandomEffect},
-    f, data, family, link, method, weights, control)
+    f, data, family, link, method, weights, control;
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing)
 
     n = length(y)
     w_prior = weights !== nothing ? Float64.(weights) : ones(n)
+    off = offset === nothing ? zeros(n) : Float64.(offset)
 
     # Initialize from a GLM fit (ignoring random effects)
     η = zeros(n)
@@ -563,6 +567,7 @@ function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
     end
     fill!(μ, y_mean)
     fill!(η, GLM.linkfun(link, y_mean))
+    η .+= off .- mean(off)   # start near the offset structure, mean-preserving
 
     # PQL iteration settings
     max_pql_iter = 20
@@ -591,15 +596,17 @@ function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
         end
 
         # Step 2: Fit Gaussian GAMM to working response z with weights w
+        # (offset enters the working model, so η_new = off + Xβ + Zb below)
         gamm_result = _fit_gamm_lams(z, X_gam, smooths, n_parametric,
-            random_effects, f, data, Normal(), IdentityLink(), method, w, control)
+            random_effects, f, data, Normal(), IdentityLink(), method, w, control;
+            offset = offset)
 
         # Step 3: Extract updated linear predictor
         gm = gamm_result.gam_model
         β_all = StatsAPI.coef(gm)
         p_gam = size(X_gam, 2)
         β_gam = β_all[1:p_gam]
-        η_new = X_gam * β_gam
+        η_new = off .+ X_gam * β_gam
 
         # Add random effect contributions
         for (i, cre) in enumerate(random_effects)
@@ -637,7 +644,7 @@ function _fit_gamm_pql(y, X_gam, smooths, n_parametric,
         # Recompute fitted values on response scale
         β_all = StatsAPI.coef(gm)
         p_gam = size(X_gam, 2)
-        η_final = X_gam * β_all[1:p_gam]
+        η_final = off .+ X_gam * β_all[1:p_gam]
         for (i, cre) in enumerate(random_effects)
             η_final .+= cre.Z * gamm_result.random_coefs[i]
         end
@@ -1101,6 +1108,8 @@ gamm(@formula(y ~ s(x, k=20) + re(subject)), data)
   families automatically use `:PQL`) or `:PQL`. The `:MixedModels` backend is
   disabled (statistically incorrect encoding) and throws.
 - `weights=nothing`: prior weights
+- `offset=nothing`: known additive term on the link scale (e.g. log-exposure);
+  supported by the LAMS and PQL backends (not the Bayesian path)
 - `control=gam_control()`: fitting control parameters
 - `priors=nothing`: if provided, triggers Bayesian fitting via Turing.jl
 
@@ -1113,6 +1122,7 @@ function gamm(gf::GammFormula, data;
     method::Symbol = :REML,
     backend::Symbol = :LAMS,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
@@ -1130,6 +1140,8 @@ function gamm(gf::GammFormula, data;
 
     # Bayesian dispatch
     if priors !== nothing
+        offset === nothing || throw(ArgumentError(
+            "offset= is not supported for Bayesian GAMM fitting"))
         return _fit_gamm_bayes(gf, data, family, link_eff, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains,
             weights = weights)
@@ -1138,6 +1150,8 @@ function gamm(gf::GammFormula, data;
     # Setup GAM part (smooths + parametric)
     y, X, X_para, smooths, n_parametric = setup_gam(gf.gam_formula, data; family = family)
     _validate_response(y, family)
+    offset === nothing || length(offset) == length(y) || throw(ArgumentError(
+        "offset length $(length(offset)) does not match response length $(length(y))"))
 
     # Build random effects
     random_effects = [construct_random_effect(re, data) for re in gf.random_effects]
@@ -1149,11 +1163,11 @@ function gamm(gf::GammFormula, data;
 
     if backend == :PQL || (backend == :LAMS && !(family isa Normal))
         return _fit_gamm_pql(y, X, smooths, n_parametric, random_effects,
-            f, data, family, link_eff, method, weights, control)
+            f, data, family, link_eff, method, weights, control; offset = offset)
     end
 
     return _fit_gamm_lams(y, X, smooths, n_parametric, random_effects,
-        f, data, family, link_eff, method, weights, control)
+        f, data, family, link_eff, method, weights, control; offset = offset)
 end
 
 # The MixedModels.jl backend is gated off: its smooth-to-random-effect
@@ -1178,6 +1192,7 @@ function gamm(f::FormulaTerm, data;
     method::Symbol = :REML,
     backend::Symbol = :LAMS,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
@@ -1222,9 +1237,11 @@ function gamm(f::FormulaTerm, data;
 
     # If no RE terms found, fall back to regular gam()
     if isempty(re_specs)
-        return gam(f, data; family, link, method, weights, control, priors,
+        return gam(f, data; family, link, method, weights, offset, control, priors,
             sampler, nsamples, nchains)
     end
+    offset === nothing || length(offset) == n || throw(ArgumentError(
+        "offset length $(length(offset)) does not match response length $n"))
 
     X_para, _ = _build_parametric_matrix(para_terms, t)
     n_parametric = size(X_para, 2)
@@ -1253,6 +1270,8 @@ function gamm(f::FormulaTerm, data;
 
     # Bayesian dispatch
     if priors !== nothing
+        offset === nothing || throw(ArgumentError(
+            "offset= is not supported for Bayesian GAMM fitting"))
         return _fit_gamm_bayes_from_parts(y, X, smooths, n_parametric, random_effects,
             f, data, family, link_eff, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains, weights = weights)
@@ -1263,11 +1282,11 @@ function gamm(f::FormulaTerm, data;
     # PQL backend: use for non-Gaussian, or when explicitly requested
     if backend == :PQL || (backend == :LAMS && !(family isa Normal))
         return _fit_gamm_pql(y, X, smooths, n_parametric, random_effects,
-            f, data, family, link_eff, method, weights, control)
+            f, data, family, link_eff, method, weights, control; offset = offset)
     end
 
     return _fit_gamm_lams(y, X, smooths, n_parametric, random_effects,
-        f, data, family, link_eff, method, weights, control)
+        f, data, family, link_eff, method, weights, control; offset = offset)
 end
 
 # GamFormula dispatch: no RE support, suggest @formula with random-effect syntax

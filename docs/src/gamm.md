@@ -44,7 +44,14 @@ gamm(formula, data;
 
 For non-Gaussian families, `gamm()` automatically uses Penalized
 Quasi-Likelihood (PQL), matching R's `mgcv::gamm()` which calls
-`MASS::glmmPQL` internally.
+`MASS::glmmPQL` internally. Gaussian models use a pure-Julia
+penalized-smooth backend (random effects as identity-penalty smooths).
+An experimental MixedModels.jl backend is currently disabled
+(`backend=:MixedModels` throws) pending a rebuild.
+
+Random-effect notes: intercept and slope terms get separate variance
+components; correlations between them are assumed zero (a warning is
+issued for `(1 + x | g)` terms).
 
 ## Formula Syntax
 
@@ -193,6 +200,19 @@ ranef(m);
 VarCorr(m);
 GAM.deviance(m);
 GAM.nobs(m);
+nothing
+```
+
+### Prediction
+
+`predict` on a `GammModel` supports `type=` and delta-method standard errors
+(conditional on the estimated random effects and smoothing parameters):
+
+```@example gamm
+newdf = DataFrame(x=range(0, 2π; length=30) |> collect,
+    subject=fill("1", 30))
+eta = GAM.predict(m, newdf);
+mu, se = GAM.predict(m, newdf; type=:response, se=true);
 nothing
 ```
 

@@ -6,6 +6,9 @@ using GAM
 using RCall
 using DataFrames
 using Statistics
+using StableRNGs
+using Distributions
+using StatsAPI: fitted
 
 @testset "evgam R comparison" begin
 
@@ -213,4 +216,61 @@ using Statistics
 
         @test nll_j ≈ nll_r atol=1e-8
     end
+    # ── Round-4 parity: fitted GEV location curve vs evgam ─────────────────
+    # Measured: elementwise max-abs 1.85e-4, cor 1.000000 on the fitted
+    # location linear predictor (smooth coefficients themselves are not
+    # compared — parameterizations differ; the fitted curve is the
+    # basis-independent quantity).
+    @testset "GEV smooth location curve vs evgam" begin
+        rng = StableRNG(504)
+        n = 500
+        xe = rand(rng, n)
+        muloc = 2.0 .+ sin.(2π .* xe)
+        ye = [rand(rng, GeneralizedExtremeValue(m, 0.8, 0.1)) for m in muloc]
+        dfe = (y=ye, x=xe)
+        me = evgam([GAM.@formula(y ~ s(x, k=8, bs=:cr)), GAM.@formula(y ~ 1),
+                    GAM.@formula(y ~ 1)], dfe, GEVFamily())
+        eta_loc_j = param_eta(me, 1)
+        @rput ye xe
+        RCall.reval("""
+        dre <- data.frame(y=ye, x=xe)
+        mre <- evgam(list(y ~ s(x, k=8, bs="cr"), ~1, ~1), data=dre, family="gev")
+        eta_loc_r <- as.vector(predict(mre)[,1])
+        """)
+        eta_loc_r = rcopy(Vector{Float64}, R"eta_loc_r")
+        @test maximum(abs.(eta_loc_j .- eta_loc_r)) < 5e-3
+        @test cor(eta_loc_j, eta_loc_r) > 0.9999
+    end
+end
+
+# ── Multi-parameter offset parity vs mgcv gaulss ────────────────────────────
+# gaulss lives in mgcv (not evgam), but this file already carries the RCall
+# gating for multi-parameter live comparisons. Measured agreement at the time
+# of writing: fitted-location max-abs 2.1e-5, cor 1.0 (mgcv's fitted() for
+# gaulss includes the offset, matching Julia's stored-offset convention).
+@testset "gamlss GaussianLS offset vs mgcv gaulss" begin
+    rng = StableRNG(2026)
+    n = 400
+    x = sort(rand(rng, n)) .* 2
+    off = 1.5 .* x .+ 0.3 .* sin.(3 .* x)
+    y = off .+ sin.(2π .* x) .+ 0.25 .* randn(rng, n)
+    df = (y = y, x = x)
+
+    m_jl = gamlss([GAM.@formulak(y ~ s(x, k = 12, bs = :cr)),
+                   GAM.@formulak(y ~ 1)],
+                  df, GaussianLS(); offset = off)
+    eta_jl = m_jl.fitted_eta[1]
+
+    @rput y x off
+    RCall.reval("""
+    suppressMessages(library(mgcv))
+    d_off <- data.frame(y = y, x = x, off = off)
+    m_r_off <- gam(list(y ~ s(x, k = 12, bs = "cr") + offset(off), ~ 1),
+                   family = gaulss(), data = d_off, method = "REML")
+    fit_r_off <- fitted(m_r_off)[, 1]
+    """)
+    fit_r = rcopy(Vector{Float64}, R"fit_r_off")
+
+    @test maximum(abs.(eta_jl .- fit_r)) < 5e-4      # ~25× observed 2.1e-5
+    @test cor(eta_jl, fit_r) > 0.99999
 end

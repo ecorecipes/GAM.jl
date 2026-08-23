@@ -1,9 +1,13 @@
 # [Smooth Term Reference](@id smooth-terms)
 
-GAM.jl provides 28 smooth basis types, covering all commonly used options from
-R's mgcv, plus shape-constrained bases from scam and several additional types
-including loess, fractional polynomials, spherical splines, SPDE Matérn, and
-constrained factor smooths.
+GAM.jl provides 30 registered smooth basis types, covering all commonly used
+options from R's mgcv, plus shape-constrained bases from scam and several
+additional types including loess, fractional polynomials, spherical splines,
+SPDE Matérn, and constrained factor smooths. A few bases (`:sos`, `:so`,
+`:ds`, and the `t2()` construction) are documented **approximations** of
+their mgcv namesakes — see the per-basis notes below. For smooths of
+*estimated* covariate transformations (single-index effects and friends),
+see [Nested Effects](@ref nested-effects).
 
 ```@setup smooths
 using GAM, DataFrames, Random
@@ -186,22 +190,15 @@ nothing
 
 ### Duchon Splines (`bs=:ds`)
 
-Generalization of thin plate splines that allow fractional derivative penalties.
-
-- `m` parameter controls the penalty order (can be non-integer via a tuple)
-
-**When to use:** When the standard TPS penalty order is not ideal and you want
-more flexibility in the smoothness penalty.
+!!! warning "Approximation"
+    `:ds` is currently an **alias for the thin plate spline** (`:tp`) —
+    Duchon's fractional-order generalization is not yet implemented.
 
 **Default k**: 10.
 
 ```@example smooths
 s(:x, bs=:ds);
 nothing
-```
-
-```text
-s(:x, :y, bs=:ds, m=(1, 0.5))   # custom penalty specification
 ```
 
 ### Adaptive Smooth (`bs=:ad`)
@@ -223,6 +220,11 @@ nothing
 
 Splines on the sphere for data defined on the surface of a sphere (e.g.,
 global spatial data with latitude/longitude coordinates).
+
+!!! warning "Approximation"
+    The kernel is the planar thin-plate kernel applied to great-circle
+    distance — an approximation of mgcv's Wahba spline-on-the-sphere
+    kernels. Fits will differ from mgcv's `bs="sos"`.
 
 **When to use:** Geospatial data on the globe where you need smoothing that
 respects spherical geometry. Avoids edge effects at poles and the date line.
@@ -267,6 +269,11 @@ s(:region, bs=:mrf, xt=nb, k=20)
 ```
 
 ### Soap Film Smooth (`bs=:so`)
+
+!!! warning "Approximation"
+    The soap-film construction uses a grid-PDE approximation of mgcv's
+    exact method; fits will differ from mgcv's `bs="so"`.
+
 
 For smoothing over complex domains with boundaries (e.g., an estuary, a lake).
 Uses a soap-film PDE approach to respect domain boundaries.

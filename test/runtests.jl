@@ -1068,6 +1068,9 @@ end
 # Nested effects (s_nest / gam_nl, gamFactory-style)
 @eval include("test_nested.jl")
 
+# Seeded configuration fuzz (property test; round-4 regression seeds)
+@eval include("test_fuzz.jl")
+
 # GAMLSS tests
 @eval include("test_gamlss.jl")
 

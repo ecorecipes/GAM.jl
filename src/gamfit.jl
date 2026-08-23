@@ -524,7 +524,7 @@ Scale (dispersion) estimator for the reported scale and covariance scaling.
 function _estimate_scale(family, y, mu, wts, pearson::Float64, dev::Float64,
     n::Int, edf::Float64, method::Symbol; trace::Bool = false)
     denom = max(n - edf, 1.0)
-    method === :deviance && return max(dev / denom, 1e-10)
+    method === :deviance && return max(dev / denom, _scale_floor(y))
     phi = pearson / denom
     if method === :fletcher
         # Prior-weighted mean of V′(μ)(y − μ)/V(μ), as in mgcv's weighted
@@ -544,7 +544,7 @@ function _estimate_scale(family, y, mu, wts, pearson::Float64, dev::Float64,
             @info "Fletcher scale correction degenerate (s̄ = $s_bar); using the Pearson estimate"
         end
     end
-    return max(phi, 1e-10)
+    return max(phi, _scale_floor(y))
 end
 
 # Convenience: fit(GamModel, formula, data; ...)

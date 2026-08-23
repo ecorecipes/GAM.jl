@@ -22,7 +22,7 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 - **Diagnostics** — gratia-style smooth estimates, derivatives, posterior samples, concurvity, rootograms
 - **Side constraints** — automatic identifiability constraints when smooths share covariates
 - **`by` variables** — varying-coefficient smooths (numeric `by`) and factor-`by` smooths (one penalized smooth per level), including factor-`by` for shape-constrained (SCAM) smooths
-- **Offsets** — `gam(...; offset=...)` for known additive terms on the link scale (e.g. log-exposure in rate models), supported for ordinary, extended-family, and shape-constrained fits
+- **Offsets** — `gam(...; offset=...)` for known additive terms on the link scale (e.g. log-exposure in rate models), supported for ordinary, extended-family, shape-constrained, nested-effect, mixed (`gamm`), and multi-parameter (`gamlss`/`evgam`/`qgam`) fits — the last accepting per-parameter offsets
 - **Term selection** — `gam(...; select=true)` adds a null-space penalty to every smooth (Marra & Wood 2011) so whole terms can be shrunk out of the model
 - **Nested effects** — gamFactory-style `s_nest()` smooths of estimated covariate transformations: single-index/distributed-lag (`trans_linear`), adaptive exponential smoothing (`trans_nexpsm`), and kernel smoothing (`trans_mgks`), fitted by joint penalized Newton with EFS smoothing selection via `gam_nl()` (or `gam()`, which routes automatically)
 

@@ -9,6 +9,13 @@
 
 using ForwardDiff
 
+# Response-magnitude-relative floor for scale estimates: an absolute 1e-10
+# floor silently inflates the scale (and hence the EFS smoothing-parameter
+# updates, oversmoothing) when the response lives on a tiny scale like 1e-8;
+# a relative floor keeps fits invariant to rescaling y.
+_scale_floor(y::AbstractVector{<:Real}) =
+    1e-10 * max(sum(abs2, y .- (sum(y) / length(y))) / max(length(y) - 1, 1), eps())
+
 """
     outer_iteration(X, y, smooths, penalty, family, link;
                     method, weights, control)
@@ -117,7 +124,8 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         # φ̂ = pearson / (n − edf)
         edf_total = sum(result.edf_vec)
         if _needs_scale_estimate(family)
-            scale_est = max(result.pearson / max(n - edf_total, 1.0), 1e-10)
+            scale_est = max(result.pearson / max(n - edf_total, 1.0),
+                _scale_floor(y))
         else
             scale_est = 1.0
         end
@@ -430,7 +438,11 @@ function _efs_sp_update(log_sp::Vector{Float64}, beta::Vector{Float64},
 
             a = ldet_derivs[j] / λ - trVS
 
-            if bSb <= eps() || !isfinite(bSb)
+            # Degeneracy threshold relative to ‖β_block‖² so the test is
+            # invariant to the response scale (an absolute eps() floor
+            # misfires when y — and hence β — lives on a tiny scale).
+            bSb_floor = eps() * max(sum(abs2, beta_block), eps())
+            if bSb <= bSb_floor || !isfinite(bSb)
                 # β̂ (numerically) in the null space of Sⱼ: the REML optimum
                 # sends λⱼ → ∞; take a bounded step toward the upper limit
                 # (mgcv's efsud pushes to the boundary) instead of freezing.
@@ -607,7 +619,8 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         dev = result.deviance
         edf_total = sum(result.edf_vec)
         if _needs_scale_estimate(family)
-            scale_est = max(result.pearson / max(n - edf_total, 1.0), 1e-10)
+            scale_est = max(result.pearson / max(n - edf_total, 1.0),
+                _scale_floor(y))
         else
             scale_est = 1.0
         end

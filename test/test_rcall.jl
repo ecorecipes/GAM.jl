@@ -14,7 +14,7 @@ using DataFrames
 using Distributions
 using LinearAlgebra
 using Statistics
-using StatsAPI: loglikelihood, dof, aic, predict
+using StatsAPI: loglikelihood, dof, aic, predict, fitted
 using StatsBase: coef
 using StableRNGs
 
@@ -920,5 +920,148 @@ end
         """)
         sc_r = rcopy(R"sc_fsr")
         @test m_fs.scale ≈ sc_r rtol = 0.05
+    end
+    # ── Round-4 parity: shrinkage bases ts/cs vs mgcv ──────────────────────
+    # Measured agreement (StableRNG(501), n=300, null smooth on x2):
+    #   ts: fitted max-abs 0.015, cor 0.999967, per-smooth edf diff ≤ 0.15
+    #   cs: fitted max-abs 0.007, cor 0.999990
+    # Tolerances at ~5x measured.
+    @testset "Shrinkage bases ts/cs vs mgcv" begin
+        rng = StableRNG(501)
+        n = 300
+        x1 = rand(rng, n); x2 = rand(rng, n)
+        y = sin.(2π .* x1) .+ 0.3 .* randn(rng, n)
+        df = DataFrame(y=y, x1=x1, x2=x2)
+        @rput y x1 x2
+        RCall.reval("dr_sh <- data.frame(y=y, x1=x1, x2=x2)")
+        for (mj, bstr, tol) in (
+            (gam(GAM.@formula(y ~ s(x1, k=10, bs=:ts) + s(x2, k=10, bs=:ts)), df), "ts", 0.08),
+            (gam(GAM.@formula(y ~ s(x1, k=10, bs=:cs) + s(x2, k=10, bs=:cs)), df), "cs", 0.05),
+        )
+            RCall.reval("""
+            mr_sh <- gam(y ~ s(x1, k=10, bs="$bstr") + s(x2, k=10, bs="$bstr"),
+                         data=dr_sh, method="REML")
+            fit_sh <- as.vector(fitted(mr_sh)); edf_sh <- summary(mr_sh)\$edf
+            """)
+            fit_r = rcopy(Vector{Float64}, R"fit_sh")
+            edf_r = rcopy(Vector{Float64}, R"edf_sh")
+            @test maximum(abs.(fitted(mj) .- fit_r)) < tol
+            @test cor(fitted(mj), fit_r) > 0.999
+            @test all(abs.(mj.edf .- edf_r) .< 0.5)
+            # both implementations shrink the null smooth on x2
+            @test mj.edf[2] < 1.5 && edf_r[2] < 1.5
+        end
+    end
+
+    # ── Round-4 parity: NB and Beta fits vs mgcv nb()/negbin()/betar() ─────
+    # Measured: NB fixed θ — fitted max-rel 0.037, cor 0.9996, smooth-edf
+    # diff 0.15; NB free θ — θ̂ 1.875 vs 1.778; Beta — fitted max-abs 0.011,
+    # φ̂ 7.98 vs 7.87. (mgcv embeds θ/φ in REML; GAM.jl alternates ML
+    # updates — small estimate differences are expected.)
+    @testset "NegBin and Beta families vs mgcv" begin
+        rng = StableRNG(502)
+        n = 300
+        x = rand(rng, n) .* 2
+        mu = exp.(0.5 .+ sin.(π .* x))
+        ynb = Float64.([rand(rng, NegativeBinomial(2.0, 2.0 / (2.0 + m))) for m in mu])
+        dfn = DataFrame(y=ynb, x=x)
+        @rput ynb x
+        RCall.reval("""
+        drn <- data.frame(y=ynb, x=x)
+        mr_nbf <- gam(y ~ s(x, k=10, bs="cr"), data=drn, family=negbin(theta=2), method="REML")
+        fit_nbf <- as.vector(fitted(mr_nbf)); edf_nbf <- sum(summary(mr_nbf)\$edf)
+        mr_nbe <- gam(y ~ s(x, k=10, bs="cr"), data=drn, family=nb(), method="REML")
+        fit_nbe <- as.vector(fitted(mr_nbe)); th_nbe <- mr_nbe\$family\$getTheta(TRUE)
+        """)
+        mjf = gam(GAM.@formula(y ~ s(x, k=10, bs=:cr)), dfn,
+            NegBinFamily(theta=2.0, estimate_theta=false))
+        fit_rf = rcopy(Vector{Float64}, R"fit_nbf")
+        edf_rf = rcopy(Float64, R"edf_nbf")
+        @test cor(fitted(mjf), fit_rf) > 0.999
+        @test maximum(abs.(fitted(mjf) .- fit_rf) ./ fit_rf) < 0.15
+        @test abs(mjf.edf[1] - edf_rf) < 0.75    # mgcv summary edf excludes intercept
+        mje = gam(GAM.@formula(y ~ s(x, k=10, bs=:cr)), dfn, NegBinFamily())
+        fit_re = rcopy(Vector{Float64}, R"fit_nbe")
+        th_re = rcopy(Float64, R"th_nbe")
+        @test abs(mje.family.theta - th_re) < 0.5
+        @test cor(fitted(mje), fit_re) > 0.995
+
+        ybeta = clamp.([rand(rng, Beta(pm * 8, (1 - pm) * 8))
+                        for pm in (0.2 .+ 0.6 .* sin.(π .* x ./ 2) .^ 2)], 1e-4, 1 - 1e-4)
+        dfb = DataFrame(y=ybeta, x=x)
+        @rput ybeta x
+        RCall.reval("""
+        drb <- data.frame(y=ybeta, x=x)
+        mr_bt <- gam(y ~ s(x, k=10, bs="cr"), data=drb, family=betar(), method="REML")
+        fit_bt <- as.vector(fitted(mr_bt)); phi_bt <- mr_bt\$family\$getTheta(TRUE)
+        """)
+        mjb = gam(GAM.@formula(y ~ s(x, k=10, bs=:cr)), dfb, BetaFamily())
+        fit_rb = rcopy(Vector{Float64}, R"fit_bt")
+        phi_rb = rcopy(Float64, R"phi_bt")
+        @test maximum(abs.(fitted(mjb) .- fit_rb)) < 0.05
+        @test cor(fitted(mjb), fit_rb) > 0.999
+        @test abs(mjb.family.phi - phi_rb) < 1.0
+    end
+
+    # ── Round-4 parity: smooth-term CIs vs mgcv terms/iterms SEs ───────────
+    # Semantics pairing (measured to machine level):
+    #   smooth_estimates default (overall_uncertainty=true)  ≙ type="iterms"
+    #     — both include intercept uncertainty (max-rel 3.6e-7)
+    #   smooth_estimates(overall_uncertainty=false)          ≙ type="terms"
+    #     — centered smooth only (max-rel 4.1e-7)
+    @testset "Smooth CI semantics vs mgcv terms/iterms" begin
+        rng = StableRNG(505)
+        n = 300
+        xg = rand(rng, n) .* 2π
+        yg = sin.(xg) .+ 0.3 .* randn(rng, n)
+        dfg = DataFrame(y=yg, x=xg)
+        mg = gam(GAM.@formula(y ~ s(x, k=12, bs=:cr)), dfg)
+        se_def = smooth_estimates(mg; n=200)
+        se_no = smooth_estimates(mg; n=200, overall_uncertainty=false)
+        @rput yg xg
+        RCall.reval("""
+        drg <- data.frame(y=yg, x=xg)
+        mr_ci <- gam(y ~ s(x, k=12, bs="cr"), data=drg, method="REML")
+        grid_ci <- data.frame(x = seq(min(xg), max(xg), length=200))
+        pt <- predict(mr_ci, newdata=grid_ci, type="terms", se.fit=TRUE)
+        est_tm <- as.vector(pt\$fit[,1]); se_tm <- as.vector(pt\$se.fit[,1])
+        se_it <- as.vector(predict(mr_ci, newdata=grid_ci, type="iterms", se.fit=TRUE)\$se.fit[,1])
+        """)
+        est_tm = rcopy(Vector{Float64}, R"est_tm")
+        se_tm = rcopy(Vector{Float64}, R"se_tm")
+        se_it = rcopy(Vector{Float64}, R"se_it")
+        @test maximum(abs.(se_def.estimate .- est_tm)) < 5e-6
+        @test maximum(abs.(se_def.se .- se_it) ./ se_it) < 5e-6
+        @test maximum(abs.(se_no.se .- se_tm) ./ se_tm) < 5e-6
+    end
+
+    # ── Round-4 parity: tensor smooths te/ti elementwise ───────────────────
+    # Measured: te fitted max-abs 1.4e-5 with smooth-edf (total−intercept)
+    # matching to 0.001; ti (with cr mains) max-abs 1.3e-4, edf to 0.01.
+    @testset "Tensor te/ti elementwise vs mgcv" begin
+        rng = StableRNG(506)
+        n = 300
+        xt = rand(rng, n); zt = rand(rng, n)
+        yt = sin.(2π .* xt) .* cos.(π .* zt) .+ 0.2 .* randn(rng, n)
+        dft = DataFrame(y=yt, x=xt, z=zt)
+        @rput yt xt zt
+        RCall.reval("""
+        drt <- data.frame(y=yt, x=xt, z=zt)
+        mr_te <- gam(y ~ te(x, z), data=drt, method="REML")
+        fit_te <- as.vector(fitted(mr_te)); edf_te <- sum(summary(mr_te)\$edf)
+        mr_ti <- gam(y ~ s(x, k=8, bs="cr") + s(z, k=8, bs="cr") + ti(x, z),
+                     data=drt, method="REML")
+        fit_ti <- as.vector(fitted(mr_ti)); edf_ti <- sum(summary(mr_ti)\$edf)
+        """)
+        mte = gam(GAM.@formula(y ~ te(x, z)), dft)
+        fit_te = rcopy(Vector{Float64}, R"fit_te")
+        edf_te = rcopy(Float64, R"edf_te")
+        @test maximum(abs.(fitted(mte) .- fit_te)) < 1e-3
+        @test abs((mte.edf_total - 1) - edf_te) < 0.2
+        mti = gam(GAM.@formula(y ~ s(x, k=8, bs=:cr) + s(z, k=8, bs=:cr) + ti(x, z)), dft)
+        fit_ti = rcopy(Vector{Float64}, R"fit_ti")
+        edf_ti = rcopy(Float64, R"edf_ti")
+        @test maximum(abs.(fitted(mti) .- fit_ti)) < 2e-3
+        @test abs((mti.edf_total - 1) - edf_ti) < 0.2
     end
 end

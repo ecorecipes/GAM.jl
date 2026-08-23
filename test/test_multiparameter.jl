@@ -10,6 +10,7 @@ using GAM: nll_total, nll_derivs!, gev_nll_derivs_exact!, gpd_nll_derivs_exact!,
 using LinearAlgebra
 using Statistics
 using Random
+using StatsAPI: predict
 
 @testset "Multi-parameter models" begin
 
@@ -272,5 +273,80 @@ using Random
         η_gpd = initial_eta(gpd, y)
         @test length(η_gpd) == 2
         @test all(length(η) == 3 for η in η_gpd)
+    end
+    @testset "Multi-parameter offsets" begin
+        rng_off = Random.MersenneTwister(31)
+        n = 300
+        x = sort(rand(rng_off, n)) .* 2
+        off = 0.5 .* sin.(4 .* x) .+ 2.0 .* x
+        f_true = sin.(2π .* x)
+        y = off .+ f_true .+ 0.2 .* randn(rng_off, n)
+        df = (y = y, x = x)
+        fs = [GAM.@formulak(y ~ s(x, k = 12, bs = :cr)), GAM.@formulak(y ~ 1)]
+
+        @testset "shapes and validation" begin
+            @test GAM._normalize_mp_offset(nothing, 2, n) === nothing
+            @test GAM._normalize_mp_offset(0, 2, n) === nothing   # legacy scalar-0
+            ol = GAM._normalize_mp_offset(off, 2, n)
+            @test ol isa Vector{Vector{Float64}} && length(ol) == 2
+            @test ol[1] == off && all(iszero, ol[2])
+            ol2 = GAM._normalize_mp_offset([nothing, off], 2, n)
+            @test all(iszero, ol2[1]) && ol2[2] == off
+            @test_throws ArgumentError GAM._normalize_mp_offset(ones(7), 2, n)
+            @test_throws ArgumentError GAM._normalize_mp_offset([off, off, off], 2, n)
+            @test_throws ArgumentError GAM._normalize_mp_offset(1.5, 2, n)
+        end
+
+        @testset "location offset: recovery and equivalence" begin
+            m_off = gamlss(fs, df, GaussianLS(); offset = off)
+            m_ref = gamlss(fs, (y = y .- off, x = x), GaussianLS())
+            # offset fit ≡ shifted-response fit (identity-link location)
+            @test maximum(abs.(m_off.coefficients .- m_ref.coefficients)) < 1e-6
+            @test cor(m_off.fitted_eta[1] .- off, f_true) > 0.99
+            # a varying offset is NOT absorbable by the intercept
+            m_no = gamlss(fs, df, GaussianLS())
+            @test maximum(abs.(m_no.coefficients .- m_off.coefficients)) > 0.1
+            # training predict includes the stored offset; newdata round-trips
+            p_tr = predict(m_off)[:, 1]
+            @test maximum(abs.(p_tr .- m_off.fitted_eta[1])) < 1e-10
+            p_new = predict(m_off, df; offset = off)[:, 1]
+            @test maximum(abs.(p_new .- p_tr)) < 1e-8
+            @test m_off.offsets isa Vector{Vector{Float64}}
+            @test m_no.offsets === nothing
+        end
+
+        @testset "per-parameter offset on the second LP" begin
+            off2 = 0.5 .* x
+            σv = exp.(-1.0 .+ off2)
+            y2 = sin.(2π .* x) .+ σv .* randn(rng_off, n)
+            m_s = gamlss([GAM.@formulak(y ~ s(x, k = 10, bs = :cr)),
+                          GAM.@formulak(y ~ 1)],
+                         (y = y2, x = x), GaussianLS(); offset = [nothing, off2])
+            resid2 = m_s.fitted_eta[2] .- off2
+            @test std(resid2) < 1e-10           # η₂ − off₂ is the constant intercept
+            @test abs(mean(resid2) - (-1.0)) < 0.3
+        end
+
+        @testset "RS/CG solvers with offset" begin
+            m_rs = gamlss(fs, df, GaussianLS(); method = :rs, offset = off)
+            m_cg = gamlss(fs, df, GaussianLS(); method = :cg, offset = off)
+            @test cor(m_rs.fitted_eta[1] .- off, f_true) > 0.99
+            @test cor(m_cg.fitted_eta[1] .- off, f_true) > 0.99
+        end
+
+        @testset "evgam GPD log-scale offset" begin
+            rng_g = Random.MersenneTwister(33)
+            n3 = 500
+            x3 = rand(rng_g, n3)
+            off3 = 1.0 .* x3
+            ξt = 0.15
+            σ3 = exp.(-0.5 .+ off3)
+            u = rand(rng_g, n3)
+            y3 = σ3 ./ ξt .* ((1 .- u) .^ (-ξt) .- 1.0)
+            m_g = evgam([GAM.@formulak(y ~ 1), GAM.@formulak(y ~ 1)],
+                        (y = y3, x = x3), GPDFamily(); offset = [off3, nothing])
+            @test abs(m_g.coefficients[1] - (-0.5)) < 0.3   # log-scale intercept
+            @test abs(m_g.fitted_eta[2][1] - ξt) < 0.15     # shape
+        end
     end
 end

@@ -53,7 +53,8 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
                          Ain = nothing,
                          bin = nothing,
                          Aeq = nothing,
-                         beq = nothing)
+                         beq = nothing,
+                         off_list = nothing)
     K = nparams(family)
     n = length(y)
     p = length(β)
@@ -72,8 +73,8 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
     nll_pen_prev = Inf
 
     for iter in 1:control.inner_maxit
-        # Compute linear predictors (in-place)
-        _compute_eta!(η_list, X_list, β, param_offsets, K)
+        # Compute linear predictors (in-place; offsets enter only through η)
+        _compute_eta!(η_list, X_list, β, param_offsets, K, off_list)
 
         # Compute NLL and derivatives
         nll_val = nll_total(family, y, η_list)
@@ -165,7 +166,7 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
         # Step halving with simple decrease (matching evgam's approach)
         step = min(1.0, control.step_max)
         β_new = β .- step .* δ
-        η_new = _compute_eta(X_list, β_new, param_offsets, K)
+        η_new = _compute_eta(X_list, β_new, param_offsets, K, off_list)
         nll_new = nll_total(family, y, η_new) + 0.5 * dot(β_new, S * β_new)
 
         for _ in 1:15
@@ -177,7 +178,7 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
                 break
             end
             β_new = β .- step .* δ
-            η_new = _compute_eta(X_list, β_new, param_offsets, K)
+            η_new = _compute_eta(X_list, β_new, param_offsets, K, off_list)
             nll_new = nll_total(family, y, η_new) + 0.5 * dot(β_new, S * β_new)
         end
 
@@ -206,7 +207,7 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
     end
 
     # Final gradient/Hessian at converged β
-    η_list = _compute_eta(X_list, β, param_offsets, K)
+    η_list = _compute_eta(X_list, β, param_offsets, K, off_list)
     nll_derivs!(family, derivs, y, η_list)
     g = assemble_gradient(derivs, X_list)
     assemble_hessian!(H, derivs, X_list)
@@ -216,22 +217,75 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
     return β, nll_pen, g, H, converged
 end
 
-"""Compute linear predictors, reusing pre-allocated η_list if provided."""
-function _compute_eta(X_list, β, param_offsets, K)
+"""
+    _normalize_mp_offset(offset, K, n) → Union{Nothing, Vector{Vector{Float64}}}
+
+Normalize a user-supplied multi-parameter offset:
+- `nothing` (or scalar `0`, the legacy no-offset convention) → `nothing`
+- a single length-`n` vector → offset on the FIRST linear predictor
+  (location; the common log-exposure case), zeros elsewhere
+- a length-`K` vector whose elements are `nothing` or length-`n` vectors →
+  per-parameter offsets
+"""
+function _normalize_mp_offset(offset, K::Int, n::Int)
+    offset === nothing && return nothing
+    if offset isa Real
+        iszero(offset) && return nothing   # legacy scalar-0 convention
+        throw(ArgumentError(
+            "offset must be nothing, a length-n vector (first linear predictor), " *
+            "or a length-K vector of per-parameter offsets; got the scalar $offset"))
+    end
+    if offset isa AbstractVector{<:Real}
+        length(offset) == n || throw(ArgumentError(
+            "offset length $(length(offset)) does not match number of observations $n"))
+        off_list = [zeros(n) for _ in 1:K]
+        off_list[1] = Float64.(offset)
+        return off_list
+    end
+    if offset isa AbstractVector
+        length(offset) == K || throw(ArgumentError(
+            "per-parameter offset must have one entry per distribution parameter " *
+            "(K = $K); got $(length(offset)) entries"))
+        off_list = Vector{Vector{Float64}}(undef, K)
+        for k in 1:K
+            ok = offset[k]
+            if ok === nothing
+                off_list[k] = zeros(n)
+            elseif ok isa AbstractVector{<:Real}
+                length(ok) == n || throw(ArgumentError(
+                    "offset for parameter $k has length $(length(ok)); expected $n"))
+                off_list[k] = Float64.(ok)
+            else
+                throw(ArgumentError(
+                    "offset entry for parameter $k must be nothing or a length-$n " *
+                    "vector; got $(typeof(ok))"))
+            end
+        end
+        return off_list
+    end
+    throw(ArgumentError("unsupported offset type $(typeof(offset))"))
+end
+
+"""Compute linear predictors η_k = X_k β_k (+ off_k), reusing pre-allocated
+η_list if provided. `off_list === nothing` means no offsets."""
+function _compute_eta(X_list, β, param_offsets, K, off_list = nothing)
     η_list = Vector{Vector{Float64}}(undef, K)
     for k in 1:K
         s = param_offsets[k] + 1
         e = param_offsets[k + 1]
         η_list[k] = X_list[k] * @view(β[s:e])
+        off_list === nothing || (η_list[k] .+= off_list[k])
     end
     return η_list
 end
 
-function _compute_eta!(η_list::Vector{Vector{Float64}}, X_list, β, param_offsets, K)
+function _compute_eta!(η_list::Vector{Vector{Float64}}, X_list, β, param_offsets, K,
+                       off_list = nothing)
     for k in 1:K
         s = param_offsets[k] + 1
         e = param_offsets[k + 1]
         mul!(η_list[k], X_list[k], @view(β[s:e]))
+        off_list === nothing || (η_list[k] .+= off_list[k])
     end
     return η_list
 end
@@ -257,7 +311,8 @@ function _init_log_sp_hessian(family::MultiParameterFamily, y::AbstractVector,
                                X_list::Vector{Matrix{Float64}},
                                Sl::Vector{Matrix{Float64}},
                                β_init::Vector{Float64},
-                               param_offsets::Vector{Int}, nsp::Int)
+                               param_offsets::Vector{Int}, nsp::Int;
+                               off_list = nothing)
     if nsp == 0
         return Float64[]
     end
@@ -270,7 +325,7 @@ function _init_log_sp_hessian(family::MultiParameterFamily, y::AbstractVector,
     H = Matrix{Float64}(undef, p, p)
 
     # Evaluate unpenalized Hessian at initial β
-    η_list = _compute_eta(X_list, β_init, param_offsets, K)
+    η_list = _compute_eta(X_list, β_init, param_offsets, K, off_list)
     nll_derivs!(family, derivs, y, η_list)
     assemble_hessian!(H, derivs, X_list)
 
@@ -319,7 +374,8 @@ function mp_reml(log_sp::Vector{Float64}, family::MultiParameterFamily,
                  Ain = nothing,
                  bin = nothing,
                  Aeq = nothing,
-                 beq = nothing)
+                 beq = nothing,
+                 off_list = nothing)
     p = length(β_init)
     K = nparams(family)
 
@@ -331,7 +387,7 @@ function mp_reml(log_sp::Vector{Float64}, family::MultiParameterFamily,
 
     # Inner Newton
     β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control;
-        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq, off_list = off_list)
 
     # log|H| — penalized Hessian determinant
     F_H = _safe_cholesky(Symmetric(H))
@@ -402,14 +458,14 @@ function mp_laml(family::MultiParameterFamily, y::AbstractVector,
                  X_list::Vector{Matrix{Float64}}, β::Vector{Float64},
                  S::Matrix{Float64}, Sl::Vector{Matrix{Float64}},
                  log_sp::Vector{Float64}, param_offsets::Vector{Int};
-                 Mp::Int=0)
+                 Mp::Int=0, off_list = nothing)
     K = nparams(family)
     n = length(y)
     p = length(β)
     ncols = deriv_ncols(K)
 
     # Compute NLL at β*
-    η_list = _compute_eta(X_list, β, param_offsets, K)
+    η_list = _compute_eta(X_list, β, param_offsets, K, off_list)
     nll_val = nll_total(family, y, η_list)
 
     # Penalty at β*
@@ -457,13 +513,14 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
                       Ain = nothing,
                       bin = nothing,
                       Aeq = nothing,
-                      beq = nothing)
+                      beq = nothing,
+                      off_list = nothing)
     nsp = length(log_sp_init)
     if nsp == 0
         p = length(β_init)
         S = zeros(p, p)
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control;
-            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq, off_list = off_list)
         return Float64[], β_opt, nll_pen, 0, conv
     end
 
@@ -472,6 +529,7 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
     β_current = copy(β_init)
     iterations = 0
     sp_converged = false
+    score_prev = Inf
 
     # Precompute penalty ranks
     pen_ranks = Float64[]
@@ -490,7 +548,7 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
 
         # Inner Newton solve
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_current, S, control;
-            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq, off_list = off_list)
 
         # H is the penalized Hessian = H0 + S
         # For EFS we need A⁻¹ where A = H (the penalized Hessian).
@@ -549,7 +607,16 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
         log_sp .= log_sp_new
         β_current .= β_opt
 
-        if max_change < 1e-4
+        # Score-based convergence (as in the core EFS loops): the criterion
+        # value is nearly free from the factor already computed above, and the
+        # smoothing parameters may wander along a numerically flat ridge.
+        logdetH = 2.0 * sum(log, diag(F.U))
+        score = nll_pen + 0.5 * logdetH - 0.5 * _logdet_penalty(Sl, log_sp, p)
+        score_converged = outer_iter > 1 && isfinite(score_prev) &&
+                          abs(score - score_prev) < 1e-6 * (abs(score_prev) + 0.1)
+        score_prev = score
+
+        if max_change < 1e-4 || score_converged
             sp_converged = true
             if control.trace
                 @info "Outer converged at iteration $outer_iter"
@@ -565,7 +632,7 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
     end
     β_final, nll_pen_final, _, H_final, conv_final = mp_newton_inner(
         family, y, X_list, β_current, S_final, control;
-        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq, off_list = off_list)
 
     F_final = _safe_cholesky(Symmetric(H_final))
     logdetH = F_final !== nothing ? 2.0 * sum(log.(diag(F_final.L))) : 0.0
@@ -659,7 +726,7 @@ function mp_bfgs_outer(family::MultiParameterFamily, y::AbstractVector,
     return log_sp, β_current, reml_val
 end
 
-function _fd_reml_gradient(log_sp, family, y, X_list, Sl, β, param_offsets, control, f0; Mp=0)
+function _fd_reml_gradient(log_sp, family, y, X_list, Sl, β, param_offsets, control, f0; Mp=0, off_list=nothing)
     nsp = length(log_sp)
     grad = Vector{Float64}(undef, nsp)
     h = 1e-3
@@ -668,8 +735,8 @@ function _fd_reml_gradient(log_sp, family, y, X_list, Sl, β, param_offsets, con
         log_sp_m = copy(log_sp)
         log_sp_p[i] += h
         log_sp_m[i] -= h
-        fp, _, _ = mp_reml(log_sp_p, family, y, X_list, Sl, β, param_offsets, control; Mp=Mp)
-        fm, _, _ = mp_reml(log_sp_m, family, y, X_list, Sl, β, param_offsets, control; Mp=Mp)
+        fp, _, _ = mp_reml(log_sp_p, family, y, X_list, Sl, β, param_offsets, control; Mp=Mp, off_list=off_list)
+        fm, _, _ = mp_reml(log_sp_m, family, y, X_list, Sl, β, param_offsets, control; Mp=Mp, off_list=off_list)
         grad[i] = (fp - fm) / (2h)
     end
     return grad
@@ -682,14 +749,15 @@ end
 """Compute Vp (posterior covariance) and Vc (corrected covariance)."""
 function mp_covariance(family::MultiParameterFamily, y::AbstractVector,
                        X_list::Vector{Matrix{Float64}}, β::Vector{Float64},
-                       S::Matrix{Float64}, param_offsets::Vector{Int})
+                       S::Matrix{Float64}, param_offsets::Vector{Int};
+                       off_list = nothing)
     K = nparams(family)
     n = length(y)
     p = length(β)
     ncols = deriv_ncols(K)
 
     derivs = Matrix{Float64}(undef, n, ncols)
-    η_list = _compute_eta(X_list, β, param_offsets, K)
+    η_list = _compute_eta(X_list, β, param_offsets, K, off_list)
     nll_derivs!(family, derivs, y, η_list)
 
     H0 = Matrix{Float64}(undef, p, p)
@@ -728,10 +796,18 @@ Create control parameters for `evgam`. See `mp_control` for keyword arguments.
 const evgam_control = mp_control
 
 """
-    evgam(formulas, data, family; control=mp_control(), sp=nothing, trace=false)
+    evgam(formulas, data, family; control=mp_control(), sp=nothing, trace=false,
+          offset=nothing)
 
 Fit a multi-parameter GAM. Alias for [`gamlss`](@ref) — any `MultiParameterFamily`
 works here (GEV, GPD, EGPD, GaussianLS, GammaLS, etc.).
+
+`offset` adds known terms to the linear predictors (η_k = X_k β_k + off_k):
+pass a single length-`n` vector for an offset on the first linear predictor
+(location — e.g. log-exposure), or a length-`K` vector of per-parameter
+entries (`nothing` or length-`n` vectors). Offsets are stored on the model
+and used by `predict`/`fitted` on the training data; supply `offset=` to
+`predict` for new data.
 
 See [`gamlss`](@ref) for full documentation.
 
@@ -749,7 +825,8 @@ m = evgam(
 """
 function evgam(formulas, data, family::MultiParameterFamily;
                control::MPFitControl=mp_control(),
-               sp=nothing, trace::Bool=control.trace)
+               sp=nothing, trace::Bool=control.trace,
+               offset=nothing)
     ctrl = MPFitControl(control.inner_maxit, control.inner_tol,
                         control.outer_maxit, control.outer_tol,
                         control.step_max, trace)
@@ -765,17 +842,20 @@ function evgam(formulas, data, family::MultiParameterFamily;
     # Build design matrices and smooth terms for each parameter
     X_list = Vector{Matrix{Float64}}(undef, K)
     smooths_list = Vector{Vector{ConstructedSmooth}}(undef, K)
-    offset = 0
+    col_count = 0
 
     for k in 1:K
-        Xk, smoothsk = _build_design_matrix(formulas[k], cols, n, offset)
+        Xk, smoothsk = _build_design_matrix(formulas[k], cols, n, col_count)
         X_list[k] = Xk
         smooths_list[k] = smoothsk
-        offset += size(Xk, 2)
+        col_count += size(Xk, 2)
     end
 
-    p = offset  # total coefficients
+    p = col_count  # total coefficients
     param_offsets = cumsum([0; [size(X, 2) for X in X_list]])
+
+    # Normalize the user offset (η_k = X_k β_k + off_k)
+    off_list = _normalize_mp_offset(offset, K, n)
 
     # Build penalty matrices
     Sl = build_penalty_matrices(smooths_list, param_offsets)
@@ -786,15 +866,17 @@ function evgam(formulas, data, family::MultiParameterFamily;
     # intercept per parameter — see _penalty_null_dim)
     Mp = _penalty_null_dim(Sl, p)
 
-    # Initial values
+    # Initial values (intercepts start from the offset-adjusted mean η)
     η_init = initial_eta(family, y)
     β_init = zeros(p)
     for k in 1:K
         s = param_offsets[k] + 1
+        init_k = off_list === nothing ? mean(η_init[k]) :
+                 mean(η_init[k]) - mean(off_list[k])
         if formulas[k] isa GamFormula || formulas[k] isa FormulaTerm
-            _formula_has_intercept(formulas[k]) && (β_init[s] = mean(η_init[k]))
+            _formula_has_intercept(formulas[k]) && (β_init[s] = init_k)
         else
-            β_init[s] = mean(η_init[k])
+            β_init[s] = init_k
         end
     end
 
@@ -802,7 +884,8 @@ function evgam(formulas, data, family::MultiParameterFamily;
     if sp !== nothing
         log_sp = Float64.(sp)
     else
-        log_sp = _init_log_sp_hessian(family, y, X_list, Sl, β_init, param_offsets, nsp)
+        log_sp = _init_log_sp_hessian(family, y, X_list, Sl, β_init, param_offsets, nsp;
+                                      off_list = off_list)
     end
 
     # Fit
@@ -813,18 +896,18 @@ function evgam(formulas, data, family::MultiParameterFamily;
             S .+= exp(log_sp[j]) .* Sj
         end
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, ctrl;
-            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq, off_list = off_list)
         reml_val = nll_pen
         iterations = 0
     else
         # Estimate smoothing parameters via EFS
         log_sp, β_opt, reml_val, iterations, conv = mp_efs_outer(family, y, X_list, Sl, β_init,
             log_sp, param_offsets, ctrl;
-            Mp=Mp, Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+            Mp=Mp, Ain = Ain, bin = bin, Aeq = Aeq, beq = beq, off_list = off_list)
     end
 
     # Final fitted values
-    η_fit = _compute_eta(X_list, β_opt, param_offsets, K)
+    η_fit = _compute_eta(X_list, β_opt, param_offsets, K, off_list)
 
     # Build final penalty for covariance computation
     S = zeros(p, p)
@@ -835,7 +918,8 @@ function evgam(formulas, data, family::MultiParameterFamily;
     end
 
     # Covariance
-    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets)
+    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets;
+                               off_list = off_list)
 
     # EDF
     edf = diag(Vp * H0)
@@ -852,11 +936,13 @@ function evgam(formulas, data, family::MultiParameterFamily;
     end
 
     # LAML for model comparison
-    laml = mp_laml(family, y, X_list, β_opt, S, Sl, log_sp, param_offsets; Mp=Mp)
+    laml = mp_laml(family, y, X_list, β_opt, S, Sl, log_sp, param_offsets;
+                   Mp=Mp, off_list=off_list)
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas
+        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas,
+        off_list
     )
 end
 

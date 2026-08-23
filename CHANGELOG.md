@@ -2,10 +2,10 @@
 
 ## 0.2.0 (2026-08-23)
 
-A full review-and-fix release: three deep code reviews, two package-wide fix
-passes, live validation against R (mgcv 1.9.4, scam, qgam, evgam, gratia,
-egpd, gamFactory), and a new nested-effects feature. Commits
-`ff81e2c..738cb5a`.
+A full review-and-fix release: four deep code reviews, three package-wide
+fix passes, live validation against R (mgcv 1.9.4, scam, qgam, evgam,
+gratia, egpd, gamFactory), and a new nested-effects feature. Commits
+`ff81e2c..HEAD` on this branch.
 
 ### Breaking / behavior changes
 
@@ -49,6 +49,26 @@ egpd, gamFactory), and a new nested-effects feature. Commits
   producing invalid fits.
 
 ### Fixed
+- qgam/ELF smooth fits: the extended-family P-IRLS could declare convergence
+  on a spurious low-curvature plateau, leaving fitted quantiles uncalibrated
+  (the empirical fraction below the fitted quantile did not track τ);
+  convergence is now stationarity-checked and quantile fits are calibrated,
+  with fraction-below-quantile regression tests.
+- Gamma/inverse-link (and other inverse-type link) fits: invalid means are
+  now handled consistently — P-IRLS enforces valid μ and `predict` no longer
+  returns unclamped out-of-domain values (previously a Gamma model could
+  predict large negative means while reporting converged).
+- `bs=:fp` (fractional polynomial) without `fx=true` no longer throws:
+  fractional-polynomial smooths are now auto-unpenalized by construction
+  (their few-column basis carries no wiggliness penalty), documented and
+  tested.
+- TPRS with more basis functions than unique covariate values now raises an
+  informative error (previously a crash at one sample size and a silent
+  edf≈0 degenerate fit at another), matching mgcv's behavior.
+- The smoothing-scale floor is now relative to the response magnitude, so
+  models of very small-magnitude responses are no longer oversmoothed.
+- `gamm()` accepts `offset=`; gamlss's smoothing-method keyword is
+  canonicalized (`method=` accepted alongside the legacy `sp_method=`).
 - `scam(method=:GCV)` optimizer: warm-started PIRLS evaluations across large
   smoothing-parameter jumps could report inconsistent (deviance, edf) pairs,
   making the cyclic golden-section search converge to a criterion-worse point
@@ -102,6 +122,15 @@ egpd, gamFactory), and a new nested-effects feature. Commits
   recipes.
 
 ### Added
+- Offsets for multi-parameter models: `gamlss`, `evgam`, and the
+  vector-formula `gam`/`qgam` routes accept `offset=` — a single length-n
+  vector (offset on the first linear predictor, e.g. log-exposure) or a
+  length-K per-parameter vector of `nothing`/vectors. Offsets enter all
+  solvers (Newton/EFS and RS/CG), are stored on the model
+  (`MultiParameterModel.offsets`, a new field), and are used by
+  `predict`/`fitted` on training data, with `predict(..., offset=)` for new
+  data. Verified against mgcv `gaulss` with an offset (fitted-location
+  max-abs 2.1e-5). Not supported for Bayesian gamlss fits (errors clearly).
 - `GamModel.criterion` field storing the optimized GCV/UBRE criterion value
   for criterion-fitted models (NaN otherwise; note this adds a positional
   field to `GamModel`).
@@ -154,3 +183,13 @@ egpd, gamFactory), and a new nested-effects feature. Commits
 ## 0.1.0
 
 Initial development version.
+
+### Documentation
+
+- The Documenter site (docs/) was fully refreshed against the current code:
+  the BAM page no longer claims covariate discretization, the SCAM page
+  documents the GCV default / `criterion` field / SE caveat, the diagnostics
+  page covers the typed `PartialResiduals`, simulated `appraise` default,
+  new k-index semantics, and influence measures, and new pages document
+  nested effects and index the 12 vignettes. The mgcv-comparison page now
+  reports the measured elementwise parity numbers.
