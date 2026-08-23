@@ -302,6 +302,38 @@ using StableRNGs
         @test maximum(abs.(fitted(m0) .- fitted(mc))) < 1e-6
     end
 
+    @testset "NestedControl" begin
+        rng = StableRNG(31)
+        n = 200
+        X = randn(rng, n, 2)
+        u = X * normalize([0.8, 0.6])
+        y = sin.(u) .+ 0.2 .* randn(rng, n)
+        df = (y = y, l1 = X[:, 1], l2 = X[:, 2])
+
+        ctrl = nested_control(outer_maxit = 2, newton_maxit = 50, tol = 1e-6)
+        @test ctrl isa NestedControl
+        m2 = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, trans = trans_linear(), k = 8)),
+            df; control = ctrl)
+        @test m2.iterations <= 2          # outer_maxit honored
+        m_full = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, trans = trans_linear(), k = 8)), df)
+        @test m_full.converged
+
+        # trace runs without error
+        mt = gam_nl(GAM.@formula(y ~ s_nest(l1, l2, trans = trans_linear(), k = 8)),
+            df; control = nested_control(trace = true))
+        @test mt.converged
+
+        # deprecated loose kwargs still work, with a warning, and match control
+        m_dep = @test_logs (:warn, r"deprecated") match_mode = :any gam_nl(
+            GAM.@formula(y ~ s_nest(l1, l2, trans = trans_linear(), k = 8)),
+            df; outer_maxit = 2, newton_maxit = 50, tol = 1e-6)
+        @test m_dep.iterations <= 2
+        @test coef(m_dep) ≈ coef(m2) atol = 1e-10
+
+        @test_throws ArgumentError nested_control(outer_maxit = 0)
+        @test_throws ArgumentError nested_control(tol = -1.0)
+    end
+
     @testset "Fixed outer sp is honored" begin
         rng = StableRNG(21)
         n = 300

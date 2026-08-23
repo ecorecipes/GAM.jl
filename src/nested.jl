@@ -495,6 +495,41 @@ end
 # ============================================================================
 
 """
+    NestedControl
+
+Control parameters for [`gam_nl`](@ref) fitting.
+
+# Fields
+- `outer_maxit::Int`: maximum EFS smoothing-parameter iterations (default 100)
+- `newton_maxit::Int`: maximum penalized-Newton iterations per EFS step
+  (default 200)
+- `tol::Float64`: convergence tolerance for gradients and objective changes
+  (default 1e-7)
+- `trace::Bool`: print per-iteration progress (default false)
+
+Construct with [`nested_control`](@ref).
+"""
+struct NestedControl
+    outer_maxit::Int
+    newton_maxit::Int
+    tol::Float64
+    trace::Bool
+end
+
+"""
+    nested_control(; outer_maxit=100, newton_maxit=200, tol=1e-7, trace=false)
+
+Construct a [`NestedControl`](@ref) for [`gam_nl`](@ref).
+"""
+function nested_control(; outer_maxit::Int = 100, newton_maxit::Int = 200,
+    tol::Real = 1e-7, trace::Bool = false)
+    outer_maxit >= 1 || throw(ArgumentError("outer_maxit must be >= 1, got $outer_maxit"))
+    newton_maxit >= 1 || throw(ArgumentError("newton_maxit must be >= 1, got $newton_maxit"))
+    tol > 0 || throw(ArgumentError("tol must be positive, got $tol"))
+    return NestedControl(outer_maxit, newton_maxit, Float64(tol), trace)
+end
+
+"""
     gam_nl(formula, data; family = Normal(), link = nothing,
            weights = nothing, offset = nothing, control...)
 
@@ -528,7 +563,9 @@ convention.
   the final gradient-stopped polish); for nonlinear links the absorption
   is exact only in the linear predictor, so response-scale fits can differ
   by the smoothing-path tolerance (~1e-3 relative for Poisson/log)
-- `outer_maxit`, `newton_maxit`, `tol`: iteration controls
+- `control`: a [`NestedControl`](@ref) from [`nested_control`](@ref) — iteration
+  limits, tolerance, and `trace`. (The loose `outer_maxit`/`newton_maxit`/`tol`
+  keywords are deprecated aliases.)
 
 Categorical parametric covariates are dummy-coded with a schema built from
 the training data, as in `gam()`.
@@ -545,7 +582,21 @@ function gam_nl(gf::GamFormula, data;
     link::Union{GLM.Link, Nothing} = nothing,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
     offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    outer_maxit::Int = 100, newton_maxit::Int = 200, tol::Float64 = 1e-7)
+    control::NestedControl = nested_control(),
+    outer_maxit::Union{Int, Nothing} = nothing,
+    newton_maxit::Union{Int, Nothing} = nothing,
+    tol::Union{Float64, Nothing} = nothing)
+
+    # Deprecated loose kwargs override the control struct (warn once)
+    if outer_maxit !== nothing || newton_maxit !== nothing || tol !== nothing
+        @warn "gam_nl: the `outer_maxit`/`newton_maxit`/`tol` keywords are " *
+              "deprecated; use `control = nested_control(...)`" maxlog = 1
+        control = NestedControl(
+            something(outer_maxit, control.outer_maxit),
+            something(newton_maxit, control.newton_maxit),
+            something(tol, control.tol),
+            control.trace)
+    end
 
     family isa Union{Normal, Poisson, Bernoulli, Binomial, Gamma} ||
         throw(ArgumentError("gam_nl supports Normal, Poisson, Bernoulli/Binomial, and Gamma families; got $(typeof(family))"))
@@ -885,14 +936,14 @@ function gam_nl(gf::GamFormula, data;
     iterations = 0
     efs_mult = 1.0
     score_prev = Inf
-    for outer in 1:outer_maxit
+    for outer in 1:control.outer_maxit
         iterations = outer
 
         # inner Newton at current λ (Gauss–Newton H, exact-AD fallback)
-        for it in 1:newton_maxit
+        for it in 1:control.newton_maxit
             obj0 = _pen_obj(ζ, log_sp)
             grad, Hgn, _ = _gn_parts(ζ, log_sp)
-            maximum(abs, grad) < tol * (1.0 + abs(obj0)) && break
+            maximum(abs, grad) < control.tol * (1.0 + abs(obj0)) && break
             stepped = false
             small_improve = false
             for hess_try in 1:2
@@ -914,7 +965,7 @@ function gam_nl(gf::GamFormula, data;
                 if isfinite(obj1) && obj1 <= obj0
                     ζ .= ζ_new
                     stepped = true
-                    small_improve = (obj0 - obj1) < tol * (abs(obj0) + 0.1)
+                    small_improve = (obj0 - obj1) < control.tol * (abs(obj0) + 0.1)
                     break
                 end
             end
@@ -976,10 +1027,16 @@ function gam_nl(gf::GamFormula, data;
 
         # Convergence: sp movement small, or the conditional score flat
         # (flat-ridge protection, as in the core EFS loops)
+        if control.trace
+            println("gam_nl outer iter $outer: score=$(round(score_cur; digits = 6)), " *
+                    "max sp change=$(round(max_change; digits = 6))")
+        end
+
         if max_change < 1e-3 ||
            (outer > 1 && abs(score_cur - score_prev) <
                          1e-7 * (abs(score_prev) + 0.1))
             converged = true
+            control.trace && println("gam_nl converged at outer iteration $outer")
             break
         end
         score_prev = score_cur
@@ -1027,7 +1084,7 @@ function gam_nl(gf::GamFormula, data;
             # component is large at unit norm) and projecting afterwards is
             # not.
             gproj = _project_scale!(copy(grad))
-            maximum(abs, gproj) < tol * (1.0 + abs(obj0)) && break
+            maximum(abs, gproj) < control.tol * (1.0 + abs(obj0)) && break
             Hcur = use_ad ? ForwardDiff.hessian(z -> _pen_obj(z, log_sp), ζ) :
                    Hgn
             F = _ridge_chol(Hcur)
@@ -1054,7 +1111,7 @@ function gam_nl(gf::GamFormula, data;
                 s_a = norm(ζ[inner_ranges[j]])
                 s_a > 1e-10 && (ζ[inner_ranges[j]] ./= s_a)
             end
-            if (obj0 - obj1) < tol * (abs(obj0) + 0.1)
+            if (obj0 - obj1) < control.tol * (abs(obj0) + 0.1)
                 use_ad && break        # stalled under the exact Hessian too
                 use_ad = true          # gradient still large: promote
             end

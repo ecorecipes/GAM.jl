@@ -122,6 +122,10 @@ gratia, egpd, gamFactory), and a new nested-effects feature. Commits
   recipes.
 
 ### Added
+- `NestedControl`/`nested_control()` for `gam_nl`, matching the package's
+  control-struct convention (iteration limits, tolerance, and a wired
+  `trace` option); the loose `outer_maxit`/`newton_maxit`/`tol` keywords
+  are deprecated aliases.
 - Offsets for multi-parameter models: `gamlss`, `evgam`, and the
   vector-formula `gam`/`qgam` routes accept `offset=` — a single length-n
   vector (offset on the first linear predictor, e.g. log-exposure) or a
