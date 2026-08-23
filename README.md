@@ -225,9 +225,14 @@ m = gam_nl(@formula(y ~ s_nest(z, cx, cy, trans=trans_mgks())), df)
 
 The inner output is standardized and the outer cubic spline uses a fixed
 symmetric knot range with an `s(0) = 0` constraint and linear extrapolation,
-following the paper. Supported families: `Normal`, `Poisson`,
+following the paper. `predict(m, newdata; se=true)` returns delta-method
+standard errors that propagate the joint uncertainty of all coefficients —
+inner transformation parameters included — through the composition.
+`trans_mgks(nn=50)` uses fixed nearest-neighbor sets (as in the paper) for
+O(n·nn) evaluation. Supported families: `Normal`, `Poisson`,
 `Bernoulli`/`Binomial`, `Gamma`. `gam()` routes formulas containing `s_nest`
-to `gam_nl` automatically.
+to `gam_nl` automatically, and the test suite compares fits against R's
+gamFactory live when it is installed.
 
 ## Large-Scale Fitting (BAM)
 

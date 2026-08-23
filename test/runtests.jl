@@ -978,6 +978,21 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
      end
     end
 
+    # gamFactory nested-effects comparison tests
+    if _rcall_available
+        _gamfactory_available = try
+            @eval RCall.reval("library(gamFactory)")
+            true
+        catch e
+            @warn "Skipping gamFactory comparison tests (gamFactory not available)" exception = e
+            false
+        end
+
+        if _gamfactory_available
+            @eval include("test_nested_rcall.jl")
+        end
+    end
+
     # mgcv::scasm R comparison tests
     if _rcall_available
         _scasm_available = try

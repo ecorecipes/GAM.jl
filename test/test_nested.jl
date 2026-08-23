@@ -83,6 +83,23 @@ using StableRNGs
         # prediction at new data (including mild extrapolation) is finite
         newdf = (l1 = [0.0, 2.5, -2.5], l2 = [0.0, 2.5, -2.5], l3 = [0.0, 2.5, -2.5])
         @test all(isfinite, predict(m, newdf; type = :response))
+
+        # delta-method standard errors: finite, positive, sane scale, and
+        # larger under extrapolation than in the interior
+        p_se, se = predict(m, df; se = true)
+        @test p_se ≈ predict(m, df) atol = 1e-12
+        @test all(isfinite, se) && all(>(0.0), se)
+        @test median(se) < 0.2                       # response sd is 0.2
+        # ~95% CIs cover the truth at most training points
+        @test mean(abs.(p_se .- f_true) .<= 1.96 .* se) > 0.7
+        far = (l1 = [8.0], l2 = [8.0], l3 = [8.0])
+        near = (l1 = [0.1], l2 = [0.1], l3 = [0.1])
+        _, se_far = predict(m, far; se = true)
+        _, se_near = predict(m, near; se = true)
+        @test se_far[1] > se_near[1]
+        # response-scale SEs equal link-scale ones under identity link
+        _, se_resp = predict(m, df; type = :response, se = true)
+        @test se_resp ≈ se atol = 1e-12
     end
 
     @testset "gam() auto-routing, mixed smooths, Poisson" begin
@@ -146,6 +163,16 @@ using StableRNGs
         newdf = (z = zeros(5), cx = collect(range(0.1, 0.9; length = 5)),
             cy = fill(0.5, 5))
         @test all(isfinite, predict(m, newdf; type = :response))
+
+        # neighborhood-truncated (nn) evaluation agrees with the full O(n²)
+        # smoother and stores its fixed training neighborhoods
+        m_full = gam_nl(GAM.@formula(y ~ s_nest(z, cx, cy,
+            trans = trans_mgks(nn = 0), k = 8)), df)
+        @test m.nested_aux[1] isa Matrix{Int}
+        @test size(m.nested_aux[1]) == (n, 50)
+        @test m_full.nested_aux[1] === nothing
+        @test cor(fitted(m), fitted(m_full)) > 0.99
+        @test_throws ArgumentError trans_mgks(nn = -1)
     end
 
     @testset "gam_nl argument validation" begin
