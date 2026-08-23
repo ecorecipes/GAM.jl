@@ -11,7 +11,7 @@ using GAM
 using RCall
 using DataFrames
 using Statistics
-using StatsAPI: fitted, coef, deviance, nobs
+using StatsAPI: fitted, coef, deviance, nobs, predict
 using StableRNGs
 import Distributions: Poisson, Binomial, Gamma
 
@@ -395,5 +395,33 @@ import Distributions: Poisson, Binomial, Gamma
         # Full fitted values (response scale, including RE)
         fit_jl = fitted(m_jl)
         @test cor(fit_jl, fitted_r) > 0.99
+    end
+
+    @testset "Prediction SEs vs mgcv gamm" begin
+        # Both sides report SEs from the smooth+fixed covariance block,
+        # conditional on the smoothing/variance parameters. Predictions are
+        # NOT compared elementwise: GAM.jl's fitted values include the BLUPs
+        # while mgcv's \$gam component excludes them (observed fit cor 0.87).
+        # Observed SE agreement: cor 0.966, median ratio 1.046.
+        rng_se = StableRNG(31)
+        ng, nper = 10, 40
+        g_se = repeat(1:ng, inner = nper)
+        x_se = rand(rng_se, ng * nper) .* 2π
+        b_se = 0.5 .* randn(rng_se, ng)
+        y_se = sin.(x_se) .+ b_se[g_se] .+ 0.3 .* randn(rng_se, ng * nper)
+        df_se = DataFrame(x = x_se, y = y_se, g = string.(g_se))
+        m_se = gamm(GAM.@formula(y ~ s(x, k = 10) + (1 | g)), df_se)
+        _, se_jl = predict(m_se, df_se; se = true)
+        @rput y_se x_se g_se
+        RCall.reval("""
+        dat_se <- data.frame(x = x_se, y = y_se, g = factor(g_se))
+        mg_se <- mgcv::gamm(y ~ s(x, k = 10), random = list(g = ~1), data = dat_se)
+        pr_se <- predict(mg_se[["gam"]], newdata = dat_se, se.fit = TRUE)
+        se_rg <- as.vector(pr_se[["se.fit"]])
+        """)
+        se_r = rcopy(Vector{Float64}, R"se_rg")
+        @test all(isfinite, se_jl) && all(>(0.0), se_jl)
+        @test cor(se_jl, se_r) > 0.9
+        @test 0.85 < median(se_jl ./ se_r) < 1.25
     end
 end
