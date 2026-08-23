@@ -241,7 +241,7 @@ println("Family        EDF      Dev.Expl(%)   Scale")
 println("─" ^ 55)
 for (name, m) in [("Poisson", m_pois), ("Binomial", m_bin), ("Gamma", m_gam)]
     e = round(edf(m)[1]; digits = 2)
-    de = round(r2(m) * 100; digits = 1)
+    de = round(GAM.deviance_explained(m) * 100; digits = 1)
     sc = round(m.scale; digits = 4)
     println("$(rpad(name, 14))$(lpad(string(e), 6))  $(lpad(string(de), 12))  $(lpad(string(sc), 8))")
 end

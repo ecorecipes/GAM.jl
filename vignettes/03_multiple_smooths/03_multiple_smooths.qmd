@@ -99,7 +99,8 @@ for (i, e) in enumerate(edf(m))
     println("$(rpad(sm.spec.label, 12)) EDF = $(round(e; digits = 2))")
 end
 println("\nTotal model EDF: ", round(m.edf_total; digits = 2))
-println("Deviance explained: ", round(r2(m) * 100; digits = 1), "%")
+println("Deviance explained: ", round(GAM.deviance_explained(m) * 100; digits = 1), "%")
+println("R² (response scale): ", round(r2(m); digits = 3))
 ```
 
 ## Plotting each smooth
@@ -140,7 +141,7 @@ end
 plot(plots...; layout = (2, 2), size = (800, 600))
 ```
 
-Note that $f_3(x_3) = 0$ (the null smooth), and the model should estimate it as approximately flat with an EDF close to 0–1.
+Note that $f_3(x_3) = 0$ (the null smooth), and the model should estimate it as approximately flat with a small EDF (near 1 — without `select=true` a smooth's EDF cannot shrink below its unpenalized null space, so exact removal requires the double-penalty approach of `gam(...; select=true)`).
 
 ## Concurvity
 
@@ -179,7 +180,7 @@ k_models = Dict(
 for k_val in sort(collect(keys(k_models)))
     mk = k_models[k_val]
     edfs = round.(edf(mk); digits = 2)
-    dev = round(r2(mk) * 100; digits = 1)
+    dev = round(GAM.deviance_explained(mk) * 100; digits = 1)
     println("k=$k_val  EDF=$(edfs)  Dev.Expl=$(dev)%")
 end
 ```

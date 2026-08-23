@@ -86,7 +86,7 @@ show(stdout, MIME("text/plain"), m_bayes)
 
 `PriorSpec` controls the prior distributions:
 
-- **`sds`**: Prior on $\sigma_s$, the SD of smooth random effects. An `Exponential(1.0)` prior is weakly informative, allowing the data to determine smoothness.
+- **`sds`**: Prior on $\sigma_s$, the SD of smooth random effects. Here we choose `Exponential(1.0)`, which is weakly informative, allowing the data to determine smoothness. (If `sds` is not specified, the package default is a half Student-t, `truncated(TDist(3); lower=0)`.)
 - **`sigma`**: Prior on $\sigma_{obs}$, the residual SD (Gaussian family only). Default: `truncated(Normal(0, 2.5); lower=0)`.
 - **`b`**: Prior on fixed-effect coefficients. Default: `Normal(0, 10)`.
 
@@ -352,7 +352,7 @@ plot!(x_sorted2, μ_lo80; fillrange=μ_hi80, alpha=0.25, color=:steelblue, label
 
 ## Cross-language comparison: GAM.jl vs brms vs mgcv
 
-We load posterior samples from R's brms (Stan MCMC) and mgcv (Gaussian approximation) to compare with GAM.jl's Turing posteriors. The key metric is the **pairwise ECDF correlation**: evaluate both ECDFs on a common grid and compute Pearson's $r$. A value of 1.0 means the distributions are identical.
+We load posterior samples from R's brms (Stan MCMC) and mgcv (Gaussian approximation) to compare with GAM.jl's Turing posteriors. We report two metrics per pair of samples: the **Kolmogorov–Smirnov statistic** (the maximum vertical distance between the two ECDFs — 0 means the samples are indistinguishable, and it is the honest measure of distributional agreement) and, for context, the **pairwise ECDF correlation**. Note that ECDF correlation is a very forgiving summary: materially different distributions can still correlate above 0.99, so the KS statistic is the number to watch.
 
 ```{julia}
 #| echo: false
@@ -376,6 +376,13 @@ function ecdf_cor(x::AbstractVector, y::AbstractVector; n_grid::Int = 500)
     ecdf_x = [count(≤(g), x) / length(x) for g in grid]
     ecdf_y = [count(≤(g), y) / length(y) for g in grid]
     return cor(ecdf_x, ecdf_y)
+end
+
+# Two-sample Kolmogorov–Smirnov statistic: sup_t |F̂_x(t) − F̂_y(t)|
+function ks_stat(x::AbstractVector, y::AbstractVector)
+    pts = sort(vcat(x, y))
+    return maximum(abs(count(≤(t), x) / length(x) - count(≤(t), y) / length(y))
+                   for t in pts)
 end
 ```
 
@@ -408,14 +415,17 @@ brms_int = brms_gauss.beta_intercept
 mgcv_sigma = mgcv_gauss.sigma_obs
 mgcv_int = mgcv_gauss.beta_intercept
 
-@printf("\nPairwise ECDF correlation (Gaussian model):\n")
-@printf("Comparison             | sigma ECDF cor | intercept ECDF cor\n")
-@printf("-----------------------|----------------|-------------------\n")
-@printf("GAM.jl vs brms         | %.6f        | %.6f\n",
+@printf("\nKS statistic (0 = indistinguishable) and ECDF correlation (Gaussian model):\n")
+@printf("Comparison             | sigma KS | intercept KS | sigma ECDF cor | intercept ECDF cor\n")
+@printf("-----------------------|----------|--------------|----------------|-------------------\n")
+@printf("GAM.jl vs brms         | %.4f   | %.4f       | %.6f       | %.6f\n",
+    ks_stat(julia_sigma, brms_sigma), ks_stat(julia_int, brms_int),
     ecdf_cor(julia_sigma, brms_sigma), ecdf_cor(julia_int, brms_int))
-@printf("GAM.jl vs mgcv (approx)| %.6f        | %.6f\n",
+@printf("GAM.jl vs mgcv (approx)| %.4f   | %.4f       | %.6f       | %.6f\n",
+    ks_stat(julia_sigma, mgcv_sigma), ks_stat(julia_int, mgcv_int),
     ecdf_cor(julia_sigma, mgcv_sigma), ecdf_cor(julia_int, mgcv_int))
-@printf("brms vs mgcv (approx)  | %.6f        | %.6f\n",
+@printf("brms vs mgcv (approx)  | %.4f   | %.4f       | %.6f       | %.6f\n",
+    ks_stat(brms_sigma, mgcv_sigma), ks_stat(brms_int, mgcv_int),
     ecdf_cor(brms_sigma, mgcv_sigma), ecdf_cor(brms_int, mgcv_int))
 ```
 
@@ -453,10 +463,13 @@ julia_int2 = vec(chains2[Symbol("β[1]")].data)
 brms_int2 = brms_poisson.beta_intercept
 mgcv_int2 = mgcv_poisson.beta_intercept
 
-@printf("Pairwise ECDF correlation (Poisson intercept):\n")
-@printf("GAM.jl vs brms:          %.6f\n", ecdf_cor(julia_int2, brms_int2))
-@printf("GAM.jl vs mgcv (approx): %.6f\n", ecdf_cor(julia_int2, mgcv_int2))
-@printf("brms vs mgcv (approx):   %.6f\n", ecdf_cor(brms_int2, mgcv_int2))
+@printf("KS statistic / ECDF correlation (Poisson intercept):\n")
+@printf("GAM.jl vs brms:          KS = %.4f, ECDF cor = %.6f\n",
+    ks_stat(julia_int2, brms_int2), ecdf_cor(julia_int2, brms_int2))
+@printf("GAM.jl vs mgcv (approx): KS = %.4f, ECDF cor = %.6f\n",
+    ks_stat(julia_int2, mgcv_int2), ecdf_cor(julia_int2, mgcv_int2))
+@printf("brms vs mgcv (approx):   KS = %.4f, ECDF cor = %.6f\n",
+    ks_stat(brms_int2, mgcv_int2), ecdf_cor(brms_int2, mgcv_int2))
 ```
 
 ## Example 3: Custom priors — effect on smoothing
@@ -491,14 +504,14 @@ m_wide = gam(@formula(y ~ s(x, k = 10)), dat;
 #| fig-width: 8
 #| fig-height: 5
 σ_s_tight = vec(m_tight.chains[Symbol("σ_s[1]")].data)
-σ_s_default = σ_s  # from default Exp(1.0) model
+σ_s_default = σ_s  # from the Exp(1.0) model fitted above
 σ_s_wide = vec(m_wide.chains[Symbol("σ_s[1]")].data)
 
 histogram(σ_s_tight; normalize=:pdf, bins=30, alpha=0.5, color=:steelblue,
     label="tight: Exp(0.1)", xlabel="σ_s", ylabel="density",
     title="Prior sensitivity: σ_s posterior")
 histogram!(σ_s_default; normalize=:pdf, bins=30, alpha=0.5, color=:darkorange,
-    label="default: Exp(1.0)")
+    label="reference: Exp(1.0)")
 histogram!(σ_s_wide; normalize=:pdf, bins=30, alpha=0.5, color=:green4,
     label="wide: Exp(5.0)")
 ```
@@ -702,7 +715,7 @@ println("  Zs (penalized):  ", [size(Z) for Z in sms[1].Zs])
 
 ### Key design choices
 
-1. **Dispatch-based API**: The same `gam()` function handles both frequentist and Bayesian fitting — the presence of `priors=` triggers Bayesian mode via multiple dispatch.
+1. **One entry point**: The same `gam()` function handles both frequentist and Bayesian fitting — passing the `priors=` keyword switches it into Bayesian mode.
 
 2. **smooth2random decomposition**: Smooth terms are split into a fixed null-space (unpenalized, estimated via `β`) and random-effects blocks (penalized, estimated via `σ_s × z`).
 

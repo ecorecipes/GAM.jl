@@ -322,7 +322,7 @@ end
 
 ## R Comparison
 
-The R `gamlss` package (with `gamlss.add` for smooth terms) fits similar models. Here we verify GAM.jl matches R:
+The R `gamlss` package (with `gamlss.add` for smooth terms) fits similar models. The code below sketches how such a comparison can be run interactively via RCall — it is **not executed** in this vignette. The automated, quantitative comparison against R lives in the test suite: `test/test_gamlss_vs_rgamlss.jl` and `test/test_gamlss_vs_mgcv.jl` check fitted parameters and negative log-likelihoods against checked-in R reference output.
 
 ```{julia}
 #| eval: false

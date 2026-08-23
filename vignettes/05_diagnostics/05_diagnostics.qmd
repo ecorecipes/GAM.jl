@@ -303,13 +303,15 @@ conc_pair = concurvity(m; full=false)
 
 ## Basis dimension check
 
-`k_check` assesses whether the basis dimension $k$ is adequate for each smooth. A high EDF-to-$k'$ ratio suggests the basis may be too small.
+`k_check` assesses whether the basis dimension $k$ is adequate for each smooth,
+using mgcv's k-index: a variance ratio computed from differences of residuals
+for neighbouring covariate values. As in mgcv, a k-index **well below 1**
+together with a **small p-value** indicates that unmodelled pattern remains in
+the residuals and $k$ should be increased (note this is the opposite reading
+from a naive EDF/$k'$ ratio, where *high* values flag trouble).
 
 ```{julia}
 kc = k_check(m)
-for item in kc
-    println("$(item.label): k' = $(item.k), edf = $(round(item.edf, digits=2)), ratio = $(round(item.k_ratio, digits=3))")
-end
 ```
 
 ## Summary

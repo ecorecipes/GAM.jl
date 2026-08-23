@@ -8,7 +8,7 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 
 ## Features
 
-- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 30 basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes
+- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 30 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (a few are documented approximations of their mgcv namesakes — see the table below)
 - **Automatic smoothness estimation** — REML/ML via Extended Fellner-Schall (EFS, default) or Newton optimization; GCV/UBRE via direct criterion optimization
 - **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta
 - **Multi-parameter models (GAMLSS)** — location-scale-shape regression with RS and CG solvers, local ML/GAIC/GCV smoothing parameter selection
@@ -16,7 +16,8 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 - **Quantile regression (QGAM)** — Extended Log-F families with automatic calibration
 - **Extreme value models** — GEV, GPD, and extended GPD families
 - **Large-scale fitting (BAM)** — chunked accumulation of the normal equations for large datasets
-- **Mixed models (GAMM)** — random intercepts/slopes via `gamm()` with `GAM.@formula(...)`
+- **Mixed models (GAMM)** — random intercepts/slopes via `gamm()` with `GAM.@formula(...)`, fitted by a pure-Julia penalized-smooth backend (PQL for non-Gaussian families)
+- **Prior weights** — `gam(...; weights=...)` for observation weights, as in mgcv
 - **Bayesian inference** — Turing.jl extension for posterior sampling with smooth-aware priors
 - **Diagnostics** — gratia-style smooth estimates, derivatives, posterior samples, concurvity, rootograms
 - **Side constraints** — automatic identifiability constraints when smooths share covariates
@@ -74,17 +75,19 @@ use `GAM.@formula(...)` or `using GAM: @formula`.
 | `s(x, bs=:cc)` | Cyclic cubic spline | For periodic data (e.g., time of day) |
 | `s(x, bs=:ps)` | P-spline | B-spline basis with difference penalty |
 | `s(x, bs=:cps)` | Cyclic P-spline | Periodic P-spline |
-| `s(x, bs=:bs)` | B-spline | Unpenalized B-spline basis |
-| `s(x, bs=:gp)` | Gaussian process | GP covariance as smooth |
-| `s(x, bs=:ds)` | Duchon spline | Generalized thin-plate spline |
+| `s(x, bs=:bs)` | B-spline | Penalized B-spline (integrated squared derivative penalty, as in mgcv) |
+| `s(x, bs=:gp)` | Gaussian process | Matérn 3/2 covariance as smooth |
+| `s(x, bs=:ds)` | Duchon spline | Currently an alias for the thin-plate spline (`:tp`) |
 | `s(x, bs=:re)` | Random effect | i.i.d. Gaussian random effects |
-| `s(x, bs=:mrf)` | Markov random field | Spatial smoothing on discrete regions |
-| `s(x, y, bs=:so)` | Soap film | Smoothing over complex domains with boundaries |
+| `s(x, bs=:mrf)` | Markov random field | Spatial smoothing on discrete regions (requires an `xt` neighborhood structure) |
+| `s(x, y, bs=:so)` | Soap film | Smoothing over complex domains with boundaries (approximation of mgcv's construction) |
 | `s(x, y, bs=:fs)` | Factor-smooth interaction | Smooth varying by factor level |
-| `s(x, bs=:sos)` | Spherical spline | Smoothing on the sphere (lat/lon) |
+| `s(lat, lon, bs=:sos)` | Spherical spline | Smoothing on the sphere; approximation of mgcv's spline-on-the-sphere kernels |
 | `s(x, bs=:spde)` | SPDE Matérn | Stochastic PDE Matérn field |
 | `s(x, bs=:lo)` | Loess | Local regression basis |
-| `s(x, bs=:ad)` | Adaptive | Spatially adaptive smoothness |
+| `s(x, bs=:ad)` | Adaptive | Spatially adaptive smoothness (approximation: Gaussian-bump penalty weights) |
+| `s(x, bs=:sc)` | Shape-constrained B-spline | Linear-constraint (SCASM) B-spline basis |
+| `s(x, bs=:scad)` | Shape-constrained adaptive | Linear-constraint (SCASM) adaptive basis |
 | `s(x, bs=:fp)` | Fractional polynomial | Fractional-polynomial basis |
 | `s(x, bs=:sz)` | Constrained factor smooth | Sum-to-zero factor smooth |
 | `te(x, y)` | Tensor product | Full interaction (main effects + interaction) |
@@ -212,7 +215,8 @@ m = bam(@formula(y ~ s(x1, k=20) + s(x2, k=20)), df)
 
 ## Mixed Models (GAMM)
 
-GAMs with random effects via MixedModels.jl:
+GAMs with random effects, fitted by a pure-Julia backend that represents random
+effects as identity-penalized smooths (LAMS), with PQL for non-Gaussian families:
 
 ```julia
 m = gamm(
@@ -249,8 +253,9 @@ w.waic
 
 ```julia
 # Model diagnostics
-gam_check(m)          # residual plots, basis adequacy
-k_check(m)            # basis dimension check
+gam_check(m)          # text diagnostics: convergence, k-index with p-values
+                      # (plots via appraise(m) with Plots.jl loaded)
+k_check(m)            # basis dimension check (mgcv-style k-index + p-value)
 concurvity(m)         # concurvity indices
 
 # Smooth estimates (gratia-style)
@@ -308,7 +313,15 @@ GAM.jl is not a line-for-line port of mgcv. Notable mgcv features that are **not
 - Specialized families such as ordered-categorical (`ocat`), zero-inflated Poisson (`ziP`), Cox proportional hazards (`cox.ph`), and multinomial (`multinom`) — though location-scale models are covered by the GAMLSS and evgam interfaces
 - Linear functional terms / the summation convention (matrix arguments to `s()`)
 - `na.action`-style missing-data handling (rows with missing/non-finite values must be removed before fitting)
-- AR1 residual correlation in `bam`
+- AR1 residual correlation in `bam`; `bam`'s covariate discretization (`discrete=TRUE`) — `bam` uses chunked accumulation of the normal equations only
+- mgcv's Fletcher (2012) scale estimator (scale is estimated as Pearson/(n − EDF))
+- mgcv's `concurvity` "observed" and "estimate" measures (only the worst-case measure is implemented)
+
+Some basis types are documented approximations rather than exact ports of their
+mgcv namesakes: `:sos` (planar kernel on great-circle distances), `:so` (grid-PDE
+soap film), `:ad` (Gaussian-bump penalty weights), `:ds` (alias of `:tp`), and
+`:t2` (an alternative tensor construction, not Wood–Scheipl–Faraway). Fits with
+these bases will differ from mgcv's.
 
 `offset` and `by` variables work for ordinary, extended-family, and shape-constrained (SCAM) fits; factor-`by` is not supported for the linear-constraint (SCASM) solver, and `select=true` applies to ordinary and extended-family GAMs (not the constrained solvers).
 
@@ -333,11 +346,11 @@ GAM.jl follows the same mathematical framework as mgcv:
 4. **Side constraints** — Automatic identifiability constraints are applied when smooths share covariates (mgcv's `gam.side`)
 5. **Inference** — Bayesian covariance matrices (Vp) provide approximate confidence intervals and p-values
 
-The key difference from mgcv: GAM.jl is written in pure Julia (no C code), leveraging Julia's BLAS/LAPACK bindings, multiple dispatch, and JIT compilation for performance.
+The key difference from mgcv: GAM.jl's model-fitting code is written in Julia rather than C, leveraging Julia's BLAS/LAPACK bindings, multiple dispatch, and JIT compilation for performance. (Two compiled libraries are used indirectly: BLAS/LAPACK for linear algebra, and the OSQP C solver for linear-constraint SCASM fits.)
 
 ## Testing
 
-GAM.jl has roughly 1,900 test assertions across 48 test files, including:
+GAM.jl has roughly 2,150 test assertions across 51 test files, including:
 
 - Unit tests for all basis types, families, and link functions
 - End-to-end tests for GAM, BAM, SCAM, QGAM, GAMLSS, GAMM, evgam, GINLA
@@ -349,12 +362,13 @@ R-comparison tests that require a live R installation (via RCall) are skipped au
 
 ## Dependencies
 
-**Core:** StatsModels.jl, GLM.jl, Distributions.jl, StatsBase.jl, StatsAPI.jl, LinearAlgebra, SparseArrays
+**Core:** StatsModels.jl, GLM.jl, Distributions.jl, StatsBase.jl, StatsAPI.jl, OSQP.jl, ForwardDiff.jl, DifferentiationInterface.jl, PSIS.jl, SpecialFunctions.jl, Tables.jl, Reexport.jl, LinearAlgebra, SparseArrays
 
 **Extensions (loaded on demand):**
-- [MixedModels.jl](https://github.com/JuliaStats/MixedModels.jl) — GAMM support
 - [Turing.jl](https://github.com/TuringLang/Turing.jl) — Bayesian inference
 - [Plots.jl](https://github.com/JuliaPlots/Plots.jl) — Visualization
+
+GAMM fitting uses the built-in pure-Julia backend; no MixedModels.jl dependency is required.
 
 ## References
 
