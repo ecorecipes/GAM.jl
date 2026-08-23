@@ -1,14 +1,19 @@
 # bam() — Big Additive Models for large datasets
 #
-# Port of mgcv's bam() function. Uses covariate discretization and
-# chunk-wise accumulation of X'WX and X'Wz to handle datasets that
-# are too large for standard gam().
+# Inspired by mgcv's bam() function. Fits the same penalized model as gam()
+# but accumulates the normal equations X'WX and X'Wz in row chunks, so peak
+# memory beyond the design matrix is bounded by the chunk size.
 #
 # Key differences from gam():
-# 1. Covariates discretized to reduce unique evaluations
-# 2. X'WX accumulated in chunks (never form full n×p weighted product)
-# 3. Multi-threaded accumulation via Julia's Threads
-# 4. Same EFS outer iteration for smoothing parameter estimation
+# 1. X'WX accumulated in chunks (never forms the full n×p weighted product)
+# 2. Same EFS outer iteration for smoothing parameter estimation (REML/ML)
+#
+# Unlike mgcv's bam(discrete=TRUE), covariates are NOT discretized: the full
+# dense design matrix is built once. The standalone discretization utilities
+# below (`discretize_covariates` etc.) are provided but not used by `bam()`.
+# Note also that solving the normal equations by Cholesky squares the
+# condition number relative to mgcv's QR updating; poorly scaled bases are
+# less stable here than in mgcv.
 #
 # Reference: Wood, Goude & Shaw (2015) JASA 110(512):1321-1331
 
@@ -37,6 +42,8 @@ end
 
 Discretize continuous covariates by binning into `max_unique` quantile-based bins.
 Returns a `DiscretizedData` struct with unique values and index mappings.
+
+Standalone utility: `bam()` does not currently use discretization.
 """
 function discretize_covariates(data, vars::Vector{Symbol}; max_unique::Int = 1000)
     n = length(Tables.getcolumn(data, first(vars)))
@@ -87,6 +94,8 @@ end
 
 Construct a smooth basis using discretized unique values, returning both
 the compact basis (evaluated at unique values) and index mapping.
+
+Standalone utility: `bam()` does not currently use discretization.
 """
 function discretized_smooth_construct(spec::SmoothSpec, disc::DiscretizedData, full_data)
     # Build a "unique data" table for basis construction
@@ -110,30 +119,31 @@ Control parameters specific to bam() fitting.
 
 # Fields
 - `chunk_size`: number of observations per accumulation chunk
-- `discrete`: whether to use covariate discretization
-- `max_unique`: maximum unique values per covariate when discretizing
-- `nthreads`: number of threads for parallel accumulation (0 = auto)
 """
 struct BamControl
     chunk_size::Int
-    discrete::Bool
-    max_unique::Int
-    nthreads::Int
 end
 
 """
-    bam_control(; chunk_size=10000, discrete=true, max_unique=1000, nthreads=0)
+    bam_control(; chunk_size=10000)
 
 Construct a [`BamControl`](@ref) with the given parameters.
+
+The former `discrete`, `max_unique`, and `nthreads` keywords are deprecated
+and have no effect: `bam()` does not discretize covariates or thread the
+accumulation. Passing them warns.
 """
 function bam_control(;
     chunk_size::Int = 10000,
-    discrete::Bool = true,
-    max_unique::Int = 1000,
-    nthreads::Int = 0,
+    discrete::Union{Bool, Nothing} = nothing,
+    max_unique::Union{Int, Nothing} = nothing,
+    nthreads::Union{Int, Nothing} = nothing,
 )
-    return BamControl(chunk_size, discrete, max_unique,
-        nthreads == 0 ? Threads.nthreads() : nthreads)
+    if discrete !== nothing || max_unique !== nothing || nthreads !== nothing
+        @warn "bam_control: `discrete`, `max_unique`, and `nthreads` are deprecated " *
+              "and ignored — bam() does not discretize covariates or thread the accumulation"
+    end
+    return BamControl(chunk_size)
 end
 
 """
@@ -289,9 +299,15 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         @inbounds for i in 1:n
             eta[i] = GLM.linkfun(link, _bam_mustart(family, y[i], weights[i]))
         end
-        beta[1] = mean(eta)
-        mul!(eta, X, beta)
-        eta .+= offset
+        # Start from the constant fit on the link scale; locate the intercept
+        # column rather than assuming it is column 1
+        icpt = findfirst(j -> all(==(1.0), view(X, :, j)), 1:p)
+        if icpt !== nothing
+            beta[icpt] = mean(eta)
+            mul!(eta, X, beta)
+            eta .+= offset
+        end
+        # (no intercept column: keep the mustart η as the starting point)
     end
 
     @inbounds for i in 1:n
@@ -299,6 +315,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     end
     dev_old = _deviance(family, y, mu, weights)
 
+    beta_prop = zeros(p)
     converged = false
     n_iter = 0
 
@@ -333,37 +350,35 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         end
         dev_new = _deviance(family, y, mu_new, weights)
 
-        # Step halving if deviance increased
-        step_factor = 1.0
-        for _ in 1:25
-            if isfinite(dev_new) && dev_new <= dev_old + control.epsilon * abs(dev_old)
-                break
+        # Step halving on the penalized deviance (matching pirls.jl/mgcv):
+        # each trial interpolates from the ORIGINAL proposal, so factor 0.5^k
+        # really is 0.5^k of the Newton step
+        pdev_old_iter = dev_old + dot(beta, S_total, beta)
+        pdev_new = dev_new + dot(beta_new, S_total, beta_new)
+        if !(isfinite(pdev_new) &&
+             pdev_new <= pdev_old_iter + control.epsilon * abs(pdev_old_iter))
+            copyto!(beta_prop, beta_new)
+            step_factor = 1.0
+            for _ in 1:25
+                step_factor *= 0.5
+                @inbounds for j in 1:p
+                    beta_new[j] = beta[j] + step_factor * (beta_prop[j] - beta[j])
+                end
+                mul!(eta_new, X, beta_new)
+                eta_new .+= offset
+                @inbounds for i in 1:n
+                    mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
+                end
+                dev_new = _deviance(family, y, mu_new, weights)
+                pdev_new = dev_new + dot(beta_new, S_total, beta_new)
+                if isfinite(pdev_new) &&
+                   pdev_new <= pdev_old_iter + control.epsilon * abs(pdev_old_iter)
+                    break
+                end
+                if step_factor < 1e-8
+                    break
+                end
             end
-            step_factor *= 0.5
-            @inbounds for j in 1:p
-                beta_new[j] = beta[j] + step_factor * (beta_new[j] - beta[j])
-            end
-            mul!(eta_new, X, beta_new)
-            eta_new .+= offset
-            @inbounds for i in 1:n
-                mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
-            end
-            dev_new = _deviance(family, y, mu_new, weights)
-            if step_factor < 1e-8
-                break
-            end
-        end
-
-        if step_factor < 1.0
-            @inbounds for j in 1:p
-                beta_new[j] = beta[j] + step_factor * (beta_new[j] - beta[j])
-            end
-            mul!(eta_new, X, beta_new)
-            eta_new .+= offset
-            @inbounds for i in 1:n
-                mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
-            end
-            dev_new = _deviance(family, y, mu_new, weights)
         end
 
         # Convergence check
@@ -432,7 +447,7 @@ end
 
 """
     outer_iteration_bam(X, y, smooths, penalty, family, link;
-                        method, weights, control, chunk_size)
+                        method, weights, offset, control, chunk_size)
 
 Outer iteration for bam() — same EFS updates but using chunked P-IRLS.
 """
@@ -442,6 +457,7 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
     family::UnivariateDistribution, link::GLM.Link;
     method::Symbol = :REML,
     weights::Vector{Float64} = ones(length(y)),
+    offset::Vector{Float64} = zeros(length(y)),
     control::GamControl = gam_control(),
     chunk_size::Int = 10000)
 
@@ -451,7 +467,8 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
     if n_sp == 0
         S_total = zeros(p, p)
         result = pirls_bam(X, y, S_total, family, link;
-            weights = weights, control = control, chunk_size = chunk_size)
+            weights = weights, offset = offset, control = control,
+            chunk_size = chunk_size)
         return penalty.sp, result
     end
 
@@ -464,12 +481,14 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
     XtWX_cached = zeros(p, p)
     Xty_cached = zeros(p)
     yWy_cached = 0.0
+    # For Gaussian identity the offset is absorbed by fitting to y - offset
+    y_adj = is_gaussian ? y .- offset : y
     if is_gaussian
         _accumulate_XtWX_XtWz_chunked!(XtWX_cached, Xty_cached,
-            X, weights, y, chunk_size)
+            X, weights, y_adj, chunk_size)
         # y'Wy for O(p²) deviance formula
         @inbounds for i in 1:n
-            yWy_cached += weights[i] * y[i]^2
+            yWy_cached += weights[i] * y_adj[i]^2
         end
     end
 
@@ -498,8 +517,8 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         else
             start_coef = prev_result === nothing ? nothing : prev_result.coefficients
             result = pirls_bam(X, y, S_total, family, link;
-                weights = weights, start = start_coef, control = control,
-                chunk_size = chunk_size)
+                weights = weights, offset = offset, start = start_coef,
+                control = control, chunk_size = chunk_size)
             edf_total = sum(result.edf_vec)
         end
 
@@ -532,16 +551,26 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         for block in penalty.blocks
             idx = block.start:block.stop
             beta_block = beta[idx]
+            Ainv_block = Ainv[idx, idx]
 
-            for Si in block.S
+            # Per-penalty λⱼ·tr(S_λ⁺Sⱼ): equals block.rank only for
+            # single-penalty blocks; using block.rank per margin of a tensor
+            # smooth systematically oversmooths (see _efs_sp_update)
+            nSb = length(block.S)
+            ldet_derivs = _block_logdet_derivs(block,
+                view(log_sp, sp_idx:(sp_idx + nSb - 1)))
+
+            for (jS, Si) in enumerate(block.S)
+                if penalty.fixed[sp_idx]
+                    sp_idx += 1
+                    continue
+                end
                 λ = exp(log_sp[sp_idx])
-                rank_j = Float64(block.rank)
 
                 bSb = dot(beta_block, Si * beta_block)
-                Ainv_block = Ainv[idx, idx]
                 tr_AinvS = λ * tr(Ainv_block * Si)
 
-                numerator = rank_j - tr_AinvS
+                numerator = ldet_derivs[jS] - tr_AinvS
                 denominator = bSb / scale_est
 
                 if denominator > eps() && numerator > 0
@@ -581,6 +610,7 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         A_chol = cholesky(Symmetric(A))
         beta = A_chol \ Xty_cached
         eta = X * beta
+        eta .+= offset
         mu = copy(eta)
         dev = _deviance(family, y, mu, weights)
         F = A_chol \ XtWX_cached
@@ -604,7 +634,8 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
             true, 1, R, hat_diag, edf_vec)
     else
         final_result = pirls_bam(X, y, S_total, family, link;
-            weights = weights, start = prev_result.coefficients,
+            weights = weights, offset = offset,
+            start = prev_result === nothing ? nothing : prev_result.coefficients,
             control = control, chunk_size = chunk_size)
     end
 
@@ -674,24 +705,33 @@ end
 
 """
     bam(formula, data; family=Normal(), link=nothing, method=:REML,
-        weights=nothing, control=gam_control(), bam_control=bam_control())
+        weights=nothing, offset=nothing, select=false,
+        control=gam_control(), bam_ctrl=bam_control())
 
 Fit a Generalized Additive Model to large datasets using chunk-wise
-accumulation and optional covariate discretization.
+accumulation of the normal equations X'WX and X'Wz.
 
 This is the large-dataset counterpart of [`gam`](@ref). Uses the same
-smoothing parameter estimation (EFS/REML) but with memory-efficient
-accumulation of X'WX and X'Wz.
+smoothing parameter estimation (EFS, optimizing the REML/ML criterion)
+but never forms the full weighted design product, so peak memory beyond
+the design matrix is bounded by the chunk size. Note that solving the
+normal equations squares the condition number relative to a QR approach;
+for badly scaled bases prefer `gam()`.
 
 # Arguments
 - `formula`: a formula with smooth terms (via `@formulak` or `@formula`)
 - `data`: a table (DataFrame, NamedTuple of vectors, etc.)
 - `family`: distribution family (default: `Normal()`)
 - `link`: link function (default: canonical link for family)
-- `method`: smoothing parameter estimation (`:REML`, `:ML`, `:GCV`, `:UBRE`)
+- `method`: smoothing parameter estimation (`:REML` or `:ML`; the
+  criterion-optimizing `:GCV`/`:UBRE` methods of `gam()` are not
+  implemented for `bam` and throw an error)
 - `weights`: optional observation weights
+- `offset`: optional known additive term on the link scale
+- `select`: if `true`, add a null-space penalty to every smooth
+  (Marra & Wood 2011 term selection), as in `gam(...; select=true)`
 - `control`: GAM fitting control parameters
-- `bam_ctrl`: BAM-specific control parameters (chunk size, discretization)
+- `bam_ctrl`: BAM-specific control parameters (chunk size)
 
 # Returns
 A [`GamModel`](@ref) object — identical output type to `gam()`.
@@ -710,16 +750,26 @@ df = DataFrame(x=x, y=y)
 m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 ```
 """
+function _bam_check_method(method::Symbol)
+    method in (:GCV, :UBRE) && throw(ArgumentError(
+        "bam() estimates smoothing parameters by EFS on the REML/ML criterion; " *
+        "method :$method is not implemented for bam — use gam() for GCV/UBRE"))
+    method in (:REML, :ML) ||
+        throw(ArgumentError("method must be :REML or :ML, got :$method"))
+    return method
+end
+
 function bam(f::FormulaTerm, data;
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    select::Bool = false,
     control::GamControl = gam_control(),
     bam_ctrl::BamControl = bam_control())
 
-    method in (:REML, :ML, :GCV, :UBRE) ||
-        throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
+    _bam_check_method(method)
 
     if link === nothing
         link = GLM.canonicallink(family)
@@ -727,7 +777,7 @@ function bam(f::FormulaTerm, data;
 
     y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
-        method, weights, control, bam_ctrl)
+        method, weights, offset, select, control, bam_ctrl)
 end
 
 function bam(gf::GamFormula, data;
@@ -735,11 +785,12 @@ function bam(gf::GamFormula, data;
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    select::Bool = false,
     control::GamControl = gam_control(),
     bam_ctrl::BamControl = bam_control())
 
-    method in (:REML, :ML, :GCV, :UBRE) ||
-        throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
+    _bam_check_method(method)
 
     if link === nothing
         link = GLM.canonicallink(family)
@@ -748,22 +799,26 @@ function bam(gf::GamFormula, data;
     y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
     f = term(gf.response) ~ term(1)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
-        method, weights, control, bam_ctrl)
+        method, weights, offset, select, control, bam_ctrl)
 end
 
 function _fit_bam(y, X, smooths, n_parametric, f, data,
-    family, link, method, weights, control, bam_ctrl)
+    family, link, method, weights, offset, select, control, bam_ctrl)
     n, p = size(X)
 
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch(
         "weights length $(length(wts)) ≠ data length $n"))
 
-    penalty = setup_penalties(smooths, n_parametric)
+    off = offset === nothing ? zeros(n) : Float64.(offset)
+    length(off) == n || throw(DimensionMismatch(
+        "offset length $(length(off)) ≠ data length $n"))
+
+    penalty = setup_penalties(smooths, n_parametric; select = select)
 
     # Use BAM outer iteration with chunked accumulation
     log_sp, result = outer_iteration_bam(X, y, smooths, penalty, family, link;
-        method = method, weights = wts, control = control,
+        method = method, weights = wts, offset = off, control = control,
         chunk_size = bam_ctrl.chunk_size)
 
     # Post-processing — use the R factor from pirls result to avoid O(n) passes
@@ -779,7 +834,8 @@ function _fit_bam(y, X, smooths, n_parametric, f, data,
     S_total = total_penalty(penalty, log_sp, p)
     XtWX_from_R = R_upper' * R_upper - S_total
     F = Vp * XtWX_from_R
-    Ve = Symmetric(F * Vp * F') |> Matrix
+    # Frequentist covariance: Ve = F·Vp·φ (mgcv; matches gamfit.jl)
+    Ve = Symmetric(F * Vp) |> Matrix
 
     if _needs_scale_estimate(family)
         scale_est = result.pearson / (n - edf_total_val)
@@ -791,16 +847,18 @@ function _fit_bam(y, X, smooths, n_parametric, f, data,
 
     null_dev = _null_deviance(family, y, wts)
 
-    # REML score from R factor (no X'WX recomputation needed)
+    # REML/ML score from the R factor, using the same criterion as gam()
+    # (reml.jl / mgcv gam.fit3): (Dp/(2φ) - ls) + ½log|A| - ½log|S|₊
+    # - (Mp/2)·log(2πφ), with Dp = dev + β'Sβ
     log_det_A = 2.0 * sum(log(abs(R_upper[i, i])) for i in 1:p)
     log_det_S = _log_penalty_det(penalty, log_sp)
-    if _needs_scale_estimate(family)
-        reml_val = result.deviance / (2 * scale_est) +
-                   0.5 * log_det_A - 0.5 * log_det_S +
-                   0.5 * (n - p) * log(2π * scale_est)
-    else
-        reml_val = result.deviance / 2.0 +
-                   0.5 * log_det_A - 0.5 * log_det_S
+    phi = scale_est
+    Mp = p - sum(b.rank for b in penalty.blocks; init = 0)
+    Dp = result.deviance + dot(result.coefficients, S_total, result.coefficients)
+    ls = _log_saturated_likelihood(family, y, wts, phi)
+    reml_val = (Dp / (2 * phi) - ls) + 0.5 * log_det_A - 0.5 * log_det_S
+    if method == :REML
+        reml_val -= 0.5 * Mp * log(2π * phi)
     end
 
     return GamModel(

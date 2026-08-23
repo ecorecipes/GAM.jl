@@ -4,11 +4,31 @@
 # Uses power transformations x^p from a discrete candidate set,
 # selecting the best powers by AIC.
 
-"""Fractional polynomial smooth basis (gamlss-style `bs=:fp`)."""
+"""
+Fractional polynomial smooth basis (gamlss-style `bs=:fp`).
+
+NOTE: powers default to (1, 2) (or 1 for degree-1). AIC-based power
+selection runs ONLY when a response vector is supplied via
+`xt = Dict(:y => y)` — the response is not available at basis-construction
+time, so no automatic selection happens by default.
+"""
 struct FractionalPolynomial <: AbstractBasisType end
 
 # Register
 BASIS_TYPES[:fp] = FractionalPolynomial()
+
+"""
+Prediction cache for fractional-polynomial smooths: stores the selected
+powers, the positivity shift, the degree, the column means used for
+centering, and the smallest shifted training value (extrapolation floor).
+"""
+struct FPPredictCache <: AbstractSmoothPredictCache
+    powers::Vector{Float64}
+    x_shift::Float64
+    degree::Int
+    col_means::Vector{Float64}
+    x_floor::Float64
+end
 
 """Default candidate powers for fractional polynomials (0 means log(x))."""
 const FP_DEFAULT_POWERS = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0]
@@ -173,11 +193,6 @@ function _smooth_construct(::FractionalPolynomial, spec::SmoothSpec, data, user_
     null_dim = 0
     pen_rank = size(X, 2)
 
-    # Store selected powers and shift for prediction
-    spec.xt[:_selected_powers] = selected_powers
-    spec.xt[:_x_shift] = x_shift
-    spec.xt[:_degree] = degree
-
     # For FP, skip constraint absorption — these are parametric-like terms
     # with very few columns, and sum-to-zero doesn't apply well.
     # Instead, center columns for numerical stability.
@@ -185,7 +200,6 @@ function _smooth_construct(::FractionalPolynomial, spec::SmoothSpec, data, user_
     for j in axes(X, 2)
         X[:, j] .-= col_means[j]
     end
-    spec.xt[:_col_means] = col_means
 
     return ConstructedSmooth(
         spec, X, penalties,
@@ -194,6 +208,8 @@ function _smooth_construct(::FractionalPolynomial, spec::SmoothSpec, data, user_
         nothing, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = FPPredictCache(selected_powers, x_shift, degree,
+            col_means, minimum(x)),
     )
 end
 
@@ -201,14 +217,28 @@ function _predict_matrix(::FractionalPolynomial, smooth::ConstructedSmooth, newd
     var = smooth.spec.term_vars[1]
     x_new = Float64.(Tables.getcolumn(newdata, var))
 
-    selected_powers = smooth.spec.xt[:_selected_powers]::Vector{Float64}
-    x_shift = smooth.spec.xt[:_x_shift]::Float64
-    degree = smooth.spec.xt[:_degree]::Int
-    col_means = smooth.spec.xt[:_col_means]::Vector{Float64}
+    cache = smooth.predict_cache
+    cache isa FPPredictCache ||
+        throw(ArgumentError("Missing fitted fractional-polynomial prediction cache"))
+    selected_powers = cache.powers
+    x_shift = cache.x_shift
+    degree = cache.degree
+    col_means = cache.col_means
 
     # Apply same shift
     if x_shift > 0.0
         x_new = x_new .+ x_shift
+    end
+
+    # Guard against non-positive values (below the training-derived shift):
+    # log/negative powers would silently produce NaN/Inf. Clamp those points
+    # to the smallest shifted training value and warn.
+    n_bad = count(xi -> xi <= 0.0, x_new)
+    if n_bad > 0
+        @warn "Fractional-polynomial smooth $(smooth.spec.label): " *
+              "$n_bad prediction point(s) fall at or below the positivity " *
+              "shift used at fitting; clamping to the training minimum."
+        x_new = [xi <= 0.0 ? cache.x_floor : xi for xi in x_new]
     end
 
     # Build basis with stored powers

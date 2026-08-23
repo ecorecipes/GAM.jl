@@ -35,6 +35,50 @@ function place_knots(x::AbstractVector{<:Real}, k::Int, lo::Real, hi::Real)
 end
 
 """
+    _bspline_knot_vector(x, k, m2; user_knots=nothing, extend_frac=0.001)
+
+Shared B-spline knot-vector builder used by the ps/bs/ad/sc/scad bases.
+
+Places `nk = k - m2 + 1` evenly spaced knots spanning the (slightly
+extended) data range, then extends by `m2` knots on each side so that a
+B-spline basis of degree `m2` has `k` columns. Following mgcv, the data
+range is first extended by `extend_frac * range` on each side so boundary
+observations sit strictly inside the outer interior knots.
+
+If `user_knots` is supplied it is used as the interior knot sequence
+(no range extension is applied to user knots).
+"""
+function _bspline_knot_vector(x::AbstractVector{<:Real}, k::Int, m2::Int;
+    user_knots = nothing, extend_frac::Float64 = 0.001)
+    nk = k - m2 + 1
+    nk >= 2 || throw(ArgumentError(
+        "k=$k too small for B-spline of degree $m2 (need k ≥ $(m2 + 1))"))
+
+    if user_knots !== nothing
+        interior = Float64.(user_knots)
+        dk = length(interior) > 1 ? interior[2] - interior[1] :
+             (maximum(x) - minimum(x))
+        return vcat(
+            [interior[1] - dk * i for i in m2:-1:1],
+            interior,
+            [interior[end] + dk * i for i in 1:m2],
+        )
+    end
+
+    lo, hi = minimum(x), maximum(x)
+    ext = extend_frac * (hi - lo)
+    lo -= ext
+    hi += ext
+    k_new = collect(range(lo, hi; length = nk))
+    dk = k_new[2] - k_new[1]
+    return vcat(
+        [k_new[1] - dk * i for i in m2:-1:1],
+        k_new,
+        [k_new[end] + dk * i for i in 1:m2],
+    )
+end
+
+"""
     knot_quantiles(x::AbstractVector, n_interior::Int) -> Vector{Float64}
 
 Compute `n_interior` interior knot positions as evenly spaced quantiles of unique values of `x`.

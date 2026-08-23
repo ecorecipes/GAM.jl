@@ -217,19 +217,6 @@ struct FactorSmoothPredictCache <: AbstractSmoothPredictCache
 end
 
 """
-Prediction cache for constrained factor smooths (bs="sz"): stores the factor
-levels, the marginal smooth, the factor variable, the per-level constrained
-basis dimension, and the per-level constraint null-space bases `Z_levels`.
-"""
-struct SZPredictCache <: AbstractSmoothPredictCache
-    levels::Vector
-    marginal_smooth  # ConstructedSmooth
-    factor_var::Symbol
-    k_constrained::Int
-    Z_levels::Vector{Matrix{Float64}}
-end
-
-"""
 Prediction cache for splines-on-the-sphere smooths (bs="sos"): stores the knot
 lat/lon, knot eigenvectors, eigenvalues, penalty order, and basis dimension.
 """
@@ -373,8 +360,9 @@ Control parameters for GAM fitting.
 - `outer_maxit`: maximum outer iterations for smoothing parameter estimation
 - `trace`: print iteration progress
 - `gamma`: inflation factor for GCV/UBRE degrees of freedom (>1 = more smoothing)
-- `scale_est`: scale parameter estimate method (:fletcher, :pearson, :deviance)
-- `edge_correct`: apply edge correction to smoothing parameters
+- `scale_est`: scale parameter estimator for the reported scale/covariances
+  (`:fletcher` — Fletcher 2012 corrected Pearson, mgcv's default;
+   `:pearson` — Pearson/(n−edf); `:deviance` — deviance/(n−edf))
 """
 struct GamControl
     epsilon::Float64
@@ -383,23 +371,29 @@ struct GamControl
     trace::Bool
     gamma::Float64
     scale_est::Symbol
-    edge_correct::Bool
     sp_optimizer::Symbol
 end
 
 """
     gam_control(; epsilon=1e-7, maxit=200, outer_maxit=200, trace=false,
-                  gamma=1.0, scale_est=:fletcher, edge_correct=true,
-                  sp_optimizer=:efs)
+                  gamma=1.0, scale_est=:fletcher, sp_optimizer=:efs)
 
 Construct a [`GamControl`](@ref) with the given parameters.
 
 # Smoothing parameter optimizers
 - `:efs` (default) — Extended Fellner-Schall (Wood & Fasiolo 2017). Fast,
   monotonically convergent, one PIRLS call per outer iteration.
-- `:newton` — Newton's method with autodiff Hessian. Uses ForwardDiff to
-  differentiate the REML score w.r.t. log(sp). More expensive but may
-  converge in fewer iterations for difficult problems.
+- `:newton` — Newton's method with autodiff Hessian. Differentiates a
+  *conditional* REML score (β, W, and scale held fixed at their current
+  P-IRLS values), a performance-iteration-style approximation of the exact
+  Wood (2011) REML derivative; its fixed point can differ slightly from the
+  exact REML optimum. More expensive per step but may converge in fewer
+  iterations for difficult problems.
+
+Note: `gamma` inflates the effective degrees of freedom in the GCV/UBRE
+criteria and enters the EFS step-acceptance test; unlike mgcv it does not
+reshape the EFS update itself. Under the EFS optimizer, `method=:ML` differs
+from `:REML` only in the acceptance test and the reported score.
 """
 function gam_control(;
     epsilon::Real = 1e-7,
@@ -408,13 +402,14 @@ function gam_control(;
     trace::Bool = false,
     gamma::Real = 1.0,
     scale_est::Symbol = :fletcher,
-    edge_correct::Bool = true,
     sp_optimizer::Symbol = :efs,
 )
     sp_optimizer in (:efs, :newton) ||
         throw(ArgumentError("sp_optimizer must be :efs or :newton, got :$sp_optimizer"))
+    scale_est in (:fletcher, :pearson, :deviance) ||
+        throw(ArgumentError("scale_est must be :fletcher, :pearson, or :deviance, got :$scale_est"))
     return GamControl(Float64(epsilon), maxit, outer_maxit, trace,
-        Float64(gamma), scale_est, edge_correct, sp_optimizer)
+        Float64(gamma), scale_est, sp_optimizer)
 end
 
 # ============================================================================
@@ -433,7 +428,6 @@ for a single smooth term.
 - `rank`: penalty rank
 - `start`: first parameter index in the full coefficient vector
 - `stop`: last parameter index
-- `repara`: should reparameterization be applied
 """
 struct PenaltyBlock
     S::Vector{Matrix{Float64}}
@@ -441,7 +435,6 @@ struct PenaltyBlock
     rank::Int
     start::Int
     stop::Int
-    repara::Bool
 end
 
 """
@@ -453,13 +446,18 @@ Equivalent to mgcv's `Sl.setup` output.
 # Fields
 - `blocks`: individual penalty blocks
 - `sp`: current smoothing parameters (log scale)
-- `E`: square root of total penalty for rank detection
+- `fixed`: per-penalty flag — `true` entries hold a user-supplied `sp=` value
+  and are excluded from smoothing parameter optimization
 """
 mutable struct PenaltySetup
     blocks::Vector{PenaltyBlock}
     sp::Vector{Float64}
-    E::Matrix{Float64}
+    fixed::BitVector
 end
+
+# Backward-compatible constructor: default to all smoothing parameters free.
+PenaltySetup(blocks::Vector{PenaltyBlock}, sp::Vector{Float64}) =
+    PenaltySetup(blocks, sp, falses(length(sp)))
 
 # ============================================================================
 # GAM model type

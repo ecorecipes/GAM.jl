@@ -6,10 +6,12 @@
 
 """
     reml_score(X, y, S_penalty, log_sp, family, link, weights, pirls_result;
-               method=:REML, gamma=1.0)
+               method=:REML, gamma=1.0, compute_gradient=true)
 
 Compute the REML (or ML/GCV) score for given log smoothing parameters.
 Returns `(score, grad)` where `grad` is the gradient w.r.t. `log_sp`.
+Pass `compute_gradient=false` to skip the (relatively expensive) analytical
+gradient when only the score is needed; `grad` is then a zero vector.
 """
 function reml_score(X::Matrix{Float64}, y::Vector{Float64},
     penalty::PenaltySetup,
@@ -18,7 +20,8 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
     weights::Vector{Float64},
     pirls_result::PirlsResult;
     method::Symbol = :REML, gamma::Real = 1.0,
-    scale::Float64 = -1.0)
+    scale::Float64 = -1.0,
+    compute_gradient::Bool = true)
 
     n, p = size(X)
     beta = pirls_result.coefficients
@@ -30,9 +33,10 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
     # X'WX
     XtWX = X' * Diagonal(w) * X
 
-    # A = X'WX + S
+    # A = X'WX + S — protected Cholesky so a boundary-sp fit that converged
+    # does not throw PosDefException while computing its final score
     A = XtWX + S_total
-    A_chol = cholesky(Symmetric(A))
+    A_chol = _protected_cholesky!(A)
     log_det_A = logdet(A_chol)
 
     # EDF
@@ -44,9 +48,13 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
         denom = n - gamma * edf_total
         score = n * dev / denom^2
 
+        if !compute_gradient
+            return score, zeros(length(log_sp))
+        end
         # Analytical gradient via IFT (matches mgcv's gdi1)
         mu = pirls_result.fitted_values
-        grad = _gcv_gradient(X, y, w, beta, mu, S_total, A_chol, penalty, log_sp,
+        grad = _gcv_gradient(X, y, w, beta, mu,
+            pirls_result.linear_predictor, S_total, A_chol, penalty, log_sp,
             family, link, dev, edf_total, n, gamma, weights)
         return score, grad
 
@@ -105,6 +113,9 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
                     0.5 * log_det_S
         end
 
+        if !compute_gradient
+            return score, zeros(length(log_sp))
+        end
         # Gradient via implicit function theorem (Wood 2011, Section 3.1)
         mu = pirls_result.fitted_values
         grad = _reml_gradient(X, w, S_total, A_chol, beta, mu, y, penalty, log_sp,
@@ -128,11 +139,23 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
     sp_idx = 1
     for block in penalty.blocks
         k = block.stop - block.start + 1
+        nS = length(block.S)
+        # Factor out the largest λ in the block:
+        #   log|Σλⱼ Sⱼ|₊ = r·log(λmax) + log|Σ(λⱼ/λmax)Sⱼ|₊
+        # so the eigen threshold operates on ratios λⱼ/λmax ≤ 1 instead of
+        # raw λ values spanning up to e³⁰ — genuine small eigenvalues of a
+        # weakly-weighted margin are no longer dropped. (mgcv goes further
+        # with the full similarity-transform reparameterization of
+        # Wood 2011 / gam.reparam; that remains future work.)
+        lsp_max = log_sp[sp_idx]
+        for j in 1:nS
+            lsp_max = max(lsp_max, log_sp[sp_idx + j - 1])
+        end
         S_block = zeros(T, k, k)
         for Si in block.S
-            λ = exp(log_sp[sp_idx])
+            λr = exp(log_sp[sp_idx] - lsp_max)
             @inbounds for j in 1:k, m in 1:k
-                S_block[j, m] += λ * Si[j, m]
+                S_block[j, m] += λr * Si[j, m]
             end
             sp_idx += 1
         end
@@ -140,7 +163,7 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
         thresh = eps(real(T)) * maximum(abs.(eig))
         for ev in eig
             if ev > thresh
-                ldet += log(ev)
+                ldet += log(ev) + lsp_max
             end
         end
     end
@@ -364,8 +387,11 @@ _d2mu_deta2(::GLM.LogLink, mu::Float64, eta::Float64) = mu
 _d2mu_deta2(::GLM.LogitLink, mu::Float64, eta::Float64) = mu * (1 - mu) * (1 - 2mu)
 _d2mu_deta2(::GLM.IdentityLink, mu::Float64, eta::Float64) = 0.0
 _d2mu_deta2(::GLM.InverseLink, mu::Float64, eta::Float64) = 2.0 * mu^3
-_d2mu_deta2(::GLM.SqrtLink, mu::Float64, eta::Float64) = 0.5
-_d2mu_deta2(::GLM.Link, mu::Float64, eta::Float64) = 0.0  # fallback
+# η = √μ ⇒ μ = η², d²μ/dη² = 2 (constant)
+_d2mu_deta2(::GLM.SqrtLink, mu::Float64, eta::Float64) = 2.0
+# Fallback: 0 second derivative degrades Newton weights to Fisher-type
+# weights for links without an analytic entry (e.g. probit, cloglog)
+_d2mu_deta2(::GLM.Link, mu::Float64, eta::Float64) = 0.0
 
 # Helper: V'(μ) for different families
 _dvariance_scalar_mu(::Normal, mu::Float64) = 0.0
@@ -376,11 +402,12 @@ _dvariance_scalar_mu(::InverseGaussian, mu::Float64) = 3.0 * mu * mu
 _dvariance_scalar_mu(::UnivariateDistribution, mu::Float64) = 0.0
 
 """
-    _gcv_gradient(X, y, w, beta, mu, S_total, A_chol, penalty, log_sp,
+    _gcv_gradient(X, y, w, beta, mu, eta, S_total, A_chol, penalty, log_sp,
                   family, link, dev, edf, n, gamma)
 
 Analytical gradient of GCV score w.r.t. log smoothing parameters using the
 Implicit Function Theorem (Wood 2011, Section 3). Matches mgcv's gdi1 C code.
+`eta` is the fitted linear predictor (offset included).
 
 Key formulas:
   GCV = n·dev / (n - γ·trA)²
@@ -390,6 +417,7 @@ where D1[j] = ∂dev/∂(log_sp_j) via IFT and trA1[j] = ∂trA/∂(log_sp_j).
 """
 function _gcv_gradient(X::Matrix{Float64}, y::Vector{Float64},
     w::Vector{Float64}, beta::Vector{Float64}, mu::Vector{Float64},
+    eta::Vector{Float64},
     S_total::Matrix{Float64},
     A_chol, penalty::PenaltySetup,
     log_sp::Vector{Float64},
@@ -420,7 +448,7 @@ function _gcv_gradient(X::Matrix{Float64}, y::Vector{Float64},
     v = zeros(n)
     @inbounds for i in 1:n
         vi = _variance_scalar(family, mu[i])
-        g1 = 1.0 / GLM.mueta(link, X[i, :]' * beta)
+        g1 = 1.0 / GLM.mueta(link, eta[i])
         v[i] = -2.0 * prior_weights[i] * (y[i] - mu[i]) / (max(vi, eps()) * g1)
     end
     dev_grad = X' * v
@@ -480,7 +508,7 @@ function _gcv_gradient(X::Matrix{Float64}, y::Vector{Float64},
                 # T_j_i = (dw_i/dη_i · η1_j_i) / w_i
                 T_j = zeros(n)
                 @inbounds for i in 1:n
-                    eta_i = X[i, :]' * beta
+                    eta_i = eta[i]
                     mueta_i = GLM.mueta(link, eta_i)
                     vi = _variance_scalar(family, mu[i])
                     # Numerical dw/deta

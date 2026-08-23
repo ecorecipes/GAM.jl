@@ -113,7 +113,24 @@ function mp_newton_inner(family::MultiParameterFamily, y::AbstractVector,
         end
 
         if has_constraints
-            β_target = _solve_constrained_qp(H, -g + H * β, Ain, bin, Aeq, beq;
+            # OSQP requires a convex quadratic model: if the observed Hessian
+            # is indefinite, ridge it to PD first (otherwise the QP "target"
+            # is meaningless and the step direction need not be descent).
+            H_qp = H
+            if _safe_cholesky(Symmetric(H)) === nothing
+                diag_base = max(1e-6 * maximum(abs, diag(H)), 1e-8)
+                for attempt in 0:5
+                    H_try = copy(H)
+                    for i in 1:p
+                        H_try[i, i] += diag_base * 10.0^attempt
+                    end
+                    if _safe_cholesky(Symmetric(H_try)) !== nothing
+                        H_qp = H_try
+                        break
+                    end
+                end
+            end
+            β_target = _solve_constrained_qp(H_qp, -g + H_qp * β, Ain, bin, Aeq, beq;
                 warm_start = β,
                 eps_abs = max(control.inner_tol, 1e-8),
                 eps_rel = max(control.inner_tol, 1e-8))
@@ -326,14 +343,36 @@ function mp_reml(log_sp::Vector{Float64}, family::MultiParameterFamily,
     # log|S+| — penalty determinant (only non-zero eigenvalues)
     logdetS = _logdet_penalty(Sl, log_sp, p)
 
-    # REML = NLL_pen + 0.5 log|H| - 0.5 log|S+| + 0.5 Mp log(2π)
-    reml_val = nll_pen + 0.5 * logdetH - 0.5 * logdetS + 0.5 * Mp * log(2π)
+    # REML = NLL_pen + 0.5 log|H| - 0.5 log|S+| - 0.5 Mp log(2π)
+    # (the Mp null-space directions contribute +(Mp/2)·log 2π to the restricted
+    # log-likelihood, hence a NEGATIVE constant in the negative criterion)
+    reml_val = nll_pen + 0.5 * logdetH - 0.5 * logdetS - 0.5 * Mp * log(2π)
 
     if !isfinite(reml_val)
         reml_val = 1e20
     end
 
     return reml_val, β_opt, g
+end
+
+"""
+Null-space dimension of the total penalty: Mp = p − rank(Σⱼ Sⱼ).
+
+Counts every unpenalized direction (parametric columns — including any
+intercepts actually present — plus smooth null spaces) without assuming
+one intercept per distribution parameter.
+"""
+function _penalty_null_dim(Sl::Vector{Matrix{Float64}}, p::Int)
+    isempty(Sl) && return p
+    S = zeros(p, p)
+    for Sj in Sl
+        S .+= Sj
+    end
+    eigs = eigvals(Symmetric(S))
+    mx = maximum(abs, eigs)
+    mx <= 0 && return p
+    rank_S = count(e -> e > 1e-10 * mx, eigs)
+    return p - rank_S
 end
 
 """Log determinant of penalty (sum of log of non-zero eigenvalues)."""
@@ -354,7 +393,7 @@ end
     mp_laml(family, y, X_list, β, S, Sl, log_sp, param_offsets; Mp=0) → Float64
 
 Compute the Laplace Approximate Marginal Likelihood (LAML):
-    LAML = -NLL(β*) - 0.5*β*'Sβ* - 0.5*log|H| + 0.5*log|S+| - 0.5*Mp*log(2π)
+    LAML = -NLL(β*) - 0.5*β*'Sβ* - 0.5*log|H| + 0.5*log|S+| + 0.5*Mp*log(2π)
 
 LAML = -REML, so maximizing LAML is equivalent to minimizing REML.
 Useful for model comparison (higher LAML = better fit).
@@ -391,7 +430,7 @@ function mp_laml(family::MultiParameterFamily, y::AbstractVector,
 
     logdetS = _logdet_penalty(Sl, log_sp, p)
 
-    laml = -nll_val - pen - 0.5 * logdetH + 0.5 * logdetS - 0.5 * Mp * log(2π)
+    laml = -nll_val - pen - 0.5 * logdetH + 0.5 * logdetS + 0.5 * Mp * log(2π)
     return isfinite(laml) ? laml : -Inf
 end
 
@@ -401,7 +440,7 @@ end
 
 """
     mp_efs_outer(family, y, X_list, Sl, β_init, log_sp_init, param_offsets, control)
-    → (log_sp_opt, β_opt, reml_val, iterations)
+    → (log_sp_opt, β_opt, reml_val, iterations, converged)
 
 EFS optimization of smoothing parameters for multi-parameter models.
 Each outer iteration: 1 inner Newton solve + closed-form SP update.
@@ -425,13 +464,14 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
         S = zeros(p, p)
         β_opt, nll_pen, g, H, conv = mp_newton_inner(family, y, X_list, β_init, S, control;
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
-        return Float64[], β_opt, nll_pen, 0
+        return Float64[], β_opt, nll_pen, 0, conv
     end
 
     p = length(β_init)
     log_sp = copy(log_sp_init)
     β_current = copy(β_init)
     iterations = 0
+    sp_converged = false
 
     # Precompute penalty ranks
     pen_ranks = Float64[]
@@ -453,8 +493,22 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
         # H is the penalized Hessian = H0 + S
-        # For EFS we need A⁻¹ where A = H (the penalized Hessian)
+        # For EFS we need A⁻¹ where A = H (the penalized Hessian).
+        # A non-log-concave likelihood (e.g. ELFLSS) can leave H indefinite at
+        # an intermediate iterate: recover with the same escalating ridge as
+        # mp_newton_inner rather than abandoning smoothing-parameter selection.
         F = _safe_cholesky(Symmetric(H))
+        if F === nothing
+            diag_base = max(1e-6 * maximum(abs, diag(H)), 1e-8)
+            for attempt in 0:5
+                H_pert = copy(H)
+                for i in 1:p
+                    H_pert[i, i] += diag_base * 10.0^attempt
+                end
+                F = _safe_cholesky(Symmetric(H_pert))
+                F !== nothing && break
+            end
+        end
         if F === nothing
             if control.trace
                 @info "Outer iteration $outer_iter: Cholesky failed, stopping"
@@ -473,7 +527,8 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
             rank_j = pen_ranks[j]
 
             bSb = dot(β_opt, Sj * β_opt)
-            trAS = tr(Ainv * Sj)
+            # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(p²), not O(p³)
+            trAS = sum(Ainv .* Sj)
 
             # EFS formula: scale_est=1 for multi-parameter (no separate scale)
             a = max(0.0, rank_j / λ - trAS)
@@ -495,6 +550,7 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
         β_current .= β_opt
 
         if max_change < 1e-4
+            sp_converged = true
             if control.trace
                 @info "Outer converged at iteration $outer_iter"
             end
@@ -507,16 +563,17 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
     for (j, Sj) in enumerate(Sl)
         S_final .+= exp(log_sp[j]) .* Sj
     end
-    β_final, nll_pen_final, _, H_final, _ = mp_newton_inner(
+    β_final, nll_pen_final, _, H_final, conv_final = mp_newton_inner(
         family, y, X_list, β_current, S_final, control;
         Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
     F_final = _safe_cholesky(Symmetric(H_final))
     logdetH = F_final !== nothing ? 2.0 * sum(log.(diag(F_final.L))) : 0.0
     logdetS = _logdet_penalty(Sl, log_sp, p)
-    reml_val = nll_pen_final + 0.5 * logdetH - 0.5 * logdetS + 0.5 * Mp * log(2π)
+    reml_val = nll_pen_final + 0.5 * logdetH - 0.5 * logdetS - 0.5 * Mp * log(2π)
 
-    return log_sp, β_final, reml_val, iterations
+    converged = sp_converged && conv_final
+    return log_sp, β_final, reml_val, iterations, converged
 end
 
 # Keep BFGS as fallback (legacy, not used by default)
@@ -725,8 +782,9 @@ function evgam(formulas, data, family::MultiParameterFamily;
     nsp = length(Sl)
     Ain, bin, Aeq, beq = _global_linear_constraints(smooths_list, p)
 
-    # Count null space dimension for REML constant
-    Mp = sum(1 + sum(sm.null_dim for sm in smooths; init=0) for smooths in smooths_list)
+    # Null-space dimension for the REML constant (does not assume an
+    # intercept per parameter — see _penalty_null_dim)
+    Mp = _penalty_null_dim(Sl, p)
 
     # Initial values
     η_init = initial_eta(family, y)
@@ -760,10 +818,9 @@ function evgam(formulas, data, family::MultiParameterFamily;
         iterations = 0
     else
         # Estimate smoothing parameters via EFS
-        log_sp, β_opt, reml_val, iterations = mp_efs_outer(family, y, X_list, Sl, β_init,
+        log_sp, β_opt, reml_val, iterations, conv = mp_efs_outer(family, y, X_list, Sl, β_init,
             log_sp, param_offsets, ctrl;
             Mp=Mp, Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
-        conv = true
     end
 
     # Final fitted values

@@ -360,8 +360,9 @@ end
 """
     egpd1_nll_derivs_exact!(out, y, ψvec, ξvec, lκvec)
 
-Hand-coded EGPD1 per-obs derivatives. Translation of egpd1d12 from egpd.cpp.
-out is n×9: [d_ψ, d_ξ, d_lκ, d_ψψ, d_ψξ, d_ψlκ, d_ξξ, d_ξlκ, d_lκlκ]
+Hand-coded EGPD1 per-obs derivatives. Translation of egpd1d12 from egpd.cpp,
+with Hessian columns written in the `hess_col` (column-major upper-triangle)
+order: out is n×9: [d_ψ, d_ξ, d_lκ, d_ψψ, d_ψξ, d_ξξ, d_ψlκ, d_ξlκ, d_lκlκ]
 """
 function egpd1_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
                                   ψvec::AbstractVector, ξvec::AbstractVector,
@@ -434,8 +435,9 @@ end
 """
     egpd3_nll_derivs_exact!(out, y, ψvec, ξvec, lδvec)
 
-Hand-coded EGPD3 per-obs derivatives. Translation of egpd3d12 from egpd.cpp.
-out is n×9: [d_ψ, d_ξ, d_lδ, d_ψψ, d_ψξ, d_ψlδ, d_ξξ, d_ξlδ, d_lδlδ]
+Hand-coded EGPD3 per-obs derivatives. Translation of egpd3d12 from egpd.cpp,
+with Hessian columns written in the `hess_col` (column-major upper-triangle)
+order: out is n×9: [d_ψ, d_ξ, d_lδ, d_ψψ, d_ψξ, d_ξξ, d_ψlδ, d_ξlδ, d_lδlδ]
 """
 function egpd3_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
                                   ψvec::AbstractVector, ξvec::AbstractVector,
@@ -521,8 +523,9 @@ end
 """
     egpd4_nll_derivs_exact!(out, y, ψvec, ξvec, lδvec, lκvec)
 
-Hand-coded EGPD4 per-obs derivatives. Translation of egpd4d12 from egpd.cpp.
-out is n×14: [d_ψ, d_ξ, d_lδ, d_lκ, d_ψψ, d_ψξ, d_ψlδ, d_ψlκ, d_ξξ, d_ξlδ, d_ξlκ, d_lδlδ, d_lδlκ, d_lκlκ]
+Hand-coded EGPD4 per-obs derivatives. Translation of egpd4d12 from egpd.cpp,
+with Hessian columns written in the `hess_col` (column-major upper-triangle)
+order: out is n×14: [d_ψ, d_ξ, d_lδ, d_lκ, d_ψψ, d_ψξ, d_ξξ, d_ψlδ, d_ξlδ, d_lδlδ, d_ψlκ, d_ξlκ, d_lδlκ, d_lκlκ]
 """
 function egpd4_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
                                   ψvec::AbstractVector, ξvec::AbstractVector,

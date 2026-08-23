@@ -17,18 +17,30 @@ function _smooth_construct(::RandomEffect, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) >= 1 ||
         throw(ArgumentError("Random effect requires at least one variable"))
 
+    # First variable is the grouping factor; any further variables must be
+    # numeric and multiply the level indicators (random slopes), matching
+    # mgcv's s(g, x, bs="re") = model.matrix(~ g:x - 1).
     var = spec.term_vars[1]
     col = Tables.getcolumn(data, var)
     levels = sort(unique(col))
     k = length(levels)
-
-    # Dummy coding: one column per level
     n = length(col)
+
+    slope = ones(n)
+    for v in spec.term_vars[2:end]
+        vcol = Tables.getcolumn(data, v)
+        eltype(vcol) <: Real || throw(ArgumentError(
+            "Random-effect smooth $(spec.label): variables after the first " *
+            "must be numeric (random slopes); got non-numeric :$v"))
+        slope .*= Float64.(vcol)
+    end
+
+    # Dummy coding: one column per level (times the slope product)
     X = zeros(n, k)
     level_map = Dict(lev => i for (i, lev) in enumerate(levels))
     for i in 1:n
         j = level_map[col[i]]
-        X[i, j] = 1.0
+        X[i, j] = slope[i]
     end
 
     # Identity penalty — penalizes all coefficients equally
@@ -67,6 +79,14 @@ function _predict_matrix(::RandomEffect, smooth::ConstructedSmooth, newdata)
     k = length(levels)
     level_map = Dict(lev => i for (i, lev) in enumerate(levels))
 
+    # Rebuild the slope product for random-slope terms (same convention as
+    # construction: product of the numeric variables after the first)
+    slope = ones(n_new)
+    for v in smooth.spec.term_vars[2:end]
+        vcol = Tables.getcolumn(newdata, v)
+        slope .*= Float64.(vcol)
+    end
+
     X = zeros(n_new, k)
     unseen = Set{Any}()
     for i in 1:n_new
@@ -74,7 +94,7 @@ function _predict_matrix(::RandomEffect, smooth::ConstructedSmooth, newdata)
         if j === nothing
             push!(unseen, col[i])  # zero row → population-level prediction
         else
-            X[i, j] = 1.0
+            X[i, j] = slope[i]
         end
     end
     if !isempty(unseen)

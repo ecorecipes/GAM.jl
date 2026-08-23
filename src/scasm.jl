@@ -286,7 +286,7 @@ function scasm_pirls(X::Matrix{Float64}, y::Vector{Float64},
         div_thresh = 10.0 * (0.1 + abs(pdev_old)) * sqrt(eps())
         accepted_step = (pdev_new - pdev_old <= div_thresh) &&
                         _is_feasible(beta_new, Ain, bin, Aeq, beq)
-        if iter > 1 && feasible_old && pdev_new - pdev_old > div_thresh
+        if feasible_old && pdev_new - pdev_old > div_thresh
             beta_trial = copy(beta_new)
             eta_trial = similar(eta_new)
             mu_trial = similar(mu_new)
@@ -488,6 +488,20 @@ function scasm_outer_iteration(
     return log_sp, final_result
 end
 
+"""
+    _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, weights, control)
+
+Fit a linear-constraint smooth model (`bs=:sc`/`bs=:scad`) via constrained
+PIRLS with OSQP quadratic-programming solves.
+
+!!! note "Covariance is unconditional on active constraints"
+    The reported `Vp = (X'WX + S)⁻¹φ` and the penalty-based EDF do not
+    condition on the active inequality constraints at the solution: where a
+    constraint binds, standard errors overstate the sampling variability in
+    the constrained directions and the EDF counts dimensions the constraints
+    have removed. This matches the behavior of mgcv's `pcls`-based workflows,
+    but confidence intervals near binding constraints are conservative.
+"""
 function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, weights, control;
                     start::Union{AbstractVector{<:Real}, Nothing} = nothing,
                     offset = nothing)
@@ -530,7 +544,8 @@ function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, 
     end
     Vp = inv(A_chol)
     F = Vp * XtWX
-    Ve = Symmetric(F * Vp * F') |> Matrix
+    # Frequentist covariance Ve = F·Vp (mgcv's Ve <- F %*% Vb), not F·Vp·F'
+    Ve = Symmetric(F * Vp) |> Matrix
 
     if _needs_scale_estimate(family)
         scale_est = result.pearson / (n - edf_total_val)
