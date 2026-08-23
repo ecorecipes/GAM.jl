@@ -47,14 +47,11 @@ using Plots
 ```
 
     Precompiling packages...
-       1222.1 ms  ✓ QuartoNotebookWorkerJSONExt (serial)
-      1 dependency successfully precompiled in 1 seconds
+       6300.9 ms  ✓ GAM
+      1 dependency successfully precompiled in 11 seconds. 118 already precompiled.
     Precompiling packages...
-       1572.6 ms  ✓ QuartoNotebookWorkerLaTeXStringsExt (serial)
-      1 dependency successfully precompiled in 2 seconds
-    Precompiling packages...
-       3222.0 ms  ✓ QuartoNotebookWorkerPlotsExt (serial)
-      1 dependency successfully precompiled in 3 seconds
+       4948.3 ms  ✓ GAM → GAMPlotsExt
+      1 dependency successfully precompiled in 8 seconds. 239 already precompiled.
 
 ## Simulating data
 
@@ -148,26 +145,26 @@ f_se = se.se
 ```
 
     200-element Vector{Float64}:
-     0.09763163450009903
-     0.09152575707543469
-     0.08590590067281129
-     0.08086768892930608
-     0.07649632646362477
-     0.07285706865774347
-     0.06998447397642743
-     0.06787297088819652
-     0.06647197194951468
-     0.06568791294903539
+     0.0976316345000991
+     0.09152575707543474
+     0.08590590067281131
+     0.08086768892930611
+     0.07649632646362478
+     0.0728570686577435
+     0.06998447397642744
+     0.06787297088819655
+     0.06647197194951471
+     0.06568791294903545
      ⋮
-     0.05956981337022623
-     0.06240285920034746
-     0.06630296119939035
-     0.07129741297875003
-     0.07733546480573951
-     0.08431034509967825
-     0.09208332126850172
-     0.10050265025256565
-     0.10941557070229413
+     0.05956981337022625
+     0.06240285920034748
+     0.06630296119939037
+     0.07129741297875006
+     0.07733546480573958
+     0.08431034509967834
+     0.09208332126850187
+     0.10050265025256583
+     0.10941557070229435
 
 We plot the smooth estimate with ±2 SE confidence bands, overlaying the
 true function:
@@ -262,7 +259,7 @@ gam_check(m)
     ──────────────────────────────────────────────────────────────────────
     Smooth                     k'      edf  k-index  p-value
     ──────────────────────────────────────────────────────────────────────
-    s(x,bs=cr)                 14     7.72    1.088    0.890
+    s(x,bs=cr)                 14     7.72    1.088    0.905
     ──────────────────────────────────────────────────────────────────────
 
 

@@ -206,7 +206,8 @@ for (i, xvar) in enumerate(x_vars)
     se_vals = se_i.se
 
     label_key = m.smooths[i].spec.label
-    xvals, resids = pr[label_key]
+    mask = pr.smooth .== label_key
+    xvals, resids = pr.x[mask], pr.residual[mask]
 
     p = plot(xgrid, est;
         ribbon=2 .* se_vals, fillalpha=0.2, color=:steelblue,
@@ -385,7 +386,7 @@ println("Median 95% CI width: ", round(median(upper95 .- lower95), digits=3))
 ```
 
     Fitted samples matrix size: (400, 200)
-    Median 95% CI width: 1.611
+    Median 95% CI width: 1.612
 
 ## Concurvity
 
@@ -396,7 +397,7 @@ analogue of multicollinearity). Values near 1 indicate high concurvity.
 conc_full = concurvity(m; full=true)
 ```
 
-    (worst = [0.12771464477604377, 0.13917946213220714, 0.1316305905556416, 0.16780562169356655], observed = [0.04135751351745519, 0.05319755422178866, 0.05348332326684894, 0.05786181400853229], estimate = [0.06572652054279716, 0.07437164158906605, 0.06226494707212572, 0.07251361411323007])
+    (worst = [0.12771464477604377, 0.13917946213220714, 0.1316305905556416, 0.16780562169356655], observed = [0.04135751351745519, 0.05319755422178868, 0.053483323266848924, 0.05786181400853201], estimate = [0.06572652054279716, 0.07437164158906605, 0.06226494707212572, 0.07251361411323007])
 
 Pairwise concurvity matrix:
 
@@ -425,10 +426,10 @@ kc = k_check(m)
 ```
 
     4-element Vector{@NamedTuple{label::String, k::Int64, edf::Float64, k_index::Float64, p_value::Float64}}:
-     (label = "s(x0,bs=cr)", k = 9, edf = 3.4262656464864034, k_index = 1.0449332110085794, p_value = 0.81)
-     (label = "s(x1,bs=cr)", k = 9, edf = 3.2029648458432822, k_index = 1.0172236314355265, p_value = 0.66)
-     (label = "s(x2,bs=cr)", k = 9, edf = 7.833821589051947, k_index = 1.0396460061058745, p_value = 0.765)
-     (label = "s(x3,bs=cr)", k = 9, edf = 1.8871672259901549, k_index = 0.9732144202730099, p_value = 0.24)
+     (label = "s(x0,bs=cr)", k = 9, edf = 3.4262656464864105, k_index = 1.0449332110085794, p_value = 0.73)
+     (label = "s(x1,bs=cr)", k = 9, edf = 3.202964845843242, k_index = 1.0172236314355263, p_value = 0.625)
+     (label = "s(x2,bs=cr)", k = 9, edf = 7.833821589051949, k_index = 1.0396460061058748, p_value = 0.76)
+     (label = "s(x3,bs=cr)", k = 9, edf = 1.8871672259901553, k_index = 0.9732144202730096, p_value = 0.33)
 
 ## Summary
 

@@ -287,17 +287,17 @@ summary(m2$gam)
 
     Parametric coefficients:
                 Estimate Std. Error t value Pr(>|t|)    
-    (Intercept)   0.9450     0.1208    7.82 3.47e-14 ***
+    (Intercept)   0.9314     0.1110   8.391 5.62e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     Approximate significance of smooth terms:
            edf Ref.df     F p-value    
-    s(x) 6.091  6.091 57.58  <2e-16 ***
+    s(x) 6.704  6.704 56.61  <2e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
-    R-sq.(adj) =  0.339   
+    R-sq.(adj) =  0.398   
       Scale est. = 1         n = 480
 
 ### Random effects
@@ -309,7 +309,7 @@ cat(sprintf("RE correlation with truth: %.4f\n",
             cor(re2[, 1], true_re2)))
 ```
 
-    RE correlation with truth: 0.9437
+    RE correlation with truth: 0.9202
 
 ### Plot: Data by Site with Population Smooth
 

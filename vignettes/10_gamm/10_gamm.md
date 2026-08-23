@@ -107,7 +107,7 @@ println(m)
 ```
 
     ┌ Warning: Random effect grouping variable :subject is numeric (Float64). This will be treated as a categorical grouping variable. If this is intentional, convert to CategoricalArray or String first.
-    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:295
+    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:283
     Generalized Additive Mixed Model
 
     Family: Normal
@@ -261,27 +261,27 @@ println(m2)
 ```
 
     ┌ Warning: Random effect grouping variable :site is numeric (Float64). This will be treated as a categorical grouping variable. If this is intentional, convert to CategoricalArray or String first.
-    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:295
+    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:283
     Generalized Additive Mixed Model
 
     Family: Poisson
     Link:   LogLink
 
     Fixed Effects Coefficients:
-      β[1] =   0.943890
+      β[1] =   0.930386
 
     Smooth Terms:
-      s(x,bs=tp)            edf =   6.20
+      s(x,bs=tp)            edf =   6.82
 
     Variance Components:
      Group                 Term                      Variance      Std.Dev.    Levels
      ──────────────────────────────────────────────────────────────────────────────
-     site                  Intercept                 0.125291      0.353965         8
-     Residual                                        0.981836      0.990876          
+     site                  Intercept                 0.104307      0.322967         8
+     Residual                                        0.980400      0.990151          
 
-    Deviance:         505.6844
-    REML:             472.7598
-    Scale est.:       0.981836
+    Deviance:         494.4476
+    REML:             476.0931
+    Scale est.:       0.980400
     n = 480
 
 ### Random effects
@@ -298,8 +298,8 @@ sd_drawn = std([dat2.re_true[findfirst(dat2.site .== s)] for s in sort(unique(da
     vc2[1].std, sd_drawn)
 ```
 
-    RE correlation with truth: 0.9434
-    Estimated σ_RE: 0.3540 (population σ_b: 0.4; sd of the 8 drawn effects: 0.3575)
+    RE correlation with truth: 0.9201
+    Estimated σ_RE: 0.3230 (population σ_b: 0.4; sd of the 8 drawn effects: 0.3575)
 
 ### Visualizing the Poisson GAMM
 
@@ -348,7 +348,7 @@ m3a = gamm(@formula(y ~ cr(x, 15) + (1|subject)), dat)
 ```
 
     ┌ Warning: Random effect grouping variable :subject is numeric (Float64). This will be treated as a categorical grouping variable. If this is intentional, convert to CategoricalArray or String first.
-    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:295
+    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:283
     @formula path: scale = 0.147337
 
 ### Using `@formula` with `re(group)`
@@ -361,7 +361,7 @@ m3b = gamm(@formula(y ~ cr(x, 15) + re(subject)), dat)
 ```
 
     ┌ Warning: Random effect grouping variable :subject is numeric (Float64). This will be treated as a categorical grouping variable. If this is intentional, convert to CategoricalArray or String first.
-    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:295
+    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:283
     re() path: scale = 0.147337
 
 ### Consistency with `re(group)` and `s(group, bs=:re)`

@@ -2,7 +2,8 @@
 
 @isdefined(run_benchmarks) || include(joinpath(@__DIR__, "benchmarks.jl"))
 
-using Dates
+# Date stamp via Libc to avoid a Dates dependency in minimal environments
+_today_stamp() = Libc.strftime("%Y-%m-%d", time())
 
 # Environment stamp for the report header, so the snapshot records when and
 # where it was produced (previously hand-edited and prone to going stale).
@@ -15,7 +16,7 @@ function environment_stamp()
     end
     arch = Sys.ARCH in (:aarch64, :arm64) ? "ARM64" : string(Sys.ARCH)
     os = Sys.isapple() ? "macOS" : Sys.islinux() ? "Linux" : Sys.iswindows() ? "Windows" : string(Sys.KERNEL)
-    "($(Dates.format(Dates.today(), "yyyy-mm-dd")), Julia $(VERSION), R $(rver), $(os) $(arch))"
+    "($(_today_stamp()), Julia $(VERSION), R $(rver), $(os) $(arch))"
 end
 
 function main()
