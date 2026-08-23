@@ -187,7 +187,7 @@ end
 # ============================================================================
 
 """
-    ginla(model::GamModel; A=nothing, nk=16, nb=100, J=1, approx=0)
+    ginla(model::GamModel; A=nothing, select=nothing, nk=16, nb=100, J=1, approx=0)
 
 Compute marginal posterior densities for GAM coefficients using the
 GAM Integrated Nested Laplace Approximation (GINLA).
@@ -196,6 +196,9 @@ GAM Integrated Nested Laplace Approximation (GINLA).
 - `model`: a fitted `GamModel` from `gam()` or `bam()`
 - `A`: optional matrix of linear transforms (rows) or vector of coefficient
   indices. If `nothing`, computes posteriors for all coefficients.
+- `select`: convenience alternative to `A` — an index (or indices) of smooth
+  terms whose coefficients to compute posteriors for, e.g. `select=1` for the
+  first smooth. Mutually exclusive with `A`.
 - `nk`: number of evaluation points for log posterior density (default: 16)
 - `nb`: number of points in the returned gridded density (default: 100)
 - `J`: number of determinant update steps (default: 1)
@@ -227,12 +230,27 @@ Wood, S.N. (2020) "Simplified Integrated Nested Laplace Approximation."
 """
 function ginla(model::GamModel;
     A::Union{Matrix{Float64}, Vector{Int}, Nothing} = nothing,
+    select::Union{Int, AbstractVector{Int}, Nothing} = nothing,
     nk::Int = 16,
     nb::Int = 100,
     J::Int = 1,
     approx::Int = 0)
 
     @assert approx in (0, 1, 2) "approx must be 0, 1, or 2"
+
+    # select= convenience: build the coefficient-index vector for the chosen
+    # smooth term(s), matching the select= convention of the other diagnostics
+    if select !== nothing
+        A === nothing || throw(ArgumentError("give either A or select, not both"))
+        idxs = Int[]
+        for si in (select isa Int ? (select,) : select)
+            1 <= si <= length(model.smooths) || throw(ArgumentError(
+                "select=$si out of range: model has $(length(model.smooths)) smooths"))
+            sm = model.smooths[si]
+            append!(idxs, sm.first_para:sm.last_para)
+        end
+        A = idxs
+    end
 
     X = model.X
     p = size(X, 2)

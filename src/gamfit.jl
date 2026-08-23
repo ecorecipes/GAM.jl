@@ -219,7 +219,9 @@ function gam(f::FormulaTerm, data;
     if _formula_has_nested(f)
         family isa ExtendedFamily && throw(ArgumentError(
             "s_nest supports Normal, Poisson, Bernoulli/Binomial, and Gamma families"))
-        return gam_nl(f, data; family = family, link = link)
+        _check_nested_kwargs(select, start, method)
+        return gam_nl(f, data; family = family, link = link,
+            offset = offset, weights = weights)
     end
 
     if family isa ExtendedFamily
@@ -257,6 +259,19 @@ function gam(f::FormulaTerm, data;
     end
 end
 
+# Kwargs gam() accepts but the nested-effect fitter does not: error rather
+# than silently ignore (offset/weights ARE forwarded to gam_nl).
+function _check_nested_kwargs(select, start, method)
+    select && throw(ArgumentError(
+        "select=true is not supported for nested-effect models"))
+    start === nothing || throw(ArgumentError(
+        "start= is not supported for nested-effect models"))
+    method == :REML || throw(ArgumentError(
+        "nested-effect models use EFS (REML-flavored) smoothing selection; " *
+        "method=:$method is not supported"))
+    return nothing
+end
+
 # select=TRUE (double-penalty term selection) is implemented for ordinary and
 # extended-family GAMs; the constrained (SCAM/SCASM) solvers do not support it.
 function _reject_select(select, what)
@@ -288,7 +303,9 @@ function gam(gf::GamFormula, data;
     if has_nested_effects(gf.smooth_specs)
         family isa ExtendedFamily && throw(ArgumentError(
             "s_nest supports Normal, Poisson, Bernoulli/Binomial, and Gamma families"))
-        return gam_nl(gf, data; family = family, link = link)
+        _check_nested_kwargs(select, start, method)
+        return gam_nl(gf, data; family = family, link = link,
+            offset = offset, weights = weights)
     end
 
     _validate_has_smooths(gf.smooth_specs)
@@ -509,13 +526,17 @@ function _estimate_scale(family, y, mu, wts, pearson::Float64, dev::Float64,
     method === :deviance && return max(dev / denom, 1e-10)
     phi = pearson / denom
     if method === :fletcher
-        s_bar = 0.0
+        # Prior-weighted mean of V′(μ)(y − μ)/V(μ), as in mgcv's weighted
+        # Fletcher estimator; reduces to the plain mean for unit weights.
+        s_num = 0.0
+        s_den = 0.0
         @inbounds for i in eachindex(y)
             vm = _variance_scalar(family, mu[i])
-            s_bar += _dvariance_scalar_mu(family, mu[i]) * (y[i] - mu[i]) /
-                     max(vm, eps())
+            s_num += wts[i] * _dvariance_scalar_mu(family, mu[i]) *
+                     (y[i] - mu[i]) / max(vm, eps())
+            s_den += wts[i]
         end
-        s_bar /= length(y)
+        s_bar = s_num / max(s_den, eps())
         if isfinite(s_bar) && 1.0 + s_bar > 0
             phi /= 1.0 + s_bar
         end
@@ -627,9 +648,11 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
     F = Vp * XtWX
     Ve = Symmetric(F * Vp) |> Matrix
 
-    # Scale parameter
+    # Scale parameter, honoring control.scale_est like the standard path
     if _estimates_scale(family)
-        scale_est = max(result.pearson / (n - edf_total_val), 1e-10)
+        scale_est = _estimate_scale(family, y, result.fitted_values, wts,
+            result.pearson, result.deviance, n, edf_total_val,
+            control.scale_est)
         Vp .*= scale_est
         Ve .*= scale_est
     else

@@ -175,4 +175,28 @@ using StatsAPI: deviance, nobs, dof_residual
         @test !isnan(mt.statistic[2])
         @test !isnan(mt.statistic[3])
     end
+    @testset "Influence measures (leverage, cooks_distance)" begin
+        rng_i = MersenneTwister(31)
+        n = 200
+        x = collect(range(0, 2π; length = n))
+        y = sin.(x) .+ 0.2 .* randn(rng_i, n)
+        # Inject a gross outlier
+        y[50] += 8.0
+        df = DataFrame(x = x, y = y)
+        m = gam(GAM.@formula(y ~ s(x, k = 10, bs = :cr)), df)
+
+        h = GAM.leverage(m)
+        @test length(h) == n
+        @test all(0.0 .<= h .<= 1.0)
+        @test sum(h) ≈ m.edf_total rtol = 0.05
+
+        d = GAM.cooksdistance(m)
+        @test length(d) == n
+        @test all(d .>= 0.0)
+        @test all(isfinite, d)
+        # The injected outlier dominates
+        @test argmax(d) == 50
+        @test d[50] > 10 * median(d)
+    end
+
 end

@@ -463,13 +463,14 @@ function _deviance(d::InverseGaussian, y, mu, wt)
     return dev
 end
 
-# Fallback for other distributions
+# Unsupported distributions must fail loudly: a generic logpdf-based
+# "deviance" here would silently ignore the fitted means. Family support is
+# gated upstream by _validate_gam_family, so this is a safety net only.
 function _deviance(d::UnivariateDistribution, y, mu, wt)
-    ll = 0.0
-    for i in eachindex(y, mu, wt)
-        ll += wt[i] * logpdf(d, y[i])
-    end
-    return -2 * ll
+    throw(ArgumentError(
+        "no deviance implementation for family $(nameof(typeof(d))); " *
+        "supported families are Normal, Poisson, Bernoulli/Binomial, " *
+        "Gamma, and InverseGaussian (plus the ExtendedFamily types)"))
 end
 
 function _variance(d::Normal, mu)

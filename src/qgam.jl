@@ -536,7 +536,7 @@ function qgam(formula, data, qu::Real;
 
     # Step 2: Compute error parameter if not provided
     if err === nothing
-        err = _get_err_param(qu, var_hat, n)
+        err = _get_err_param()
     end
 
     # Step 3: Compute smoothness constant co
@@ -560,7 +560,7 @@ function _qgam_default_co(y::AbstractVector, qu::Real; err::Union{Nothing, Real}
     y_float = Float64.(y)
     n = length(y_float)
     var_hat = max(var(y_float; corrected=false), eps(Float64))
-    err_val = err === nothing ? _get_err_param(qu, var_hat, n) : Float64(err)
+    err_val = err === nothing ? _get_err_param() : Float64(err)
     return err_val * sqrt(2π * var_hat) / (2 * log(2))
 end
 
@@ -644,9 +644,8 @@ Default error parameter `err` (the bound on |F(μ̂) − F(μ₀)| induced by th
 smoothed pinball loss). R qgam's default is `err = 0.05`; users can override
 via the `err` keyword of `qgam`/`mqgam`.
 """
-function _get_err_param(qu::Real, var_hat::Real, n::Int)
-    return 0.05
-end
+# R qgam's default err (the bias budget of the smoothed pinball loss).
+_get_err_param() = 0.05
 
 # ============================================================================
 # Internal: Learning rate calibration (bootstrap + Brent search, matching R's tuneLearnFast)

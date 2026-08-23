@@ -2,6 +2,10 @@
 
 using Random: shuffle!, MersenneTwister as _DiagMT, default_rng as _diag_default_rng
 
+# ============================================================================
+# gam_check / k_check — basis-dimension adequacy
+# ============================================================================
+
 """
     _k_index_and_p(m, sm, dev_resid, rng; n_rep=200) -> (k_index, p_value)
 
@@ -129,6 +133,10 @@ function k_check(m::GamModel; n_rep::Int = 200, seed = nothing)
 
     return results
 end
+
+# ============================================================================
+# concurvity
+# ============================================================================
 
 """
     concurvity(m::GamModel; full=true)
@@ -266,6 +274,10 @@ struct AnovaGamResult
     model_table::Union{Nothing, NamedTuple{(:resid_df, :resid_dev, :df, :deviance, :statistic, :p_value),
         Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}}}
 end
+
+# ============================================================================
+# anova_gam — approximate significance of smooth terms
+# ============================================================================
 
 """
     anova_gam(m::GamModel)
@@ -492,4 +504,51 @@ function _show_model_table(io::IO, r::AnovaGamResult)
         end
     end
     println(io, "─" ^ 80)
+end
+
+# ============================================================================
+# Influence measures
+# ============================================================================
+
+"""
+    leverage(m::GamModel) -> Vector{Float64}
+
+Leverage (diagonal of the hat/influence matrix) for each observation, as
+stored from the final penalized fit. Values sum to the model's effective
+degrees of freedom. Extends `StatsAPI.leverage`.
+
+# Example
+```julia
+h = leverage(m)
+findall(h .> 2 * sum(h) / length(h))   # high-leverage points
+```
+"""
+StatsAPI.leverage(m::GamModel) = copy(m.hat_matrix_diag)
+
+"""
+    cooksdistance(m::GamModel) -> Vector{Float64}
+
+Approximate Cook's distance for each observation, using the standard GLM
+form Dᵢ = r²_{P,i} hᵢ / (p φ (1 − hᵢ)²) with Pearson residuals r_P, hat
+diagonals h, scale φ, and p = total effective degrees of freedom. Large
+values flag observations with outsized influence on the fit. Extends
+`StatsAPI.cooksdistance`.
+
+# Example
+```julia
+d = cooksdistance(m)
+sortperm(d; rev=true)[1:5]   # five most influential observations
+```
+"""
+function StatsAPI.cooksdistance(m::GamModel)
+    h = m.hat_matrix_diag
+    r_p = residuals(m; type = :pearson)
+    p_eff = max(m.edf_total, 1.0)
+    φ = max(m.scale, eps())
+    d = similar(r_p)
+    @inbounds for i in eachindex(d)
+        hi = clamp(h[i], 0.0, 1.0 - 1e-10)
+        d[i] = r_p[i]^2 * hi / (p_eff * φ * (1.0 - hi)^2)
+    end
+    return d
 end

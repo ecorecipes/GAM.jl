@@ -46,10 +46,13 @@ edf(m::GamModel) = m.edf
     loglikelihood(m::GamModel)
 
 Log-likelihood of the fitted model, on the absolute scale (saturated-model
-constants included), so `aic(m)` is comparable with R's `AIC()` and across
-families/hyperparameters (e.g. two NegBin fits with different θ). Quasi
-families (QuasiPoisson, QuasiBinomial) have no true likelihood and return
-`NaN` (R reports `NA` for their AIC).
+constants included), so `aic(m)` is comparable across families and
+hyperparameters (e.g. two NegBin fits with different θ). For families with
+an estimated scale the plug-in φ is the model's Pearson/Fletcher estimate,
+matching **mgcv's** `logLik.gam`/`AIC()` convention — not `stats::glm`,
+which profiles φ as deviance/n, so absolute values differ slightly from
+`AIC(glm(...))`. Quasi families (QuasiPoisson, QuasiBinomial) have no true
+likelihood and return `NaN` (R reports `NA` for their AIC).
 """
 function loglikelihood(m::GamModel)
     dev = deviance(m)

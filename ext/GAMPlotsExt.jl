@@ -122,6 +122,30 @@ end
     x1_grid, x2_grid, Z'
 end
 
+# ─── PartialResiduals recipe ────────────────────────────────────────────────
+
+@recipe function f(pr::GAM.PartialResiduals)
+    unique_smooths = unique(pr.smooth)
+    n_panels = length(unique_smooths)
+
+    layout --> (1, n_panels)
+    legend --> false
+
+    for (panel, label) in enumerate(unique_smooths)
+        mask = pr.smooth .== label
+        @series begin
+            subplot := panel
+            seriestype := :scatter
+            markersize --> 2
+            markeralpha --> 0.5
+            title --> label
+            xguide --> first(pr.xname[mask])
+            yguide --> "partial residual"
+            pr.x[mask], pr.residual[mask]
+        end
+    end
+end
+
 # ─── SmoothEstimates recipe ─────────────────────────────────────────────────
 
 @recipe function f(se::GAM.SmoothEstimates)

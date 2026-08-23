@@ -407,7 +407,8 @@ function _efs_sp_update(log_sp::Vector{Float64}, beta::Vector{Float64},
     sp_idx = 1
     for block in penalty.blocks
         idx = block.start:block.stop
-        beta_block = beta[idx]
+        beta_block = view(beta, idx)
+        Ainv_block = view(Ainv, idx, idx)
 
         # The EFS numerator needs λⱼ·∂log|S_λ|₊/∂λⱼ = λⱼ·tr(S_λ⁺ Sⱼ).
         # For a single-penalty block this equals the penalty rank; for
@@ -423,9 +424,9 @@ function _efs_sp_update(log_sp::Vector{Float64}, beta::Vector{Float64},
             end
             λ = exp(log_sp[sp_idx])
 
-            bSb = dot(beta_block, Si * beta_block)
-            Ainv_block = Ainv[idx, idx]
-            trVS = tr(Ainv_block * Si)
+            bSb = dot(beta_block, Si, beta_block)
+            # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(k²), not O(k³)
+            trVS = dot(Ainv_block, Si)
 
             a = ldet_derivs[j] / λ - trVS
 
@@ -554,6 +555,24 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         result = pirls_extended(X, y, S_total, family, link;
             weights = weights, offset = offset, start = start, control = control,
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+        # With no free smoothing parameters there is no outer EFS loop to
+        # alternate with, so converge the family's extra parameter (NB θ,
+        # Tweedie p, Beta φ) here by alternating refits — pirls_extended's
+        # internal updates alone leave it under-converged.
+        if _has_extra_param(family)
+            # Refit first, then compare: pirls_extended re-estimates the
+            # extra parameter internally given the refreshed fit, so each
+            # cycle alternates β̂ and θ̂ until θ̂ is stationary across cycles.
+            for _ in 1:10
+                theta_old = _extra_param_value(family)
+                result = pirls_extended(X, y, S_total, family, link;
+                    weights = weights, offset = offset,
+                    start = result.coefficients, control = control,
+                    Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+                abs(_extra_param_value(family) - theta_old) <=
+                    1e-4 * (abs(theta_old) + 1e-8) && break
+            end
+        end
         return penalty.sp, result, true, 0
     end
 
@@ -765,6 +784,9 @@ function _conditional_reml(log_sp::AbstractVector, XtWX::Matrix{Float64},
 
     if method == :GCV
         denom = n - gamma * edf_total
+        # edf ≥ n/γ leaves the criterion undefined: return Inf so the
+        # candidate step is rejected instead of dividing by ~0.
+        denom <= 0 && return T(Inf)
         return T(n * dev / denom^2)
     end
 

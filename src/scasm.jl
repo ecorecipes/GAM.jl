@@ -555,9 +555,10 @@ function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, 
         scale_est = 1.0
     end
 
-    null_dev = _null_deviance(family, y, wts)
+    null_dev = _null_deviance(family, link, y, wts, off, control)
     reml_val, _ = reml_score(X, y, penalty, log_sp, family, link,
-        wts, result; method = method_eff, gamma = control.gamma)
+        wts, result; method = method_eff, gamma = control.gamma,
+        compute_gradient = false)
 
     return GamModel(
         f,

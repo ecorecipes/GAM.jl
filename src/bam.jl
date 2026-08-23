@@ -338,8 +338,9 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
             A[j, k] = XtWX[j, k] + S_total[j, k]
         end
 
-        # Solve via Cholesky
-        A_chol = cholesky!(Symmetric(A))
+        # Solve via Cholesky (escalating-ridge recovery on indefiniteness,
+        # matching the other fitters)
+        A_chol = _protected_cholesky!(A)
         ldiv!(beta_new, A_chol, XtWz)
 
         # Update eta, mu
@@ -532,26 +533,34 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         # Scale estimate
         scale_est = _needs_scale_estimate(family) ? max(result.pearson / (n - edf_total), 1e-10) : 1.0
 
-        # EFS update — reuse Cholesky from inner solve for Gaussian
+        # EFS update — reuse Cholesky from inner solve for Gaussian.
+        # Only the per-block diagonal blocks of A⁻¹ are needed for the EFS
+        # traces, so solve for those columns instead of forming the full
+        # p×p inverse (O(p²·k) per block vs O(p³)).
         if is_gaussian
             # A_chol is already available from inner solve (same XtWX + S_total)
-            Ainv = inv(A_chol)
+            A_fact = A_chol
         else
             A_efs = zeros(p, p)
             _accumulate_XtWX_chunked!(A_efs, X, w, chunk_size)
             A_efs .+= S_total
-            A_chol_efs = cholesky(Symmetric(A_efs))
-            Ainv = inv(A_chol_efs)
+            A_fact = _protected_cholesky!(A_efs)
         end
 
         log_sp_new = copy(log_sp)
         sp_idx = 1
         max_change = 0.0
 
+        E_blk = zeros(p, 0)
         for block in penalty.blocks
             idx = block.start:block.stop
             beta_block = beta[idx]
-            Ainv_block = Ainv[idx, idx]
+            kb = length(idx)
+            E_blk = zeros(p, kb)
+            @inbounds for (c, j) in enumerate(idx)
+                E_blk[j, c] = 1.0
+            end
+            Ainv_block = (A_fact \ E_blk)[idx, :]
 
             # Per-penalty λⱼ·tr(S_λ⁺Sⱼ): equals block.rank only for
             # single-penalty blocks; using block.rank per margin of a tensor
@@ -568,7 +577,8 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
                 λ = exp(log_sp[sp_idx])
 
                 bSb = dot(beta_block, Si * beta_block)
-                tr_AinvS = λ * tr(Ainv_block * Si)
+                # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(k²), not O(k³)
+                tr_AinvS = λ * sum(Ainv_block .* Si)
 
                 numerator = ldet_derivs[jS] - tr_AinvS
                 denominator = bSb / scale_est
