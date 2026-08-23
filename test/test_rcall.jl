@@ -14,7 +14,7 @@ using DataFrames
 using Distributions
 using LinearAlgebra
 using Statistics
-using StatsAPI: loglikelihood, dof, aic
+using StatsAPI: loglikelihood, dof, aic, predict
 using StatsBase: coef
 using StableRNGs
 
@@ -795,6 +795,110 @@ end
         @test all(gi.density .>= 0)
         @test all(isfinite.(gi.density))
         @test all(isfinite.(gi.beta))
+    end
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Inference parity: sp, coefficients, prediction SEs, AIC, p-values
+    # (elementwise, tolerances ~5-10x empirically observed agreement)
+    # ──────────────────────────────────────────────────────────────────────
+    @testset "Inference parity — Gaussian CR (sp, coef, SE, AIC, p)" begin
+        R"""
+        set.seed(123)
+        n <- 200
+        x <- seq(0, 2*pi, length.out=n)
+        y <- sin(x) + rnorm(n, sd=0.3)
+        r_inf <- gam(y ~ s(x, k=15, bs="cr"), data=data.frame(x=x, y=y),
+                     method="REML")
+        pr_inf <- predict(r_inf, se.fit=TRUE)
+        sm_inf <- summary(r_inf)
+        """
+        rs = r_gam_summary("r_inf")
+        df = DataFrame(x = rcopy(R"x"), y = rcopy(R"y"))
+        m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df; method = :REML)
+
+        # Smoothing parameter (log scale; observed agreement ~1e-5)
+        @test m.sp[1] ≈ log(rs[:sp][1]) atol = 0.05
+        # Coefficient vector, elementwise (observed max abs diff ~9e-8)
+        @test length(coef(m)) == length(rs[:coef])
+        @test maximum(abs.(coef(m) .- rs[:coef])) < 1e-5
+        # Prediction standard errors vs predict(se.fit=TRUE), elementwise
+        # (observed max rel diff ~5e-7)
+        se_r = rcopy(Vector{Float64}, R"pr_inf$se.fit")
+        _, se_jl = predict(m, df; se = true)
+        @test maximum(abs.(se_jl .- se_r) ./ se_r) < 1e-4
+        # AIC: mgcv applies the Wood/Pya/Säfken corrected edf for REML fits,
+        # GAM.jl uses the plain edf — observed difference ~0.23
+        @test aic(m) ≈ rcopy(R"AIC(r_inf)") atol = 1.5
+        # Smooth-term test: edf and ref_df match; the test STATISTIC differs
+        # (GAM.jl uses a documented simplification of Wood (2013) testStat,
+        # observed F 160.4 vs mgcv 132.6), so only edf and the (here
+        # decisive) p-value magnitude are asserted.
+        st = anova_gam(m).smooth_table
+        @test st.edf[1] ≈ rcopy(R"sm_inf$s.table[1,\"edf\"]") atol = 0.05
+        @test st.p_value[1] < 1e-10 && rcopy(R"sm_inf$s.table[1,\"p-value\"]") < 1e-10
+    end
+
+    @testset "Inference parity — Poisson CR (sp, SE, AIC)" begin
+        R"""
+        set.seed(77)
+        n <- 300
+        xp <- runif(n, 0, 2)
+        yp <- rpois(n, exp(0.5 + 0.8*sin(2*pi*xp)))
+        r_pinf <- gam(yp ~ s(xp, k=12, bs="cr"), family=poisson(),
+                      method="REML", data=data.frame(xp=xp, yp=yp))
+        pr_pinf <- predict(r_pinf, se.fit=TRUE)
+        """
+        df = DataFrame(xp = rcopy(R"xp"), yp = Float64.(rcopy(R"yp")))
+        m = gam(@formulak(yp ~ s(xp, k = 12, bs = :cr)), df;
+            family = Poisson(), method = :REML)
+        # observed: sp log-diff 0.012, SE max rel 0.0021, AIC diff 0.54
+        @test m.sp[1] ≈ rcopy(R"log(r_pinf$sp[1])") atol = 0.1
+        se_r = rcopy(Vector{Float64}, R"pr_pinf$se.fit")
+        _, se_jl = predict(m, df; se = true)
+        @test maximum(abs.(se_jl .- se_r) ./ se_r) < 0.02
+        @test aic(m) ≈ rcopy(R"AIC(r_pinf)") atol = 2.0
+    end
+
+    @testset "Cyclic cubic (bs=:cc) vs mgcv" begin
+        R"""
+        set.seed(5)
+        n <- 250
+        tt <- runif(n, 0, 24)
+        yc <- sin(2*pi*tt/24) + 0.5*cos(4*pi*tt/24) + rnorm(n, sd=0.25)
+        r_cc2 <- gam(yc ~ s(tt, k=12, bs="cc"), method="REML",
+                     data=data.frame(tt=tt, yc=yc),
+                     knots=list(tt=seq(0, 24, length.out=12)))
+        """
+        df = DataFrame(tt = rcopy(R"tt"), yc = rcopy(R"yc"))
+        m = gam(@formulak(yc ~ s(tt, k = 12, bs = :cc)), df; method = :REML)
+        f_r = rcopy(Vector{Float64}, R"fitted(r_cc2)")
+        # observed: edf diff 0.005, fitted max abs 0.033, cor 0.99996
+        @test m.edf_total ≈ rcopy(R"sum(r_cc2$edf)") atol = 0.1
+        @test cor(m.fitted_values, f_r) > 0.999
+        @test maximum(abs.(m.fitted_values .- f_r)) < 0.1
+    end
+
+    @testset "Factor smooth (bs=:fs) vs mgcv" begin
+        R"""
+        set.seed(9)
+        ng <- 5; npg <- 60
+        gf <- factor(rep(1:ng, each=npg))
+        xf <- runif(ng*npg)
+        bf <- rnorm(ng, sd=0.5)
+        yf <- sin(2*pi*xf) + bf[as.integer(gf)] +
+              0.3*as.integer(gf)/ng*cos(2*pi*xf) + rnorm(ng*npg, sd=0.2)
+        r_fs2 <- gam(yf ~ s(xf, gf, bs="fs", k=8), method="REML",
+                     data=data.frame(xf=xf, gf=gf, yf=yf))
+        """
+        df = DataFrame(xf = rcopy(R"xf"), g = string.(rcopy(R"as.integer(gf)")),
+            yf = rcopy(R"yf"))
+        m = gam(@formulak(yf ~ s(xf, g, bs = :fs, k = 8)), df; method = :REML)
+        f_r = rcopy(Vector{Float64}, R"fitted(r_fs2)")
+        # post-rewrite fs matches mgcv basis dimension and fit
+        # (observed: 41 = 41 coefficients, fitted cor 0.9999, max abs 0.037)
+        @test length(coef(m)) == rcopy(R"length(coef(r_fs2))")
+        @test cor(m.fitted_values, f_r) > 0.999
+        @test maximum(abs.(m.fitted_values .- f_r)) < 0.1
     end
 
 end  # R Integration Tests
