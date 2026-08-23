@@ -149,9 +149,12 @@ Concurvity is the smooth analogue of collinearity — it measures how well each 
 
 ```{julia}
 conc = concurvity(m; full = true)
-println("Worst-case concurvity per smooth:")
+println("Concurvity per smooth (worst / observed / estimate):")
 for (i, sm) in enumerate(m.smooths)
-    println("  $(rpad(sm.spec.label, 10)) $(round(conc[i]; digits = 3))")
+    println("  $(rpad(sm.spec.label, 10)) ",
+        "$(round(conc.worst[i]; digits = 3)) / ",
+        "$(round(conc.observed[i]; digits = 3)) / ",
+        "$(round(conc.estimate[i]; digits = 3))")
 end
 ```
 

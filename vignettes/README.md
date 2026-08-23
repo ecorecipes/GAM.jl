@@ -5,8 +5,9 @@ dataset(s) as CSV files, and an `R/` subdirectory with a companion vignette
 that runs the equivalent analysis with the corresponding R package (mgcv,
 scam, qgam, gamlss, evgam) on the **same** CSV data.
 
-Rendered outputs (`.md`, `.html`, `.pdf`, `*_files/`) are build artifacts and
-are not checked in — render them locally when needed.
+GFM renders (`.md` plus `*_files/` figures) are checked in so the vignettes
+can be browsed on GitHub; re-render them after changing a `.qmd` or the
+package. HTML/PDF renders are local-only build artifacts.
 
 ## Rendering
 
