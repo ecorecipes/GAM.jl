@@ -108,11 +108,12 @@ using LinearAlgebra
             cre = construct_random_effect(spec, df)
             @test cre.n_levels == 5
             @test cre.n_terms == 1
-            # With sum-to-zero constraint: n_levels - 1 columns
+            # Unconstrained REs (mgcv/lme4 convention): one column per level,
+            # identified by the ridge penalty rather than a sum-to-zero
+            # constraint.
             @test size(cre.Z, 1) == 100
-            @test size(cre.Z, 2) == 4  # 5 - 1 = 4 constrained cols
-            @test cre.constraint_basis !== nothing
-            @test size(cre.constraint_basis) == (5, 4)
+            @test size(cre.Z, 2) == 5
+            @test cre.constraint_basis === nothing
         end
 
         @testset "Random slope Z" begin
@@ -122,8 +123,8 @@ using LinearAlgebra
             @test cre.n_levels == 3
             @test cre.n_terms == 1
             @test size(cre.Z, 1) == 90
-            # Random slope: no intercept, so no sum-to-zero needed — but check it works
-            @test size(cre.Z, 2) >= 2  # at least 2 cols (3 - 1 or 3)
+            # Random slope: one column per level (unconstrained)
+            @test size(cre.Z, 2) == 3
         end
 
         @testset "Prediction Z for new groups" begin

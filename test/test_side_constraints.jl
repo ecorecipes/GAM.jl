@@ -164,7 +164,9 @@ using StatsAPI
         k = size(sm.X, 2)
         np = k  # just use k as total param count for this test
 
-        X_aug = GAM._augment_smooth_X(sm, nobs, np)
+        # col_offset: this smooth's 0-based column offset within the
+        # smooth-only parameter block (single smooth → 0)
+        X_aug = GAM._augment_smooth_X(sm, nobs, np, 0)
         @test size(X_aug) == (nobs + np, k)
         # Top portion should be the original basis matrix
         @test X_aug[1:nobs, :] ≈ sm.X

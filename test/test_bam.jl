@@ -22,13 +22,14 @@
     @testset "BamControl construction" begin
         ctrl = bam_control()
         @test ctrl.chunk_size == 10000
-        @test ctrl.discrete == true
-        @test ctrl.max_unique == 1000
-        @test ctrl.nthreads >= 1
 
-        ctrl2 = bam_control(chunk_size=5000, discrete=false)
+        ctrl2 = bam_control(chunk_size=5000)
         @test ctrl2.chunk_size == 5000
-        @test ctrl2.discrete == false
+
+        # discrete/max_unique/nthreads are deprecated no-ops with a warning
+        ctrl3 = @test_logs (:warn, r"deprecated") match_mode=:any bam_control(
+            chunk_size=5000, discrete=false)
+        @test ctrl3.chunk_size == 5000
     end
 
     @testset "BAM Gaussian — small data matches gam" begin
