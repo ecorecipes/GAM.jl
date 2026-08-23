@@ -34,19 +34,20 @@
 
         @test sm isa ConstructedSmooth{FactorSmooth}
         n_levels = 3
-        k_eff = k - 1   # after sum-to-zero constraint on marginal
+        k_eff = k   # uncentered marginal (mgcv fs: no constraint absorbed)
         @test size(sm.X) == (n, n_levels * k_eff)
 
         # No additional constraint on the full fs smooth
         @test sm.constraint === nothing
 
-        # Penalty dimensions match
+        # Penalty dimensions match: replicated wiggliness penalty plus the
+        # shared null-space (random-effect) penalty added for full penalization
+        @test length(sm.S) == 2
         @test all(S -> size(S) == (n_levels * k_eff, n_levels * k_eff), sm.S)
 
-        # Penalty rank and null_dim
-        # TPRS 1D: original null_dim=2, after constraint: null_dim_constrained=1
-        @test sm.null_dim == n_levels * 1
-        @test sm.rank == n_levels * (k - 2)   # marginal rank = k - original_null_dim
+        # Fully penalized, as in mgcv fs (null.space.dim = 0)
+        @test sm.null_dim == 0
+        @test sm.rank == n_levels * k_eff
     end
 
     @testset "Block-diagonal structure" begin

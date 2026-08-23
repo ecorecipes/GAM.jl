@@ -24,8 +24,10 @@
         y = 3.0 .* x .+ 0.2 .* randn(n)
         df = DataFrame(x=x, y=y)
 
+        # gam() routes shape-constrained fits with its own default method
+        # (:REML → EFS); scam() defaults to :GCV, so pin matching methods.
         m_gam = gam(@formulak(y ~ s(x, bs=:mpi, k=10)), df)
-        m_scam = scam(@formulak(y ~ s(x, bs=:mpi, k=10)), df)
+        m_scam = scam(@formulak(y ~ s(x, bs=:mpi, k=10)), df; method=:REML)
 
         @test m_gam.deviance_val ≈ m_scam.deviance_val atol=1e-6
         @test m_gam.fitted_values ≈ m_scam.fitted_values atol=1e-6

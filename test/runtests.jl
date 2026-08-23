@@ -769,7 +769,9 @@ end
         @test m.converged
         @test m.scale > 1.0
         @test all(fitted(m) .> 0)
-        @test isfinite(loglikelihood(m))
+        # Quasi families have no true likelihood: loglikelihood/AIC follow
+        # R's NA convention and return NaN.
+        @test isnan(loglikelihood(m))
         @test length(residuals(m; type=:pearson)) == n
     end
 

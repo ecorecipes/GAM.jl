@@ -215,7 +215,8 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         df = DataFrame(x = x, z = z, y = y)
 
         f = @formulak(y ~ z + s(x, bs = :mpi, k = 12))
-        m_scam = scam(f, df)
+        # Pin method=:REML so scam() (default :GCV) matches gam()'s routing.
+        m_scam = scam(f, df; method=:REML)
         m_gam = gam(f, df)
 
         @test m_scam.converged
