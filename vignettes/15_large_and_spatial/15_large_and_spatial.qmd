@@ -492,9 +492,11 @@ $(S, X^\top X)$ — which determine EDF as a function of the smoothing
 parameter — agree to $5\times10^{-8}$, and fitting at mgcv's selected `sp`
 reproduces mgcv's fit to $5\times10^{-9}$. What can still differ is the
 *selection* of `sp`, because GAM.jl uses extended Fellner–Schall where mgcv
-uses outer Newton on the LAML. On a harder ±30° problem at $k = 20$ the two
-optimizers land on different smoothing parameters (0.093 versus 0.234),
-giving EDF 16.0 versus 13.2 — a difference in the optimizer, not the basis.
+uses outer Newton on the LAML. On harder problems — a narrower spatial extent
+with a smaller $k$ — the two optimizers can land on visibly different
+smoothing parameters and effective degrees of freedom. That is a difference in
+the optimizer, not the basis, and the test above distinguishes the two: if
+supplying mgcv's `sp` reproduces mgcv's fit, the basis is not at fault.
 
 A practical consequence: unlike `bs=:tp`, **`sp` values are portable between
 the packages** for `sos`, so an mgcv `sp` can be passed straight to GAM.jl.

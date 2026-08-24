@@ -98,16 +98,17 @@ m
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x0,bs=cr)              3.20     4.00      4.528   0.001384
-    s(x1,bs=cr)              2.57     3.00    114.545  5.272e-53
-    s(x2,bs=cr)              7.80     8.00     70.801  6.614e-71
-    s(x3,bs=cr)              1.00     1.00      0.255     0.6137
+    s(x0,bs=cr)              3.20     3.96      4.528   0.001384 **  
+    s(x1,bs=cr)              2.57     3.18    114.545  5.272e-53 *** 
+    s(x2,bs=cr)              7.80     8.62     70.801  6.614e-71 *** 
+    s(x3,bs=cr)              1.00     1.01      0.255     0.6137     
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.713   Deviance explained = 72.3%
-    Scale est. = 4.6665   n = 400
+    -REML = 890.7   Scale est. = 4.6665   n = 400
 
 `k_check` reports, per smooth, the basis dimension `k`, the effective
 degrees of freedom, mgcv’s **k-index**, and a permutation p-value. The
@@ -123,9 +124,9 @@ for r in k_check(m)
 end
 ```
 
-    s(x0,bs=cr)      k= 9  edf= 3.20  k-index=0.988  p=0.350
-    s(x1,bs=cr)      k= 9  edf= 2.57  k-index=0.964  p=0.235
-    s(x2,bs=cr)      k= 9  edf= 7.80  k-index=1.076  p=0.930
+    s(x0,bs=cr)      k= 9  edf= 3.20  k-index=0.988  p=0.330
+    s(x1,bs=cr)      k= 9  edf= 2.57  k-index=0.964  p=0.215
+    s(x2,bs=cr)      k= 9  edf= 7.80  k-index=1.076  p=0.950
     s(x3,bs=cr)      k= 9  edf= 1.00  k-index=1.051  p=0.845
 
 All four p-values are comfortable, and the edf sit well below `k`, so
@@ -233,8 +234,8 @@ m_gamma = gam(@formula(ypos ~ s(x0, k=10, bs=:cr) + s(x1, k=10, bs=:cr) +
 @printf("Gamma/log AIC = %9.2f  (edf %.2f)\n", aic(m_gamma), m_gamma.edf_total)
 ```
 
-    Gaussian  AIC =   1767.10  (edf 14.56)
-    Gamma/log AIC =   1865.64  (edf 12.11)
+    Gaussian  AIC =   1769.81  (edf 14.56)
+    Gamma/log AIC =   1867.34  (edf 12.11)
 
 Note the caveat: these two models have **different responses** (`y`
 versus a shifted `ypos`), so their AIC values are *not* comparable with

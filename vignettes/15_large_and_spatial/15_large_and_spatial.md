@@ -148,11 +148,11 @@ end
 
     n       gam (s)   bam (s)   speedup   gam (MB)   bam (MB)   mem ratio
     ──────────────────────────────────────────────────────────────────────
-    1000    0.0096    0.0115    0.84×     20.6       26.2       0.79×
-    2000    0.0169    0.012     1.41×     26.2       30.1       0.87×
-    5000    0.0374    0.0158    2.37×     43.8       40.8       1.07×
-    10000   0.0635    0.0252    2.51×     68.2       59.7       1.14×
-    20000   0.1039    0.0324    3.21×     129.4      92.5       1.4×
+    1000    0.0098    0.0108    0.91×     20.6       26.2       0.79×
+    2000    0.0158    0.0123    1.28×     26.2       30.1       0.87×
+    5000    0.037     0.0158    2.35×     43.8       40.8       1.07×
+    10000   0.0585    0.0217    2.7×      68.3       59.7       1.14×
+    20000   0.114     0.0335    3.4×      136.1      96.8       1.41×
 
 There are two separate crossovers in that table — one in time, one in
 memory — and they need not coincide:
@@ -173,7 +173,7 @@ println("at the largest n tried (", rows[end].n, "): ",
 
     bam() first beats gam() on time   at n = 2000
     bam() first beats gam() on memory at n = 5000
-    at the largest n tried (20000): 3.21× faster, 1.4× lighter
+    at the largest n tried (20000): 3.4× faster, 1.41× lighter
 
 `bam()`’s overhead is the $p \times p$ accumulator and the chunk
 buffers, which are pure cost when the design matrix is small — that is
@@ -260,11 +260,11 @@ end
 
     n       mgcv gam   GAM.jl gam   mgcv bam   GAM.jl bam   GAM.jl gam vs mgcv gam
     ────────────────────────────────────────────────────────────────────────────
-    1000    0.472 s    0.0096 s     0.041 s    0.0115 s     49.1× faster
-    2000    0.835 s    0.0169 s     0.045 s    0.012 s      49.3× faster
-    5000    2.108 s    0.0374 s     0.079 s    0.0158 s     56.4× faster
-    10000   3.667 s    0.0635 s     0.136 s    0.0252 s     57.8× faster
-    20000   7.325 s    0.1039 s     0.276 s    0.0324 s     70.5× faster
+    1000    0.472 s    0.0098 s     0.041 s    0.0108 s     48.0× faster
+    2000    0.835 s    0.0158 s     0.045 s    0.0123 s     52.9× faster
+    5000    2.108 s    0.037 s      0.079 s    0.0158 s     56.9× faster
+    10000   3.667 s    0.0585 s     0.136 s    0.0217 s     62.7× faster
+    20000   7.325 s    0.114 s      0.276 s    0.0335 s     64.3× faster
 
 GAM.jl’s `gam()` is the fast one in absolute terms; mgcv’s `bam()` has a
 large ratio to report mainly because mgcv’s `gam()` re-forms a QR at
@@ -302,10 +302,10 @@ end
 
     k     p     gam (s)    bam (s)    speedup
     ─────────────────────────────────────────────
-    10    30    0.0121     0.0061     1.99×
-    20    60    0.03       0.0117     2.55×
-    40    120   0.11       0.0395     2.79×
-    60    180   0.2095     0.0848     2.47×
+    10    30    0.0132     0.007      1.88×
+    20    60    0.0308     0.0127     2.43×
+    40    120   0.1208     0.0451     2.68×
+    60    180   0.235      0.0903     2.6×
 
 Both fitters slow down steeply in `k`, as the $O(np^2)$ cost predicts —
 compare the growth here against the near-linear growth in the $n$ table
@@ -330,9 +330,9 @@ for cs in (1_000, 10_000, 20_000)
 end
 ```
 
-    chunk_size = 1000     time = 0.0323     EDF = 33.5785
-    chunk_size = 10000    time = 0.0354     EDF = 33.5785
-    chunk_size = 20000    time = 0.0354     EDF = 33.5785
+    chunk_size = 1000     time = 0.0341     EDF = 33.5785
+    chunk_size = 10000    time = 0.0352     EDF = 33.5785
+    chunk_size = 20000    time = 0.0342     EDF = 33.5785
 
 ## Part 2 — Areal data: Markov random fields
 
@@ -641,10 +641,12 @@ eigenvalues of $(S, X^\top X)$ — which determine EDF as a function of
 the smoothing parameter — agree to $5\times10^{-8}$, and fitting at
 mgcv’s selected `sp` reproduces mgcv’s fit to $5\times10^{-9}$. What can
 still differ is the *selection* of `sp`, because GAM.jl uses extended
-Fellner–Schall where mgcv uses outer Newton on the LAML. On a harder
-±30° problem at $k = 20$ the two optimizers land on different smoothing
-parameters (0.093 versus 0.234), giving EDF 16.0 versus 13.2 — a
-difference in the optimizer, not the basis.
+Fellner–Schall where mgcv uses outer Newton on the LAML. On harder
+problems — a narrower spatial extent with a smaller $k$ — the two
+optimizers can land on visibly different smoothing parameters and
+effective degrees of freedom. That is a difference in the optimizer, not
+the basis, and the test above distinguishes the two: if supplying mgcv’s
+`sp` reproduces mgcv’s fit, the basis is not at fault.
 
 A practical consequence: unlike `bs=:tp`, **`sp` values are portable
 between the packages** for `sos`, so an mgcv `sp` can be passed straight

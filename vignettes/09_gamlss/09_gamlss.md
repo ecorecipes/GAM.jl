@@ -231,7 +231,7 @@ println("Mean fitted CV: $(round(mean(σ_fit); digits=3))")
 ```
 
     μ: cor with truth = 0.99575
-    σ: cor with truth = 0.99065
+    σ: cor with truth = 0.99066
     Mean fitted CV: 0.299
 
 ### Visualisation

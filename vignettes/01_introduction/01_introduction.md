@@ -46,13 +46,6 @@ using DataFrames
 using Plots
 ```
 
-    Precompiling packages...
-       6300.9 ms  ✓ GAM
-      1 dependency successfully precompiled in 11 seconds. 118 already precompiled.
-    Precompiling packages...
-       4948.3 ms  ✓ GAM → GAMPlotsExt
-      1 dependency successfully precompiled in 8 seconds. 239 already precompiled.
-
 ## Simulating data
 
 We simulate $n = 200$ observations from a sine curve with Gaussian
@@ -107,13 +100,14 @@ m = gam(@formula(y ~ s(x, k = 15, bs = :cr)), df)
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=cr)               7.72     8.00    143.385  1.535e-76
+    s(x,bs=cr)               7.72     9.37    143.385  1.535e-76 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.852   Deviance explained = 85.8%
-    Scale est. = 0.0840   n = 200
+    -REML = 49.74   Scale est. = 0.0840   n = 200
 
 The model summary shows parametric coefficients, smooth term EDF,
 deviance explained, and scale estimate.
@@ -259,7 +253,7 @@ gam_check(m)
     ──────────────────────────────────────────────────────────────────────
     Smooth                     k'      edf  k-index  p-value
     ──────────────────────────────────────────────────────────────────────
-    s(x,bs=cr)                 14     7.72    1.088    0.905
+    s(x,bs=cr)                 14     7.72    1.088    0.895
     ──────────────────────────────────────────────────────────────────────
 
 

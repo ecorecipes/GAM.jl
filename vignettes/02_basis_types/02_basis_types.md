@@ -95,7 +95,7 @@ models = Dict{Symbol, GamModel}(
 
     Dict{Symbol, GamModel} with 4 entries:
       :cr => GamModel(n_smooth=1, edf=13.8, deviance=64.49)
-      :tp => GamModel(n_smooth=1, edf=13.8, deviance=64.49)
+      :tp => GamModel(n_smooth=1, edf=13.9, deviance=64.44)
       :gp => GamModel(n_smooth=1, edf=13.3, deviance=64.89)
       :ps => GamModel(n_smooth=1, edf=12.7, deviance=64.63)
 
@@ -115,7 +115,7 @@ end
 
     Basis   EDF       Deviance    Dev.Expl(%)
     ──────────────────────────────────────────────────
-    tp         12.78       64.49        75.1
+    tp         12.92       64.44        75.1
     cr         12.78       64.49        75.1
     ps         11.66       64.63        75.1
     gp         12.25       64.89        75.0

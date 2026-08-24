@@ -104,28 +104,29 @@ m_50 = qgam(@formula(y ~ s(x, k=20, bs=:cr)), df, 0.5)
     Method: REML
 
     Parametric coefficients:
-    ─────────────────────────────────────────────────────
-                       Coef.  Std. Error      z  Pr(>|z|)
-    ─────────────────────────────────────────────────────
-    (Intercept)  -0.00166205   0.0673224  -0.02    0.9803
-    ─────────────────────────────────────────────────────
+    ────────────────────────────────────────────────────
+                      Coef.  Std. Error      z  Pr(>|z|)
+    ────────────────────────────────────────────────────
+    (Intercept)  -0.0059474    0.141522  -0.04    0.9665
+    ────────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df     Chi.sq    p-value
+    Smooth                    edf   Ref.df     Chi.sq    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=cr)               6.20     7.00    113.562  1.673e-21
+    s(x,bs=cr)               3.43     4.30     21.855  0.0002141 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
-    R² (adj) = 0.555   Deviance explained = 43.1%
-    n = 500
+    R² (adj) = 0.529   Deviance explained = 40.6%
+    -REML = 20.61   n = 500
 
 ``` julia
 yhat_50 = predict(m_50)
 println("Median regression fitted range: [$(round(minimum(yhat_50), digits=3)), $(round(maximum(yhat_50), digits=3))]")
 ```
 
-    Median regression fitted range: [-1.096, 0.953]
+    Median regression fitted range: [-0.899, 0.844]
 
 ### Compare with mean regression
 
@@ -138,7 +139,7 @@ println("Correlation (mean vs median): $(round(cor(yhat_mean, yhat_50), digits=4
 ```
 
     Mean regression fitted range: [-1.069, 0.968]
-    Correlation (mean vs median): 0.9995
+    Correlation (mean vs median): 0.9846
 
 For symmetric errors, mean and median regression give similar results.
 With heteroscedastic or skewed data, they can diverge.
@@ -166,11 +167,11 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: fitted range [-1.085, 0.959]
-    τ = 0.25: fitted range [-1.087, 0.958]
-    τ = 0.5: fitted range [-1.096, 0.953]
-    τ = 0.75: fitted range [-1.072, 0.967]
-    τ = 0.9: fitted range [-1.094, 0.954]
+    τ = 0.1: fitted range [-1.938, 0.415]
+    τ = 0.25: fitted range [-1.473, 0.645]
+    τ = 0.5: fitted range [-0.899, 0.844]
+    τ = 0.75: fitted range [-0.455, 1.24]
+    τ = 0.9: fitted range [-0.079, 1.508]
 
 ``` julia
 qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
@@ -196,7 +197,7 @@ each and collecting the results in one object:
 mq = mqgam(@formula(y ~ s(x, k=20, bs=:cr)), df, quantiles)
 ```
 
-    (fits = Dict{Float64, Any}(0.5 => GamModel(n_smooth=1, edf=7.2, deviance=85.91), 0.9 => GamModel(n_smooth=1, edf=7.0, deviance=86.32), 0.1 => GamModel(n_smooth=1, edf=6.2, deviance=55.95), 0.25 => GamModel(n_smooth=1, edf=6.3, deviance=56.59), 0.75 => GamModel(n_smooth=1, edf=5.1, deviance=22.26)), quantiles = [0.1, 0.25, 0.5, 0.75, 0.9])
+    (fits = Dict{Float64, Any}(0.5 => GamModel(n_smooth=1, edf=4.4, deviance=32.39), 0.9 => GamModel(n_smooth=1, edf=6.0, deviance=98.0), 0.1 => GamModel(n_smooth=1, edf=5.1, deviance=73.06), 0.25 => GamModel(n_smooth=1, edf=5.6, deviance=99.51), 0.75 => GamModel(n_smooth=1, edf=6.1, deviance=123.52)), quantiles = [0.1, 0.25, 0.5, 0.75, 0.9])
 
 ``` julia
 println("Quantiles fitted: ", mq.quantiles)
@@ -215,11 +216,11 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: fitted range [-1.085, 0.959]
-    τ = 0.25: fitted range [-1.087, 0.958]
-    τ = 0.5: fitted range [-1.096, 0.953]
-    τ = 0.75: fitted range [-1.072, 0.967]
-    τ = 0.9: fitted range [-1.094, 0.954]
+    τ = 0.1: fitted range [-1.938, 0.415]
+    τ = 0.25: fitted range [-1.473, 0.645]
+    τ = 0.5: fitted range [-0.899, 0.844]
+    τ = 0.75: fitted range [-0.455, 1.24]
+    τ = 0.9: fitted range [-0.079, 1.508]
 
 ``` julia
 qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
@@ -254,7 +255,7 @@ end
 println("Quantile crossings: $n_crossings out of $n observations ($(round(100*n_crossings/n, digits=1))%)")
 ```
 
-    Quantile crossings: 500 out of 500 observations (100.0%)
+    Quantile crossings: 0 out of 500 observations (0.0%)
 
 ``` julia
 qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
@@ -289,11 +290,11 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: empirical coverage = 0.496 (target = 0.1)
-    τ = 0.25: empirical coverage = 0.496 (target = 0.25)
-    τ = 0.5: empirical coverage = 0.496 (target = 0.5)
-    τ = 0.75: empirical coverage = 0.496 (target = 0.75)
-    τ = 0.9: empirical coverage = 0.496 (target = 0.9)
+    τ = 0.1: empirical coverage = 0.094 (target = 0.1)
+    τ = 0.25: empirical coverage = 0.234 (target = 0.25)
+    τ = 0.5: empirical coverage = 0.502 (target = 0.5)
+    τ = 0.75: empirical coverage = 0.756 (target = 0.75)
+    τ = 0.9: empirical coverage = 0.904 (target = 0.9)
 
 ``` julia
 coverages = [mean(y .< predict(mq.fits[qu])) for qu in quantiles]
@@ -332,12 +333,12 @@ for qu in quantiles
 end
 ```
 
-    Pinball loss (τ=0.5): 114.854
-    Pinball loss (τ=0.1): 114.976
-    Pinball loss (τ=0.25): 114.958
-    Pinball loss (τ=0.5): 114.854
-    Pinball loss (τ=0.75): 115.231
-    Pinball loss (τ=0.9): 114.877
+    Pinball loss (τ=0.5): 119.433
+    Pinball loss (τ=0.1): 52.557
+    Pinball loss (τ=0.25): 94.348
+    Pinball loss (τ=0.5): 119.433
+    Pinball loss (τ=0.75): 91.978
+    Pinball loss (τ=0.9): 50.299
 
 ``` julia
 losses = [pinball_loss(y, predict(mq.fits[qu]), qu) for qu in quantiles]

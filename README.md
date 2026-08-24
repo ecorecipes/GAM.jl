@@ -8,7 +8,7 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 
 ## Features
 
-- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 30 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (three are documented approximations of their mgcv namesakes — see the table below)
+- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 30 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (one is a documented approximation of its mgcv namesake — see the table below)
 - **Automatic smoothness estimation** — REML/ML via Extended Fellner-Schall (EFS, default) or Newton optimization; GCV/UBRE via direct criterion optimization
 - **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta
 - **Multi-parameter models (GAMLSS)** — location-scale-shape regression with RS and CG solvers, local ML/GAIC/GCV smoothing parameter selection
@@ -425,13 +425,10 @@ GAM.jl is not a line-for-line port of mgcv. Notable mgcv features that are **not
 
 - Specialized families such as ordered-categorical (`ocat`), zero-inflated Poisson (`ziP`), Cox proportional hazards (`cox.ph`), and multinomial (`multinom`) — though location-scale models are covered by the GAMLSS and evgam interfaces
 - Linear functional terms / the summation convention (matrix arguments to `s()`)
-- `na.action`-style missing-data handling (rows with missing/non-finite values must be removed before fitting)
 - AR1 residual correlation in `bam`; `bam`'s covariate discretization (`discrete=TRUE`) — `bam` uses chunked accumulation of the normal equations only
-- Smoothing-parameter-uncertainty corrections (mgcv's `Vc`); `unconditional=true` in `smooth_estimates`/`posterior_samples` warns and uses the conditional covariance
 - Smooth-term test statistics use a simplification of mgcv's `testStat`, so the printed F/χ² can differ from `summary.gam`'s for heavily penalized smooths. This is a difference in the statistic, not in calibrated inference: on identical null replicates the empirical test size matches mgcv's within Monte Carlo error at α = 0.01, 0.05 and 0.10
-- `edf1`/`edf2` alternative effective-degrees-of-freedom and the Wood-Pya-Säfken (2016) corrected AIC for REML fits (AIC currently uses plain EDF, differing from mgcv's by ~0.5)
 - Neighbourhood cross-validation (`NCV`, mgcv ≥ 1.9) as a smoothness-selection criterion
-- Further families: `scat` (heavy-tailed *t*), `mvn` (multivariate normal), and the gamlss `SHASH` / `twlss` distributions
+- Further families: `mvn` (multivariate normal) and the gamlss `SHASH` / `twlss` distributions
 - Penalized parametric terms (`paraPen`)
 
 Some behaviors differ from R by design: quasi families report `NaN`
@@ -440,10 +437,10 @@ the `Normal`, `Poisson`, `Bernoulli`/`Binomial`, and `Gamma` families with
 identity/log/logit links. The optional MixedModels.jl GAMM backend is disabled
 (the pure-Julia backend is the supported path).
 
-Some basis types are documented approximations rather than exact ports of their
-mgcv namesakes: `:sos` (planar kernel on great-circle distances), `:so` (grid-PDE
-soap film), and `:ds` (alias of `:tp`). Fits with these bases will differ from
-mgcv's.
+One basis type is a documented approximation rather than an exact port of its
+mgcv namesake: `:so` (grid-PDE soap film). Fits with it will differ from mgcv's.
+`:sos` is now a direct port of mgcv's spherical-spline kernel, and `:ds` is an
+alias of `:tp` that warns rather than silently posing as a Duchon spline.
 
 Some algorithms differ from their R counterparts while targeting the same
 criterion, with measured consequences: smoothing parameters are selected by

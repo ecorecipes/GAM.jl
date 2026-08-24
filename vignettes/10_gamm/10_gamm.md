@@ -127,7 +127,7 @@ println(m)
     Variance Components:
      Group                 Term                      Variance      Std.Dev.    Levels
      ──────────────────────────────────────────────────────────────────────────────
-     subject               Intercept                 0.215957      0.464712        12
+     subject               Intercept                 0.215958      0.464713        12
      Residual                                        0.147477      0.384028          
 
     Deviance:          67.3213

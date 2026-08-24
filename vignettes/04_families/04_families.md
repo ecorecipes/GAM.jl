@@ -117,13 +117,14 @@ m_pois
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df     Chi.sq    p-value
+    Smooth                    edf   Ref.df     Chi.sq    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=cr)               7.98     8.00    667.413 7.395e-139
+    s(x,bs=cr)               7.98     9.60    667.413 7.395e-139 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.764   Deviance explained = 76.4%
-    n = 300
+    -REML = 566.9   n = 300
 
 ### Smooth estimate
 
@@ -229,13 +230,14 @@ m_bin
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df     Chi.sq    p-value
+    Smooth                    edf   Ref.df     Chi.sq    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=cr)               4.98     5.00     68.652  1.955e-13
+    s(x,bs=cr)               4.98     6.15     68.652  1.955e-13 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.295   Deviance explained = 25.5%
-    n = 300
+    -REML = 153   n = 300
 
 ### Smooth estimate
 
@@ -345,13 +347,14 @@ m_gam
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=cr)               6.25     7.00     32.929  1.278e-33
+    s(x,bs=cr)               6.25     7.68     32.929  1.278e-33 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.362   Deviance explained = 41.6%
-    Scale est. = 0.1811   n = 300
+    -REML = 474.1   Scale est. = 0.1811   n = 300
 
 ### Smooth estimate
 
