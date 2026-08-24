@@ -35,7 +35,8 @@ julia --project=. generate_data.jl
 Currently that covers `06_extreme_values/data_gpd.csv`,
 `07_shape_constraints/data_cx.csv`, `07_shape_constraints/data_micv.csv`,
 `10_gamm/data_gaussian_gamm.csv`, `10_gamm/data_poisson_gamm.csv`,
-`12_nested_effects/data_si.csv`, and `12_nested_effects/data_expsm.csv`; the
+`12_nested_effects/data_si.csv`, `12_nested_effects/data_expsm.csv`,
+`13_migrating_from_mgcv/data.csv`, and `14_model_selection/data.csv`; the
 remaining CSVs predate the script and already match their vignettes.
 The reference posterior CSVs in `11_bayesian_gam/` were produced by the R code
 in `11_bayesian_gam/R/`.

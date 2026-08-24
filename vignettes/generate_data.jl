@@ -140,10 +140,46 @@ function gen_nested()
         ["y" => y2, "x" => x, "st_true" => st])
 end
 
+# ── 13_migrating_from_mgcv: data.csv ────────────────────────────────────────
+# Gaussian smooth used for the side-by-side mgcv comparison:
+#   y = sin(x) + ε,  x on a regular grid over [0, 2π],  ε ~ N(0, 0.3²)
+# Matches the reference model used by the package's R-parity tests.
+function gen_migration()
+    rng = MersenneTwister(20260824)
+    n = 200
+    x = collect(range(0, 2π; length = n))
+    y = sin.(x) .+ 0.3 .* randn(rng, n)
+    write_csv(joinpath(VIGNETTES, "13_migrating_from_mgcv", "data.csv"),
+        ["y" => y, "x" => x])
+end
+
+# ── 14_model_selection: data.csv ────────────────────────────────────────────
+# Gu & Wahba four-term example with one null smooth, plus a deliberately
+# concurve covariate and a gross outlier for the diagnostics workflow:
+#   f0(x) = 2 sin(πx), f1(x) = exp(2x),
+#   f2(x) = 0.2 x^11 (10(1−x))^6 + 10 (10x)^3 (1−x)^10, f3(x) = 0
+#   x4 = x1 + small noise  (near-duplicate of x1, for concurvity)
+#   y = f0 + f1 + f2 + ε,  ε ~ N(0, 2²);  observation 100 shifted by +15
+function gen_model_selection()
+    rng = MersenneTwister(2024)
+    n = 400
+    x0 = rand(rng, n); x1 = rand(rng, n); x2 = rand(rng, n); x3 = rand(rng, n)
+    x4 = x1 .+ 0.03 .* randn(rng, n)
+    f0(x) = 2 * sin(π * x)
+    f1(x) = exp(2 * x)
+    f2(x) = 0.2 * x^11 * (10 * (1 - x))^6 + 10 * (10 * x)^3 * (1 - x)^10
+    y = f0.(x0) .+ f1.(x1) .+ f2.(x2) .+ 2.0 .* randn(rng, n)
+    y[100] += 15.0   # gross outlier for the influence section
+    write_csv(joinpath(VIGNETTES, "14_model_selection", "data.csv"),
+        ["y" => y, "x0" => x0, "x1" => x1, "x2" => x2, "x3" => x3, "x4" => x4])
+end
+
 gen_gpd()
 gen_cx()
 gen_micv()
 gen_gaussian_gamm()
 gen_poisson_gamm()
 gen_nested()
+gen_migration()
+gen_model_selection()
 println("done")

@@ -80,7 +80,7 @@ meaningful comparison there.
 | Adaptive smooths (`:ad`) | ✅ | ✅ |
 | Spherical splines (`:sos`) | ✅ | ⚠️ approximation |
 | Soap film (`:so`) | ✅ | ⚠️ approximation |
-| `t2()` tensor construction | ✅ | ⚠️ different (documented) construction |
+| `t2()` tensor construction (Wood–Scheipl–Faraway) | ✅ | ✅ (verified against mgcv: matching columns, penalty count, ranks, supports) |
 | Linear functional terms (matrix args) | ✅ | ❌ |
 | `bam(discrete=TRUE)` covariate discretization | ✅ | ❌ (chunked accumulation instead) |
 | Smoothing-parameter-uncertainty `Vc` / `unconditional=TRUE` | ✅ | ❌ |
