@@ -36,6 +36,10 @@ function _fuzz_draw(seed::Int)
         bs = rand(rng, _FUZZ_BASES)
         bs === :lo && n > 300 && (bs = :cr)
         k = rand(rng, 4:25)
+        # `bs=:ad` defaults to mgcv's 5 adaptive sub-penalties, and mgcv errors
+        # when the smoothing basis cannot hold them. Clamp AFTER the draw so the
+        # seeded RNG stream — and every other seed's configuration — is unchanged.
+        bs === :ad && (k = max(k, 8))
         if bs === :re
             g = rand(rng, 1:rand(rng, 3:8), n)
             v = Symbol("g$j")
@@ -165,5 +169,47 @@ const _FUZZ_REJECTED = [2, 4, 6, 50]
         @test cor(fitted(ma), fitted(mb) ./ 1e-8) > 1 - 1e-8
         @test cor(fitted(ma), fitted(mc) ./ 1e8) > 1 - 1e-8
         @test mb.scale / ma.scale ≈ 1e-16 rtol = 1e-4
+    end
+
+    @testset "F5: na_action = :omit equals fitting the hand-filtered table" begin
+        # Property: for randomly placed missing/NaN/Inf entries across the
+        # response, the covariates, the weights and the offset, an :omit fit
+        # must be indistinguishable from fitting the table the caller would
+        # have built by dropping exactly those rows — and na_omit_rows must
+        # name that row set.
+        for seed in 1:6
+            rng = StableRNG(600 + seed)
+            n = 150
+            x = rand(rng, n)
+            z = rand(rng, n)
+            df = DataFrame(x = x, z = z,
+                y = sin.(2π .* x) .+ 0.4 .* z .+ 0.3 .* randn(rng, n))
+
+            allowmissing!(df, :y)
+            allowmissing!(df, :x)
+            bad_y = rand(rng, 1:n, 2)
+            bad_x = rand(rng, 1:n, 2)
+            bad_z = rand(rng, 1:n, 1)
+            df.y[bad_y] .= missing
+            df.x[bad_x] .= missing
+            df.z[bad_z] .= (seed % 2 == 0 ? NaN : Inf)
+
+            w = 0.5 .+ rand(rng, n)
+            off = 0.1 .* randn(rng, n)
+            expected = sort(unique(vcat(bad_y, bad_x, bad_z)))
+
+            f = GAM.@formulak(y ~ s(x, k = 6, bs = :cr) + s(z, k = 6, bs = :cr))
+            keep = GAM.na_omit_rows(df, :y, [:x, :z])
+            @test keep == sort(setdiff(1:n, expected))
+
+            m = bam(f, df; weights = w, offset = off, na_action = :omit)
+            m_ref = bam(f, df[keep, :]; weights = w[keep], offset = off[keep])
+            @test length(fitted(m)) == length(keep)
+            @test coef(m) ≈ coef(m_ref) atol = 1e-12
+            @test deviance(m) ≈ deviance(m_ref) atol = 1e-12
+
+            # and :fail still refuses the same table
+            @test_throws ArgumentError bam(f, df; weights = w, offset = off)
+        end
     end
 end

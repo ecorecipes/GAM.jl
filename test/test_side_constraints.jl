@@ -47,7 +47,7 @@ using StatsAPI
 
     # ----------------------------------------------------------------
     @testset "te() with marginals — s(x) + s(z) + te(x, z)" begin
-        m = gam(@formulak(y ~ s(x, k = 8) + s(z, k = 8) + te(x, z, k = 25)), data)
+        m = gam(@formulak(y ~ s(x, k = 8) + s(z, k = 8) + te(x, z, k = 5)), data)
         @test m.converged
         @test length(m.smooths) == 3
 
@@ -69,7 +69,7 @@ using StatsAPI
         df = DataFrame(y = y, x = x, z = z)
         gf = @formulak(y ~ s(x, k = 8, bs = :cr) +
                               s(z, k = 8, bs = :cr) +
-                              te(x, z, k = 25, bs = [:sc, :cr], xt = Any[["m+"], nothing]))
+                              te(x, z, k = 5, bs = [:sc, :cr], xt = Any[["m+"], nothing]))
         _, _, _, smooths, _ = GAM.setup_gam(gf, df; family = Normal())
 
         sm_te = smooths[3]
@@ -84,7 +84,7 @@ using StatsAPI
 
     # ----------------------------------------------------------------
     @testset "ti() with marginals — s(x) + s(z) + ti(x, z)" begin
-        m = gam(@formulak(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 25)), data)
+        m = gam(@formulak(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 5)), data)
         @test m.converged
         @test length(m.smooths) == 3
 
@@ -103,7 +103,7 @@ using StatsAPI
     # ----------------------------------------------------------------
     @testset "Predict consistency" begin
         # Use CR basis (exact prediction) and te() for the 2d interaction
-        m = gam(@formulak(y ~ s(x, k = 8, bs = :cr) + s(z, k = 8, bs = :cr) + te(x, z, k = 25)), data)
+        m = gam(@formulak(y ~ s(x, k = 8, bs = :cr) + s(z, k = 8, bs = :cr) + te(x, z, k = 5)), data)
         @test m.converged
 
         # te() has side constraints applied (marginals overlap)

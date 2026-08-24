@@ -293,7 +293,7 @@ end
         @test size(Xp) == (50, size(sm_te.X, 2))
 
         # te() with explicit k
-        spec_te_k = te(:x1, :x2, k=16)
+        spec_te_k = te(:x1, :x2, k=4)   # per-marginal (mgcv): 4×4 = 16, as before
         sm_te_k = smooth_construct(spec_te_k, data)
         @test size(sm_te_k.X, 1) == n
         @test size(sm_te_k.X, 2) > 0
@@ -1042,6 +1042,11 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
             @eval include("test_gratia_rcall.jl")
         end
     end
+
+    # scat (scaled-t) R comparison tests — needs only mgcv, no extra R package
+    if _rcall_available
+        @eval include("test_scat_rcall.jl")
+    end
 end
 
 # EGPD unit tests (no R needed) — must run regardless of GAM_SKIP_RCALL
@@ -1191,6 +1196,24 @@ _spde_csv_ok && @eval include("test_spde_rcall.jl")
 @eval include("test_review_fixes_by.jl")
 @eval include("test_review_fixes_extended.jl")
 @eval include("test_review_fixes_serialization.jl")
+
+# TPRS/mgcv basis parity: max_knots rule, translation invariance (no R needed)
+@eval include("test_tprs_parity.jl")
+
+# Binomial GCV/UBRE parity with mgcv 1.9-4 (pinned values, no R needed)
+@eval include("test_gcv_binomial.jl")
+
+# method=:ML criterion parity with mgcv (range-space determinant, Dp/n scale)
+@eval include("test_ml_criterion.jl")
+
+# scat (scaled-t) family unit tests (no R needed)
+@eval include("test_scat.jl")
+
+# na.action / weight-and-offset validation tests (no R needed)
+@eval include("test_na_action.jl")
+
+# Vc / edf1 / edf2 smoothing-parameter-uncertainty correction (no R needed)
+@eval include("test_vc.jl")
 
 # Plotting tests — run only when Plots.jl (a weak dependency) is available.
 # Availability is checked separately so plotting test failures are not swallowed.

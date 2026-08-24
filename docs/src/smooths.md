@@ -3,9 +3,9 @@
 GAM.jl provides 30 registered smooth basis types, covering all commonly used
 options from R's mgcv, plus shape-constrained bases from scam and several
 additional types including loess, fractional polynomials, spherical splines,
-SPDE Matérn, and constrained factor smooths. Three bases (`:sos`, `:so`,
-`:ds`) are documented **approximations** of their mgcv namesakes — see the
-per-basis notes below. For smooths of
+SPDE Matérn, and constrained factor smooths. Two bases (`:so`, `:ds`) are
+documented **approximations** of their mgcv namesakes — see the per-basis
+notes below. For smooths of
 *estimated* covariate transformations (single-index effects and friends),
 see [Nested Effects](@ref nested-effects).
 
@@ -33,7 +33,7 @@ s(:x, fx=true, k=5);            # unpenalized (fixed df)
 s(:group, bs=:re);              # random effect
 s(:x, bs=:lo, k=15);            # loess smooth
 s(:x, bs=:fp);                  # fractional polynomial
-s(:lon, :lat, bs=:sos, k=50);   # spherical spline
+s(:lat, :lon, bs=:sos, k=50);   # spherical spline (LATITUDE first, degrees)
 s(:x, :y, bs=:spde);            # SPDE Matérn
 te(:x, :y, k=5);                # tensor product
 ti(:x, :y, k=5);                # tensor product interaction
@@ -221,19 +221,50 @@ nothing
 Splines on the sphere for data defined on the surface of a sphere (e.g.,
 global spatial data with latitude/longitude coordinates).
 
-!!! warning "Approximation"
-    The kernel is the planar thin-plate kernel applied to great-circle
-    distance — an approximation of mgcv's Wahba spline-on-the-sphere
-    kernels. Fits will differ from mgcv's `bs="sos"`.
+**Units.** Latitude and longitude are read as **degrees**, matching mgcv,
+whose `makeR` converts internally with `pi/180`. Pass
+`xt = Dict(:units => :radians)` to supply radians instead. The unit is
+resolved once when the smooth is constructed and reused at prediction, so a
+fit and its predictions can never disagree about the scale.
 
-**When to use:** Geospatial data on the globe where you need smoothing that
-respects spherical geometry. Avoids edge effects at poles and the date line.
-Equivalent to R's `s(lon, lat, bs="sos")` in mgcv.
+**Penalty order.** `m` selects the reproducing kernel, exactly as in mgcv:
+
+| `m` | kernel | null space |
+|---|---|---|
+| `-2` | Duchon first-derivative semi-kernel | 1 |
+| `-1` | Duchon semi-kernel `z²log(z)/(8π)` | 4 |
+| `0` | Wendelberger order 2 (**default**) | 1 |
+| `1`–`4` | Wahba pseudospline closed forms | 1 |
+
+Values below `-2` are mapped to `-1` and values above `4` to `4`, matching
+mgcv's own normalisation.
+
+!!! note "Matches mgcv's basis exactly"
+    This is a direct port of mgcv's construction — Wahba (1981) spherical
+    reproducing kernels on great-circle angles, the same truncated
+    eigendecomposition keeping the largest-*magnitude* eigenpairs, the same
+    constraint absorption and column rescaling. The generalized eigenvalues
+    of `(S, XᵀX)`, which determine edf as a function of the smoothing
+    parameter, agree with mgcv's to 5×10⁻⁸.
+
+    Consequently `sp` values are **portable**: fitting at mgcv's selected
+    `sp` reproduces mgcv's fit to 5×10⁻⁹ (edf 13.217991 in both, on a ±30°,
+    `n=300`, `k=20` test). This is not true of `bs=:tp`, where the two
+    packages use different — though equivalent — parameterizations.
+
+    Freely-selected fits can still differ slightly, because GAM.jl selects
+    smoothing parameters by extended Fellner–Schall where mgcv uses outer
+    Newton on the LAML. That is a difference in the optimizer, not the basis.
+
+**When to use:** Geospatial data on a sphere where smoothing should respect
+spherical geometry rather than treating lat/lon as a plane. Avoids edge
+effects at the poles and the date line.
 
 **Default k**: 50.
 
 ```@example smooths
-s(:lon, :lat, bs=:sos, k=50);
+s(:lat, :lon, bs=:sos, k=50);                              # degrees (default)
+s(:lat, :lon, bs=:sos, k=50, xt=Dict(:units => :radians)); # radians
 nothing
 ```
 
@@ -450,9 +481,9 @@ nothing
 | `:gp` | Gaussian process | 1D+ | Spatial, GP interpretation |
 | `:lo` | Loess | 1D | Local polynomial, exploratory |
 | `:fp` | Fractional polynomial | 1D | Dose-response, epidemiology |
-| `:ds` | Duchon spline | 1D+ | Flexible TPS generalization |
+| `:ds` | Duchon spline | 1D+ | **Alias for `:tp`** (warns) — not yet implemented |
 | `:ad` | Adaptive | 1D | Varying smoothness |
-| `:sos` | Spherical spline | 2D (sphere) | Global geospatial data |
+| `:sos` | Spherical spline | 2D (sphere) | Geospatial data on a sphere (degrees; matches mgcv) |
 | `:spde` | SPDE Matérn | 2D | Large spatial data, sparse GP |
 | `:mrf` | Markov random field | Discrete | Areal/lattice data |
 | `:so` | Soap film | 2D | Complex domain boundaries |

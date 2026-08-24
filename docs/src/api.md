@@ -13,6 +13,7 @@ gam
 gam_control
 GamControl
 GamModel
+na_omit_rows
 ```
 
 ### Model Accessors
@@ -24,6 +25,25 @@ lpmatrix
 overview
 OverviewTable
 model_edf
+sp_criterion
+```
+
+### Smoothing-Parameter Uncertainty
+
+The Wood, Pya & Säfken (2016) correction: `edf2` degrees of freedom and the
+corrected covariance `Vc`, which is what `unconditional = true` uses in
+`predict`, `smooth_estimates`, `derivatives` and `posterior_samples`.
+
+```@docs
+edf2
+ref_df
+has_vc
+vcov_corrected
+conditional_aic
+conditional_dof
+GAM.force_vc!
+GAM.edf1_from_F
+GAM.corrected_covariance
 ```
 
 ### Formula Macros (extra)

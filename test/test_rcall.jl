@@ -119,10 +119,38 @@ end
         df = DataFrame(x = r_x, y = r_y)
         m = gam(@formulak(y ~ s(x, k = 15, bs = :tp)), df; method = :REML)
 
-        # TPRS basis construction may differ slightly; check statistical equivalence
-        @test abs(m.edf_total - rs[:edf]) < 1.0
-        @test abs(m.deviance_val - rs[:deviance]) / rs[:deviance] < 0.05
-        @test cor(m.fitted_values, rs[:fitted]) > 0.999
+        # Since the `max_knots` fix (mgcv's rule: subsample only above 2000 knots,
+        # not the old rank-k Nyström fallback above max(3k, 200)) the TPRS basis
+        # matches mgcv's to near machine precision on this model.
+        @test abs(m.edf_total - rs[:edf]) < 1e-4
+        @test abs(m.deviance_val - rs[:deviance]) / rs[:deviance] < 1e-6
+        @test maximum(abs.(m.fitted_values .- rs[:fitted])) < 1e-5
+    end
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 2b. Gaussian GAM — 2-D TPRS
+    # ──────────────────────────────────────────────────────────────────────
+    # This is the case the `max_knots` fix actually repairs. At n = 300 the old
+    # rule (n > max(3k, 200)) dropped to a rank-k Nyström basis, giving edf error
+    # 5.4e-2 and max fitted error 2.5e-2 against mgcv. The 1-D case above was
+    # already close before the fix, so its tight tolerances are necessary but not
+    # sufficient — this testset is what would catch a revert of the knot rule.
+    @testset "Gaussian 2-D TPRS — interacting surface" begin
+        R"""
+        set.seed(11)
+        n <- 300
+        u <- runif(n); v <- runif(n)
+        y <- sin(2*pi*u) * cos(pi*v) + rnorm(n, sd=0.2)
+        r_tp2 <- gam(y ~ s(u, v, k=30, bs="tp"), data=data.frame(u=u, v=v, y=y),
+                     method="REML")
+        """
+        rs2 = r_gam_summary("r_tp2")
+        df2 = DataFrame(u = rcopy(R"u"), v = rcopy(R"v"), y = rcopy(R"y"))
+        m2 = gam(@formulak(y ~ s(u, v, k = 30, bs = :tp)), df2; method = :REML)
+
+        @test abs(m2.edf_total - rs2[:edf]) < 1e-4
+        @test abs(m2.deviance_val - rs2[:deviance]) / rs2[:deviance] < 1e-6
+        @test maximum(abs.(m2.fitted_values .- rs2[:fitted])) < 1e-5
     end
 
     # ──────────────────────────────────────────────────────────────────────
@@ -826,20 +854,36 @@ end
         se_r = rcopy(Vector{Float64}, R"pr_inf$se.fit")
         _, se_jl = predict(m, df; se = true)
         @test maximum(abs.(se_jl .- se_r) ./ se_r) < 1e-4
-        # AIC. GAM.jl's aic(m) is mgcv's `m$aic` field:
-        #     m$aic = family$aic(y, n, mu, w, dev) + 2*sum(edf)     [gam.outer]
-        # mgcv's AIC(m) is NOT that: logLik.gam reports a df based on `edf2`
-        # (Wood/Pya/Säfken smoothing-parameter-uncertainty correction), so
-        #     AIC(m) = m$aic + 2*(sum(edf2) - sum(edf)).
-        # We match the m$aic convention exactly (observed 2.6e-5 here), and
-        # the residual gap to AIC(m) is accounted for by the edf2 term.
-        @test aic(m) ≈ rcopy(R"r_inf$aic") atol = 1e-3
+        # AIC. Both mgcv conventions are now reproduced directly:
+        #     AIC(m)  = family$aic(...) + 2*sum(edf2)  [stats::AIC -> logLik.gam]
+        #     m$aic   = family$aic(...) + 2*sum(edf)   [gam.outer]
+        # `aic(m)` targets the first (what an mgcv user gets from AIC());
+        # `conditional_aic(m)` targets the second.
+        @test aic(m) ≈ rcopy(R"AIC(r_inf)") atol = 2e-3
+        @test conditional_aic(m) ≈ rcopy(R"r_inf$aic") atol = 1e-3
         @test loglikelihood(m) ≈ rcopy(R"as.numeric(logLik(r_inf))") atol = 1e-3
+        # the edf2 correction itself, isolated from any fit difference
         edf2_gap = rcopy(R"2*(sum(r_inf$edf2) - sum(r_inf$edf))")
-        @test rcopy(R"AIC(r_inf)") - aic(m) ≈ edf2_gap atol = 5e-3
+        @test aic(m) - conditional_aic(m) ≈ edf2_gap atol = 2e-3
+        # logLik's df attribute is sum(edf2) + 1 when the scale is estimated
+        @test dof(m) ≈ rcopy(R"""attr(logLik(r_inf), "df")""") atol = 1e-3
         # BIC follows the same decomposition (df enters as log(n)*df)
-        @test rcopy(R"BIC(r_inf)") - bic(m) ≈
-              log(nobs(m)) * rcopy(R"(sum(r_inf$edf2) - sum(r_inf$edf))") atol = 5e-3
+        @test bic(m) - (-2loglikelihood(m) + log(nobs(m)) * conditional_dof(m)) ≈
+              log(nobs(m)) * rcopy(R"(sum(r_inf$edf2) - sum(r_inf$edf))") atol = 6e-3
+        # edf1 / edf2 / Ref.df totals. Basis-invariant only: elementwise
+        # comparison is meaningless because the bases are ordered differently
+        # and mgcv rescales each S by its own S.scale.
+        @test sum(m.edf1) ≈ rcopy(R"sum(r_inf$edf1)") rtol = 1e-3
+        @test sum(edf2(m)) ≈ rcopy(R"sum(r_inf$edf2)") rtol = 1e-3
+        @test ref_df(m)[1] ≈ rcopy(R"""sm_inf$s.table[1, "Ref.df"]""") rtol = 1e-3
+        # Vc, through the quantity it exists to change: mgcv's
+        # predict(unconditional = TRUE) standard errors, and the widening
+        # factor they imply relative to the conditional ones.
+        R"""pr_unc <- predict(r_inf, se.fit = TRUE, unconditional = TRUE)"""
+        se_unc_r = rcopy(Vector{Float64}, R"pr_unc$se.fit")
+        _, se_unc = predict(m, df; se = true, unconditional = true)
+        @test maximum(abs.(se_unc .- se_unc_r) ./ se_unc_r) < 1e-3
+        @test mean(se_unc ./ se_jl) ≈ mean(se_unc_r ./ se_r) rtol = 1e-3
         # Smooth-term test: edf and ref_df match; the test STATISTIC differs
         # (GAM.jl uses a documented simplification of Wood (2013) testStat,
         # observed F 160.4 vs mgcv 132.6), so only edf and the (here
@@ -867,12 +911,17 @@ end
         se_r = rcopy(Vector{Float64}, R"pr_pinf$se.fit")
         _, se_jl = predict(m, df; se = true)
         @test maximum(abs.(se_jl .- se_r) ./ se_r) < 0.02
-        # Same AIC decomposition as the Gaussian case above. The residual
-        # against m$aic here (~0.004) is fit difference, not convention:
+        # Same AIC conventions as the Gaussian case above. The residual
+        # (~0.004) is fit difference, not convention:
         # EFS and mgcv's outer Newton stop at slightly different sp.
-        @test aic(m) ≈ rcopy(R"r_pinf$aic") atol = 0.05
-        @test rcopy(R"AIC(r_pinf)") - aic(m) ≈
+        @test aic(m) ≈ rcopy(R"AIC(r_pinf)") atol = 0.05
+        @test conditional_aic(m) ≈ rcopy(R"r_pinf$aic") atol = 0.05
+        @test aic(m) - conditional_aic(m) ≈
               rcopy(R"2*(sum(r_pinf$edf2) - sum(r_pinf$edf))") atol = 0.05
+        # Poisson's scale is known, so mgcv's REML Hessian carries no log-φ
+        # coordinate and Vc is built on the M×M block directly.
+        @test sum(edf2(m)) ≈ rcopy(R"sum(r_pinf$edf2)") rtol = 0.03
+        @test sum(m.edf1) ≈ rcopy(R"sum(r_pinf$edf1)") rtol = 0.03
     end
 
     @testset "Cyclic cubic (bs=:cc) vs mgcv" begin

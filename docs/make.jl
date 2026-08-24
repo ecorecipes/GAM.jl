@@ -10,14 +10,13 @@ makedocs(;
     sitename = "GAM.jl",
     # `:missing_docs` is intentional: ~340 internal helpers carry docstrings
     # that deliberately stay out of the manual.
-    # `:cross_references` remains for two reasons: `statsbase.jl` links to
-    # `r2`, which is StatsAPI's binding and cannot be documented from this
-    # module; and `s_nest`'s docstring links to
-    # `trans_linear` / `trans_nexpsm` / `trans_mgks`, whose docstrings are
-    # attached to the types (`TransLinear`, …) rather than the constructor
-    # functions. Add a docstring to each constructor in `src/nested.jl` and
-    # this entry can be dropped, making broken links a hard build error.
-    warnonly = [:missing_docs, :cross_references],
+    # `:cross_references` was dropped once both of its causes were fixed: the
+    # `r2` link in `statsbase.jl` (StatsAPI's binding, not documentable from
+    # this module) is now plain code formatting, and `trans_linear` /
+    # `trans_nexpsm` / `trans_mgks` carry docstrings on the constructor
+    # functions rather than only on their types. Broken links are now a hard
+    # build error; keep it that way.
+    warnonly = [:missing_docs],
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", "false") == "true",
         canonical = "https://ecorecipes.github.io/GAM.jl",

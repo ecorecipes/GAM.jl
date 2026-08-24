@@ -45,8 +45,9 @@ using StatsAPI
         ref_sm = CSV.read(joinpath(refdir, "side_m2_smooths.csv"), DataFrame)
         ref_fit = CSV.read(joinpath(refdir, "side_m2_fitted.csv"), DataFrame)
 
-        # Julia te(x,z,k=25) matches R te(x,z,k=c(5,5)) in total basis size
-        f = GAM.@formulak(y ~ s(x, k = 8) + s(z, k = 8) + te(x, z, k = 25))
+        # A scalar `k` is per-marginal in both packages now, so Julia
+        # te(x,z,k=5) and R te(x,z,k=5) build the identical 5x5 basis.
+        f = GAM.@formulak(y ~ s(x, k = 8) + s(z, k = 8) + te(x, z, k = 5))
         m = gam(f, data)
 
         # s(x) and s(z) untouched
@@ -66,7 +67,7 @@ using StatsAPI
 
         # Julia ti() has different k split from R ti(k=c(5,5)),
         # but the key behavior is the same: NO columns are removed
-        f = GAM.@formulak(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 25))
+        f = GAM.@formulak(y ~ s(x, k = 8) + s(z, k = 8) + ti(x, z, k = 5))
         m = gam(f, data)
 
         # No columns removed from any smooth
@@ -74,8 +75,9 @@ using StatsAPI
             @test isempty(sm.del_index)
         end
 
-        # Fitted values correlate reasonably with R despite different ti() dimensions
-        # (Julia ti(k=25) → 8 cols vs R ti(k=c(5,5)) → 16 cols)
+        # Julia ti(x,z,k=5) and R ti(x,z,k=5) now build the same 5x5 marginal
+        # basis; the reference CSV predates that change, so this stays a
+        # correlation check rather than an elementwise one.
         @test cor(m.fitted_values, ref_fit.fitted) > 0.99
     end
 end
