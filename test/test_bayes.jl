@@ -335,7 +335,7 @@ end
         @test get_prior(ps, :phi) isa Truncated
 
         # Unknown class should error
-        @test_throws ErrorException get_prior(ps, :unknown)
+        @test_throws ArgumentError get_prior(ps, :unknown)
     end
 end
 

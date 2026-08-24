@@ -8,6 +8,15 @@ DocMeta.setdocmeta!(GAM, :DocTestSetup, :(using GAM); recursive = true)
 makedocs(;
     modules = [GAM],
     sitename = "GAM.jl",
+    # `:missing_docs` is intentional: ~340 internal helpers carry docstrings
+    # that deliberately stay out of the manual.
+    # `:cross_references` remains for two reasons: `statsbase.jl` links to
+    # `r2`, which is StatsAPI's binding and cannot be documented from this
+    # module; and `s_nest`'s docstring links to
+    # `trans_linear` / `trans_nexpsm` / `trans_mgks`, whose docstrings are
+    # attached to the types (`TransLinear`, …) rather than the constructor
+    # functions. Add a docstring to each constructor in `src/nested.jl` and
+    # this entry can be dropped, making broken links a hard build error.
     warnonly = [:missing_docs, :cross_references],
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", "false") == "true",
@@ -30,7 +39,11 @@ makedocs(;
         "Diagnostics" => "diagnostics.md",
         "Comparison with mgcv" => "mgcv.md",
         "Vignettes" => "vignettes.md",
-        "API Reference" => "api.md",
+        "API Reference" => [
+            "Core" => "api.md",
+            "Model Types" => "api_models.md",
+            "Diagnostics & Plotting" => "api_diagnostics.md",
+        ],
     ],
 )
 

@@ -291,7 +291,7 @@ function predict(m::GamModel; type::Symbol = :link)
     elseif type == :response
         return m.fitted_values
     else
-        throw(ArgumentError("type must be :link or :response"))
+        throw(ArgumentError("type must be :link or :response, got :$type"))
     end
 end
 
@@ -338,8 +338,32 @@ function _gam_has_intercept(m::GamModel)
     return m.n_parametric > 0
 end
 
+"""
+Check that `newdata` carries every column the fitted model needs, so a missing
+covariate reports the offending column and the term that requires it rather
+than surfacing as a raw `FieldError` from the table.
+"""
+function _check_prediction_columns(m::GamModel, t)
+    have = Set(Tables.columnnames(t))
+    for sm in m.smooths, v in sm.spec.term_vars
+        v in have || throw(ArgumentError(
+            "newdata is missing column :$v, required by $(sm.spec.label). " *
+            "Columns present: " * join(string.(collect(have)), ", ") * "."))
+    end
+    if m.formula isa GamFormula
+        for v in m.formula.parametric
+            v in have || throw(ArgumentError(
+                "newdata is missing column :$v, required by the parametric " *
+                "part of the model. Columns present: " *
+                join(string.(collect(have)), ", ") * "."))
+        end
+    end
+    return nothing
+end
+
 function _gam_prediction_matrix(m::GamModel, newdata)
     t = Tables.columntable(newdata)
+    _check_prediction_columns(m, t)
     X_para = _gam_parametric_matrix(m, t)
 
     X_smooth_parts = Matrix{Float64}[]
@@ -356,6 +380,8 @@ end
 
 function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false,
     offset::Union{AbstractVector{<:Real}, Nothing} = nothing)
+    type in (:link, :response, :terms) || throw(ArgumentError(
+        "type must be :link, :response, or :terms, got :$type"))
     if type == :terms
         return _predict_terms(m, newdata; se = se)
     end
@@ -535,7 +561,8 @@ end
 function _predict_multiparameter(m::MultiParameterModel, X_list::Vector{Matrix{Float64}};
                                  type::Symbol = :link, se::Bool = false,
                                  off_list = nothing)
-    type in (:link, :response) || throw(ArgumentError("type must be :link or :response"))
+    type in (:link, :response) || throw(ArgumentError(
+        "type must be :link or :response, got :$type"))
 
     K = nparams(m)
     n = size(X_list[1], 1)
@@ -646,7 +673,7 @@ function residuals(m::GamModel; type::Symbol = :deviance)
         dmu = GLM.mueta.(Ref(link), m.linear_predictor)
         return (y .- mu) ./ dmu
     else
-        throw(ArgumentError("type must be :deviance, :pearson, :working, or :response"))
+        throw(ArgumentError("type must be :deviance, :pearson, :working, or :response, got :$type"))
     end
 end
 

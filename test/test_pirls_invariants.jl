@@ -121,6 +121,86 @@ using Statistics, LinearAlgebra
     # report honestly — never converge silently onto clamped means with a
     # nonsense scale.
     # ---------------------------------------------------------------------
+    @testset "leverage/EDF identity across fitters and families" begin
+        # h_i = w_i · x_i' A⁻¹ x_i, so sum(hat) == tr(F) == edf_total, and every
+        # leverage lies in [0, 1]. bam hand-rolled this without the weight
+        # factor, which is invisible for unit-weight Gaussian (w ≡ 1) and wrong
+        # for every weighted or non-Gaussian fit — silently corrupting
+        # leverage() and cooksdistance().
+        rngh = StableRNG(4321)
+        nh = 300
+        xh = sort(rand(rngh, nh))
+
+        function check_leverage(m, label)
+            h = leverage(m)
+            @test length(h) == nh
+            @test all(isfinite, h)
+            @test all(h .>= -1e-8)
+            @test maximum(h) <= 1.0 + 1e-6          # a leverage cannot exceed 1
+            @test sum(h) ≈ m.edf_total rtol = 1e-6  # the defining identity
+            d = cooksdistance(m)
+            @test all(isfinite, d)
+        end
+
+        # Gaussian, unit weights — the only case existing tests covered
+        yg = sin.(2π .* xh) .+ 0.3 .* randn(rngh, nh)
+        dfg = (y = yg, x = xh)
+        @testset "gam Gaussian unit-weight" begin
+            check_leverage(gam(@formulak(y ~ s(x, k = 12, bs = :cr)), dfg), "gam")
+        end
+        @testset "bam Gaussian unit-weight" begin
+            check_leverage(bam(@formulak(y ~ s(x, k = 12, bs = :cr)), dfg), "bam")
+        end
+
+        # Gaussian with prior weights
+        wts = 0.5 .+ rand(rngh, nh)
+        @testset "gam Gaussian prior-weight" begin
+            check_leverage(gam(@formulak(y ~ s(x, k = 12, bs = :cr)), dfg;
+                weights = wts), "gam/w")
+        end
+        @testset "bam Gaussian prior-weight" begin
+            check_leverage(bam(@formulak(y ~ s(x, k = 12, bs = :cr)), dfg;
+                weights = wts), "bam/w")
+        end
+
+        # Poisson
+        yp = Float64[rand(rngh, Poisson(exp(0.5 + sin(2π * t)))) for t in xh]
+        dfp = (y = yp, x = xh)
+        @testset "gam Poisson" begin
+            check_leverage(gam(@formulak(y ~ s(x, k = 12, bs = :cr)), dfp;
+                family = Poisson(), link = LogLink()), "gam/pois")
+        end
+        @testset "bam Poisson" begin
+            check_leverage(bam(@formulak(y ~ s(x, k = 12, bs = :cr)), dfp;
+                family = Poisson(), link = LogLink()), "bam/pois")
+        end
+
+        # Bernoulli
+        yb = Float64[rand(rngh) < 1 / (1 + exp(-(2.0 * sin(2π * t)))) ? 1.0 : 0.0
+                     for t in xh]
+        dfb = (y = yb, x = xh)
+        @testset "gam Bernoulli" begin
+            check_leverage(gam(@formulak(y ~ s(x, k = 12, bs = :cr)), dfb;
+                family = Bernoulli(), link = LogitLink()), "gam/bern")
+        end
+        @testset "bam Bernoulli" begin
+            check_leverage(bam(@formulak(y ~ s(x, k = 12, bs = :cr)), dfb;
+                family = Bernoulli(), link = LogitLink()), "bam/bern")
+        end
+
+        # Constrained fitters (Gaussian, monotone truth)
+        ym = 2.0 .* xh .+ 0.2 .* randn(rngh, nh)
+        dfm = (y = ym, x = xh)
+        @testset "scam" begin
+            check_leverage(scam(@formulak(y ~ s(x, bs = :mpi, k = 10)), dfm;
+                method = :REML), "scam")
+        end
+        @testset "scasm" begin
+            check_leverage(gam(@formulak(y ~ s(x, bs = :sc, xt = ["m+"], k = 10)),
+                dfm), "scasm")
+        end
+    end
+
     @testset "family-domain invariants across fitters" begin
         rngd = StableRNG(103)
         nd = 200

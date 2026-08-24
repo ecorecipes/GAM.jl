@@ -65,7 +65,7 @@ function _raw_adaptive_basis(spec::SmoothSpec, data, user_knots)
     k = min(spec.k, n)
     m_order = spec.m === nothing ? 2 : spec.m
     spline_order = m_order + 2
-    n_penalties = Int(get(spec.xt, :n_penalties, 5))
+    n_penalties = Int(get(spec.xt, :n_penalties, 5))::Int
 
     m2 = spline_order - 1
     knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)

@@ -200,10 +200,14 @@ using LinearAlgebra
         n_groups = 8
         n_per = 40
         n = n_groups * n_per
-        group = repeat(1:n_groups, inner = n_per)
+        # bs=:re follows mgcv: factors expand to one column per level, numerics
+        # enter as a linear term. The grouping column must therefore be a factor
+        # for this model to be equivalent to the GAMM.
+        group_id = repeat(1:n_groups, inner = n_per)
+        group = string.(group_id)
         x = randn(n)
         true_re = randn(n_groups) * 0.4
-        y = cos.(x) .+ true_re[group] .+ 0.2 .* randn(n)
+        y = cos.(x) .+ true_re[group_id] .+ 0.2 .* randn(n)
         df = DataFrame(x = x, y = y, group = group)
 
         # Fit GAMM

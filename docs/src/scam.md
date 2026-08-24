@@ -56,9 +56,15 @@ since no REML score is computed).
 
 !!! note "Standard errors"
     SCAM standard errors are conditional on the estimated smoothing
-    parameters and constraints; in simulations they can understate full-refit
-    variability (a parametric bootstrap gave reported-SE/empirical-sd ratios
-    around 0.6, similar to R's scam).
+    parameters and constraints, as in R's scam. Coverage for the fitted
+    *function* is close to nominal: a 400-replicate study of a monotone truth
+    gave 0.948 (± 0.006) for nominal-95% pointwise intervals.
+
+    A parametric bootstrap of the *coefficients* gives reported-SE to
+    empirical-sd ratios near 0.6, which looks alarming but measures a
+    different quantity — coefficient spread under smoothing-parameter
+    re-selection through the `exp` reparameterization, inflated by the
+    constraint boundary. It does not govern interval coverage.
 
 ## Examples
 

@@ -125,11 +125,27 @@ On the reference Gaussian cubic-spline model, GAM.jl matches mgcv
 to 9e-8, and prediction standard errors to 5e-7 (Poisson: sp within 0.012,
 SEs within 0.2%). AIC agrees within ~0.5 (mgcv's corrected-edf convention).
 Nested effects match gamFactory's index directions to |cosine| > 0.999.
-Two caveats: smooth-test F statistics use a documented simplification of
-mgcv's `testStat` (edf and p-value conclusions match; statistics can
-differ), and on numerically flat REML ridges the smoothing parameter is
-only weakly identified, so fitted values/EDF — not raw sp — are the
-meaningful comparison there.
+Two caveats: smooth-test F statistics use a simplification of mgcv's
+`testStat`, so the printed statistic can differ from `summary.gam`'s; and on
+numerically flat REML ridges the smoothing parameter is only weakly
+identified, so fitted values/EDF — not raw sp — are the meaningful
+comparison there.
+
+!!! note "The `testStat` simplification does not cost test size"
+    The differing statistic is a difference in the *statistic*, not in
+    calibrated inference. On identical null replicates the empirical
+    rejection rates are within Monte Carlo error of mgcv's at every level:
+
+    | α | GAM.jl | mgcv |
+    |---|---|---|
+    | 0.01 | 0.003 | 0.003 |
+    | 0.05 | 0.037 | 0.035 |
+    | 0.10 | 0.077 | 0.070 |
+
+    (Gaussian, 400 replicates; Poisson gives the same picture — 0.062 vs
+    0.052 at α = 0.05.) Both engines are mildly non-uniform in the same
+    direction, a known property of REML-fitted smooth p-values rather than a
+    defect in either.
 
 ## Feature Comparison
 

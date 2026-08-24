@@ -311,13 +311,10 @@ function penalty_edf(X::Matrix{Float64}, W::Vector{Float64},
         A_chol_local = A_chol
     end
 
-    # F = A^{-1} * X'WX — the influence/hat matrix in coef space
-    F = A_chol_local \ XtWX_local
-
-    # EDF = trace(F) per parameter; leverage h_i = w_i * x_i' A^{-1} x_i,
-    # so that sum(hat_diag) == total EDF.
-    edf_vec = diag(F)
-    hat_diag = W .* vec(sum((X / A_chol_local.U) .^ 2; dims = 2))
+    # Shared with the other P-IRLS variants: `pirls_finalize` owns the
+    # leverage identity h_i = w_i·x_i'A⁻¹x_i (and evaluates it in row chunks
+    # rather than forming two full n×p temporaries).
+    edf_vec, hat_diag, _ = pirls_finalize(X, W, XtWX_local, A_chol_local)
 
     return edf_vec, hat_diag
 end

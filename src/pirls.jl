@@ -113,6 +113,60 @@ function PirlsStepControl(; threshold = _pirls_gamfit3_threshold,
 end
 
 """
+    pirls_finalize(X, w, XtWX, A_chol; chunk_size=10_000)
+        -> (edf_vec, hat_diag, R)
+
+Final effective degrees of freedom, hat diagonal and R factor, shared by the
+P-IRLS variants.
+
+`XtWX` is the accumulated Xᵀ W X — dense for `pirls`/`scasm`/`pirls_extended`,
+chunk-accumulated for `pirls_bam` — and `A_chol` factorises A = XᵀWX + S.
+Then F = A⁻¹ XᵀWX, `edf_vec = diag(F)`, and the leverage is
+
+    hᵢ = wᵢ · xᵢᵀ A⁻¹ xᵢ = wᵢ ‖ xᵢᵀ U⁻¹ ‖²,   A = UᵀU
+
+so that `sum(hat_diag) == tr(F) == edf_total`. That weight factor is the whole
+reason the identity holds; `bam` hand-rolled this block without it, which is
+invisible for unit-weight Gaussian fits (w ≡ 1) and silently corrupted
+`leverage`/`cooksdistance` for every weighted or non-Gaussian `bam` fit.
+Computing it here, once, is what keeps the identity true for all of them.
+
+The triangular solve is row-independent, so the row-chunked evaluation is
+numerically identical (verified bit-for-bit across chunk sizes) to forming the
+full n×p product, while allocating only one `chunk_size`×p buffer instead of
+two full n×p temporaries.
+"""
+function pirls_finalize(X::AbstractMatrix{Float64}, w::Vector{Float64},
+    XtWX::Matrix{Float64}, A_chol::Cholesky; chunk_size::Int = 1024)
+
+    n, p = size(X)
+    F = A_chol \ XtWX
+    edf_vec = diag(F)
+
+    U = A_chol.U
+    hat_diag = zeros(n)
+    cs = clamp(chunk_size, 1, max(n, 1))
+    H = Matrix{Float64}(undef, cs, p)
+
+    for start in 1:cs:n
+        stop = min(start + cs - 1, n)
+        m = stop - start + 1
+        Hv = view(H, 1:m, :)
+        copyto!(Hv, view(X, start:stop, :))
+        rdiv!(Hv, U)
+        @inbounds for i in 1:m
+            s = 0.0
+            for j in 1:p
+                s += Hv[i, j]^2
+            end
+            hat_diag[start + i - 1] = w[start + i - 1] * s
+        end
+    end
+
+    return edf_vec, hat_diag, Matrix(U)
+end
+
+"""
     pirls_halve!(beta_new, beta_old, recompute!, spec, obj_old, prev_valid)
         -> (obj, valid, accepted, halvings)
 

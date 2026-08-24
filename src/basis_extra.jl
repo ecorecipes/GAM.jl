@@ -520,7 +520,7 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
 
     # ── Unpack inputs ────────────────────────────────────────────────────
     bnd = Matrix{Float64}[Float64.(b) for b in spec.xt[:bnd]]
-    nmax = Int(get(spec.xt, :nmax, 200))
+    nmax = Int(get(spec.xt, :nmax, 200))::Int
 
     x = Float64.(Tables.getcolumn(data, spec.term_vars[1]))
     y = Float64.(Tables.getcolumn(data, spec.term_vars[2]))

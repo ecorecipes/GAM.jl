@@ -113,7 +113,7 @@ function _smooth_construct(::SphericalSpline, spec::SmoothSpec, data, user_knots
     k = spec.k
 
     # Knot subsampling for large datasets
-    max_knots = get(spec.xt, :max_knots, 2000)
+    max_knots = Int(get(spec.xt, :max_knots, 2000))::Int
     if n > max_knots
         # Subsample knots evenly
         step = n / max_knots

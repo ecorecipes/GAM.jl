@@ -105,7 +105,8 @@ function construct_random_effect(spec::RandomEffectSpec, data)
     # Number of terms per group
     n_re_terms = (spec.has_intercept ? 1 : 0) + length(spec.terms)
     n_re_terms > 0 || throw(ArgumentError(
-        "Random effect $(spec.label) has no terms (need intercept or slopes)"))
+        "random effect $(spec.label) has no terms: it needs an intercept or " *
+        "at least one slope (e.g. `(1 | g)` or `(0 + x | g)`)"))
 
     q = n_levels * n_re_terms  # total random effect dimension
     Z = zeros(n, q)
@@ -690,7 +691,8 @@ function _parse_random_effect(ex::Expr)
     # ex should be a call to | with two arguments
     # (1 | group) parses as Expr(:call, :|, 1, :group)
     ex.head == :call && ex.args[1] == :(|) ||
-        throw(ArgumentError("Expected (... | group), got $ex"))
+        throw(ArgumentError(
+            "expected a random-effect term of the form `(... | group)`, got `$ex`"))
 
     lhs = ex.args[2]
     rhs_expr = ex.args[3]
@@ -699,7 +701,9 @@ function _parse_random_effect(ex::Expr)
     grouping = if rhs_expr isa Symbol
         rhs_expr
     else
-        throw(ArgumentError("Grouping factor must be a symbol, got $rhs_expr"))
+        throw(ArgumentError(
+            "the grouping factor must be a variable name, got `$rhs_expr` " *
+            "($(typeof(rhs_expr)))"))
     end
 
     # Parse LHS for intercept and slope terms
@@ -747,12 +751,16 @@ end
 
 function _parse_re_call(ex::Expr)
     ex.head == :call && ex.args[1] == :re ||
-        throw(ArgumentError("Expected re(group[, slope...]), got $ex"))
-    length(ex.args) >= 2 || throw(ArgumentError("re() requires at least one argument"))
+        throw(ArgumentError(
+            "expected `re(group[, slope...])`, got `$ex`"))
+    length(ex.args) >= 2 || throw(ArgumentError(
+        "re() requires at least one argument (the grouping factor), got none"))
 
     grouping = ex.args[2]
     grouping isa Symbol ||
-        throw(ArgumentError("Grouping factor must be a symbol, got $grouping"))
+        throw(ArgumentError(
+            "the grouping factor must be a variable name, got `$grouping` " *
+            "($(typeof(grouping)))"))
 
     terms = Symbol[]
     for arg in ex.args[3:end]
@@ -947,7 +955,8 @@ gf = @formula(y ~ x1 + s(x2) + (1|site) + (x1|subject))
 """
 function _gamm_formula_expr(ex)
     ex.head == :call && ex.args[1] == :(~) ||
-        error("Expected formula expression like `y ~ ...`, got $ex")
+        throw(ArgumentError(
+            "expected a formula of the form `y ~ ...`, got `$ex`"))
 
     lhs = ex.args[2]
     rhs = ex.args[3]
@@ -1003,7 +1012,9 @@ function _functionterm_to_re_spec(ft::StatsModels.FunctionTerm)
     grouping = if group_term isa Term
         group_term.sym
     else
-        throw(ArgumentError("Grouping factor must be a variable, got $group_term"))
+        throw(ArgumentError(
+            "the grouping factor must be a variable name, got `$group_term` " *
+            "($(typeof(group_term)))"))
     end
 
     lhs_term = ft.args[1]
@@ -1052,7 +1063,8 @@ Convenience function for random intercepts in `@formula`:
 ```
 """
 function re(vars...; kwargs...)
-    length(vars) >= 1 || throw(ArgumentError("re() requires at least one variable"))
+    length(vars) >= 1 || throw(ArgumentError(
+        "re() requires at least one variable (the grouping factor), got none"))
 
     grouping = vars[1]
     terms = Symbol[]
@@ -1206,7 +1218,9 @@ function gamm(f::FormulaTerm, data;
     _validate_link(link_eff, family)
 
     t = Tables.columntable(data)
-    resp_col = f.lhs isa Term ? f.lhs.sym : error("LHS must be a single term")
+    resp_col = f.lhs isa Term ? f.lhs.sym : throw(ArgumentError(
+        "the response must be a single variable, got `$(f.lhs)` " *
+        "($(typeof(f.lhs))); transformed responses are not supported"))
     y = Float64.(Tables.getcolumn(t, resp_col))
     _validate_response(y, family)
     n = length(y)

@@ -11,7 +11,7 @@ using GLM: LogLink, LogitLink
 Random.seed!(42)
 
 n_subjects = 12
-n_per = 12
+n_per = 20          # 20 distinct x values per subject, so k = 15 is admissible
 n = n_subjects * n_per
 
 subject = repeat(1:n_subjects; inner=n_per)

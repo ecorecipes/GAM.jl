@@ -176,10 +176,15 @@ using StatsAPI: coef, fitted, predict
         n_groups = 8
         n_per = 40
         n = n_groups * n_per
-        group = repeat(1:n_groups, inner = n_per)
+        group_id = repeat(1:n_groups, inner = n_per)
+        # bs=:re follows mgcv's model.matrix(~ vars - 1) rule: only *factor*
+        # variables expand to one column per level. A grouping variable must
+        # therefore be categorical — integer codes would enter as a single
+        # linear term, exactly as in mgcv.
+        group = string.(group_id)
         x = randn(n)
         true_re = randn(n_groups) .* 0.4
-        f_true = cos.(x) .+ true_re[group]
+        f_true = cos.(x) .+ true_re[group_id]
         y = f_true .+ 0.2 .* randn(n)
         df = DataFrame(x = x, y = y, group = group)
 
@@ -209,5 +214,45 @@ using StatsAPI: coef, fitted, predict
         @test !all(iszero, b_re)
         @test std(b_re) > 0.05
         @test cor(b_re, true_re) > 0.8
+    end
+
+    # ========================================================================
+    # bs=:re follows mgcv's model.matrix(~ v1:v2:... - 1) semantics:
+    # factors expand to indicators, numerics multiply. Verified against
+    # mgcv 1.9.4 (see test_rcall.jl for the live comparison).
+    # ========================================================================
+    @testset "re smooth: factor/numeric semantics match mgcv" begin
+        Random.seed!(202)
+        n = 200
+        gi = repeat(1:5, inner = 40)              # integer codes -> numeric
+        gs = repeat(string.('a':'e'), inner = 40) # strings       -> factor
+        g2 = repeat(["p", "q"], outer = 100)      # second factor
+        xv = rand(n)
+        zv = rand(n)
+        tbl = (gi = gi, gs = gs, g2 = g2, x = xv, z = zv)
+
+        # Factors expand to one column per level
+        @test size(GAM.smooth_construct(s(:gs, bs = :re), tbl).X, 2) == 5
+        # Numerics contribute a single multiplier column (mgcv: ncol 1)
+        @test size(GAM.smooth_construct(s(:x, bs = :re), tbl).X, 2) == 1
+        @test size(GAM.smooth_construct(s(:gi, bs = :re), tbl).X, 2) == 1
+        @test size(GAM.smooth_construct(s(:x, :z, bs = :re), tbl).X, 2) == 1
+        # Two factors give the product of their level counts
+        @test size(GAM.smooth_construct(s(:gs, :g2, bs = :re), tbl).X, 2) == 10
+        # Random slopes: the rule is symmetric in the variables
+        sm_gx = GAM.smooth_construct(s(:gs, :x, bs = :re), tbl)
+        sm_xg = GAM.smooth_construct(s(:x, :gs, bs = :re), tbl)
+        @test size(sm_gx.X, 2) == 5
+        @test size(sm_xg.X, 2) == 5
+        @test sm_gx.X ≈ sm_xg.X
+
+        # A numeric column of repeated integer codes warns that it is being
+        # treated as numeric (the user probably meant a grouping factor)
+        @test_logs (:warn, r"convert it to a factor") match_mode = :any begin
+            GAM.smooth_construct(s(:gi, bs = :re), tbl)
+        end
+
+        # Numeric entries really are the multiplier values
+        @test vec(GAM.smooth_construct(s(:x, bs = :re), tbl).X) ≈ xv
     end
 end

@@ -92,7 +92,10 @@ function get_prior(ps::PriorSpec, class::Symbol, name::String = "")
     elseif class == :phi
         return ps.phi
     else
-        error("Unknown prior class: $class")
+        throw(ArgumentError(
+            "unknown prior class :$class; valid classes are " *
+            ":b (parametric coefficients), :sds (smooth SDs), " *
+            ":sigma (Gaussian scale), :phi (dispersion)"))
     end
 end
 

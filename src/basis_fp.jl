@@ -150,7 +150,7 @@ function _smooth_construct(::FractionalPolynomial, spec::SmoothSpec, data, user_
     # Get degree and candidate powers from xt or spec
     degree = get(spec.xt, :degree, spec.m === nothing ? 2 : spec.m)::Int
     degree in (1, 2) || throw(ArgumentError("FP degree must be 1 or 2, got $degree"))
-    powers = get(spec.xt, :powers, FP_DEFAULT_POWERS)
+    powers = get(spec.xt, :powers, FP_DEFAULT_POWERS)::Vector{Float64}
 
     # Ensure x is positive (required for negative powers and log)
     x_shift = 0.0

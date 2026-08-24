@@ -43,6 +43,13 @@ correct side-by-side code compare different models.
   marginal basis dimensions directly, alongside the existing scalar form
   (which specifies the *total* dimension).
 
+- **`summary(m)` now prints an mgcv-style model summary.** It previously fell
+  through to `Base.summary`'s type-name fallback (`"GamModel"`), which is the
+  first thing an mgcv user types. The parametric and smooth tables now also
+  carry R's significance-code column (`***`/`**`/`*`/`.`) with its legend, and
+  the footer reports the selection criterion (`-REML`/`-ML`/`GCV`/`UBRE`)
+  alongside the scale estimate and `n`, matching `summary.gam`'s layout.
+
 ### Fixed
 
 - Smoothing-parameter selection no longer walks to the clamp along a flat
@@ -89,6 +96,43 @@ correct side-by-side code compare different models.
 - Disclosed five further gaps against mgcv: `edf1`/`edf2` with the
   Wood-Pya-Säfken corrected AIC, `NCV`, `scat`, `mvn`, gamlss `SHASH`/`twlss`,
   and `paraPen`.
+
+- **The README Quick Start now runs verbatim.** It imported `StatsAPI` after
+  `GAM`, which leaves `coef`, `fitted` and the other verbs ambiguous, so the
+  advertised first example died on `UndefVarError: coef not defined`. It now
+  uses `using StatsBase` and carries a note on the import options.
+
+- **Two over-warnings corrected against measurement.** The SCAM standard-error
+  caveat cited a bootstrap-to-analytic ratio as if it were a coverage
+  shortfall; measured coverage of the analytic intervals is 0.948 +/- 0.006 at
+  the nominal 0.95, and the ratio reflects coefficient-scale spread rather than
+  coverage. The `testStat` note framed the simplified rank truncation as a
+  general accuracy loss; measured rejection rates match mgcv within Monte Carlo
+  error (0.003/0.037/0.077 vs 0.003/0.035/0.070 at alpha = 0.01/0.05/0.10), so
+  the note now states the actual consequence: `Ref.df` and the F statistic
+  differ from mgcv's edf1-based values, while test size does not.
+
+- **`overall_uncertainty` documented as an estimand choice, not a bug.** The
+  two settings correspond to mgcv's `iterms` and `terms` intervals, which
+  target different quantities; measured coverages are 0.976 and 0.964.
+
+- **The API reference is complete and the docs build genuinely gates.** About
+  65 exported bindings were missing from the manual, and six cross-references
+  in shipped docstrings resolved to nothing. All six are fixed. `api.md` had
+  grown past Documenter's hard HTML size limit, so the reference is now three
+  pages (Core, Model Types, Diagnostics & Plotting) and the build exits 0.
+  `warnonly` still lists `:missing_docs` (intentional: ~340 internal helpers
+  stay out of the manual) and `:cross_references`, but the latter now carries a
+  comment naming the only two remaining causes -- `statsbase.jl` links to `r2`,
+  which is StatsAPI's binding and cannot be documented from this module, and
+  `s_nest` links to `trans_linear`/`trans_nexpsm`/`trans_mgks`, whose
+  docstrings sit on the types rather than the constructors -- so that the
+  entry can be dropped once `src/nested.jl` gains those three docstrings.
+
+- **Vignette reading order.** The fourteen vignettes are no longer presented as
+  a flat list: the README gives a suggested order, and the diagnostics vignette
+  now says it is a tour of the tools and points to the model-selection vignette
+  for the decision workflow.
 
 ## 0.2.0 (2026-08-23)
 
