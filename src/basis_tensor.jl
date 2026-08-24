@@ -146,8 +146,28 @@ function _build_raw_marginal(::CubicShrink, spec::SmoothSpec, data, user_knots)
     knots = user_knots !== nothing ? Float64.(user_knots) : place_knots(x, k)
     k = length(knots)
     X, S = _cr_basis(x, knots)
-    # Single modified penalty (mgcv cs), consistent with _construct_cr
-    S = _shrink_penalty(S)
+    # Single modified penalty (mgcv cs), consistent with _construct_cr.
+    # This is a MARGINAL basis, built before the tensor product combines
+    # margins, so the null-space rank is the non-cyclic CR one — constant and
+    # linear, M = 2 — matching what the unshrunk CR marginal records below.
+    #
+    # KNOWN DIVERGENCE: mgcv uses *two different* shrinkage rules, and
+    # `_shrink_penalty` currently implements only the first:
+    #   * `ts`/tprs (R/smooth.r:1348) sets all M null eigenvalues to the same
+    #     value, `es$values[(k-M+1):k] <- es$values[k-M]*shrink`;
+    #   * `cs`/cr  (R/smooth.r:1495-1496) CASCADES them,
+    #     `es$values[nk-1] <- es$values[nk-2]*shrink` then
+    #     `es$values[nk] <- es$values[nk-1]*shrink`, so the smallest null
+    #     eigenvalue ends up at `shrink^2`, not `shrink`.
+    # Measured against mgcv (cr, k=5): mgcv's cs eigenvalues are
+    # [1873.6, 486.05, 57.961, 5.7961, 0.57961]; we produce
+    # [..., 5.7961, 5.7961] — the last is 10x too large. Passing `null_dim`
+    # here is behaviour-neutral (it coincides with the legacy numerical-rank
+    # path for CR, whose null eigenvalues are ~1e-13), but it states the rank
+    # explicitly so this call is already correct once `_shrink_penalty` grows
+    # a cascading mode for the cr/cs family.
+    S = _shrink_penalty(S; null_dim = 2)
+    # After shrinkage the penalty is full rank, hence null_dim = 0 downstream.
     return RawMarginalBasis(X, [S], 0, knots, spec)
 end
 
@@ -515,7 +535,7 @@ function _t2_marginal_reparam(rm::RawMarginalBasis)
     S_sum .= (S_sum .+ S_sum') ./ 2
 
     eig = eigen(Symmetric(S_sum))
-    idx = k:-1:1                      # descending eigenvalues
+    idx = k:-1:1                      # descending eigenvalues, as R's eigen()
     vals = eig.values[idx]
     vecs = eig.vectors[:, idx]
 
@@ -524,16 +544,82 @@ function _t2_marginal_reparam(rm::RawMarginalBasis)
     # eigenvalues, and a threshold rule makes the split data-dependent (one
     # marginal can be classified differently from an identical sibling).
     # mgcv likewise splits on the known null space.
-    tol = eps(Float64) * max(maximum(abs, vals), 1.0) * k
     n_range = clamp(k - rm.null_dim, 0, k)
+    null_exists = n_range < k
+    n_obs = size(rm.X, 1)
 
-    R = Matrix{Float64}(undef, k, k)
-    for j in 1:n_range
-        R[:, j] = vecs[:, j] ./ sqrt(max(vals[j], tol))
+    # ─── mgcv's `nat.param(X, S, rank, type = 3, unit.fnorm = TRUE)` ───────
+    # (R/smooth.r:15-129; called from smooth.construct.t2.smooth.spec at
+    # R/smooth.r:1066). Reproducing it matters because t2 then discards the
+    # transformed penalty and uses a partial IDENTITY on each block, so the
+    # whole smoothing-parameter scale is carried by the column scaling of the
+    # reparameterized marginal basis. Without it our reported `sp` sits on a
+    # different scale from mgcv's and `sp =` cannot be transferred between
+    # the packages, even though the fitted subspace is identical.
+    #
+    # Step 1: scale range columns by 1/sqrt(eigenvalue), so the penalty
+    # becomes the identity there; null columns start at 1.
+    E = ones(k)
+    @inbounds for j in 1:n_range
+        E[j] = sqrt(max(vals[j], 0.0))
     end
-    for j in (n_range + 1):k
-        R[:, j] = vecs[:, j]
+
+    Xv = rm.X * vecs
+
+    # Step 2: give the null columns a scale comparable to the range columns,
+    # controlling the condition number (nat.param's `col.norm`/`av.norm`).
+    if null_exists && n_range > 0
+        col_norm = vec(sum(abs2, Xv; dims = 1)) ./ (E .^ 2)
+        av_norm = mean(view(col_norm, 1:n_range))
+        if av_norm > 0
+            @inbounds for i in (n_range + 1):k
+                E[i] = sqrt(col_norm[i] / av_norm)
+            end
+        end
     end
+
+    R = vecs ./ E'
+    Xt = Xv ./ E'
+
+    # Step 3 (type = 3): rotate the null block to its principal directions of
+    # the column-centred basis, which places the constant function first among
+    # the null columns. mgcv assigns into REVERSED indices so the smallest
+    # eigenvalue — the direction annihilated by centring, i.e. the constant —
+    # lands at the start of the null block.
+    if null_exists && n_range < k - 1
+        ind = (n_range + 1):k
+        rind = k:-1:(n_range + 1)
+        Xn = Xt[:, ind]
+        Xn .-= sum(Xn; dims = 1) ./ n_obs
+        um = eigen(Symmetric(Xn' * Xn))
+        U = um.vectors[:, size(um.vectors, 2):-1:1]   # descending
+        Xt[:, rind] = Xt[:, ind] * U
+        R[:, rind] = R[:, ind] * U
+    end
+
+    # Step 4 (unit.fnorm): rescale the penalized and unpenalized blocks so each
+    # has unit mean square, making both blocks' Frobenius norms canonical and
+    # independent of the (arbitrary) basis chosen within the null eigenspace.
+    # We scale COLUMNS of R, not rows as mgcv's type-2/3 branch writes, so that
+    # `X_raw * R == Xt` continues to hold exactly — that identity is what
+    # `predict_matrix` relies on, and it is the relation mgcv's own returned
+    # `P` satisfies (verified against `mgcv:::nat.param` to ~1e-15).
+    if n_range > 0
+        sc = mean(abs2, view(Xt, :, 1:n_range))
+        if sc > 0
+            f = 1 / sqrt(sc)
+            Xt[:, 1:n_range] .*= f
+            R[:, 1:n_range] .*= f
+        end
+    end
+    if null_exists
+        scf = mean(abs2, view(Xt, :, (n_range + 1):k))
+        if scf > 0
+            f = 1 / sqrt(scf)
+            R[:, (n_range + 1):k] .*= f
+        end
+    end
+
     return R, n_range
 end
 

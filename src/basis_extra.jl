@@ -18,8 +18,16 @@ struct DuchonSpline <: AbstractBasisType end
 BASIS_TYPES[:ds] = DuchonSpline()
 
 function _smooth_construct(::DuchonSpline, spec::SmoothSpec, data, user_knots)
-    # Duchon splines with integer m reduce to TPRS
-    # Delegate to TPRS with the specified m
+    # Duchon splines with integer m reduce to TPRS, so we delegate. This is a
+    # genuine approximation, not an equivalence: mgcv's bs="ds" is a different
+    # basis (its S.scale is 0.427 against TPRS's 19.60 on the same data), so
+    # results are NOT comparable with R's. The docstring says so, but a
+    # docstring is not visible at the call site — warn once per session, since
+    # silently fitting a different model than the one asked for is the failure
+    # mode most likely to go unnoticed.
+    @warn "bs=:ds is not implemented as a Duchon spline; fitting an ordinary " *
+          "thin-plate regression spline (bs=:tp) instead. Results will NOT " *
+          "match mgcv's bs=\"ds\"." maxlog = 1
     return _smooth_construct(ThinPlateSpline(), spec, data, user_knots)
 end
 
@@ -238,6 +246,93 @@ struct FactorSmooth <: AbstractBasisType end
 
 BASIS_TYPES[:fs] = FactorSmooth()
 
+"""
+Prediction cache for factor-smooth interactions (`bs="fs"`).
+
+Extends the marginal-smooth/level bookkeeping with `P`, the `nat.param`
+reparameterization matrix. mgcv's `Predict.matrix.fs.interaction`
+(R/smooth.r:2166) forms the base prediction matrix and then post-multiplies by
+the smooth's stored `P`, so `P` has to survive to prediction time or the
+fitted and predicted bases silently disagree.
+"""
+struct FactorSmoothReparamCache <: AbstractSmoothPredictCache
+    levels::Vector
+    marginal_smooth  # ConstructedSmooth
+    factor_var::Symbol
+    P::Matrix{Float64}   # X_reparam = X_base * P
+end
+
+"""
+    _nat_param_type1(X, S, rank) -> (X=..., D=..., P=..., rank=...)
+
+Port of mgcv's `nat.param(X, S, rank, type = 1, unit.fnorm = TRUE)`
+(R/smooth.r:15-129), the QR branch.
+
+Reparameterizes so the penalty becomes the identity on the range space and
+zero on the null space, with the range and null blocks each rescaled to unit
+mean square. mgcv uses `type = 1` for `fs` specifically — the comment at
+R/smooth.r:2063-2066 explains why: the range and null spaces should be at
+least approximately orthogonal, because their variance components are treated
+as independent.
+
+Returns the transformed model matrix, the positive diagonal `D` of the
+penalty, and `P` with `X_new == X * P`.
+"""
+function _nat_param_type1(X::Matrix{Float64}, S::Matrix{Float64}, rank::Int;
+                          tol::Float64 = eps()^0.8)
+    n, p = size(X)
+    F = qr(X)
+    R = Matrix(F.R)                                  # p × p upper triangular
+    Q = Matrix(F.Q * Matrix{Float64}(I, n, p))       # thin Q, n × p
+
+    # RSR = R^{-T} S R^{-1}; mgcv writes this as a pair of forwardsolves.
+    Rt = transpose(R)
+    RSR = Rt \ Matrix(transpose(Rt \ S))
+
+    es = eigen(Symmetric(RSR))
+    # LAPACK returns ascending eigenvalues; mgcv indexes R's DEscending order,
+    # so reverse before applying its `1:rank` / `(rank+1):p` slicing.
+    ord = sortperm(es.values; rev = true)
+    vals = es.values[ord]
+    vecs = es.vectors[:, ord]
+
+    r = rank
+    if r < 1 || r > p
+        r = count(>(maximum(vals) * tol), vals)
+    end
+    null_exists = r < p
+
+    D = vals[1:r]
+    Xn = Q * vecs
+    P = R \ vecs
+
+    # type = 1: divide through by sqrt(D) so the penalty becomes the identity.
+    E = ones(p)
+    @inbounds for j in 1:r
+        E[j] = sqrt(max(D[j], 0.0))
+    end
+    Xn = Xn ./ transpose(E)
+    P = P ./ transpose(E)
+    D = ones(r)
+
+    # unit.fnorm: rescale range and null blocks to unit mean square. Note the
+    # QR branch scales P's COLUMNS (mgcv's type 2/3 branch scales rows), which
+    # is what preserves `X * P == X_new`.
+    rng = 1:r
+    scale = 1.0 / sqrt(mean(abs2, view(Xn, :, rng)))
+    Xn[:, rng] .*= scale
+    P[:, rng] .*= scale
+    D .*= scale^2
+    if null_exists
+        nrng = (r + 1):p
+        scalef = 1.0 / sqrt(mean(abs2, view(Xn, :, nrng)))
+        Xn[:, nrng] .*= scalef
+        P[:, nrng] .*= scalef
+    end
+
+    return (X = Xn, D = D, P = P, rank = r)
+end
+
 function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) >= 2 ||
         throw(ArgumentError("Factor-smooth interactions require at least 2 variables: " *
@@ -266,8 +361,21 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
     # makes the gam.side exemption for fs safe.
     marginal_sm = _construct_tprs(marginal_spec, data, user_knots;
         absorb_cons = false)
-    X_marginal = marginal_sm.X    # n × k (uncentered)
-    k_eff = size(X_marginal, 2)
+    X_base = marginal_sm.X        # n × k (uncentered)
+    k_eff = size(X_base, 2)
+
+    # mgcv errors rather than guessing when the base basis is multiply
+    # penalized (R/smooth.r:2053).
+    length(marginal_sm.S) == 1 || throw(ArgumentError(
+        "\"fs\" smooth cannot use a multiply penalized basis " *
+        "(got $(length(marginal_sm.S)) penalties from the marginal smooth)"))
+
+    # Reparameterize to separate range from null space, exactly as mgcv does
+    # at R/smooth.r:2065 — `nat.param(X, S[[1]], rank, type = 1)`.
+    rp = _nat_param_type1(X_base, marginal_sm.S[1], marginal_sm.rank)
+    X_marginal = rp.X
+    r = rp.rank
+    null_d = k_eff - r
 
     # Block-diagonal model matrix: one block per factor level
     total_cols = L * k_eff
@@ -281,42 +389,39 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         end
     end
 
-    # Block-diagonal penalties: replicate each marginal penalty L times
-    # (one shared smoothing parameter per marginal penalty, as in mgcv fs)
+    # Penalties, following mgcv R/smooth.r:2110-2114 exactly.
+    #
+    #   S[[1]]   <- diag(rep(c(rp$D, rep(0, null.d)), nf))   # range space
+    #   S[[i+1]] <- diag(rep(um, nf))                        # one per null dim
+    #
+    # The second line is the substantive point: mgcv gives EVERY null-space
+    # direction its own penalty, hence its own smoothing parameter and its own
+    # variance component. GAM.jl previously lumped them into a single shared
+    # ridge, which is a strictly smaller model class (the per-level constant
+    # and per-level slope were forced to share one variance component).
     penalties = Matrix{Float64}[]
-    for S_j in marginal_sm.S
-        S_fs = zeros(total_cols, total_cols)
-        for l in 1:L
-            rng = ((l - 1) * k_eff + 1):(l * k_eff)
-            S_fs[rng, rng] .= S_j
+
+    S_range = zeros(total_cols, total_cols)
+    for l in 1:L
+        off = (l - 1) * k_eff
+        @inbounds for j in 1:r
+            S_range[off + j, off + j] = rp.D[j]
         end
-        push!(penalties, S_fs)
+    end
+    push!(penalties, S_range)
+
+    for i in 1:null_d
+        S_i = zeros(total_cols, total_cols)
+        for l in 1:L
+            idx = (l - 1) * k_eff + r + i
+            S_i[idx, idx] = 1.0
+        end
+        push!(penalties, S_i)
     end
 
-    # Full penalization (mgcv fs: null.space.dim = 0): add a shared ridge
-    # penalty on the marginal-penalty null space of every level, so the
-    # per-level polynomial components (constants, slopes) are shrunk like
-    # random effects and the whole smooth is identifiable.
-    marg_nullity = _penalty_nullity(marginal_sm.S, k_eff)
-    if marg_nullity > 0
-        St = zeros(k_eff, k_eff)
-        for S_j in marginal_sm.S
-            nrm = opnorm(S_j)
-            nrm > 0 && (St .+= S_j ./ nrm)
-        end
-        es = eigen(Symmetric(St))
-        tolv = maximum(es.values) * eps()^0.75
-        U0 = es.vectors[:, es.values .< tolv]
-        P_null = U0 * U0'
-        S_null_fs = zeros(total_cols, total_cols)
-        for l in 1:L
-            rng = ((l - 1) * k_eff + 1):(l * k_eff)
-            S_null_fs[rng, rng] .= P_null
-        end
-        push!(penalties, Matrix(Symmetric(S_null_fs)))
-    end
-
-    # Fully penalized: no unpenalized directions remain
+    # Fully penalized: no unpenalized directions remain (mgcv sets
+    # null.space.dim = 0). The summed penalty is full rank, which is what the
+    # single per-block `rank` field feeds into `Mp = p - sum(rank)`.
     pen_rank = total_cols
     null_dim = 0
 
@@ -327,22 +432,25 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         nothing, nothing, 0, 0,   # no additional constraint on the full fs smooth
         nothing, nothing, nothing,
         Int[],
-        predict_cache = FactorSmoothPredictCache(collect(levels), marginal_sm, factor_var),
+        predict_cache = FactorSmoothReparamCache(
+            collect(levels), marginal_sm, factor_var, rp.P),
     )
     return sm
 end
 
 function _predict_matrix(::FactorSmooth, smooth::ConstructedSmooth, newdata)
     info = smooth.predict_cache
-    info isa FactorSmoothPredictCache ||
+    info isa FactorSmoothReparamCache ||
         throw(ArgumentError("Cannot find factor smooth metadata for prediction"))
 
     factor_col = Tables.getcolumn(newdata, info.factor_var)
     n_new = length(factor_col)
 
-    # Predict marginal at new data (handles constraint absorption automatically)
+    # Predict marginal at new data (handles constraint absorption automatically),
+    # then apply the same nat.param reparameterization used at fit time —
+    # mgcv's `Xb <- Predict.matrix(object,data) %*% object$P` (R/smooth.r:2166).
     marginal_sm = info.marginal_smooth
-    X_marginal = _predict_matrix(marginal_sm.spec.basis, marginal_sm, newdata)
+    X_marginal = _predict_matrix(marginal_sm.spec.basis, marginal_sm, newdata) * info.P
     k_eff = size(X_marginal, 2)
     L = length(info.levels)
     total_cols = L * k_eff

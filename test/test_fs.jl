@@ -40,10 +40,22 @@
         # No additional constraint on the full fs smooth
         @test sm.constraint === nothing
 
-        # Penalty dimensions match: replicated wiggliness penalty plus the
-        # shared null-space (random-effect) penalty added for full penalization
-        @test length(sm.S) == 2
+        # Penalty structure follows mgcv (R/smooth.r:2110-2114): one range-space
+        # penalty plus ONE PENALTY PER NULL-SPACE DIMENSION, so every null
+        # direction gets its own smoothing parameter / variance component.
+        # A 1-D TPRS marginal with m=2 has a 2-dimensional null space (constant
+        # and linear), hence 1 + 2 = 3 penalties. GAM.jl previously lumped the
+        # null directions into a single shared ridge (2 penalties), which was a
+        # strictly smaller model class.
+        marg_null_d = 2
+        @test length(sm.S) == 1 + marg_null_d
         @test all(S -> size(S) == (n_levels * k_eff, n_levels * k_eff), sm.S)
+
+        # Each null-space penalty selects one column per factor level, so its
+        # rank is the number of levels.
+        for i in 1:marg_null_d
+            @test rank(sm.S[1 + i]) == n_levels
+        end
 
         # Fully penalized, as in mgcv fs (null.space.dim = 0)
         @test sm.null_dim == 0

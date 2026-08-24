@@ -17,7 +17,7 @@ using DataFrames
         @test sp.basis isa T2TensorProduct
         @test sp.k == 25  # 5 * 5
 
-        sp2 = t2(:x, :z, k=16)
+        sp2 = t2(:x, :z, k=4)
         @test sp2.k == 16  # 4 * 4
 
         sp3 = t2(:x, :z, bs=:ps)
@@ -36,7 +36,7 @@ using DataFrames
         z = randn(t2_rng, n)
         data = DataFrame(x=x, z=z)
 
-        spec = t2(:x, :z, k=25, bs=:cr)
+        spec = t2(:x, :z, k=5, bs=:cr)
         sm = smooth_construct(spec, data)
 
         @test sm isa ConstructedSmooth{T2TensorProduct}
@@ -69,7 +69,7 @@ using DataFrames
         z = randn(t2_rng, n)
         data = DataFrame(x=x, y=y, z=z)
 
-        spec = t2(:x, :y, :z, k=27, bs=:cr)  # 3^3 = 27
+        spec = t2(:x, :y, :z, k=3, bs=:cr)  # 3 per margin
         sm = smooth_construct(spec, data)
 
         @test sm isa ConstructedSmooth{T2TensorProduct}
@@ -96,7 +96,7 @@ using DataFrames
         z = randn(t2_rng, n)
         data = DataFrame(x=x, z=z)
 
-        spec = t2(:x, :z, k=25, bs=:cr)
+        spec = t2(:x, :z, k=5, bs=:cr)
         sm = smooth_construct(spec, data)
 
         # Predict on training data should match X
@@ -129,8 +129,8 @@ using DataFrames
         z = randn(t2_rng, n)
         data = DataFrame(x=x, z=z)
 
-        spec_te = te(:x, :z, k=25, bs=:cr)
-        spec_t2 = t2(:x, :z, k=25, bs=:cr)
+        spec_te = te(:x, :z, k=5, bs=:cr)
+        spec_t2 = t2(:x, :z, k=5, bs=:cr)
 
         sm_te = smooth_construct(spec_te, data)
         sm_t2 = smooth_construct(spec_t2, data)
@@ -151,7 +151,7 @@ using DataFrames
         y = f_true .+ 0.3 .* randn(t2_rng, n)
         data = DataFrame(x=x, z=z, y=y)
 
-        m = gam(@formulak(y ~ t2(x, z, k=25)), data)
+        m = gam(@formulak(y ~ t2(x, z, k=5)), data)
 
         @test m isa GamModel
         @test m.converged
@@ -177,8 +177,8 @@ using DataFrames
         y = f_true .+ 0.3 .* randn(t2_rng, n)
         data = DataFrame(x=x, z=z, y=y)
 
-        m_te = gam(@formulak(y ~ te(x, z, k=25)), data)
-        m_t2 = gam(@formulak(y ~ t2(x, z, k=25)), data)
+        m_te = gam(@formulak(y ~ te(x, z, k=5)), data)
+        m_t2 = gam(@formulak(y ~ t2(x, z, k=5)), data)
 
         @test m_te.converged
         @test m_t2.converged
@@ -205,10 +205,10 @@ using DataFrames
         n = 200
         d2 = (x = rand(rng_o, n), z = rand(rng_o, n), w = rand(rng_o, n))
 
-        sm2 = smooth_construct(t2(:x, :z, k = 25), d2)
+        sm2 = smooth_construct(t2(:x, :z, k = 5), d2)
         @test [rank(S; rtol = 1e-8) for S in sm2.S] == [9, 6, 6]
 
-        sm3 = smooth_construct(t2(:x, :z, :w, k = 27), d2)
+        sm3 = smooth_construct(t2(:x, :z, :w, k = 3), d2)
         @test [rank(S; rtol = 1e-8) for S in sm3.S] == [1, 2, 2, 4, 2, 4, 4]
     end
 
@@ -228,7 +228,7 @@ using DataFrames
         @test size(smooth_construct(te(:x, :z, k = [4, 7]), dk).X, 2) == 27
 
         # a scalar k remains a TOTAL-dimension hint
-        @test size(smooth_construct(t2(:x, :z, k = 25), dk).X, 2) == 24
+        @test size(smooth_construct(t2(:x, :z, k = 5), dk).X, 2) == 24
 
         @test_throws ArgumentError t2(:x, :z, k = [4, 7, 9])
         @test_throws ArgumentError t2(:x, :z, k = [2, 7])
@@ -245,7 +245,7 @@ using DataFrames
         dp = (x = rand(rng_p, n), z = rand(rng_p, n))
         newp = (x = rand(rng_p, 90), z = rand(rng_p, 90))
 
-        spec = t2(:x, :z, k = 25)
+        spec = t2(:x, :z, k = 5)
         sm = smooth_construct(spec, dp)
         rms = [GAM._build_raw_marginal(m, dp, nothing) for m in GAM._get_marginals(spec)]
         X_raw_tr = GAM._row_kronecker([rm.X for rm in rms])

@@ -41,42 +41,78 @@ function _ad_diff_matrix(k::Int, d::Int)
 end
 
 """
-    _partition_of_unity_weights(n_rows, n_penalties) -> Vector{Vector{Float64}}
+    _adaptive_weight_basis(n_rows, n_penalties) -> Vector{Vector{Float64}}
 
-Build smooth partition-of-unity weights for `n_rows` difference rows split
-into `n_penalties` regions, using a B-spline basis over the row index
-(mgcv's `bs="ad"` weights the difference penalty by the columns of a small
-B-spline basis; dimension 5 by default). B-splines sum to one on the
-interior, giving an exact partition of unity there; a final normalization
-guards the (extended-knot) edges.
+Build the adaptive penalty weight basis `V`: the columns weight the rows of the
+second-difference matrix, so `S_j = D' diag(V[:, j]) D`.
+
+Follows mgcv's `smooth.construct.ad.smooth.spec` exactly
+(`R/smooth.r:2467-2477`), which evaluates a **fixed** P-spline basis of
+dimension `n_penalties` at `x = 1:(nk-2)/nk`, where `nk = n_rows + 2` is the
+smoothing-basis dimension:
+
+  * `n_penalties == 2` → `V = [1  x]` (no spline basis);
+  * `n_penalties == 3` → order-3 basis (mgcv overrides to `m = 1`);
+  * `n_penalties >= 4` → order-4 basis (`m = 2`, mgcv's `bs="ps"` default).
+
+Note mgcv applies **no** normalization: for `n_penalties >= 3` the B-spline
+columns already form an exact partition of unity over the evaluation points,
+so `sum_j S_j == D'D`. That identity deliberately does *not* hold for
+`n_penalties == 2`, where mgcv's `[1  x]` has row sums in `[1, 2]`.
 """
-function _partition_of_unity_weights(n_rows::Int, n_penalties::Int)
+function _adaptive_weight_basis(n_rows::Int, n_penalties::Int)
     n_penalties >= 1 || throw(ArgumentError("n_penalties must be ≥ 1"))
     if n_penalties == 1 || n_rows == 1
-        return [ones(n_rows) for _ in 1:1]
+        return [ones(n_rows)]
     end
 
-    # Quadratic B-spline basis (order 3) of dimension n_penalties over the
-    # row-index range [1, n_rows]; fall back to lower order if n_penalties
-    # is very small.
-    order = min(3, n_penalties)
-    idx = collect(1.0:n_rows)
-    knots = _bspline_knot_vector(idx, n_penalties, order - 1)
-    W = _bspline_basis(idx, knots, order)   # n_rows × n_penalties
+    # mgcv evaluates the weight basis at 1:(nk-2)/nk, with nk the smoothing
+    # basis dimension. The B-spline branches are invariant to an affine change
+    # of this grid, but the `n_penalties == 2` branch below is not, so use
+    # mgcv's actual values.
+    nk = n_rows + 2
+    xw = collect(1.0:n_rows) ./ nk
 
-    weights = [W[:, j] for j in 1:n_penalties]
+    if n_penalties == 2
+        return [ones(n_rows), xw]
+    end
 
-    # Normalize (exact partition of unity, incl. edges)
-    for i in 1:n_rows
-        total = sum(weights[j][i] for j in 1:n_penalties)
-        if total > 0
-            for j in 1:n_penalties
-                weights[j][i] /= total
-            end
+    # mgcv: m = 2 (order 4) in general, overridden to m = 1 (order 3) at k == 3.
+    order = n_penalties == 3 ? 3 : 4
+    knots = _bspline_knot_vector(xw, n_penalties, order - 1)
+    W = _bspline_basis(xw, knots, order)   # n_rows × n_penalties
+
+    return [W[:, j] for j in 1:n_penalties]
+end
+
+"""
+    _adaptive_n_penalties(spec, default) -> Int
+
+Resolve the number of adaptive sub-penalties, following mgcv's convention in
+which `m` is the **penalty basis size** (`p.order[1]`, default 5) rather than a
+spline order. `xt[:n_penalties]` is retained as an explicit alias and wins if
+both are supplied.
+"""
+function _adaptive_n_penalties(spec::SmoothSpec, default::Int)
+    xt_val = get(spec.xt, :n_penalties, nothing)
+    if spec.m !== nothing
+        m_val = Int(spec.m)
+        m_val >= 1 || throw(ArgumentError(
+            "For an adaptive smooth, `m` is the number of sub-penalties and must be ≥ 1, got $m_val"))
+        if xt_val === nothing
+            @warn "For `bs=:ad`, `m` follows mgcv and sets the NUMBER of adaptive " *
+                  "sub-penalties (mgcv's `p.order`, default 5) — it is not a spline " *
+                  "order. The smoothing basis is always a cubic P-spline with a " *
+                  "second-order difference penalty. Use `xt=Dict(:n_penalties => n)` " *
+                  "to be explicit." maxlog = 1
+            return m_val
+        elseif Int(xt_val) != m_val
+            throw(ArgumentError(
+                "Conflicting adaptive penalty basis size: m=$m_val and " *
+                "xt[:n_penalties]=$(Int(xt_val)). Supply only one."))
         end
     end
-
-    return weights
+    return xt_val === nothing ? default : Int(xt_val)
 end
 
 function _smooth_construct(basis::AdaptiveSmooth, spec::SmoothSpec, data, user_knots)
@@ -87,12 +123,14 @@ function _smooth_construct(basis::AdaptiveSmooth, spec::SmoothSpec, data, user_k
     n = length(x)
 
     k = min(spec.k, n)
-    m_order = spec.m === nothing ? 2 : spec.m
-    spline_order = m_order + 2
 
-    # Get n_penalties from xt or from the basis type default
-    n_penalties = get(spec.xt, :n_penalties, basis.n_penalties)::Int
-    n_penalties >= 1 || throw(ArgumentError("n_penalties must be ≥ 1"))
+    # mgcv fixes the smoothing basis for `bs="ad"` at a cubic P-spline with a
+    # second-order difference penalty (`pobject$p.order <- c(2,2)`,
+    # R/smooth.r:2454) regardless of `m`; `m` selects the penalty basis size.
+    m_order = 2
+    spline_order = 4
+
+    n_penalties = _adaptive_n_penalties(spec, basis.n_penalties)
 
     # Build P-spline knot vector (same shared builder as PSpline)
     m2 = spline_order - 1
@@ -106,11 +144,15 @@ function _smooth_construct(basis::AdaptiveSmooth, spec::SmoothSpec, data, user_k
     D = _ad_diff_matrix(actual_k, m_order)
     n_rows = size(D, 1)
 
-    # Clamp n_penalties to available rows
+    # mgcv errors rather than silently shrinking the request (R/smooth.r:2463).
+    n_penalties < actual_k - 2 || throw(ArgumentError(
+        "penalty basis too large for smoothing basis: requested $n_penalties " *
+        "sub-penalties for a basis of dimension $actual_k (need < $(actual_k - 2)). " *
+        "Increase `k` or reduce `m`/`xt[:n_penalties]`."))
     n_pen = min(n_penalties, n_rows)
 
-    # Build local penalties via partition-of-unity weighting of D
-    pou_weights = _partition_of_unity_weights(n_rows, n_pen)
+    # Build local penalties by weighting the rows of D (mgcv's V basis)
+    pou_weights = _adaptive_weight_basis(n_rows, n_pen)
     penalties = Matrix{Float64}[]
     for j in 1:n_pen
         W_j = Diagonal(pou_weights[j])

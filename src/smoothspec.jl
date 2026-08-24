@@ -1,5 +1,47 @@
 # Smooth specification constructors — user-facing s(), te(), ti()
 
+"""
+    _check_sp_fx(sp, fx, call, vars)
+
+Reject `sp=` combined with `fx=true` at construction time.
+
+`fx=true` drops the penalty entirely, so a supplied smoothing parameter can
+never be used. Accepting the pair and letting `fx` win means the smooth the
+user asked for is silently not the smooth they get; failing in `s()` itself
+points at the term instead of at a fit that ran to completion with a
+different model. (`_validate_formula_smooths` keeps the same check for specs
+built by other routes.)
+"""
+function _check_sp_fx(sp, fx::Bool, call::String, vars)
+    (fx && sp !== nothing) || return nothing
+    varlist = join(string.(vars), ", ")
+    throw(ArgumentError(
+        "$call($varlist, sp=$sp, fx=true): sp= and fx=true are incompatible. " *
+        "fx=true leaves the smooth unpenalized, so the smoothing parameter " *
+        "would be ignored. Drop sp= to keep the term unpenalized, or drop " *
+        "fx=true to fit at the given smoothing parameter."))
+end
+
+"""
+    _check_sos_units(bs, xt, vars)
+
+Reject an invalid `xt[:units]` on an `sos` term at construction time.
+
+`sos` reads latitude/longitude in degrees by default (as mgcv does); the only
+other accepted value is `:radians`. A typo such as `:radian` or `:deg` would
+otherwise fall through to the default and silently rescale the fit by 57×.
+"""
+function _check_sos_units(bs::Symbol, xt::Dict{Symbol,Any}, vars)
+    bs === :sos || return nothing
+    haskey(xt, :units) || return nothing
+    u = xt[:units]
+    u = u isa AbstractString ? Symbol(u) : u
+    u === :degrees || u === :radians || throw(ArgumentError(
+        "s($(join(string.(vars), ", ")), bs=:sos, xt=Dict(:units => $(repr(xt[:units])))): " *
+        "xt[:units] must be :degrees (the default, matching mgcv) or :radians."))
+    return nothing
+end
+
 function _normalize_xt(xt; pc=nothing)
     xt_norm = Dict{Symbol,Any}()
     if xt === nothing
@@ -80,6 +122,7 @@ function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
     id = nothing, sp = nothing, fx::Bool = false, m = nothing,
     xt = nothing, pc = nothing)
     length(vars) >= 1 || throw(ArgumentError("s() requires at least one variable"))
+    _check_sp_fx(sp, fx, "s", vars)
 
     basis = resolve_basis_type(bs)
 
@@ -108,6 +151,7 @@ function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
     sp_val = sp === nothing ? nothing : Float64(sp)
     m_val = m === nothing ? nothing : Int(m)
     xt_norm = _normalize_xt(xt; pc = pc)
+    _check_sos_units(bs, xt_norm, vars)
 
     label = _smooth_label(vars, by_sym, bs)
 
@@ -148,6 +192,7 @@ function te(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
             by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
             xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("te() requires at least 2 variables"))
+    _check_sp_fx(sp, fx, "te", vars)
     d = length(vars)
 
     # Resolve per-margin basis types
@@ -207,6 +252,7 @@ function ti(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
             by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
             xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("ti() requires at least 2 variables"))
+    _check_sp_fx(sp, fx, "ti", vars)
     d = length(vars)
 
     bs_vec = bs isa Symbol ? fill(bs, d) : bs
@@ -256,10 +302,22 @@ end
     _tensor_marginal_k(k, d) -> Vector{Int}
 
 Resolve the per-marginal basis dimensions for a tensor smooth over `d`
-variables. A scalar `k` is a *total* dimension hint, split as `k^(1/d)` per
-margin and floored at 3; `k = -1` selects the default of 5 per margin. A
-vector gives the marginal dimensions directly, matching mgcv's per-margin
-`k` (e.g. `k = [4, 7]` ≙ mgcv's `k = c(4, 7)`).
+variables, following mgcv's convention exactly.
+
+A scalar `k` is the **per-marginal** basis dimension, recycled across margins:
+`te(x, z, k = 8)` builds an 8×8 tensor product, as in mgcv's
+`te(x, z, k = 8)` (`R/smooth.r`, `te`: `if (length(k)==1) k <- rep(k,n.bases)`).
+A vector gives the marginal dimensions directly (`k = [4, 7]` ≙ mgcv's
+`k = c(4, 7)`), and `k = -1` selects mgcv's default of 5 per margin
+(mgcv's `k <- 5^d` with `d = 1` per basis).
+
+!!! warning "Breaking change"
+    Before GAM.jl 0.2.0 a scalar `k` was a *total* dimension hint, split as
+    `k^(1/d)` per margin, so `te(x, z, k = 25)` meant 5×5. It now means
+    25×25. Models ported from mgcv were silently getting a basis roughly
+    `d`-th-root smaller; models written against the old GAM.jl behaviour
+    should switch to the explicit vector form (`k = [5, 5]`) to keep their
+    previous basis size.
 """
 function _tensor_marginal_k(k, d::Int)
     if k isa AbstractVector
@@ -270,7 +328,10 @@ function _tensor_marginal_k(k, d::Int)
         return collect(Int, k)
     end
     k == -1 && return fill(5, d)
-    return fill(max(3, round(Int, k^(1 / d))), d)
+    k >= 3 || throw(ArgumentError(
+        "marginal k must be >= 3, got $k (a scalar k is the per-marginal " *
+        "basis dimension, as in mgcv; use a vector for unequal margins)"))
+    return fill(Int(k), d)
 end
 
 # Marginal specs for tensor product smooths (te/ti/t2) are stored in the
@@ -336,6 +397,7 @@ function t2(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
             by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
             xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("t2() requires at least 2 variables"))
+    _check_sp_fx(sp, fx, "t2", vars)
     d = length(vars)
 
     bs_vec = bs isa Symbol ? fill(bs, d) : bs
