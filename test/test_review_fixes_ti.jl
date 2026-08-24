@@ -27,7 +27,7 @@ end
         z = rand(rng, n) .* 2 .- 1
         data = DataFrame(x=x, z=z)
 
-        sm_ti = smooth_construct(ti(:x, :z, k=25, bs=bs), data)
+        sm_ti = smooth_construct(ti(:x, :z, k=5, bs=bs), data)
         Xti = sm_ti.X
 
         # ti() basis dimension is prod(k_j - 1) = 4*4 = 16
@@ -76,7 +76,7 @@ end
         df = DataFrame(x=x, z=z, y=y)
 
         m = gam(GAM.@formulak(y ~ s(x, k = 8, bs = :cr) + s(z, k = 8, bs = :cr) +
-                                  ti(x, z, k = 25, bs = :cr)), df)
+                                  ti(x, z, k = 5, bs = :cr)), df)
         @test m.converged
 
         i_ti = findfirst(sm -> sm.spec.basis isa TensorInteraction, m.smooths)
@@ -101,7 +101,7 @@ end
 
         m_add = gam(GAM.@formulak(y ~ s(x, k = 8, bs = :cr) + s(z, k = 8, bs = :cr)), df)
         m_int = gam(GAM.@formulak(y ~ s(x, k = 8, bs = :cr) + s(z, k = 8, bs = :cr) +
-                                      ti(x, z, k = 25, bs = :cr)), df)
+                                      ti(x, z, k = 5, bs = :cr)), df)
         @test m_int.converged
 
         rmse_add = sqrt(mean((fitted(m_add) .- f_true) .^ 2))
@@ -120,12 +120,12 @@ end
         df = DataFrame(x=x, z=z, y=y)
 
         m = gam(GAM.@formulak(y ~ s(x, k = 8, bs = :cr) + s(z, k = 8, bs = :cr) +
-                                  ti(x, z, k = 25, bs = :cr)), df)
+                                  ti(x, z, k = 5, bs = :cr)), df)
         pred = predict(m, df; type = :response)
         @test maximum(abs.(pred .- fitted(m))) < 1e-6
 
         # ti-only model too (constraint transforms reused in prediction)
-        m2 = gam(GAM.@formulak(y ~ ti(x, z, k = 25, bs = :cr)), df)
+        m2 = gam(GAM.@formulak(y ~ ti(x, z, k = 5, bs = :cr)), df)
         pred2 = predict(m2, df; type = :response)
         @test maximum(abs.(pred2 .- fitted(m2))) < 1e-6
 

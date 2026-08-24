@@ -63,9 +63,13 @@ function _raw_adaptive_basis(spec::SmoothSpec, data, user_knots)
     n = length(x)
 
     k = min(spec.k, n)
-    m_order = spec.m === nothing ? 2 : spec.m
-    spline_order = m_order + 2
-    n_penalties = Int(get(spec.xt, :n_penalties, 5))::Int
+
+    # Matches mgcv's `bs="ad"`: the smoothing basis is always a cubic P-spline
+    # with a second-order difference penalty, and `m` sets the number of
+    # sub-penalties. See `_adaptive_weight_basis` in basis_adaptive.jl.
+    m_order = 2
+    spline_order = 4
+    n_penalties = _adaptive_n_penalties(spec, 5)
 
     m2 = spline_order - 1
     knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)
@@ -74,8 +78,12 @@ function _raw_adaptive_basis(spec::SmoothSpec, data, user_knots)
     actual_k = size(X, 2)
     D = _ad_diff_matrix(actual_k, m_order)
     n_rows = size(D, 1)
+    n_penalties < actual_k - 2 || throw(ArgumentError(
+        "penalty basis too large for smoothing basis: requested $n_penalties " *
+        "sub-penalties for a basis of dimension $actual_k (need < $(actual_k - 2)). " *
+        "Increase `k` or reduce `m`/`xt[:n_penalties]`."))
     n_pen = min(n_penalties, n_rows)
-    pou_weights = _partition_of_unity_weights(n_rows, n_pen)
+    pou_weights = _adaptive_weight_basis(n_rows, n_pen)
     penalties = Matrix{Float64}[]
     for wj in pou_weights
         Sj = D' * Diagonal(wj) * D
