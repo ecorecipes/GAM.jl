@@ -9,6 +9,13 @@ on training data but not off it, and two undocumented conventions that make
 correct side-by-side code compare different models.
 
 ### Breaking / behavior changes
+- **`loglikelihood` now uses the maximum-likelihood dispersion `deviance/n`**
+  for Normal, Gamma and InverseGaussian, matching R's `family$aic` convention
+  (shared by `stats::glm` and mgcv) instead of the model's Pearson/Fletcher
+  `scale`. `aic`, `bic` and `aicc` shift accordingly for those families; the
+  Pearson/Fletcher estimate remains the scale used for inference (standard
+  errors and intervals), which is what it is for. The previous docstring
+  claimed the old behaviour matched mgcv — it did not.
 
 - **`scam` now enforces the family mean domain** (mgcv's `validmu`) during
   step halving, as `gam` has since 0.2.0. Previously a Gamma model with its
@@ -52,6 +59,16 @@ correct side-by-side code compare different models.
   assertions still hold).
 
 ### Documentation
+- **`aic`'s exact relationship to mgcv is now documented and asserted.**
+  GAM.jl's `aic(m)` is mgcv's `m$aic` field (`family$aic(...) + 2*sum(edf)`,
+  set in `gam.outer`). mgcv's `AIC(m)` is *not* that value: `logLik.gam`
+  reports a df based on `edf2`, the Wood, Pya & Säfken (2016) correction for
+  smoothing-parameter uncertainty, so `AIC(m) = m$aic + 2*(sum(edf2) -
+  sum(edf))`. GAM.jl does not compute `edf2` yet (it needs the corrected
+  covariance `Vc`), so `aic(m)` is the conditional AIC. For `method="GCV.Cp"`
+  fits mgcv leaves `edf2` unset and the two conventions coincide — measured
+  agreement there is 8e-5. The smoothing penalty is accounted for in both,
+  through the effective degrees of freedom.
 
 - **Documented the two conventions that differ from mgcv**: `k` counts basis
   functions per margin in mgcv but in total in GAM.jl for tensor smooths
