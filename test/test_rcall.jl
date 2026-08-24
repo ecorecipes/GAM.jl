@@ -14,7 +14,7 @@ using DataFrames
 using Distributions
 using LinearAlgebra
 using Statistics
-using StatsAPI: loglikelihood, dof, aic, predict, fitted
+using StatsAPI: loglikelihood, dof, aic, bic, nobs, predict, fitted
 using StatsBase: coef
 using StableRNGs
 
@@ -826,9 +826,20 @@ end
         se_r = rcopy(Vector{Float64}, R"pr_inf$se.fit")
         _, se_jl = predict(m, df; se = true)
         @test maximum(abs.(se_jl .- se_r) ./ se_r) < 1e-4
-        # AIC: mgcv applies the Wood/Pya/Säfken corrected edf for REML fits,
-        # GAM.jl uses the plain edf — observed difference ~0.23
-        @test aic(m) ≈ rcopy(R"AIC(r_inf)") atol = 1.5
+        # AIC. GAM.jl's aic(m) is mgcv's `m$aic` field:
+        #     m$aic = family$aic(y, n, mu, w, dev) + 2*sum(edf)     [gam.outer]
+        # mgcv's AIC(m) is NOT that: logLik.gam reports a df based on `edf2`
+        # (Wood/Pya/Säfken smoothing-parameter-uncertainty correction), so
+        #     AIC(m) = m$aic + 2*(sum(edf2) - sum(edf)).
+        # We match the m$aic convention exactly (observed 2.6e-5 here), and
+        # the residual gap to AIC(m) is accounted for by the edf2 term.
+        @test aic(m) ≈ rcopy(R"r_inf$aic") atol = 1e-3
+        @test loglikelihood(m) ≈ rcopy(R"as.numeric(logLik(r_inf))") atol = 1e-3
+        edf2_gap = rcopy(R"2*(sum(r_inf$edf2) - sum(r_inf$edf))")
+        @test rcopy(R"AIC(r_inf)") - aic(m) ≈ edf2_gap atol = 5e-3
+        # BIC follows the same decomposition (df enters as log(n)*df)
+        @test rcopy(R"BIC(r_inf)") - bic(m) ≈
+              log(nobs(m)) * rcopy(R"(sum(r_inf$edf2) - sum(r_inf$edf))") atol = 5e-3
         # Smooth-term test: edf and ref_df match; the test STATISTIC differs
         # (GAM.jl uses a documented simplification of Wood (2013) testStat,
         # observed F 160.4 vs mgcv 132.6), so only edf and the (here
@@ -851,12 +862,17 @@ end
         df = DataFrame(xp = rcopy(R"xp"), yp = Float64.(rcopy(R"yp")))
         m = gam(@formulak(yp ~ s(xp, k = 12, bs = :cr)), df;
             family = Poisson(), method = :REML)
-        # observed: sp log-diff 0.012, SE max rel 0.0021, AIC diff 0.54
+        # observed: sp log-diff 0.012, SE max rel 0.0021
         @test m.sp[1] ≈ rcopy(R"log(r_pinf$sp[1])") atol = 0.1
         se_r = rcopy(Vector{Float64}, R"pr_pinf$se.fit")
         _, se_jl = predict(m, df; se = true)
         @test maximum(abs.(se_jl .- se_r) ./ se_r) < 0.02
-        @test aic(m) ≈ rcopy(R"AIC(r_pinf)") atol = 2.0
+        # Same AIC decomposition as the Gaussian case above. The residual
+        # against m$aic here (~0.004) is fit difference, not convention:
+        # EFS and mgcv's outer Newton stop at slightly different sp.
+        @test aic(m) ≈ rcopy(R"r_pinf$aic") atol = 0.05
+        @test rcopy(R"AIC(r_pinf)") - aic(m) ≈
+              rcopy(R"2*(sum(r_pinf$edf2) - sum(r_pinf$edf))") atol = 0.05
     end
 
     @testset "Cyclic cubic (bs=:cc) vs mgcv" begin

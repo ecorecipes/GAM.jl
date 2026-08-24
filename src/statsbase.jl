@@ -47,12 +47,19 @@ edf(m::GamModel) = m.edf
 
 Log-likelihood of the fitted model, on the absolute scale (saturated-model
 constants included), so `aic(m)` is comparable across families and
-hyperparameters (e.g. two NegBin fits with different θ). For families with
-an estimated scale the plug-in φ is the model's Pearson/Fletcher estimate,
-matching **mgcv's** `logLik.gam`/`AIC()` convention — not `stats::glm`,
-which profiles φ as deviance/n, so absolute values differ slightly from
-`AIC(glm(...))`. Quasi families (QuasiPoisson, QuasiBinomial) have no true
-likelihood and return `NaN` (R reports `NA` for their AIC).
+hyperparameters (e.g. two NegBin fits with different θ).
+
+For families with a dispersion parameter (Normal, Gamma, InverseGaussian)
+the plug-in φ is the **maximum-likelihood** estimate `deviance/n`, matching
+R's `family$aic` convention used by both `stats::glm` and `mgcv`. This is
+deliberately *not* `m.scale` (the Pearson/Fletcher estimate, `≈ pearson /
+(n − edf)`), which is the right scale for *inference* — standard errors and
+intervals — but not the maximiser of the likelihood the AIC is defined from.
+
+Quasi families (QuasiPoisson, QuasiBinomial) have no true likelihood and
+return `NaN` (R reports `NA` for their AIC).
+
+See [`aic`](@ref) for how this relates to mgcv's `AIC.gam`.
 """
 function loglikelihood(m::GamModel)
     dev = deviance(m)
@@ -64,18 +71,23 @@ function loglikelihood(m::GamModel)
         return _tweedie_total_loglik(y, mu, w, m.family.p,
             clamp(scale, 1e-8, 1e8))
     elseif m.family isa Normal
-        # Weighted Gaussian: -1/2 Σ [log(2πφ/wᵢ) + wᵢ(yᵢ-μᵢ)²/φ]
-        return -0.5 * (sum(log.(2π * scale ./ w)) + dev / scale)
+        # R's gaussian()$aic convention: φ̂ = dev/nobs (the ML dispersion),
+        # ℓ = -½[n·(log(2πφ̂) + 1) - Σ log wᵢ]
+        nobs = length(y)
+        return -0.5 * (nobs * (log(2π * dev / nobs) + 1) - sum(log.(w)))
     elseif m.family isa Gamma
-        # shapeᵢ = wᵢ/φ, scale parameter μᵢφ/wᵢ (mean μᵢ, var μᵢ²φ/wᵢ)
-        phi = max(scale, 1e-10)
-        return sum(logpdf(Gamma(w[i] / phi, mu[i] * phi / w[i]), y[i])
+        # R's Gamma()$aic convention: φ̂ = dev/Σwᵢ, shape 1/φ̂, scale μᵢφ̂,
+        # each term weighted by wᵢ
+        sw = sum(w)
+        phi = max(dev / sw, 1e-10)
+        return sum(w[i] * logpdf(Gamma(1 / phi, mu[i] * phi), y[i])
                    for i in eachindex(y))
     elseif m.family isa InverseGaussian
-        # λᵢ = wᵢ/φ (mean μᵢ, var μᵢ³φ/wᵢ)
-        phi = max(scale, 1e-10)
-        return sum(logpdf(InverseGaussian(mu[i], w[i] / phi), y[i])
-                   for i in eachindex(y))
+        # R's inverse.gaussian()$aic convention: φ̂ = dev/Σwᵢ,
+        # ℓ = -½[Σwᵢ·(1 + log(2πφ̂)) + 3Σ wᵢ log yᵢ]
+        sw = sum(w)
+        phi = max(dev / sw, 1e-10)
+        return -0.5 * (sw * (1 + log(2π * phi)) + 3 * sum(w .* log.(y)))
     elseif m.family isa Poisson
         ll = 0.0
         @inbounds for i in eachindex(y)
@@ -129,6 +141,33 @@ function loglikelihood(m::GamModel)
     end
 end
 
+"""
+    aic(m::GamModel)
+
+Akaike information criterion, `-2ℓ̂ + 2·dof(m)`, where `dof(m) = sum(edf) + 1`
+if the scale is estimated (`sum(edf)` otherwise). The smoothing penalty enters
+through the **effective** degrees of freedom: a heavily penalised smooth
+contributes far less than its basis dimension.
+
+# Relationship to mgcv
+This is exactly mgcv's `m$aic` field:
+
+    m$aic = family$aic(y, n, μ̂, w, dev) + 2·sum(m$edf)          # gam.outer
+
+mgcv's `AIC(m)` is *not* `m$aic`. `logLik.gam` reports a df attribute based on
+`edf2` — the Wood, Pya & Säfken (2016) correction for smoothing-parameter
+uncertainty — when the outer optimiser supplies `dβ/dρ`, so
+
+    AIC(m) = m\$aic + 2·(sum(m\$edf2) - sum(m\$edf))
+
+with `edf2 ≥ edf` (capped at `edf1`). GAM.jl does not yet compute `edf2`
+(it needs the corrected covariance `Vc`; see the roadmap), so `aic(m)` is the
+**conditional** AIC, treating the smoothing parameters as known. Measured gaps
+against `AIC(m)` on typical single-smooth fits: ≈0.2–1.5.
+
+For `method="GCV.Cp"` fits mgcv leaves `edf2` unset and falls back to `edf`,
+so `AIC(m)` and `aic(m)` then use the *same* convention.
+"""
 aic(m::GamModel) = -2loglikelihood(m) + 2dof(m)
 
 function aicc(m::GamModel)

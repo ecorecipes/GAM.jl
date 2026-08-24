@@ -74,11 +74,20 @@ using StatsAPI: fitted, predict, coef, deviance, loglikelihood, aic, residuals, 
         yg = rand.(rng, Gamma.(2.0, mu ./ 2.0))
         mg = gam(GAM.@formula(y ~ s(x, k=10)), DataFrame(y=yg, x=x), Gamma(),
                  GAM.GLM.LogLink())
-        # Compare with the explicit family likelihood at the fitted values
-        phi = mg.scale
-        ll_manual = sum(logpdf(Gamma(mg.weights[i]/phi, fitted(mg)[i]*phi/mg.weights[i]),
-                               yg[i]) for i in 1:n)
+        # Compare with the explicit family likelihood at the fitted values,
+        # using R's Gamma()$aic convention (shared by stats::glm and mgcv):
+        # the plug-in dispersion is the ML estimate dev/Σw, shape 1/φ̂,
+        # scale μᵢφ̂ — NOT the Pearson/Fletcher `mg.scale`, which is the
+        # inference scale.
+        phi = deviance(mg) / sum(mg.weights)
+        ll_manual = sum(mg.weights[i] * logpdf(Gamma(1/phi, fitted(mg)[i]*phi),
+                                               yg[i]) for i in 1:n)
         @test isapprox(loglikelihood(mg), ll_manual; rtol=1e-8)
+        # and it is genuinely not the Pearson-scale version
+        phi_pearson = mg.scale
+        ll_pearson = sum(mg.weights[i] * logpdf(Gamma(1/phi_pearson,
+                          fitted(mg)[i]*phi_pearson), yg[i]) for i in 1:n)
+        @test !isapprox(loglikelihood(mg), ll_pearson; rtol=1e-6)
         # deviance residuals use the Gamma form, not the Gaussian fallback
         rd = residuals(mg; type=:deviance)
         @test !isapprox(rd, sign.(yg .- fitted(mg)) .* sqrt.(abs.(yg .- fitted(mg)).^2))
