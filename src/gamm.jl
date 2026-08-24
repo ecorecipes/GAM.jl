@@ -818,8 +818,8 @@ Following lme4 convention: `(1|a/b)` expands to `(1|a) + (1|a:b)`.
 function _expand_nested_re(ex::Expr)
     lhs = ex.args[2]
     rhs_nested = ex.args[3]  # Expr(:call, :/, :a, :b)
-    outer = rhs_nested.args[2]  # :a
-    inner = rhs_nested.args[3]  # :b
+    outer = _check_re_grouping(rhs_nested.args[2], ex)  # :a
+    inner = _check_re_grouping(rhs_nested.args[3], ex)  # :b
 
     # Create interaction symbol a_b for the nested term
     interaction_sym = Symbol(string(outer), "_", string(inner))
@@ -860,10 +860,31 @@ function _parse_gamm_rhs!(ex, parametric, smooth_calls, re_calls, has_intercept)
     end
 end
 
+"""
+    _check_re_grouping(grouping, ex)
+
+Reject a grouping expression that is not a bare variable name.
+
+`@formula(y ~ s(x) + (1 | 3))` used to splice the literal into a
+`RandomEffectSpec(3, ...)` call, so the failure surfaced from the expanded
+code as `MethodError: Cannot convert an object of type Int64 to Symbol` with
+no mention of the formula. Catch it while the expression is still in hand.
+"""
+function _check_re_grouping(grouping, ex)
+    grouping isa Symbol && return grouping
+    throw(ArgumentError(
+        "the grouping factor in `$ex` must be a variable name, got " *
+        "`$grouping` ($(grouping isa Expr ? "expression" : typeof(grouping))). " *
+        "Write `(1 | group)` with `group` a column of the data; for nested " *
+        "groupings use `(1 | outer / inner)`. Transformations of the " *
+        "grouping variable are not supported — add the derived column to the " *
+        "data first."))
+end
+
 function _build_re_spec_call(ex::Expr)
     # Convert (1 + x | group) to a RandomEffectSpec(...) expression for the macro
     lhs = ex.args[2]
-    grouping = ex.args[3]
+    grouping = _check_re_grouping(ex.args[3], ex)
 
     has_intercept = true
     term_syms = Symbol[]
@@ -1119,9 +1140,16 @@ gamm(@formula(y ~ s(x, k=20) + re(subject)), data)
 - `backend=:LAMS`: fitting backend — `:LAMS` (penalized-smooth REs; non-Gaussian
   families automatically use `:PQL`) or `:PQL`. The `:MixedModels` backend is
   disabled (statistically incorrect encoding) and throws.
-- `weights=nothing`: prior weights
+- `weights=nothing`: prior weights — must be finite and non-negative (zero
+  excludes an observation)
 - `offset=nothing`: known additive term on the link scale (e.g. log-exposure);
   supported by the LAMS and PQL backends (not the Bayesian path)
+- `na_action=:fail`: how to treat rows carrying `missing`, `NaN` or `Inf` in
+  the response, in a model variable (including the random-effect grouping and
+  slope variables), or in `weights`/`offset`. `:fail` errors; `:omit` drops
+  them, as `mgcv` does by default. Dropping is silent, so a fit can use fewer
+  rows than the table supplied — recover the surviving row numbers with
+  [`na_omit_rows`](@ref) to line results back up with the original data
 - `control=gam_control()`: fitting control parameters
 - `priors=nothing`: if provided, triggers Bayesian fitting via Turing.jl
 
@@ -1133,16 +1161,19 @@ function gamm(gf::GammFormula, data;
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
     backend::Symbol = :LAMS,
-    weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    weights::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    na_action::Symbol = :fail,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
     nchains::Int = 4)
 
-    # Input validation
-    _validate_data_lengths(data)
+    # Input validation (na_action first — it also length-checks and validates
+    # weights/offset, and everything below must see the surviving rows)
+    data, _, weights, offset = _na_prepare(data, gf.gam_formula.response,
+        _model_covariates(gf), na_action; weights = weights, offset = offset)
     _validate_response_in_data(gf.gam_formula.response, data)
     _validate_formula_smooths(gf.gam_formula.smooth_specs, data)
     _validate_gamm_random_effects(gf.random_effects, data)
@@ -1203,8 +1234,9 @@ function gamm(f::FormulaTerm, data;
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
     backend::Symbol = :LAMS,
-    weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    weights::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    na_action::Symbol = :fail,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
@@ -1212,7 +1244,13 @@ function gamm(f::FormulaTerm, data;
     nchains::Int = 4)
 
     # Input validation
-    _validate_data_lengths(data)
+    resp_sym = f.lhs isa Term ? f.lhs.sym : nothing
+    data, _, weights, offset = _na_prepare(data, resp_sym, _model_covariates(f),
+        na_action; weights = weights, offset = offset)
+    # The GammFormula front-end reaches _validate_formula_smooths, which names
+    # an incomplete covariate; this one does not, so check here instead of
+    # letting a `missing` reach smooth_construct as a bare MethodError.
+    na_action === :fail && _validate_model_columns(data, _model_covariates(f))
     _validate_gam_family(family)
     link_eff = link === nothing ? GLM.canonicallink(family) : link
     _validate_link(link_eff, family)

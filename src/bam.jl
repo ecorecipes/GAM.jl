@@ -371,10 +371,26 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
             return (dev_new + dot(b, S_total, b), ok)
         end
 
-        _, prev_valid, _, _ =
+        _, valid_new, step_ok, _ =
             pirls_halve!(beta_new, beta, recompute!, step_spec,
                 pdev_old_iter, prev_valid)
         dev_new = _deviance(family, y, mu_new, weights)
+
+        if !step_ok
+            # Same policy as pirls/gam: mgcv raises "step failure" here.
+            # `beta`/`eta`/`mu` still hold the previous (best) iterate, and
+            # `mu_new` holds the rejected one — keep the former and stop
+            # rather than copying divergence in below.
+            @inbounds for i in 1:n
+                mu[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta[i]))
+            end
+            @warn "bam P-IRLS step failure: penalized deviance could not be " *
+                  "reduced after $(step_spec.max_halvings) step halvings; " *
+                  "returning last stable iterate" maxlog = 1
+            converged = false
+            break
+        end
+        prev_valid = valid_new
 
         # Convergence check
         crit = abs(dev_new - dev_old) / (abs(dev_new) + 0.1)
@@ -730,8 +746,15 @@ for badly scaled bases prefer `gam()`.
 - `method`: smoothing parameter estimation (`:REML` or `:ML`; the
   criterion-optimizing `:GCV`/`:UBRE` methods of `gam()` are not
   implemented for `bam` and throw an error)
-- `weights`: optional observation weights
+- `weights`: optional observation weights — must be finite and non-negative
+  (zero excludes an observation)
 - `offset`: optional known additive term on the link scale
+- `na_action`: how to treat rows carrying `missing`, `NaN` or `Inf` in the
+  response, in a model variable, or in `weights`/`offset`. `:fail` (default)
+  errors; `:omit` drops them, as `mgcv` does by default. Dropping is silent,
+  so a fit can use fewer rows than the table supplied — recover the surviving
+  row numbers with [`na_omit_rows`](@ref) to line results back up with the
+  original data
 - `select`: if `true`, add a null-space penalty to every smooth
   (Marra & Wood 2011 term selection), as in `gam(...; select=true)`
 - `control`: GAM fitting control parameters
@@ -758,8 +781,9 @@ function bam(f::FormulaTerm, data;
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
-    weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    weights::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    na_action::Symbol = :fail,
     select::Bool = false,
     control::GamControl = gam_control(),
     bam_ctrl::BamControl = bam_control())
@@ -769,6 +793,11 @@ function bam(f::FormulaTerm, data;
     if link === nothing
         link = GLM.canonicallink(family)
     end
+
+    resp = f.lhs isa Term ? f.lhs.sym : nothing
+    data, _, weights, offset = _na_prepare(data, resp, _model_covariates(f),
+        na_action; weights = weights, offset = offset)
+    na_action === :fail && _validate_model_columns(data, _model_covariates(f))
 
     y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
@@ -779,8 +808,9 @@ function bam(gf::GamFormula, data;
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
-    weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    weights::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    na_action::Symbol = :fail,
     select::Bool = false,
     control::GamControl = gam_control(),
     bam_ctrl::BamControl = bam_control())
@@ -790,6 +820,11 @@ function bam(gf::GamFormula, data;
     if link === nothing
         link = GLM.canonicallink(family)
     end
+
+    data, _, weights, offset = _na_prepare(data, gf.response,
+        _model_covariates(gf), na_action; weights = weights, offset = offset)
+    _validate_response_in_data(gf.response, data)
+    na_action === :fail && _validate_model_columns(data, _model_covariates(gf))
 
     y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
     f = term(gf.response) ~ term(1)
