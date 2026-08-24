@@ -1069,10 +1069,19 @@ end
 # multi-penalty REML gradient, RE prediction levels, t2/smooth2random)
 @eval include("test_pirls_invariants.jl")
 
+# Type-stability / allocation regressions (guards the inference-loss bug class)
+@eval include("test_type_stability.jl")
+
+# Statistical calibration: interval coverage, null test size, select= shrinkage
+@eval include("test_coverage.jl")
+
 # Analytic REML/GCV gradient vs finite differences (validity domain pinned)
 @eval include("test_reml_gradient.jl")
 
 @eval include("test_regressions.jl")
+
+# Model display: `show` and the mgcv-style `summary`
+@eval include("test_show.jl")
 
 # Nested effects (s_nest / gam_nl, gamFactory-style)
 @eval include("test_nested.jl")

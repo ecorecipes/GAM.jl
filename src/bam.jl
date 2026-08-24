@@ -315,9 +315,15 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     end
     dev_old = _deviance(family, y, mu, weights)
 
-    beta_prop = zeros(p)
     converged = false
     n_iter = 0
+
+    # bam's step-acceptance policy: its own relative tolerance and 25-halving
+    # cap, plus the shared family-domain guard.
+    step_spec = PirlsStepControl(;
+        threshold = _pirls_relative_threshold(control.epsilon),
+        max_halvings = 25)
+    prev_valid = all(_valid_mu_scalar(family, GLM.linkinv(link, e)) for e in eta)
 
     for iter in 1:(control.maxit)
         n_iter = iter
@@ -346,36 +352,29 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         end
         dev_new = _deviance(family, y, mu_new, weights)
 
-        # Step halving on the penalized deviance (matching pirls.jl/mgcv):
-        # each trial interpolates from the ORIGINAL proposal, so factor 0.5^k
-        # really is 0.5^k of the Newton step
+        # Step halving on the penalized deviance, using the acceptance policy
+        # shared with pirls/scasm/scam. bam's own tolerance (relative, with 25
+        # halvings) is preserved; what it gains is the family-domain check, so
+        # a chunked fit can no longer walk outside the mean domain the way the
+        # hand-rolled loop could.
         pdev_old_iter = dev_old + dot(beta, S_total, beta)
-        pdev_new = dev_new + dot(beta_new, S_total, beta_new)
-        if !(isfinite(pdev_new) &&
-             pdev_new <= pdev_old_iter + control.epsilon * abs(pdev_old_iter))
-            copyto!(beta_prop, beta_new)
-            step_factor = 1.0
-            for _ in 1:25
-                step_factor *= 0.5
-                @inbounds for j in 1:p
-                    beta_new[j] = beta[j] + step_factor * (beta_prop[j] - beta[j])
-                end
-                mul!(eta_new, X, beta_new)
-                eta_new .+= offset
-                @inbounds for i in 1:n
-                    mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
-                end
-                dev_new = _deviance(family, y, mu_new, weights)
-                pdev_new = dev_new + dot(beta_new, S_total, beta_new)
-                if isfinite(pdev_new) &&
-                   pdev_new <= pdev_old_iter + control.epsilon * abs(pdev_old_iter)
-                    break
-                end
-                if step_factor < 1e-8
-                    break
-                end
+        recompute! = function (b)
+            mul!(eta_new, X, b)
+            eta_new .+= offset
+            ok = true
+            @inbounds for i in 1:n
+                li = GLM.linkinv(link, eta_new[i])
+                ok &= _valid_mu_scalar(family, li)
+                mu_new[i] = _clamp_mu_scalar(family, li)
             end
+            dev_new = _deviance(family, y, mu_new, weights)
+            return (dev_new + dot(b, S_total, b), ok)
         end
+
+        _, prev_valid, _, _ =
+            pirls_halve!(beta_new, beta, recompute!, step_spec,
+                pdev_old_iter, prev_valid)
+        dev_new = _deviance(family, y, mu_new, weights)
 
         # Convergence check
         crit = abs(dev_new - dev_old) / (abs(dev_new) + 0.1)
@@ -410,26 +409,11 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         A[j, k] = XtWX[j, k] + S_total[j, k]
     end
     A_chol = _protected_cholesky!(A)
-    F = A_chol \ XtWX
-    edf_vec = diag(F)
 
-    # Chunked hat diagonal: hat[i] = sum_j (X[i,:] / U)_j^2
-    hat_diag = zeros(n)
-    Uinv = inv(A_chol.U)  # p×p — small
-    for start in 1:chunk_size:n
-        stop = min(start + chunk_size - 1, n)
-        X_chunk = view(X, start:stop, :)
-        H_chunk = X_chunk * Uinv
-        @inbounds for i in 1:(stop - start + 1)
-            s = 0.0
-            for j in 1:p
-                s += H_chunk[i, j]^2
-            end
-            hat_diag[start + i - 1] = s
-        end
-    end
-
-    R = Matrix(A_chol.U)
+    # Shared finalization: EDF, the weighted leverage h_i = w_i·x_i'A⁻¹x_i,
+    # and R. Chunked internally, so memory stays bounded as it was here.
+    edf_vec, hat_diag, R = pirls_finalize(X, w, XtWX, A_chol;
+        chunk_size = chunk_size)
 
     return PirlsResult(
         beta, mu, eta, w, dev_old, pearson,
@@ -638,23 +622,9 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         eta .+= offset
         mu = copy(eta)
         dev = _deviance(family, y, mu, weights)
-        F = A_chol \ XtWX_cached
-        edf_vec = diag(F)
-        hat_diag = zeros(n)
-        Uinv = inv(A_chol.U)
-        for start_i in 1:chunk_size:n
-            stop_i = min(start_i + chunk_size - 1, n)
-            X_chunk = view(X, start_i:stop_i, :)
-            H_chunk = X_chunk * Uinv
-            @inbounds for i in 1:(stop_i - start_i + 1)
-                s = 0.0
-                for j in 1:p
-                    s += H_chunk[i, j]^2
-                end
-                hat_diag[start_i + i - 1] = s
-            end
-        end
-        R = Matrix(A_chol.U)
+        # Gaussian/identity: the working weights are the prior weights
+        edf_vec, hat_diag, R = pirls_finalize(X, weights, XtWX_cached, A_chol;
+            chunk_size = chunk_size)
         final_result = PirlsResult(beta, mu, eta, weights, dev, dev,
             true, 1, R, hat_diag, edf_vec)
     else

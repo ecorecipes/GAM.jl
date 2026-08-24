@@ -218,6 +218,14 @@ function _validate_formula_smooths(smooth_specs::Vector{<:SmoothSpec}, data)
     n = _nrow(t)
     for spec in smooth_specs
         _validate_smooth_vars_in_data(spec, t)
+        # sp= and fx=true are contradictory: fx removes the penalty entirely,
+        # so the supplied smoothing parameter would be silently discarded.
+        if spec.fx && spec.sp !== nothing
+            throw(ArgumentError(
+                "sp=$(spec.sp) and fx=true are incompatible in $(spec.label): " *
+                "fx=true leaves the smooth unpenalized, so the smoothing " *
+                "parameter would be ignored. Drop one of them."))
+        end
         # Validate data finiteness for each variable
         for var in spec.term_vars
             col = Tables.getcolumn(t, var)
@@ -393,6 +401,64 @@ function _validate_response_in_data(response::Symbol, data)
             "Response variable :$response not found in data. " *
             "Available columns: $(join(sort(collect(col_names)), ", ")). " *
             "Check for typos in your formula."))
+    end
+    _validate_response_column(Tables.getcolumn(t, response), response)
+    return nothing
+end
+
+"""
+    _validate_response_column(col, response::Symbol)
+
+Check the raw response column *before* it is converted to `Float64`.
+
+Without this, a `missing` or non-numeric entry surfaces as a bare
+`MethodError: no method matching Float64(::Missing)` from deep inside the
+setup path, naming neither the variable nor the remedy.
+"""
+function _validate_response_column(col::AbstractVector, response::Symbol)
+    T = eltype(col)
+    if Missing <: T
+        n_missing = count(ismissing, col)
+        if n_missing > 0
+            throw(ArgumentError(
+                "Response variable :$response contains $n_missing missing " *
+                "$(n_missing == 1 ? "value" : "values"). Remove or impute them " *
+                "before fitting (GAM.jl has no na.action equivalent)."))
+        end
+    elseif !(T <: Real)
+        throw(ArgumentError(
+            "Response variable :$response must be numeric, got element type $T. " *
+            "Convert with `Float64.(y)`, or use a categorical response with " *
+            "Bernoulli()/Binomial() after coding it as 0/1."))
+    end
+    return nothing
+end
+
+"""
+    _validate_weights(weights, n::Int)
+
+Validate prior weights: correct length, finite, and non-negative.
+
+Without this, a negative weight surfaces as
+`DomainError with -1.0: sqrt was called with a negative real argument`
+from inside the P-IRLS working-weight computation.
+"""
+function _validate_weights(weights, n::Int)
+    weights === nothing && return nothing
+    if length(weights) != n
+        throw(ArgumentError(
+            "weights length $(length(weights)) ≠ number of observations $n"))
+    end
+    for (i, w) in enumerate(weights)
+        if !isfinite(w)
+            throw(ArgumentError(
+                "weights must be finite, but weights[$i] = $w"))
+        end
+        if w < 0
+            throw(ArgumentError(
+                "weights must be non-negative, got minimum $(minimum(weights)) " *
+                "at index $i. Use zero to exclude an observation."))
+        end
     end
     return nothing
 end

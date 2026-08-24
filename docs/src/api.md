@@ -1,4 +1,10 @@
-# [API Reference](@id api-reference)
+# [API Reference — Core](@id api-reference)
+
+Fitting entry points, formula macros, smooth specification, basis types,
+families and smoothing-method selectors.
+
+!!! tip "Other API pages"
+    [Core](@ref api-reference) · [Model Types](@ref api-models) · [Diagnostics & Plotting](@ref api-diagnostics)
 
 ## Main Interface
 
@@ -7,6 +13,23 @@ gam
 gam_control
 GamControl
 GamModel
+```
+
+### Model Accessors
+
+```@docs
+edf
+deviance_explained
+lpmatrix
+overview
+OverviewTable
+model_edf
+```
+
+### Formula Macros (extra)
+
+```@docs
+@formulak
 ```
 
 ## Formula Macros
@@ -28,6 +51,30 @@ SmoothSpec
 GAM.ConstructedSmooth
 smooth_construct
 predict_matrix
+```
+
+### Basis-Alias Constructors
+
+Shorthand constructors equivalent to `s(x; bs=...)`.
+
+```@docs
+tp
+ts
+cr
+cs
+cc
+ps
+cps
+```
+
+### Smooth Term Internals
+
+```@docs
+SmoothTerm
+penalty_matrix
+null_space_dim
+has_shape_constraints
+has_nested_effects
 ```
 
 ## Basis Types
@@ -58,6 +105,21 @@ TensorInteraction
 T2TensorProduct
 ```
 
+### Shape-Constrained Basis Types
+
+```@docs
+MonoIncBasis
+MonoDecBasis
+ConcaveBasis
+ConvexBasis
+MonoIncConvexBasis
+MonoIncConcaveBasis
+MonoDecConvexBasis
+MonoDecConcaveBasis
+ShapeConstrainedBSpline
+ShapeConstrainedAdaptive
+```
+
 ## Extended Families
 
 ```@docs
@@ -69,144 +131,6 @@ TweedieFamily
 BetaFamily
 ```
 
-## BAM (Large Data)
-
-```@docs
-bam
-bam_control
-BamControl
-```
-
-## GAMLSS (Distributional Regression)
-
-```@docs
-gamlss
-GamlssControl
-GAM.MPFitControl
-GAM.MultiParameterModel
-GAM.mp_control
-GAM.GaussianLS
-GAM.GammaLocationScale
-GAM.BetaRegression
-GAM.NegativeBinomialLocationScale
-GAM.InverseGaussianLocationScale
-GAM.DistFamily
-```
-
-## Nested Effects
-
-```@docs
-gam_nl
-s_nest
-GAM.TransLinear
-GAM.TransExpSmooth
-GAM.TransMGKS
-inner_coef
-NestedGamModel
-```
-
-## SCAM (Shape Constraints)
-
-```@docs
-scam
-scam_control
-ScamControl
-```
-
-## QGAM (Quantile Regression)
-
-```@docs
-qgam
-mqgam
-qdo
-GAM.ELFFamily
-GAM.ELFLSSFamily
-```
-
-## evgam (Extreme Values)
-
-```@docs
-evgam
-GAM.GEVFamily
-GAM.GPDFamily
-GAM.MultiParameterFamily
-```
-
-## GAMM (Mixed Models)
-
-```@docs
-gamm
-GammModel
-ranef
-VarCorr
-```
-
-## GINLA
-
-```@docs
-ginla
-GinlaResult
-```
-
-## Bayesian Inference
-
-```@docs
-BayesGamModel
-PSISKDiagnostic
-LOOResult
-WAICResult
-smooth2random
-PriorSpec
-GAM.smooth_prior
-pointwise_loglikelihood
-psis_loo
-pareto_k_diagnostic
-loo
-waic
-```
-
-## Diagnostics
-
-```@docs
-gam_check
-k_check
-concurvity
-anova_gam
-AnovaGamResult
-```
-
-## Influence Measures
-
-```@docs
-GAM.leverage(::GamModel)
-GAM.cooksdistance(::GamModel)
-```
-
-## Gratia-Style Diagnostics
-
-```@docs
-smooth_estimates
-GAM.SmoothEstimates
-derivatives
-GAM.DerivativeEstimates
-partial_residuals
-posterior_samples
-fitted_samples
-appraise
-GAM.AppraiseData
-rootogram
-GAM.RootogramData
-data_slice
-PartialResiduals
-```
-
-## Visualization
-
-```@docs
-gamplot
-gamcontour
-```
-
 ## Smoothing Methods
 
 ```@docs
@@ -216,8 +140,3 @@ GCV
 UBRE
 ```
 
-## Side Constraints
-
-Side constraints (`gam.side`) are applied internally to enforce identifiability
-when smooth terms overlap with parametric terms or with each other. They are not
-typically called directly by users.

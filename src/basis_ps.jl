@@ -20,32 +20,46 @@ function _bspline_basis(x::AbstractVector{<:Real}, knots::Vector{Float64}, order
 
     B = zeros(n, n_basis)
 
+    # Ping-pong buffers for the Cox-de Boor recursion, allocated once per
+    # call rather than once per row. This function backs every B-spline basis
+    # in the package (ps/cps/bs/ad, SCAM, SCASM, ps-margin tensors, nested
+    # outer bases) and runs during prediction as well as fitting, so the
+    # per-row allocations were O(n·order) on every one of those paths.
+    # They are locals, not module state, so the function stays reentrant.
+    buf_a = zeros(nk - 1)
+    buf_b = zeros(nk - 1)
+
     for i in 1:n
         xi = x[i]
+        cur, nxt = buf_a, buf_b
+
         # Order 1 (piecewise constant)
-        b_prev = zeros(nk - 1)
         for j in 1:(nk - 1)
             if j == nk - 1
-                b_prev[j] = (knots[j] <= xi <= knots[j + 1]) ? 1.0 : 0.0
+                cur[j] = (knots[j] <= xi <= knots[j + 1]) ? 1.0 : 0.0
             else
-                b_prev[j] = (knots[j] <= xi < knots[j + 1]) ? 1.0 : 0.0
+                cur[j] = (knots[j] <= xi < knots[j + 1]) ? 1.0 : 0.0
             end
         end
 
-        # Recursion for higher orders
+        # Recursion for higher orders. Level p writes entries 1:(nk-p) of
+        # `nxt` while reading 1:(nk-p+1) of `cur` — exactly the range the
+        # previous level filled — so stale values further along are never
+        # read and the buffers need no clearing between rows.
         for p in 2:order
-            b_curr = zeros(nk - p)
             for j in 1:(nk - p)
                 denom1 = knots[j + p - 1] - knots[j]
                 denom2 = knots[j + p] - knots[j + 1]
-                t1 = denom1 > 0 ? (xi - knots[j]) / denom1 * b_prev[j] : 0.0
-                t2 = denom2 > 0 ? (knots[j + p] - xi) / denom2 * b_prev[j + 1] : 0.0
-                b_curr[j] = t1 + t2
+                t1 = denom1 > 0 ? (xi - knots[j]) / denom1 * cur[j] : 0.0
+                t2 = denom2 > 0 ? (knots[j + p] - xi) / denom2 * cur[j + 1] : 0.0
+                nxt[j] = t1 + t2
             end
-            b_prev = b_curr
+            cur, nxt = nxt, cur
         end
 
-        B[i, :] .= b_prev[1:n_basis]
+        for j in 1:n_basis
+            B[i, j] = cur[j]
+        end
     end
     return B
 end

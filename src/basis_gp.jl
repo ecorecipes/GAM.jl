@@ -68,6 +68,19 @@ function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
     var = spec.term_vars[1]
     x = Float64.(Tables.getcolumn(data, var))
     n = length(x)
+
+    # A knot-based basis cannot carry more basis functions than there are
+    # distinct covariate values; mgcv raises "A term has fewer unique
+    # covariate combinations than specified maximum degrees of freedom"
+    # rather than silently shrinking the basis.
+    if user_knots === nothing
+        n_unique = length(unique(x))
+        n_unique >= spec.k || throw(ArgumentError(
+            "s($var) has fewer unique covariate combinations ($n_unique) " *
+            "than the basis dimension k=$(spec.k); reduce k (mgcv raises the " *
+            "same error)"))
+    end
+
     k = min(spec.k, n)
 
     # Knot locations
@@ -84,7 +97,11 @@ function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
 
     # Range parameter: the data range by default (documented above)
     x_range = maximum(x) - minimum(x)
-    scale = Float64(get(spec.xt, :scale, x_range > 0 ? x_range : 1.0))
+    # The ::Float64 assertion is load-bearing: spec.xt is Dict{Symbol,Any},
+    # so get(...) infers Any and Float64(::Any) is not statically resolvable.
+    # Without it `scale` is Any and the divisions in the n×nk loops below
+    # become runtime dispatches, boxing every element.
+    scale = Float64(get(spec.xt, :scale, x_range > 0 ? x_range : 1.0))::Float64
 
     # Correlation matrix at knot locations = the penalty. The small nugget
     # keeps it positive definite.

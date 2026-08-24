@@ -18,6 +18,8 @@ This vignette demonstrates **gratia**-style model diagnostics and visualization 
 
 We fit a GAM to the classic Gu & Wahba (1991) simulated example with four smooth terms of varying complexity, then explore the full diagnostic toolkit.
 
+This vignette is a *tour of the tools* — what each diagnostic returns and how to plot it. For a worked decision workflow that strings them together to choose a model (`select=true`, `k_check` p-values, concurvity, AIC across families, influence measures), see [14 — Model selection and diagnostics](../14_model_selection/14_model_selection.qmd).
+
 ## Setup
 
 ```{julia}

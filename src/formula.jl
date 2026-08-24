@@ -480,11 +480,34 @@ function _build_parametric_matrix(gf::GamFormula, t;
             # data with a subset of levels still produces the right columns.
             levels = ref_levels !== nothing && haskey(ref_levels, sym) ?
                      ref_levels[sym] : sort!(unique(collect(col)))
+            # A level absent from the training data matches none of the dummy
+            # columns. Silently returning the reference level's prediction (as
+            # this did before) is wrong; mgcv warns and contributes nothing for
+            # such rows — verified against mgcv 1.9.4, which returns a value
+            # rather than erroring, and does not fall back to the reference
+            # level. Match that, and mirror the factor-`by` convention.
+            unseen_rows = falses(n)
+            if ref_levels !== nothing && haskey(ref_levels, sym)
+                new_levels = setdiff(unique(collect(col)), levels)
+                if !isempty(new_levels)
+                    @warn "Parametric term :$sym has level(s) " *
+                          join(repr.(sort!(new_levels; by = string)), ", ") *
+                          " that were not present when the model was fitted; " *
+                          "these rows contribute nothing for this term " *
+                          "(mgcv behaves the same way). Known levels: " *
+                          join(repr.(levels), ", ") * "."
+                    unseen_rows = [c in new_levels for c in col]
+                end
+            end
             ref = gf.has_intercept ? levels[2:end] : levels
             for lev in ref
-                X_para = hcat(X_para, Float64.(col .== lev))
+                colvals = Float64.(col .== lev)
+                # Rows whose level was never seen match no dummy column; they
+                # are already zero here, which is the intended contribution.
+                X_para = hcat(X_para, colvals)
                 push!(para_names, string(sym, ": ", lev))
             end
+            any(unseen_rows)  # documented above; rows stay all-zero for this term
         end
     end
 

@@ -39,6 +39,7 @@ Requires Julia ≥ 1.11.
 
 ```julia
 using GAM, DataFrames, Distributions, Random
+using StatsBase   # coef, fitted, predict, coeftable, r2, ... (see note below)
 
 # Generate data
 Random.seed!(42)
@@ -52,14 +53,19 @@ df = DataFrame(; y, x1, x2)
 m = gam(@formula(y ~ s(x1, k=15, bs=:cr) + s(x2, k=10)), df)
 
 # Standard StatsAPI interface
-using StatsAPI
 coef(m)              # coefficients
 fitted(m)            # fitted values
 deviance(m)          # deviance
 predict(m, df)       # predictions (with new data)
 coeftable(m)         # coefficient table with p-values
 r2(m)                # R-squared
+summary(m)           # mgcv-style model summary
 ```
+
+> **Import note.** Bring the model verbs into scope with `using StatsBase`
+> (as above) or import them explicitly, e.g. `using StatsAPI: coef, fitted`.
+> A bare `using StatsAPI` alongside `using GAM` leaves names such as `coef`
+> ambiguous, and calling them raises `UndefVarError`.
 
 ## Smooth Term Types
 
@@ -177,7 +183,7 @@ m = gam(
 
 Supported GAMLSS families: `GaussianLS`, `GammaLocationScale`, `BetaRegression`, `NegativeBinomialLocationScale`, `InverseGaussianLocationScale`.
 
-Solver options via `gamlss_control(sp_method=...)`: `:efs` (default, fastest), `:local_ml`, `:local_gaic`, `:local_gcv`.
+Solver options via `gamlss_control(method=...)`: `:efs` (default, fastest), `:local_ml`, `:local_gaic`, `:local_gcv`. (`sp_method=` is a deprecated alias.)
 
 ## Shape-Constrained Models (SCAM)
 
@@ -351,9 +357,14 @@ Xp = lpmatrix(m, newdata)
 
 ## Vignettes
 
-Twelve Quarto vignettes walk through the package, each with an R companion in
+Fourteen Quarto vignettes walk through the package, each with an R companion in
 its `R/` subdirectory running the equivalent analysis (mgcv, scam, qgam,
-gamlss, evgam, gamFactory) on the same checked-in data:
+gamlss, evgam, gamFactory) on the same checked-in data.
+
+**Suggested reading order.** Start with 1–3 for the basics. If you are coming
+from mgcv, read **13 (Migrating from mgcv)** early — it maps the API and spells
+out where the two packages genuinely differ. Then 14 for an end-to-end model
+selection workflow, 4–5 as needed, and 6–12 as your application requires.
 
 1. [Introduction](vignettes/01_introduction/01_introduction.qmd)
 2. [Basis types](vignettes/02_basis_types/02_basis_types.qmd)
@@ -414,7 +425,7 @@ GAM.jl is not a line-for-line port of mgcv. Notable mgcv features that are **not
 - `na.action`-style missing-data handling (rows with missing/non-finite values must be removed before fitting)
 - AR1 residual correlation in `bam`; `bam`'s covariate discretization (`discrete=TRUE`) — `bam` uses chunked accumulation of the normal equations only
 - Smoothing-parameter-uncertainty corrections (mgcv's `Vc`); `unconditional=true` in `smooth_estimates`/`posterior_samples` warns and uses the conditional covariance
-- Smooth-term test statistics use a documented simplification of mgcv's `testStat` (EDFs and p-value conclusions match mgcv; the statistics themselves can differ for heavily penalized smooths)
+- Smooth-term test statistics use a simplification of mgcv's `testStat`, so the printed F/χ² can differ from `summary.gam`'s for heavily penalized smooths. This is a difference in the statistic, not in calibrated inference: on identical null replicates the empirical test size matches mgcv's within Monte Carlo error at α = 0.01, 0.05 and 0.10
 - `edf1`/`edf2` alternative effective-degrees-of-freedom and the Wood-Pya-Säfken (2016) corrected AIC for REML fits (AIC currently uses plain EDF, differing from mgcv's by ~0.5)
 - Neighbourhood cross-validation (`NCV`, mgcv ≥ 1.9) as a smoothness-selection criterion
 - Further families: `scat` (heavy-tailed *t*), `mvn` (multivariate normal), and the gamlss `SHASH` / `twlss` distributions

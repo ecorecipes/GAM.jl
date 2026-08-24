@@ -118,7 +118,7 @@ nothing
 ctrl = gamlss_control(
     n_cyc = 20,             # max outer iterations
     c_crit = 1e-7,          # convergence tolerance
-    sp_method = :efs,       # smoothing parameter method
+    method = :efs,          # smoothing parameter method (sp_method= is a deprecated alias)
     trace = false,
 )
 

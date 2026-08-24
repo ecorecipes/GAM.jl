@@ -122,10 +122,14 @@ import Distributions: Poisson, Binomial, Gamma
         n_groups = 6
         n_per = 60
         n = n_groups * n_per
-        group = repeat(1:n_groups, inner = n_per)
+        # R factors `group` below; bs=:re follows the same mgcv rule (factors
+        # expand, numerics enter linearly), so the Julia column must be a factor
+        # too for the two sides to fit the same model.
+        group_id = repeat(1:n_groups, inner = n_per)
+        group = string.(group_id)
         x = randn(rng, n)
         true_re = randn(rng, n_groups) * 0.4
-        y = cos.(x) .+ true_re[group] .+ 0.25 .* randn(rng, n)
+        y = cos.(x) .+ true_re[group_id] .+ 0.25 .* randn(rng, n)
         df = DataFrame(x = x, y = y, group = group)
 
         # Julia: GAMM

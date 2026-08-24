@@ -149,6 +149,18 @@ function _construct_cr(spec::SmoothSpec, data, user_knots;
     var = spec.term_vars[1]
     x = Float64.(Tables.getcolumn(data, var))
     n = length(x)
+
+    # A knot-based basis cannot carry more basis functions than there are
+    # distinct covariate values; mgcv raises "x has insufficient unique values
+    # to support k knots" rather than silently shrinking the basis.
+    if user_knots === nothing
+        n_unique = length(unique(x))
+        n_unique >= spec.k || throw(ArgumentError(
+            "s($var) has fewer unique covariate combinations ($n_unique) " *
+            "than the basis dimension k=$(spec.k); reduce k (mgcv raises the " *
+            "same error)"))
+    end
+
     k = min(spec.k, n)
 
     # Place knots at quantiles of x

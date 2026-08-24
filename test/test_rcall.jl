@@ -1080,4 +1080,47 @@ end
         @test maximum(abs.(fitted(mti) .- fit_ti)) < 2e-3
         @test abs((mti.edf_total - 1) - edf_ti) < 0.2
     end
+
+    # ========================================================================
+    # bs="re" follows mgcv's smooth.construct.re.smooth.spec, which builds
+    # model.matrix(~ v1:v2:...:vk - 1): factor variables expand to one column
+    # per level (several factors give the product of their level counts),
+    # while numeric variables contribute no columns of their own and instead
+    # multiply the indicators. The rule is symmetric in the variables.
+    # ========================================================================
+    @testset "bs=:re basis dimension matches mgcv" begin
+        n = 200
+        gi = repeat(1:5, inner = 40)
+        gs = repeat(string.('a':'e'), inner = 40)
+        g2 = repeat(["p", "q"], outer = 100)
+        xv = collect(range(0, 1; length = n))
+        zv = collect(range(1, 2; length = n))
+        tbl = (gi = gi, gs = gs, g2 = g2, x = xv, z = zv)
+
+        @rput gi gs g2 xv zv
+        RCall.reval("""
+        library(mgcv)
+        dre <- data.frame(gi=gi, gs=factor(gs), g2=factor(g2), x=xv, z=zv)
+        recol <- function(f) ncol(smoothCon(eval(parse(text=f)), data=dre,
+                                            absorb.cons=FALSE)[[1]]\$X)
+        nc_gi  <- recol('s(gi,bs="re")');    nc_gs <- recol('s(gs,bs="re")')
+        nc_x   <- recol('s(x,bs="re")');     nc_xz <- recol('s(x,z,bs="re")')
+        nc_gsg2<- recol('s(gs,g2,bs="re")'); nc_gsx<- recol('s(gs,x,bs="re")')
+        nc_xgs <- recol('s(x,gs,bs="re")')
+        """)
+
+        jl(sp) = size(GAM.smooth_construct(sp, tbl).X, 2)
+        # Integer codes are numeric in both: a single multiplier column
+        @test jl(s(:gi, bs = :re)) == rcopy(Int, R"nc_gi") == 1
+        # Factors expand to one column per level
+        @test jl(s(:gs, bs = :re)) == rcopy(Int, R"nc_gs") == 5
+        # Continuous covariates: one column, not one per observation
+        @test jl(s(:x, bs = :re)) == rcopy(Int, R"nc_x") == 1
+        @test jl(s(:x, :z, bs = :re)) == rcopy(Int, R"nc_xz") == 1
+        # Two factors: product of level counts
+        @test jl(s(:gs, :g2, bs = :re)) == rcopy(Int, R"nc_gsg2") == 10
+        # Random slopes, and symmetry in the variable order
+        @test jl(s(:gs, :x, bs = :re)) == rcopy(Int, R"nc_gsx") == 5
+        @test jl(s(:x, :gs, bs = :re)) == rcopy(Int, R"nc_xgs") == 5
+    end
 end
