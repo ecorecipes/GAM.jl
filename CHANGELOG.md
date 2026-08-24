@@ -122,6 +122,9 @@ gratia, egpd, gamFactory), and a new nested-effects feature. Commits
   recipes.
 
 ### Added
+- Minimum Julia version raised to 1.11 (matching the CI matrix), and the
+  `workflow_dispatch` CI trigger restored — both carried over from work that
+  had been made directly on the published `main`.
 - `NestedControl`/`nested_control()` for `gam_nl`, matching the package's
   control-struct convention (iteration limits, tolerance, and a wired
   `trace` option); the loose `outer_maxit`/`newton_maxit`/`tol` keywords

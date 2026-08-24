@@ -75,9 +75,13 @@ using DataFrames
         @test sm isa ConstructedSmooth{T2TensorProduct}
         @test size(sm.X, 1) == n
 
-        # 3 marginals, each with 1 penalty:
-        # S1⊗I⊗I, I⊗S2⊗I, I⊗I⊗S3, S1⊗S2⊗S3 → 4 penalties
-        @test length(sm.S) == 4
+        # mgcv's t2 (Wood, Scheipl & Faraway 2013) reparameterizes each
+        # marginal into null/range parts and gives one penalty per
+        # tensor-product block that involves at least one range factor:
+        # 2^d - 1 = 7 penalties for d = 3 (verified against
+        # mgcv::smoothCon(t2(x,y,z,k=3,bs="cr")), which gives 7 penalties of
+        # ranks 1,2,2,2,4,4,4 over 26 columns with null.space.dim 7).
+        @test length(sm.S) == 7
 
         k_eff = size(sm.X, 2)
         for S in sm.S

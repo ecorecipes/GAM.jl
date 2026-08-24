@@ -1065,6 +1065,10 @@ end
 # General fit (WPS algorithm) tests
 @eval include("test_general_fit.jl")
 
+# Targeted regressions (ported from the published main: TPRS null space,
+# multi-penalty REML gradient, RE prediction levels, t2/smooth2random)
+@eval include("test_regressions.jl")
+
 # Nested effects (s_nest / gam_nl, gamFactory-style)
 @eval include("test_nested.jl")
 

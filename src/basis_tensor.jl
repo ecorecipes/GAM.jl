@@ -478,25 +478,126 @@ end
 # ============================================================================
 
 """
+Prediction cache for t2 tensor products.
+
+`reparam` is the single matrix `M` mapping the raw row-Kronecker basis to the
+final constrained basis: `X_final = rowkron(marginals) * M`. It folds the
+marginal null/range reparameterization, the block-grouping permutation, and
+the identifiability constraint into one operator, so prediction reproduces
+the training basis exactly (no QR is recomputed at predict time).
+"""
+struct T2PredictCache <: AbstractSmoothPredictCache
+    raw_marginals::Vector{RawMarginalBasis}
+    reparam::Matrix{Float64}
+end
+
+"""
+    _t2_marginal_reparam(rm) -> (R, n_range)
+
+Reparameterize one marginal into `[range | null]` form (Wood, Scheipl &
+Faraway 2013). Returns `R` such that `X_i * R` has its first `n_range`
+columns carrying an IDENTITY penalty and the remaining columns unpenalized.
+
+The split uses the eigendecomposition of the marginal's summed penalty:
+range directions are rescaled by `1/sqrt(eigenvalue)` so their penalty
+becomes the identity; null directions are passed through unchanged.
+"""
+function _t2_marginal_reparam(rm::RawMarginalBasis)
+    k = size(rm.X, 2)
+    if isempty(rm.S)
+        return Matrix{Float64}(I, k, k), 0
+    end
+
+    S_sum = zeros(k, k)
+    for Si in rm.S
+        S_sum .+= Si
+    end
+    S_sum .= (S_sum .+ S_sum') ./ 2
+
+    eig = eigen(Symmetric(S_sum))
+    idx = k:-1:1                      # descending eigenvalues
+    vals = eig.values[idx]
+    vecs = eig.vectors[:, idx]
+
+    # Use the basis's ANALYTIC null-space dimension rather than an eigenvalue
+    # threshold: marginal penalties can carry numerically tiny positive
+    # eigenvalues, and a threshold rule makes the split data-dependent (one
+    # marginal can be classified differently from an identical sibling).
+    # mgcv likewise splits on the known null space.
+    tol = eps(Float64) * max(maximum(abs, vals), 1.0) * k
+    n_range = clamp(k - rm.null_dim, 0, k)
+
+    R = Matrix{Float64}(undef, k, k)
+    for j in 1:n_range
+        R[:, j] = vecs[:, j] ./ sqrt(max(vals[j], tol))
+    end
+    for j in (n_range + 1):k
+        R[:, j] = vecs[:, j]
+    end
+    return R, n_range
+end
+
+"""
+    _t2_blocks(range_dims, marginal_dims) -> (blocks, null_block)
+
+Group the tensor-product columns by which marginals contribute a *range*
+(penalized) factor. Column `c` of the row-Kronecker product corresponds to a
+multi-index with the LAST marginal varying fastest; a column belongs to the
+block labelled by the tuple of per-marginal range/null flags.
+
+Returns the penalized blocks (one per non-all-null combination that has
+columns) and the all-null block, which carries the unpenalized columns.
+"""
+function _t2_blocks(range_dims::Vector{Int}, marginal_dims::Vector{Int})
+    d = length(marginal_dims)
+    total = prod(marginal_dims)
+
+    # strides: last marginal varies fastest
+    strides = ones(Int, d)
+    for i in (d - 1):-1:1
+        strides[i] = strides[i + 1] * marginal_dims[i + 1]
+    end
+
+    labels = Vector{Int}(undef, total)   # bitmask: bit i set => marginal i is range
+    for c in 0:(total - 1)
+        rem = c
+        mask = 0
+        for i in 1:d
+            j = div(rem, strides[i]) + 1
+            rem = mod(rem, strides[i])
+            if j <= range_dims[i]
+                mask |= (1 << (i - 1))
+            end
+        end
+        labels[c + 1] = mask
+    end
+
+    blocks = Vector{Vector{Int}}()
+    for mask in 1:((1 << d) - 1)
+        cols = findall(==(mask), labels)
+        isempty(cols) || push!(blocks, cols)
+    end
+    null_block = findall(==(0), labels)
+    return blocks, null_block
+end
+
+"""
     _construct_t2(spec, data, user_knots)
 
-Construct a t2() tensor product smooth. The basis matrix is the same as te()
-(row-wise Kronecker product of marginals), but the penalties differ:
+Construct a t2() tensor product smooth following mgcv's construction
+(Wood, Scheipl & Faraway 2013).
 
-For d marginals, each with penalties S_j^(m):
-- For each marginal m and each penalty j of that marginal:
-  P = I_1 ⊗ ... ⊗ S_j^(m) ⊗ ... ⊗ I_d  (penalty in position m, identity elsewhere)
-- Plus a "full interaction" penalty: S⁺_1 ⊗ S⁺_2 ⊗ ... ⊗ S⁺_d, where S⁺_m is
-  the positive-semidefinite part of the marginal's (first) penalty.
+Each marginal is reparameterized into orthogonal null and range parts, with
+the range part rescaled to carry an identity penalty. The tensor-product
+columns then partition into 2^d blocks by which marginals contribute a range
+factor. Every block except the all-null one receives its own penalty — an
+identity on that block's columns and zero elsewhere — so the penalties are
+diagonal with NON-OVERLAPPING support. The all-null block is unpenalized and
+carries the identifiability constraint.
 
-!!! note
-    This is NOT mgcv's t2() construction (Wood, Scheipl & Faraway 2013),
-    which reparameterizes each marginal into orthogonal null/range parts and
-    builds non-overlapping subspace penalties. The construction here uses
-    overlapping penalties (the ⊗-identity terms also penalize the
-    interaction subspace) and therefore selects different smoothing
-    parameters than mgcv's t2 on the same model. It is a valid smoother,
-    but results are not directly comparable with mgcv's t2().
+This diagonal, non-overlapping structure is what makes t2 usable as
+independent random-effect blocks in mixed-model software (lme4/gamm4), in
+contrast to te(), whose overlapping penalties require mgcv's `pdTens`.
 """
 function _construct_t2(spec::SmoothSpec, data, user_knots)
     marginal_specs = _get_marginals(spec)
@@ -510,7 +611,7 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
 
     d = length(marginal_specs)
 
-    # 1. Build unconstrained marginal bases
+    # 1. Unconstrained marginal bases
     raw_marginals = RawMarginalBasis[]
     for mspec in marginal_specs
         push!(raw_marginals, _build_raw_marginal(mspec, data, user_knots))
@@ -518,49 +619,89 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
 
     marginal_Xs = [rm.X for rm in raw_marginals]
     marginal_dims = [size(X, 2) for X in marginal_Xs]
-    marginal_null_dims = [rm.null_dim for rm in raw_marginals]
 
-    # 2. Row-wise Kronecker product (same as te())
-    X_tensor = _row_kronecker(marginal_Xs)
+    # 2. Per-marginal null/range reparameterization
+    reparams = Matrix{Float64}[]
+    range_dims = Int[]
+    for rm in raw_marginals
+        R, nr = _t2_marginal_reparam(rm)
+        push!(reparams, R)
+        push!(range_dims, nr)
+    end
 
-    # 3. t2-style penalties:
-    #    For each marginal m and each penalty S_j of that marginal:
-    #      I_1 ⊗ ... ⊗ S_j ⊗ ... ⊗ I_d
-    #    Plus the full interaction: S_1^(1) ⊗ S_1^(2) ⊗ ...
+    # 3. Raw row-Kronecker basis and the folded reparameterization operator.
+    #    (A*Ra) ⊙ (B*Rb) == (A ⊙ B) * (Ra ⊗ Rb), so one matrix suffices.
+    X_raw = _row_kronecker(marginal_Xs)
+    T = reparams[1]
+    for i in 2:d
+        T = kron(T, reparams[i])
+    end
+
+    # 4. Block structure, ordered penalized-blocks-first, null block last
+    blocks, null_block = _t2_blocks(range_dims, marginal_dims)
+    perm = vcat(blocks..., null_block)
+    T = T[:, perm]
+    X_repar = X_raw * T
+
+    total_k = size(X_repar, 2)
+    n_pen_cols = total_k - length(null_block)
+
+    # 5. One identity penalty per penalized block (non-overlapping supports)
     penalties = Matrix{Float64}[]
+    col = 0
+    for blk in blocks
+        P = zeros(total_k, total_k)
+        for _ in 1:length(blk)
+            col += 1
+            P[col, col] = 1.0
+        end
+        push!(penalties, P)
+    end
 
-    for m in 1:d
-        for Sj in raw_marginals[m].S
-            P = _t2_single_penalty(Sj, m, marginal_dims, d)
-            push!(penalties, P)
+    # mgcv-style penalty rescaling (as in absorb_constraints!), applied
+    # before the constraint so the scaling matches other smooths
+    maXX = opnorm(X_repar, Inf)^2
+    if maXX > 0
+        for i in eachindex(penalties)
+            nS = opnorm(penalties[i], 1)
+            nS > 0 && (penalties[i] .*= maXX / nS)
         end
     end
 
+    # 6. Identifiability constraint. The constant function lies entirely in
+    #    the all-null block, so — as in mgcv — the constraint acts ONLY on
+    #    that block, leaving the penalized blocks (and hence the diagonal,
+    #    non-overlapping penalty structure) untouched.
+    n_null = length(null_block)
+    if n_null >= 1
+        c_null = vec(sum(X_repar[:, (n_pen_cols + 1):total_k]; dims = 1))
+        Z_null = _constraint_basis(reshape(c_null, 1, n_null), n_null)
+        Z = zeros(total_k, n_pen_cols + size(Z_null, 2))
+        Z[1:n_pen_cols, 1:n_pen_cols] = Matrix{Float64}(I, n_pen_cols, n_pen_cols)
+        Z[(n_pen_cols + 1):total_k, (n_pen_cols + 1):end] = Z_null
+        C = zeros(1, total_k)
+        C[1, (n_pen_cols + 1):total_k] = c_null
+    else
+        # Every marginal is fully penalized (e.g. shrinkage marginals): there
+        # is no null block to constrain, so fall back to a whole-basis
+        # sum-to-zero constraint. This mixes columns and the resulting
+        # penalties are no longer exactly block-diagonal.
+        C = reshape(vec(sum(X_repar; dims = 1)), 1, total_k)
+        Z = _constraint_basis(C, total_k)
+    end
+
+    X_cons = X_repar * Z
+    S_cons = [Symmetric(Z' * P * Z) |> Matrix for P in penalties]
+
+    M = T * Z   # raw row-Kronecker basis -> final constrained basis
+
     Ain, bin = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Ain)
     Aeq, beq = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Aeq)
+    Ain_cons = Ain === nothing ? nothing : Ain * M
+    Aeq_cons = Aeq === nothing ? nothing : Aeq * M
 
-    # Full interaction penalty: kronecker of the PSD part of each marginal's
-    # first penalty. (TPRS marginal penalties can carry tiny negative
-    # eigenvalues from the truncated eigen construction; a Kronecker product
-    # of indefinite factors would not be a valid penalty.)
-    P_full = Matrix{Float64}(I, 1, 1)
-    for m in 1:d
-        Sm = raw_marginals[m].S[1]
-        es = eigen(Symmetric(Sm))
-        S_psd = es.vectors * Diagonal(max.(es.values, 0.0)) * es.vectors'
-        P_full = kron(P_full, Matrix(Symmetric(S_psd)))
-    end
-    push!(penalties, P_full)
-
-    total_k = size(X_tensor, 2)
-    null_dim = prod(marginal_null_dims)
-    pen_rank = max(total_k - null_dim, 0)
-
-    # 4. Absorb identifiability constraints
-    X_cons, S_cons, C, _ = absorb_constraints!(X_tensor, penalties)
-    Z = _constraint_basis(C, size(X_tensor, 2))
-    Ain_cons = Ain === nothing ? nothing : Ain * Z
-    Aeq_cons = Aeq === nothing ? nothing : Aeq * Z
+    null_dim = size(X_cons, 2) - n_pen_cols
+    pen_rank = n_pen_cols
 
     sm = ConstructedSmooth(
         spec, X_cons, S_cons,
@@ -570,43 +711,18 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
         nothing, nothing, nothing,
         Int[],
         Ain_cons, bin, Aeq_cons, beq,
-        predict_cache = TensorPredictCache(raw_marginals, Matrix{Float64}[]),
+        predict_cache = T2PredictCache(raw_marginals, M),
     )
     return sm
 end
 
-"""
-    _t2_single_penalty(Sj, pos, marginal_dims, d)
-
-Build a single t2 penalty: I_1 ⊗ ... ⊗ S_j ⊗ ... ⊗ I_d,
-where S_j is placed at position `pos`.
-"""
-function _t2_single_penalty(Sj::Matrix{Float64}, pos::Int,
-                            marginal_dims::Vector{Int}, d::Int)
-    P = Matrix{Float64}(I, 1, 1)
-    for i in 1:d
-        if i == pos
-            P = kron(P, Sj)
-        else
-            P = kron(P, Matrix{Float64}(I, marginal_dims[i], marginal_dims[i]))
-        end
-    end
-    return P
-end
-
 function _predict_matrix(::T2TensorProduct, smooth::ConstructedSmooth, newdata)
     cache = smooth.predict_cache
-    cache isa TensorPredictCache ||
+    cache isa T2PredictCache ||
         throw(ArgumentError("Cannot find marginal info for t2 tensor product prediction"))
-    raw_marginals = cache.raw_marginals
 
-    marginal_Xs = [_raw_predict_marginal(rm, newdata) for rm in raw_marginals]
-    X_tensor = _row_kronecker(marginal_Xs)
-
-    if smooth.constraint !== nothing
-        C = smooth.constraint
-        Z = _constraint_basis(C, size(X_tensor, 2))
-        return X_tensor * Z
-    end
-    return X_tensor
+    marginal_Xs = [_raw_predict_marginal(rm, newdata) for rm in cache.raw_marginals]
+    # The stored operator folds the marginal reparameterization, the block
+    # permutation, and the constraint, so this reproduces the training basis.
+    return _row_kronecker(marginal_Xs) * cache.reparam
 end

@@ -64,10 +64,13 @@ unpenalized components. The random effects have identity penalty.
 All columns are penalized (null_dim = 0), so Xf is empty.
 
 # Multi-penalty smooths (te, ti, t2)
-t2-style smooths (diagonal, non-overlapping penalties) get one random-effect
-block per penalty. Overlapping-penalty tensors (te/ti) are decomposed via the
-SUMMED penalty into a single random-effect block — per-margin smoothing is
-approximated by one variance component in mixed-model form (see
+Following mgcv: t2 smooths (diagonal, non-overlapping penalties) get one
+INDEPENDENT random-effect block per penalty, each with its own variance
+component — this is what makes t2 usable with lme4/gamm4. te/ti smooths have
+overlapping penalties that cannot be written as independent i.i.d. blocks
+(mgcv's `gamm` needs the `pdTens` class, and `mgcv:::smooth2random` refuses
+te outright with "te smooths not useable with gamm4: use t2 instead"), so
+they are decomposed into a single structured block (see
 [`_smooth2random_tensor`](@ref)).
 
 # Examples
@@ -223,46 +226,59 @@ end
 """
     _smooth2random_t2(sm) -> SmoothMixedModel
 
-For t2 smooths: each penalty has its own set of penalized columns.
-Follows mgcv's `smooth2random.t2.smooth`.
+For t2 smooths, whose penalties are diagonal with non-overlapping support:
+each penalty becomes its OWN independent random-effect block with its own
+variance component, exactly as in mgcv's `smooth2random.t2.smooth` (this is
+what makes t2 usable with lme4/gamm4).
+
+Columns are reordered as `[block 1 | block 2 | ... | unpenalized]` and the
+penalized ones rescaled by `1/sqrt(diagonal)` so each block carries an
+identity covariance. `trans_U` is the corresponding permutation, so the
+reassembly `β_original = trans_U * (trans_D .* [b_1; …; b_m; β_f])` holds
+uniformly with the other paths.
 """
 function _smooth2random_t2(sm::ConstructedSmooth)
     k = size(sm.X, 2)
-    n_pen = length(sm.S)
 
-    fixed = trues(k)
-    diagU = ones(k)
-    pen_ind = zeros(Int, k)
-
-    Zs = Matrix{Float64}[]
-    n_para = 0
+    order = Int[]
+    scales = Float64[]
+    pen_ind = Int[]
+    assigned = falses(k)
 
     for (i, Si) in enumerate(sm.S)
-        # Find columns penalized by this penalty
         d = diag(Si)
-        thresh = eps() * maximum(abs.(d))
-        indi = findall(abs.(d) .> thresh)
-
-        pen_ind[indi] .= i
-        D_i = d[indi]
-        diagU[indi] .= 1.0 ./ sqrt.(D_i)
-
-        # Rescaled random effect matrix
-        Z_i = sm.X[:, indi] * Diagonal(diagU[indi])
-        push!(Zs, Z_i)
-        fixed[indi] .= false
-        n_para += length(indi)
+        thresh = eps() * max(maximum(abs, d), 1.0)
+        indi = findall(j -> abs(d[j]) > thresh, 1:k)
+        for j in indi
+            push!(order, j)
+            push!(scales, 1.0 / sqrt(abs(d[j])))
+            push!(pen_ind, i)
+            assigned[j] = true
+        end
     end
 
-    # Fixed effect columns: those not penalized by any penalty
-    if any(fixed)
-        Xf = sm.X[:, fixed]
-    else
-        Xf = Matrix{Float64}(undef, size(sm.X, 1), 0)
+    n_para = length(order)
+    fixed_cols = findall(!, assigned)
+    for j in fixed_cols
+        push!(order, j)
+        push!(scales, 1.0)
+        push!(pen_ind, 0)
     end
+
+    U = Matrix{Float64}(I, k, k)[:, order]
+    X_trans = sm.X[:, order] * Diagonal(scales)
+
+    Zs = Matrix{Float64}[]
+    for i in 1:length(sm.S)
+        cols = findall(==(i), pen_ind)
+        isempty(cols) || push!(Zs, X_trans[:, cols])
+    end
+
+    Xf = isempty(fixed_cols) ? Matrix{Float64}(undef, size(sm.X, 1), 0) :
+         X_trans[:, (n_para + 1):end]
 
     rind = collect(1:n_para)
-    return SmoothMixedModel(Xf, Zs, nothing, diagU, pen_ind, rind, sm.spec.label, false)
+    return SmoothMixedModel(Xf, Zs, U, scales, pen_ind, rind, sm.spec.label, false)
 end
 
 """
@@ -275,10 +291,13 @@ range space becomes ONE random-effect block with identity covariance, the
 null space becomes fixed effects.
 
 Note: a te smooth has one smoothing parameter per margin, but overlapping
-penalties cannot be represented as independent i.i.d. random-effect blocks
-(mgcv's `gamm` needs the special `pdTens` class for this). In mixed-model
-form the per-margin smoothing is therefore approximated by a SINGLE
-variance component (isotropic smoothing of the summed penalty). The
+penalties cannot be represented as independent i.i.d. random-effect blocks.
+mgcv handles this with the special `pdTens` class in `gamm`, and
+`mgcv:::smooth2random` refuses te for the gamm4-style (independent-block)
+form altogether — "te smooths not useable with gamm4: use t2 instead". Here
+the per-margin smoothing is approximated by a SINGLE variance component
+(isotropic smoothing of the summed penalty); use `t2()` when independent
+blocks are required. The
 transform metadata (trans_U, trans_D) exactly reassembles
 `β_original = U * (D .* [b; β_f])`, and `s2r_predict` reproduces the
 training decomposition at new data.
@@ -362,35 +381,22 @@ function s2r_predict(smm::SmoothMixedModel, sm::ConstructedSmooth, newdata)
 
     k = size(X_new, 2)
 
-    if smm.trans_U !== nothing
-        # Apply same transformation: X * U * diag(D)
-        X_trans = X_new * (smm.trans_U * Diagonal(smm.trans_D))
+    # Apply the stored transform, then split by pen_ind (which indexes the
+    # TRANSFORMED columns). This reproduces the training decomposition for
+    # every path: single-penalty and te (one block, pen_ind = 1 on 1:p_rank)
+    # and t2 (one block per penalty).
+    X_trans = smm.trans_U !== nothing ?
+              X_new * (smm.trans_U * Diagonal(smm.trans_D)) :
+              X_new * Diagonal(smm.trans_D)
 
-        p_rank = length(smm.rind)
-        if p_rank < k
-            Xf = X_trans[:, (p_rank + 1):k]
-        else
-            Xf = Matrix{Float64}(undef, size(X_new, 1), 0)
-        end
+    fixed_cols = findall(==(0), smm.pen_ind)
+    Xf = isempty(fixed_cols) ? Matrix{Float64}(undef, size(X_new, 1), 0) :
+         X_trans[:, fixed_cols]
 
-        # Single-penalty and tensor smooths both use exactly one Zs block in
-        # the transformed basis, so this reproduces the training decomposition
-        Zs = [X_trans[:, 1:p_rank]]
-    else
-        # t2-style: use pen_ind to split columns
-        Xf_cols = findall(smm.pen_ind .== 0)
-        if !isempty(Xf_cols)
-            Xf = X_new[:, Xf_cols] * Diagonal(smm.trans_D[Xf_cols])
-        else
-            Xf = Matrix{Float64}(undef, size(X_new, 1), 0)
-        end
-
-        Zs = Matrix{Float64}[]
-        for i in 1:length(smm.Zs)
-            cols_i = findall(smm.pen_ind .== i)
-            Z_i = X_new[:, cols_i] * Diagonal(smm.trans_D[cols_i])
-            push!(Zs, Z_i)
-        end
+    Zs = Matrix{Float64}[]
+    for i in 1:length(smm.Zs)
+        cols_i = findall(==(i), smm.pen_ind)
+        push!(Zs, X_trans[:, cols_i])
     end
 
     return SmoothMixedModel(
