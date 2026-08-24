@@ -320,6 +320,36 @@ function penalty_edf(X::Matrix{Float64}, W::Vector{Float64},
 end
 
 """
+    edf1_from_F(F) -> Vector{Float64}
+
+Per-coefficient `edf1`, mgcv's bias-corrected effective degrees of freedom:
+
+    edf1ᵢ = 2·Fᵢᵢ − (F²)ᵢᵢ,    F = (X'WX + S_λ)⁻¹ X'WX
+
+`summary.gam` reports the per-smooth sums of this vector as the **Ref.df**
+column, and uses them as the reference degrees of freedom of the smooth-term
+hypothesis tests. Because `F` is not symmetric, `(F²)ᵢᵢ = Σⱼ Fᵢⱼ Fⱼᵢ` — which
+is what mgcv's `rowSums(t(F) * F)` evaluates (mgcv `gam.fit3.post.proc`,
+`edf1 <- 2 * edf - rowSums(t(F) * F)`).
+
+`edf1 ≥ edf` always, with equality only for a wholly unpenalized or wholly
+null term; it counts the smoothing-parameter selection against the model's
+degrees of freedom in a way plain `tr(F)` does not.
+"""
+function edf1_from_F(F::AbstractMatrix{Float64})
+    p = size(F, 1)
+    e1 = Vector{Float64}(undef, p)
+    @inbounds for i in 1:p
+        s = 0.0
+        for j in 1:p
+            s += F[i, j] * F[j, i]
+        end
+        e1[i] = 2 * F[i, i] - s
+    end
+    return e1
+end
+
+"""
     smooth_edf(edf_vec, smooths) -> Vector{Float64}
 
 Sum per-parameter EDF into per-smooth EDF.

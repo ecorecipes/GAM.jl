@@ -122,4 +122,42 @@ using StatsAPI: fitted, predict, coef, deviance, loglikelihood, aic, residuals, 
         @test at.smooth_table.p_value[iz] > 0.05      # noise: not significant
         @test all(0 .<= at.smooth_table.p_value .<= 1)
     end
+
+    @testset "achieved selection score is recorded for every method" begin
+        # Regression: `criterion` was NaN on every gam() fit because the score
+        # was written to `reml` whatever the criterion, so `show`'s GCV/UBRE
+        # footer branch never fired. Each field must hold the score for its own
+        # criterion and NaN for the other, as SCAM already did.
+        rng = Xoshiro(11)
+        n = 200
+        x = collect((1:n) ./ (n + 1))
+        y = sin.(2pi .* x) .+ 0.3 .* randn(rng, n)
+        df = DataFrame(x = x, y = y)
+
+        for meth in (:REML, :ML)
+            m = gam(GAM.@formula(y ~ s(x, bs=:cr, k=10)), df; method = meth)
+            @test isfinite(m.reml)
+            @test isnan(m.criterion)
+            @test GAM.sp_criterion(m) == m.reml
+            @test occursin("-$(meth) =", sprint(show, MIME"text/plain"(), m))
+        end
+
+        m_gcv = gam(GAM.@formula(y ~ s(x, bs=:cr, k=10)), df; method = :GCV)
+        @test isfinite(m_gcv.criterion)
+        @test isnan(m_gcv.reml)
+        @test GAM.sp_criterion(m_gcv) == m_gcv.criterion
+        @test m_gcv.criterion > 0                      # GCV = n·dev/(n-γ·edf)^2
+        # the footer that previously printed nothing at all for GCV fits
+        @test occursin("GCV =", sprint(show, MIME"text/plain"(), m_gcv))
+
+        # Known-scale family: mgcv maps method="GCV.Cp" to UBRE, so :UBRE is the
+        # comparable criterion there (R/mgcv.r:1946-1965).
+        yb = Float64.(rand(rng, n) .< 1 ./ (1 .+ exp.(-(sin.(2pi .* x)))))
+        m_ub = gam(GAM.@formula(y ~ s(x, bs=:cr, k=10)), DataFrame(x = x, y = yb);
+            method = :UBRE, family = Bernoulli(), link = LogitLink())
+        @test isfinite(m_ub.criterion)
+        @test isnan(m_ub.reml)
+        @test GAM.sp_criterion(m_ub) == m_ub.criterion
+        @test occursin("UBRE =", sprint(show, MIME"text/plain"(), m_ub))
+    end
 end
