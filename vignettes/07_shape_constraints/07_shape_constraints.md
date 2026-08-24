@@ -137,10 +137,11 @@ m_scam = gam(@formula(y ~ s(x, k=15, bs=:mpi)), df)
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=mpi)              4.42     5.00    285.026  1.753e-87
+    s(x,bs=mpi)              4.42     4.42    285.026  1.753e-87 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.877   Deviance explained = 88.0%
     Scale est. = 0.0830   n = 200
@@ -368,7 +369,7 @@ rmse_micv = sqrt(mean((yhat_micv .- f_true3).^2))
 println("RMSE (monotone increasing + concave): ", round(rmse_micv, digits=4))
 ```
 
-    RMSE (monotone increasing + concave): 0.0456
+    RMSE (monotone increasing + concave): 0.0457
 
 ### Verify constraints
 
@@ -387,7 +388,7 @@ println("Monotone increasing: ", all(first_diffs_micv .>= -1e-8))
 println("Concave: ", all(second_diffs_micv .<= 1e-8))
 ```
 
-    Min first difference (monotonicity): 0.006464
+    Min first difference (monotonicity): 0.006462
     Max second difference (concavity): -3.4e-5
     Monotone increasing: true
     Concave: true
@@ -447,10 +448,11 @@ m_ctrl = gam(@formula(y ~ s(x, k=15, bs=:mpi)), df; control=ctrl)
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=mpi)              4.42     5.00    285.026  1.753e-87
+    s(x,bs=mpi)              4.42     4.42    285.026  1.753e-87 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.877   Deviance explained = 88.0%
     Scale est. = 0.0830   n = 200
@@ -483,13 +485,14 @@ m_fallback = gam(@formula(y ~ s(x, k=15, bs=:cr)), df)
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=cr)               5.90     6.00    234.159  9.027e-86
+    s(x,bs=cr)               5.90     7.25    234.159  9.027e-86 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.876   Deviance explained = 88.0%
-    Scale est. = 0.0836   n = 200
+    -REML = 45.8   Scale est. = 0.0836   n = 200
 
 ## Comparing all constraint types
 
@@ -538,7 +541,7 @@ end
     bs=:mpd — EDF: 3.68, range: [0.01, 1.05]
     bs=:cx — EDF: 2.0, range: [-0.02, 0.99]
     bs=:cv — EDF: 3.97, range: [-0.05, 0.99]
-    bs=:micx — EDF: 1.0, range: [-0.02, 0.99]
+    bs=:micx — EDF: 0.99, range: [-0.03, 0.99]
     bs=:micv — EDF: 3.96, range: [-0.05, 0.99]
     bs=:mdcx — EDF: 0.93, range: [0.09, 1.24]
     bs=:mdcv — EDF: 0.96, range: [-0.06, 0.71]

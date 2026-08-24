@@ -74,7 +74,7 @@ cat(sprintf("AIC   = %.4f\n", AIC(m)))
     AIC   = 102.4209
 
 Prediction standard errors (first five), which GAM.jl matches to a
-maximum relative difference of 5.1e-7:
+maximum relative difference of 1.1e-5:
 
 ``` r
 p <- predict(m, se.fit = TRUE)
@@ -103,7 +103,7 @@ plot(m, shade = TRUE, residuals = TRUE, pch = 16, cex = 0.4,
 
 ![](13_migrating_from_mgcv_files/figure-commonmark/unnamed-chunk-6-1.png)
 
-The Julia vignette’s corresponding output is directly comparable: the
-two implementations agree on the smoothing parameter to the printed
-precision, on the coefficients to 8.7e-8, and on prediction standard
-errors to 5.1e-7.
+The Julia vignette’s corresponding output is directly comparable: on
+this model the two implementations agree on the log smoothing parameter
+to 9.6e-5, on the coefficients to 3.7e-6, on prediction standard errors
+to 1.1e-5, and on `AIC` to 1.1e-4 (`102.4210` against `102.4209`).

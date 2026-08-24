@@ -99,21 +99,22 @@ m = gam(@formula(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
     ──────────────────────────────────────────────────
                      Coef.  Std. Error     t  Pr(>|t|)
     ──────────────────────────────────────────────────
-    (Intercept)  0.0282443    0.105069  0.27    0.7882
+    (Intercept)  0.0282443    0.105053  0.27    0.7882
     ──────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x0,bs=tp)              3.43     4.00      9.430  2.803e-07
-    s(x1,bs=tp)              3.20     4.00     67.246  4.656e-43
-    s(x2,bs=tp)              7.83     8.00     73.421  1.382e-72
-    s(x3,bs=tp)              1.89     2.00      3.212    0.04137
+    s(x0,bs=tp)              3.42     4.24      9.325  3.363e-07 *** 
+    s(x1,bs=tp)              3.22     4.00     67.545  3.303e-43 *** 
+    s(x2,bs=tp)              7.91     8.69     73.508  1.222e-72 *** 
+    s(x3,bs=tp)              1.89     2.36      3.103    0.04606 *   
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.685   Deviance explained = 69.8%
-    Scale est. = 4.4158   n = 400
+    -REML = 886.9   Scale est. = 4.4144   n = 400
 
 ## Model overview
 
@@ -137,9 +138,9 @@ end
 
     Smooth          Type                  Dim    k    EDF   EDF/k
     ─────────────────────────────────────────────────────────────────
-    s(x0,bs=tp)     GAM.ThinPlateSpline      1    9   3.43  0.381
-    s(x1,bs=tp)     GAM.ThinPlateSpline      1    9    3.2  0.355
-    s(x2,bs=tp)     GAM.ThinPlateSpline      1    9   7.83   0.87
+    s(x0,bs=tp)     GAM.ThinPlateSpline      1    9   3.42  0.381
+    s(x1,bs=tp)     GAM.ThinPlateSpline      1    9   3.22  0.357
+    s(x2,bs=tp)     GAM.ThinPlateSpline      1    9   7.91  0.878
     s(x3,bs=tp)     GAM.ThinPlateSpline      1    9   1.89   0.21
 
 Per-smooth EDF:
@@ -154,12 +155,12 @@ println("Deviance explained: ", round(GAM.deviance_explained(m) * 100; digits = 
 println("R² (response scale): ", round(r2(m); digits = 3))
 ```
 
-    s(x0,bs=tp)  EDF = 3.43
-    s(x1,bs=tp)  EDF = 3.2
-    s(x2,bs=tp)  EDF = 7.83
+    s(x0,bs=tp)  EDF = 3.42
+    s(x1,bs=tp)  EDF = 3.22
+    s(x2,bs=tp)  EDF = 7.91
     s(x3,bs=tp)  EDF = 1.89
 
-    Total model EDF: 17.35
+    Total model EDF: 17.43
     Deviance explained: 69.8%
     R² (response scale): 0.698
 
@@ -227,10 +228,10 @@ end
 ```
 
     Concurvity per smooth (worst / observed / estimate):
-      s(x0,bs=tp) 0.128 / 0.041 / 0.081
-      s(x1,bs=tp) 0.139 / 0.053 / 0.061
-      s(x2,bs=tp) 0.132 / 0.053 / 0.086
-      s(x3,bs=tp) 0.168 / 0.058 / 0.047
+      s(x0,bs=tp) 0.127 / 0.042 / 0.082
+      s(x1,bs=tp) 0.13 / 0.053 / 0.06
+      s(x2,bs=tp) 0.131 / 0.052 / 0.081
+      s(x3,bs=tp) 0.169 / 0.065 / 0.052
 
 Since our covariates are independent (uniform draws), concurvity should
 be low.
@@ -244,7 +245,7 @@ println(round.(conc_pw; digits = 3))
 ```
 
     Pairwise concurvity matrix:
-    [1.0 0.066 0.086 0.051; 0.066 1.0 0.062 0.081; 0.086 0.062 1.0 0.083; 0.051 0.081 0.083 1.0]
+    [1.0 0.059 0.086 0.06; 0.059 1.0 0.056 0.076; 0.086 0.056 1.0 0.084; 0.06 0.076 0.084 1.0]
 
 ## Comparing models with different k
 
@@ -267,10 +268,10 @@ for k_val in sort(collect(keys(k_models)))
 end
 ```
 
-    k=5  EDF=[3.01, 3.09, 3.98, 1.55]  Dev.Expl=67.5%
-    k=10  EDF=[3.43, 3.2, 7.83, 1.89]  Dev.Expl=69.8%
-    k=20  EDF=[3.45, 3.24, 9.72, 1.89]  Dev.Expl=70.1%
-    k=30  EDF=[3.46, 3.25, 10.14, 1.88]  Dev.Expl=70.2%
+    k=5  EDF=[2.98, 3.06, 3.97, 1.49]  Dev.Expl=66.0%
+    k=10  EDF=[3.42, 3.22, 7.91, 1.89]  Dev.Expl=69.8%
+    k=20  EDF=[3.45, 3.25, 9.99, 1.87]  Dev.Expl=70.2%
+    k=30  EDF=[3.46, 3.25, 10.23, 1.87]  Dev.Expl=70.2%
 
 As long as `k` is large enough to capture the true complexity, results
 are similar — the penalty takes care of the rest.

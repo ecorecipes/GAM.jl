@@ -8,17 +8,14 @@ Simon Frost
 - [Where the answers differ — and
   why](#where-the-answers-differ--and-why)
   - [1. Smooth-term test statistics](#1-smooth-term-test-statistics)
-  - [2. AIC differs by a fraction](#2-aic-differs-by-a-fraction)
-  - [3. Quasi families report `NaN`, not a
-    number](#3-quasi-families-report-nan-not-a-number)
-  - [4. SCAM standard errors are
-    conditional](#4-scam-standard-errors-are-conditional)
-  - [5. Smoothing parameters on flat likelihood
-    ridges](#5-smoothing-parameters-on-flat-likelihood-ridges)
-  - [6. `k` counts differently in tensor
-    smooths](#6-k-counts-differently-in-tensor-smooths)
-  - [7. The default smoothing-parameter method
-    differs](#7-the-default-smoothing-parameter-method-differs)
+  - [2. Quasi families report `NaN`, not a
+    number](#2-quasi-families-report-nan-not-a-number)
+  - [3. SCAM standard errors are
+    conditional](#3-scam-standard-errors-are-conditional)
+  - [4. Smoothing parameters on flat likelihood
+    ridges](#4-smoothing-parameters-on-flat-likelihood-ridges)
+  - [5. The default smoothing-parameter method
+    differs](#5-the-default-smoothing-parameter-method-differs)
   - [`te()` versus `t2()` in mixed-model
     form](#te-versus-t2-in-mixed-model-form)
 - [Gotchas](#gotchas)
@@ -50,7 +47,7 @@ using Statistics, Printf
 | `gam(y ~ s(x), data = d)` | `gam(@formula(y ~ s(x)), df)` | `@formula` handles keywords too |
 | `s(x, k = 15, bs = "cr")` | `s(x, k=15, bs=:cr)` | R strings → Julia symbols |
 | `s(x, by = g)` | `s(x, by=g)` | numeric and factor `by` both supported |
-| `te(x, z)` / `ti(x, z)` / `t2(x, z)` | `te(x, z)` / `ti(x, z)` / `t2(x, z)` | same constructions |
+| `te(x, z)` / `ti(x, z)` / `t2(x, z)` | `te(x, z)` / `ti(x, z)` / `t2(x, z)` | same constructions; scalar `k` is per-marginal in both |
 | `family = poisson()` | `Poisson()` (positional or `family=`) | `Distributions.jl` types |
 | `family = nb()` | `NegBinFamily()` | θ estimated by default |
 | `family = tw()` | `TweedieFamily(p=1.5)` | `estimate_p=true` to estimate |
@@ -104,13 +101,14 @@ m
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x,bs=cr)               8.03     8.00    137.612  5.089e-75
+    s(x,bs=cr)               8.03     9.73    137.612  5.089e-75 *** 
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.847   Deviance explained = 85.3%
-    Scale est. = 0.0923   n = 200
+    -REML = 59.53   Scale est. = 0.0923   n = 200
 
 In R this is:
 
@@ -126,23 +124,19 @@ quantities compared below.
 These are the agreements measured by the automated suite
 (`test/test_rcall.jl`) against mgcv 1.9.4, on this model specification:
 
-| Quantity                                  | Agreement             |
-|-------------------------------------------|-----------------------|
-| Smoothing parameter (log scale)           | `0.0000`              |
-| Coefficients (max absolute difference)    | `8.7e-8`              |
-| Prediction standard errors (max relative) | `5.1e-7`              |
-| Effective degrees of freedom              | matches to 3 decimals |
-| Deviance, scale                           | match                 |
-
-For a Poisson fit the agreement is looser but still tight: smoothing
-parameter within `0.012` on the log scale and prediction SEs within
-`0.21%`.
+| Quantity                                  | Agreement                    |
+|-------------------------------------------|------------------------------|
+| Smoothing parameter (log scale)           | `9.6e-5`                     |
+| Coefficients (max absolute difference)    | `3.7e-6`                     |
+| Prediction standard errors (max relative) | `1.1e-5`                     |
+| Effective degrees of freedom              | `8.0331` vs `8.03295`        |
+| Reference degrees of freedom              | `9.7311` vs `9.730895`       |
+| Scale                                     | `0.09227138` vs `0.09227141` |
+| AIC                                       | `102.4210` vs `102.4209`     |
 
 The R companion in `R/` prints the same quantities for the identical
 CSV, so you can check the agreement yourself rather than taking the
-table on trust: it reports `scale` identical to six decimals, `edf`
-agreeing to three decimals, and a log smoothing parameter differing by
-under `1e-4`.
+table on trust.
 
 ``` julia
 @printf("edf   = %.4f\n", sum(edf(m)))
@@ -154,25 +148,33 @@ under `1e-4`.
     edf   = 8.0331
     sp    = 33.049301  (log scale: 3.498000)
     scale = 0.092271
-    AIC   = 102.0043
+    AIC   = 102.4210
 
 ## Where the answers differ — and why
 
-Seven documented divergences. The last two — how `k` is counted and
-which smoothing-parameter method is the default — are differences in
-*convention* rather than in the mathematics, and they are the ones most
-likely to make a side-by-side comparison mislead you. None affects the
-mainstream fitting path, but all are worth knowing before you compare
-printouts side by side.
+Five documented divergences. The last — which smoothing-parameter method
+is the default — is a difference in *convention* rather than in the
+mathematics, and it is the one most likely to make a side-by-side
+comparison mislead you. None affects the mainstream fitting path, but
+all are worth knowing before you compare printouts side by side.
+
+Three former divergences are gone, which matters if you are reading
+older notes: `AIC` now agrees (GAM.jl implements the Wood/Pya/Säfken
+corrected degrees of freedom that mgcv uses), a scalar `k` on tensor
+smooths now means the same thing in both packages, and `bs=:sos` is now
+a direct port of mgcv’s spherical spline rather than an approximation.
 
 ### 1. Smooth-term test statistics
 
-`edf` and the p-value *conclusion* match mgcv, but the test
+`edf`, `Ref.df` and the p-value *conclusion* match mgcv, but the test
 **statistic** differs: GAM.jl uses a documented simplification of Wood
-(2013)’s `testStat`. On the model above, GAM.jl reports F ≈ 160.4 where
-mgcv reports 132.6 — both give p \< 1e-10. Expect agreement on *which*
-terms are significant, not on the statistic itself, and treat borderline
-p-values with care.
+(2013)’s `testStat`. On the model above GAM.jl reports F ≈ 137.6 where
+mgcv reports 113.1 — both give p \< 1e-70. The reference degrees of
+freedom now agree (`9.7311` here against mgcv’s `9.730895`), because
+GAM.jl reports mgcv’s `edf1`; what still differs is that the p-value is
+computed against an integer-truncated rank rather than mgcv’s fractional
+one. Expect agreement on *which* terms are significant, not on the
+statistic itself, and treat borderline p-values with care.
 
 ``` julia
 st = anova_gam(m).smooth_table
@@ -181,22 +183,13 @@ st = anova_gam(m).smooth_table
 
     edf = 8.033, p = 5.09e-75
 
-### 2. AIC differs by a fraction
-
-mgcv applies the Wood/Pya/Säfken (2016) corrected effective degrees of
-freedom for REML fits; GAM.jl uses the plain edf. The difference is a
-fraction of a unit — `0.42` between the two printouts here, `0.23` on
-the suite’s reference fit — which is irrelevant for ranking models
-fitted the same way, but don’t expect `AIC()` to print identical
-numbers.
-
-### 3. Quasi families report `NaN`, not a number
+### 2. Quasi families report `NaN`, not a number
 
 `QuasiPoissonFamily` and `QuasiBinomialFamily` have no true likelihood,
 so `loglikelihood` and `aic` return `NaN`. This mirrors R, which reports
 `NA`.
 
-### 4. SCAM standard errors are conditional
+### 3. SCAM standard errors are conditional
 
 Shape-constrained fits report standard errors conditional on the
 estimated smoothing parameters and the active constraints. In simulation
@@ -204,47 +197,23 @@ these understate full-refit variability — a parametric bootstrap gave
 reported-SE/empirical-sd ratios around 0.6. R’s scam has the same
 character; treat SCAM intervals as optimistic.
 
-### 5. Smoothing parameters on flat likelihood ridges
+### 4. Smoothing parameters on flat likelihood ridges
 
 On some problems the REML criterion is numerically flat across a wide
 range of log smoothing parameters — differences of `1e-10` in the
 criterion across several log-sp units. GAM.jl’s EFS iteration and mgcv’s
 Newton optimizer can legitimately stop at different points on such a
-ridge while producing effectively identical fits. **Compare fitted
-values, edf, and the criterion — not raw `sp`** unless the model is well
-identified.
+ridge while producing effectively identical fits.
 
-### 6. `k` counts differently in tensor smooths
+Note that this is now the *only* reason `sp` differs. The basis
+parameterizations themselves match, so a smoothing parameter transfers
+between the packages: pass mgcv’s `sp` into GAM.jl as a fixed value and
+you recover mgcv’s fit, and vice versa. If two free fits disagree on
+`sp` but agree on fitted values and the criterion, you are looking at a
+flat ridge, not a discrepancy — **compare fitted values, edf, and the
+criterion first**.
 
-This one bites hardest, because both sides look identical and neither
-complains. For `te`, `ti` and `t2`, **mgcv’s `k` is the dimension of
-each marginal basis**, so the tensor has `k^d` columns. **GAM.jl’s `k`
-is the total** target dimension, split as `round(Int, k^(1/d))` per
-margin and floored at 3:
-
-| `k` in `te(x, z, k=…)` | mgcv columns | GAM.jl columns |
-|------------------------|--------------|----------------|
-| 4                      | 15           | 8              |
-| 5                      | 24           | 8              |
-| 9                      | 80           | 8              |
-| 16                     | 255          | 15             |
-| 25                     | 624          | 24             |
-
-`te(x, z, k=5)` is a 24-column smooth in R and an 8-column smooth in
-Julia — a threefold difference in flexibility, from the same source
-text. The floor at 3 per margin is why `k=4`, `5` and `9` all collapse
-to 8 columns.
-
-Two ways to translate:
-
-``` julia
-te(:x, :z, k = 25)        # k_julia = k_mgcv^d  →  5 per margin, 24 columns
-te(:x, :z, k = [4, 7])    # or give marginal dimensions directly
-```
-
-Plain `s()` smooths are unaffected — `k` means the same thing in both.
-
-### 7. The default smoothing-parameter method differs
+### 5. The default smoothing-parameter method differs
 
 mgcv’s `gam()` defaults to `method = "GCV.Cp"`. GAM.jl’s `gam()`
 defaults to `method = :REML`. Comparing defaults compares two different
@@ -252,10 +221,16 @@ criteria, and REML generally gives smoother fits.
 
 This is a difference in defaults, not in the mathematics. With the
 methods matched, the criteria agree to numerical precision: on a matched
-tensor model the REML score at the optimum is `95.289118` in GAM.jl
-versus `95.28912` in mgcv, and the two criterion surfaces correlate at
-`0.99994` across `log λ ∈ [-12, 12]`. Set `method="REML"` in R, or
-`method=:GCV` in Julia, before drawing conclusions from a comparison.
+tensor model (`te(x0, x1, k=5, bs=[:cr,:cr])` against R’s
+`te(x0,x1,k=5,bs=c("cr","cr"))`, 25 coefficients in both) the REML score
+at the optimum is `1047.393154` in GAM.jl versus `1047.393092` in mgcv.
+
+Set `method="REML"` in R before comparing. Going the other way, note
+that mgcv’s `"GCV.Cp"` is not always GCV: it selects **GCV when the
+scale is estimated and UBRE when the scale is known**. So the setting
+that matches mgcv’s default is `method=:GCV` for Gaussian and Gamma, but
+`method=:UBRE` for Poisson and Binomial. Comparing our `:GCV` against
+mgcv’s `"GCV.Cp"` on a Poisson model compares two different criteria.
 
 ### `te()` versus `t2()` in mixed-model form
 
@@ -279,8 +254,12 @@ term; pass `offset=` to the fitting function, and supply it again at
 prediction (`predict(m, nd; offset=...)`) exactly as mgcv requires
 new-data offsets.
 
-**Rows with missing or non-finite values must be removed first.** There
-is no `na.action`; GAM.jl throws rather than silently dropping rows.
+**Missing values are kept, not dropped, unless you ask.** mgcv defaults
+to `na.action = na.omit`; GAM.jl defaults to `na_action = :fail` and
+throws, so a missing value is never dropped silently. Pass
+`na_action = :omit` for mgcv’s behaviour, and use `na_omit_rows(...)` to
+recover which rows were kept if you need to line results up against the
+original table.
 
 **`summary()` is split.** R’s one-call summary maps to `coeftable(m)`
 for the parametric block, `anova_gam(m)` for the smooth table, and
@@ -288,14 +267,19 @@ for the parametric block, `anova_gam(m)` for the smooth table, and
 
 **Basis symbols, not strings.** `bs=:cr`, not `bs="cr"`.
 
-**`k` and the default method are the two silent traps.** Both are
-covered above: `k` is per-margin in mgcv and total here for tensor
-smooths, and the default `method` is `"GCV.Cp"` in mgcv against `:REML`
-here. Neither raises an error; both change the model.
+**The default method is the remaining silent trap.** It is `"GCV.Cp"` in
+mgcv against `:REML` here. It raises no error and it changes the model.
+(A scalar `k` on tensor smooths used to be a second such trap; it now
+means the same thing in both packages.)
 
-**Three bases are approximations.** `:sos`, `:so`, and `:ds` are
-documented approximations of their mgcv namesakes and will not reproduce
-mgcv’s fits; everything else in the basis table is a faithful port.
+**`bs=:so` is an approximation, and `bs=:ds` is not implemented.** `:so`
+(soap film) is a documented approximation of its mgcv namesake. `:ds` is
+an alias for `:tp` and warns as such — it is *not* mgcv’s Duchon spline,
+so do not expect it to reproduce those fits. Everything else in the
+basis table, `:sos` now included, is a faithful port.
+
+**`bs=:sos` takes degrees, latitude first.** Matching mgcv. If your
+coordinates are in radians, pass `xt = Dict(:units => :radians)`.
 
 **`bam()` is not `bam(discrete=TRUE)`.** GAM.jl’s `bam` bounds memory by
 chunked accumulation of the normal equations; it does not discretize

@@ -28,6 +28,13 @@ We fit a GAM to the classic Gu & Wahba (1991) simulated example with
 four smooth terms of varying complexity, then explore the full
 diagnostic toolkit.
 
+This vignette is a *tour of the tools* — what each diagnostic returns
+and how to plot it. For a worked decision workflow that strings them
+together to choose a model (`select=true`, `k_check` p-values,
+concurvity, AIC across families, influence measures), see [14 — Model
+selection and
+diagnostics](../14_model_selection/14_model_selection.qmd).
+
 ## Setup
 
 ``` julia
@@ -99,16 +106,17 @@ m = gam(@formula(y ~ s(x0, k=10, bs=:cr) + s(x1, k=10, bs=:cr) +
 
     Approximate significance of smooth terms:
     ──────────────────────────────────────────────────────────────────
-    Smooth                    edf   Ref.df          F    p-value
+    Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x0,bs=cr)              3.43     4.00      9.431  2.796e-07
-    s(x1,bs=cr)              3.20     4.00     67.251  4.633e-43
-    s(x2,bs=cr)              7.83     8.00     73.421  1.381e-72
-    s(x3,bs=cr)              1.89     2.00      3.207    0.04158
+    s(x0,bs=cr)              3.43     4.24      9.431  2.796e-07 *** 
+    s(x1,bs=cr)              3.20     3.97     67.251  4.633e-43 *** 
+    s(x2,bs=cr)              7.83     8.63     73.421  1.381e-72 *** 
+    s(x3,bs=cr)              1.89     2.36      3.207    0.04158 *   
     ──────────────────────────────────────────────────────────────────
+    Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     R² (adj) = 0.685   Deviance explained = 69.8%
-    Scale est. = 4.4157   n = 400
+    -REML = 882   Scale est. = 4.4157   n = 400
 
 ## Model overview
 
@@ -428,10 +436,10 @@ kc = k_check(m)
 ```
 
     4-element Vector{@NamedTuple{label::String, k::Int64, edf::Float64, k_index::Float64, p_value::Float64}}:
-     (label = "s(x0,bs=cr)", k = 9, edf = 3.4262656464864105, k_index = 1.0449332110085794, p_value = 0.755)
-     (label = "s(x1,bs=cr)", k = 9, edf = 3.202964845843242, k_index = 1.0172236314355263, p_value = 0.615)
+     (label = "s(x0,bs=cr)", k = 9, edf = 3.4262656464864105, k_index = 1.0449332110085794, p_value = 0.83)
+     (label = "s(x1,bs=cr)", k = 9, edf = 3.202964845843242, k_index = 1.0172236314355263, p_value = 0.685)
      (label = "s(x2,bs=cr)", k = 9, edf = 7.833821589051949, k_index = 1.0396460061058748, p_value = 0.775)
-     (label = "s(x3,bs=cr)", k = 9, edf = 1.8871672259901553, k_index = 0.9732144202730096, p_value = 0.28)
+     (label = "s(x3,bs=cr)", k = 9, edf = 1.8871672259901553, k_index = 0.9732144202730096, p_value = 0.25)
 
 ## Summary
 

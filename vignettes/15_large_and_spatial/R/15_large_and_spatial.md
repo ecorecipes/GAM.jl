@@ -39,11 +39,11 @@ print(res, row.names = FALSE, digits = 4)
 ```
 
          n gam_s bam_s speedup edf_gam edf_bam
-      1000 0.464 0.042   11.05   19.43   19.43
-      2000 0.831 0.043   19.33   22.61   22.61
-      5000 2.040 0.077   26.49   27.20   27.20
-     10000 3.566 0.135   26.41   30.41   30.41
-     20000 7.289 0.266   27.40   33.53   33.54
+      1000 0.441 0.038   11.61   19.43   19.43
+      2000 0.803 0.043   18.67   22.61   22.61
+      5000 2.060 0.089   23.15   27.20   27.20
+     10000 3.562 0.130   27.40   30.41   30.41
+     20000 7.176 0.263   27.29   33.53   33.54
 
 Note that mgcv’s `bam()` wins by a much wider margin than GAM.jl’s does.
 That is not because GAM.jl’s `bam()` is slow — it is because GAM.jl’s

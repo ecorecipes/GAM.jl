@@ -50,11 +50,14 @@ draws, so a generator that interleaves `rand(rng, Uniform(...))` with
 `rand(rng, Poisson(...))` can produce a different CSV after a Distributions.jl
 upgrade even though nothing in this repository changed.
 
-`gen_poisson_gamm()` has exactly that shape and no longer reproduces the
-checked-in `10_gamm/data_poisson_gamm.csv` byte-for-byte under the current
-Distributions.jl. The checked-in file remains the one the vignette narrates and
-was generated from the documented DGP; re-running the script will overwrite it
-with a different, equally valid sample. If you regenerate, either re-render
-`10_gamm` or restore the CSV. New generators should draw each variable in its
-own vectorized pass rather than interleaving distributions, which keeps the
-uniform covariate stream stable across versions.
+`gen_poisson_gamm()` used to have exactly that shape, interleaving its uniform
+covariate draws with `rand(rng, Poisson(...))`. It has been rewritten to draw
+each variable in its own vectorized pass, which keeps the covariate stream
+independent of how many draws the Poisson sampler happens to consume. Running
+`julia --project=. generate_data.jl` now leaves every checked-in CSV
+byte-identical, and that is the property to preserve: new generators should
+draw each variable in its own pass rather than interleaving distributions.
+
+If a future Distributions.jl upgrade ever does move a CSV, the fix is to
+re-render the affected vignette rather than to hand-edit its prose — the
+narrative and the rendered output must agree.
