@@ -54,6 +54,11 @@ Simulated data with 12 subjects, each observed 40 times. The population-level si
 
 ```{julia}
 dat = CSV.read("data_gaussian_gamm.csv", DataFrame)
+# `s(g, bs=:re)` needs a *factor*. A numeric column enters as a linear
+# (random-slope) term on its values instead — matching mgcv, which treats
+# non-factors as numeric. `gamm`'s `(1 | subject)` groups by level either way,
+# so only the explicit `s(..., bs=:re)` comparisons below need this column.
+dat.subject_f = string.(dat.subject)
 println("n = $(nrow(dat)), subjects = $(length(unique(dat.subject)))")
 println("y range: [$(round(minimum(dat.y); digits=2)), $(round(maximum(dat.y); digits=2))]")
 ```
@@ -134,10 +139,10 @@ plot(p1, p2; layout=(1, 2), size=(900, 400))
 
 ### Equivalence with `s(subject, bs=:re)`
 
-In GAM.jl, `gamm(@formula(y ~ s(x) + (1|subject)), ...)` is mathematically equivalent to `gam(@formula(y ~ s(x) + s(subject, bs=:re)), ...)`. Both treat the random intercept as a smooth with identity penalty:
+In GAM.jl, `gamm(@formula(y ~ s(x) + (1|subject)), ...)` is mathematically equivalent to `gam(@formula(y ~ s(x) + s(subject, bs=:re)), ...)`. Both treat the random intercept as a smooth with identity penalty. Note the grouping variable must be a **factor** (`subject_f` here): given a numeric column, `bs=:re` fits a random *slope* on those values, exactly as mgcv does.
 
 ```{julia}
-m_gam = gam(@formula(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
+m_gam = gam(@formula(y ~ s(x, k=15) + s(subject_f, bs=:re)), dat)
 @printf("Fitted values correlation: %.6f\n", cor(fitted(m), fitted(m_gam)))
 @printf("Scale (gamm): %.6f\n", m.gam_model.scale)
 @printf("Scale (gam):  %.6f\n", m_gam.scale)
@@ -241,9 +246,9 @@ These formula forms produce equivalent fits (agreeing up to convergence
 tolerance, so fitted-value correlations are ≈ 1 and scales agree closely):
 
 ```{julia}
-m3c = gam(@formula(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
+m3c = gam(@formula(y ~ s(x, k=15) + s(subject_f, bs=:re)), dat)
 @printf("cor((1|subject), re(subject)): %.6f\n", cor(fitted(m3a), fitted(m3b)))
-@printf("cor((1|subject), s(subject, bs=:re)): %.6f\n", cor(fitted(m3a), fitted(m3c)))
+@printf("cor((1|subject), s(subject_f, bs=:re)): %.6f\n", cor(fitted(m3a), fitted(m3c)))
 ```
 
 ## Prediction

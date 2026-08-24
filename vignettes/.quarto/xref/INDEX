@@ -123,5 +123,11 @@
   },
   "13_migrating_from_mgcv/R/13_migrating_from_mgcv.qmd": {
     "13_migrating_from_mgcv.md": "4bdd148d"
+  },
+  "15_large_and_spatial/15_large_and_spatial.qmd": {
+    "15_large_and_spatial.md": "545918fb"
+  },
+  "15_large_and_spatial/R/15_large_and_spatial.qmd": {
+    "15_large_and_spatial.md": "b8d96f67"
   }
 }
