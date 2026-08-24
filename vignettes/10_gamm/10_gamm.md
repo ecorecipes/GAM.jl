@@ -89,6 +89,11 @@ value.)
 
 ``` julia
 dat = CSV.read("data_gaussian_gamm.csv", DataFrame)
+# `s(g, bs=:re)` needs a *factor*. A numeric column enters as a linear
+# (random-slope) term on its values instead — matching mgcv, which treats
+# non-factors as numeric. `gamm`'s `(1 | subject)` groups by level either way,
+# so only the explicit `s(..., bs=:re)` comparisons below need this column.
+dat.subject_f = string.(dat.subject)
 println("n = $(nrow(dat)), subjects = $(length(unique(dat.subject)))")
 println("y range: [$(round(minimum(dat.y); digits=2)), $(round(maximum(dat.y); digits=2))]")
 ```
@@ -107,7 +112,7 @@ println(m)
 ```
 
     ┌ Warning: Random effect grouping variable :subject is numeric (Float64). This will be treated as a categorical grouping variable. If this is intentional, convert to CategoricalArray or String first.
-    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:283
+    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:291
     Generalized Additive Mixed Model
 
     Family: Normal
@@ -117,17 +122,17 @@ println(m)
       β[1] =   0.184662
 
     Smooth Terms:
-      s(x,bs=tp)            edf =  11.61
+      s(x,bs=tp)            edf =  11.70
 
     Variance Components:
      Group                 Term                      Variance      Std.Dev.    Levels
      ──────────────────────────────────────────────────────────────────────────────
-     subject               Intercept                 0.216080      0.464844        12
-     Residual                                        0.147337      0.383845          
+     subject               Intercept                 0.215957      0.464712        12
+     Residual                                        0.147477      0.384028          
 
-    Deviance:          67.2705
-    REML:             269.2223
-    Scale est.:       0.147337
+    Deviance:          67.3213
+    REML:             269.4643
+    Scale est.:       0.147477
     n = 480
 
 ### Random effects
@@ -143,18 +148,18 @@ for (lev, eff) in zip(levels, est)
 end
 ```
 
-      Subject 1.0: b̂ = +0.364
+      Subject 1.0: b̂ = +0.365
       Subject 2.0: b̂ = -0.504
       Subject 3.0: b̂ = -0.609
-      Subject 4.0: b̂ = +0.404
-      Subject 5.0: b̂ = +0.419
+      Subject 4.0: b̂ = +0.405
+      Subject 5.0: b̂ = +0.418
       Subject 6.0: b̂ = -0.363
-      Subject 7.0: b̂ = +0.338
+      Subject 7.0: b̂ = +0.339
       Subject 8.0: b̂ = -0.178
       Subject 9.0: b̂ = -0.199
       Subject 10.0: b̂ = -0.442
       Subject 11.0: b̂ = -0.081
-      Subject 12.0: b̂ = +0.849
+      Subject 12.0: b̂ = +0.848
 
 ### Variance components
 
@@ -169,9 +174,9 @@ residual_scale = m isa GAM.GammModel ? m.gam_model.scale : m.scale
 @printf("  Residual: σ = %.4f\n", sqrt(residual_scale))
 ```
 
-      Intercept: σ = 0.4648  (n_levels = 12)
-      Residual: σ = 0.3838  (n_levels = 480)
-      Residual: σ = 0.3838
+      Intercept: σ = 0.4647  (n_levels = 12)
+      Residual: σ = 0.3840  (n_levels = 480)
+      Residual: σ = 0.3840
 
 ### Comparison with true values
 
@@ -180,7 +185,7 @@ true_re = [dat.re_true[findfirst(dat.subject .== s)] for s in sort(unique(dat.su
 @printf("Correlation of estimated vs true RE: %.4f\n", cor(est, true_re))
 ```
 
-    Correlation of estimated vs true RE: 0.9875
+    Correlation of estimated vs true RE: 0.9874
 
 ### Visualizing the Gaussian GAMM
 
@@ -218,18 +223,21 @@ plot(p1, p2; layout=(1, 2), size=(900, 400))
 In GAM.jl, `gamm(@formula(y ~ s(x) + (1|subject)), ...)` is
 mathematically equivalent to
 `gam(@formula(y ~ s(x) + s(subject, bs=:re)), ...)`. Both treat the
-random intercept as a smooth with identity penalty:
+random intercept as a smooth with identity penalty. Note the grouping
+variable must be a **factor** (`subject_f` here): given a numeric
+column, `bs=:re` fits a random *slope* on those values, exactly as mgcv
+does.
 
 ``` julia
-m_gam = gam(@formula(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
+m_gam = gam(@formula(y ~ s(x, k=15) + s(subject_f, bs=:re)), dat)
 @printf("Fitted values correlation: %.6f\n", cor(fitted(m), fitted(m_gam)))
 @printf("Scale (gamm): %.6f\n", m.gam_model.scale)
 @printf("Scale (gam):  %.6f\n", m_gam.scale)
 ```
 
     Fitted values correlation: 1.000000
-    Scale (gamm): 0.147337
-    Scale (gam):  0.147337
+    Scale (gamm): 0.147477
+    Scale (gam):  0.147477
 
 ## Example 2: Poisson GAMM for Count Data
 
@@ -248,7 +256,7 @@ println("y range: [$(minimum(dat2.y)), $(maximum(dat2.y))]")
 ```
 
     n = 480, sites = 8
-    y range: [0.0, 16.0]
+    y range: [0.0, 13.0]
 
 ### Fitting
 
@@ -261,27 +269,27 @@ println(m2)
 ```
 
     ┌ Warning: Random effect grouping variable :site is numeric (Float64). This will be treated as a categorical grouping variable. If this is intentional, convert to CategoricalArray or String first.
-    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:283
+    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:291
     Generalized Additive Mixed Model
 
     Family: Poisson
     Link:   LogLink
 
     Fixed Effects Coefficients:
-      β[1] =   0.930386
+      β[1] =   0.980357
 
     Smooth Terms:
-      s(x,bs=tp)            edf =   6.82
+      s(x,bs=tp)            edf =   6.72
 
     Variance Components:
      Group                 Term                      Variance      Std.Dev.    Levels
      ──────────────────────────────────────────────────────────────────────────────
-     site                  Intercept                 0.104307      0.322967         8
-     Residual                                        0.980400      0.990151          
+     site                  Intercept                 0.136510      0.369472         8
+     Residual                                        1.057981      1.028582          
 
-    Deviance:         494.4476
-    REML:             476.0931
-    Scale est.:       0.980400
+    Deviance:         538.8796
+    REML:             482.9459
+    Scale est.:       1.057981
     n = 480
 
 ### Random effects
@@ -298,8 +306,8 @@ sd_drawn = std([dat2.re_true[findfirst(dat2.site .== s)] for s in sort(unique(da
     vc2[1].std, sd_drawn)
 ```
 
-    RE correlation with truth: 0.9201
-    Estimated σ_RE: 0.3230 (population σ_b: 0.4; sd of the 8 drawn effects: 0.3575)
+    RE correlation with truth: 0.9743
+    Estimated σ_RE: 0.3695 (population σ_b: 0.4; sd of the 8 drawn effects: 0.3575)
 
 ### Visualizing the Poisson GAMM
 
@@ -348,7 +356,7 @@ m3a = gamm(@formula(y ~ cr(x, 15) + (1|subject)), dat)
 ```
 
     ┌ Warning: Random effect grouping variable :subject is numeric (Float64). This will be treated as a categorical grouping variable. If this is intentional, convert to CategoricalArray or String first.
-    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:283
+    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:291
     @formula path: scale = 0.147337
 
 ### Using `@formula` with `re(group)`
@@ -361,7 +369,7 @@ m3b = gamm(@formula(y ~ cr(x, 15) + re(subject)), dat)
 ```
 
     ┌ Warning: Random effect grouping variable :subject is numeric (Float64). This will be treated as a categorical grouping variable. If this is intentional, convert to CategoricalArray or String first.
-    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:283
+    └ @ GAM ~/Projects/gam/GAM.jl/src/validation.jl:291
     re() path: scale = 0.147337
 
 ### Consistency with `re(group)` and `s(group, bs=:re)`
@@ -371,13 +379,13 @@ tolerance, so fitted-value correlations are ≈ 1 and scales agree
 closely):
 
 ``` julia
-m3c = gam(@formula(y ~ s(x, k=15) + s(subject, bs=:re)), dat)
+m3c = gam(@formula(y ~ s(x, k=15) + s(subject_f, bs=:re)), dat)
 @printf("cor((1|subject), re(subject)): %.6f\n", cor(fitted(m3a), fitted(m3b)))
-@printf("cor((1|subject), s(subject, bs=:re)): %.6f\n", cor(fitted(m3a), fitted(m3c)))
+@printf("cor((1|subject), s(subject_f, bs=:re)): %.6f\n", cor(fitted(m3a), fitted(m3c)))
 ```
 
     cor((1|subject), re(subject)): 1.000000
-    cor((1|subject), s(subject, bs=:re)): 1.000000
+    cor((1|subject), s(subject_f, bs=:re)): 0.999977
 
 ## Prediction
 
@@ -396,8 +404,8 @@ pred_new = predict(m, df_new)
 @printf("Predictions (new subject):    [%.3f, %.3f, %.3f]\n", pred_new...)
 ```
 
-    Predictions (known subjects): [0.511, 0.706, 1.070]
-    Predictions (new subject):    [0.147, 1.210, 1.679]
+    Predictions (known subjects): [0.513, 0.698, 1.082]
+    Predictions (new subject):    [0.149, 1.202, 1.690]
 
 ## Summary
 
