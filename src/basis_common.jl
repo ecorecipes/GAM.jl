@@ -224,16 +224,49 @@ so a SINGLE penalty (with a single smoothing parameter) penalizes the whole
 coefficient space and the smooth can be shrunk entirely to zero. The factor
 0.1 matches mgcv's default `shrink` constant for `bs="ts"`/`bs="cs"`.
 """
-function _shrink_penalty(S::Matrix{Float64}; shrink::Float64 = 0.1)
+function _shrink_penalty(S::Matrix{Float64}; shrink::Float64 = 0.1,
+                         null_dim::Int = -1, cascade::Bool = false)
     eig = eigen(Symmetric(S))
-    vals = copy(eig.values)
+    vals = copy(eig.values)          # ascending (LAPACK); mgcv's R `eigen` is descending
+    k = length(vals)
     mx = maximum(abs.(vals))
     mx > 0 || return Matrix{Float64}(I, size(S, 1), size(S, 2))
-    tol = mx * eps()^0.75
-    pos = vals .> tol
-    any(pos) || return Matrix{Float64}(I, size(S, 1), size(S, 2))
-    min_pos = minimum(vals[pos])
-    vals[.!pos] .= shrink * min_pos
+
+    if null_dim >= 0
+        # mgcv has TWO shrinkage rules, and which one applies is per-basis.
+        # Both use the KNOWN null-space rank M rather than a numerical-rank
+        # threshold, so neither depends on how nearly-singular the null
+        # directions happen to be. R's `eigen` is DEscending where LAPACK is
+        # ascending, so the M smallest are `vals[1:M]` here and the smallest
+        # range-space eigenvalue is `vals[M+1]`.
+        #
+        # `ts`/tprs — flat (R/smooth.r:1348):
+        #     es$values[(k-M+1):k] <- es$values[k-M] * shrink
+        # all M null eigenvalues take the same value.
+        #
+        # `cs`/cr — cascading (R/smooth.r:1495-1496):
+        #     es$values[nk-1] <- es$values[nk-2] * shrink
+        #     es$values[nk]   <- es$values[nk-1] * shrink
+        # each successive null eigenvalue is `shrink` times the previous, so
+        # the smallest lands at `shrink^M`. mgcv hardcodes M = 2 there; the
+        # loop below generalizes it while reproducing that case exactly.
+        M = null_dim
+        (M == 0 || M >= k) && return Matrix(Symmetric(S))
+        if cascade
+            for j in M:-1:1
+                vals[j] = vals[j + 1] * shrink
+            end
+        else
+            vals[1:M] .= vals[M + 1] * shrink
+        end
+    else
+        # Legacy numerical-rank path, kept for callers that do not know M.
+        tol = mx * eps()^0.75
+        pos = vals .> tol
+        any(pos) || return Matrix{Float64}(I, size(S, 1), size(S, 2))
+        vals[.!pos] .= shrink * minimum(vals[pos])
+    end
+
     vals .= max.(vals, 0.0)
     S_new = eig.vectors * Diagonal(vals) * eig.vectors'
     return Matrix(Symmetric(S_new))

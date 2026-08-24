@@ -183,7 +183,35 @@ function _construct_cr(spec::SmoothSpec, data, user_knots;
     # null-space eigenvalues (one smoothing parameter, full-rank penalty),
     # rather than appending a second penalty.
     if shrink && !cyclic
-        S = _shrink_penalty(S)
+        # mgcv's `cs` CASCADES the two null eigenvalues (R/smooth.r:1495-1496),
+        # unlike `ts`, which gives them all the same value. Use mgcv's rule.
+        #
+        # Measured against mgcv 1.9-4 (n=200), holding sp FIXED at mgcv's own
+        # selected value so the smoothing-parameter optimizer cannot contaminate
+        # the comparison:
+        #
+        #     k       cascade Δedf      flat Δedf
+        #     5       4.44e-15          2.73e-05
+        #     10      0.00e+00          5.12e-05
+        #     20      5.33e-15          3.47e-05
+        #
+        # Cascade reproduces mgcv's edf to machine precision; the flat rule is
+        # ~10 orders of magnitude worse. Do not "simplify" this back to flat.
+        #
+        # On the eigenbasis question, since it is easy to get wrong: the two
+        # null eigenvalues ARE numerically degenerate — their gap (1.4e-13 at
+        # k=5, 5.0e-11 at k=20) sits below eps*‖S‖ (4.0e-13, 7.1e-11) — so the
+        # basis LAPACK returns within that 2-D subspace is arbitrary, and it
+        # genuinely differs from R's (exactly 2 columns disagree, |cos| ≈ 0.89
+        # to 0.94; syevr!/syevd!/syev! all disagree with R and with each other,
+        # and R links reference LAPACK 3.12.1 while Julia links OpenBLAS).
+        # Reconstructing the penalty from mgcv's own eigenvectors reproduces
+        # mgcv exactly (rel 1e-16); from ours it is off by rel 1e-3 (k=5) to
+        # 1e-6 (k=20). But that perturbation lives in the null block and does
+        # NOT propagate to the fit: at fixed sp the edf still matches to 1e-15
+        # above. The residual free-fit gap (~0.15 edf at k=15) is the EFS vs
+        # outer-Newton smoothing-parameter optimizer, not the eigenbasis.
+        S = _shrink_penalty(S; null_dim = null_dim, cascade = true)
         null_dim = 0
     end
 

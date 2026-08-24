@@ -33,6 +33,14 @@ function _gp_correlation(d::Float64, corfun::Symbol, params::Vector{Float64})
     elseif corfun == :matern32
         s = sqrt(3) * d
         return (1 + s) * exp(-s)
+    elseif corfun == :mgcv_m32
+        # mgcv's default `gp` correlation (gpE type 3): (1 + E)·exp(-E) with
+        # E = distance/rho. This is Matérn 3/2 with length-scale rho/√3 — mgcv
+        # omits the √3 that the standard parameterization (:matern32 above)
+        # carries, so at the same nominal range its correlation decays √3 times
+        # more slowly. Kept as a distinct name rather than folded into
+        # :matern32 so both parameterizations stay available and explicit.
+        return (1 + d) * exp(-d)
     elseif corfun == :matern52
         s = sqrt(5) * d
         return (1 + s + s^2 / 3) * exp(-s)
@@ -56,10 +64,25 @@ the same low-rank construction). The basis is the cross-correlation matrix
 matrix `S = R_kk`, so the implied prior covariance of the fitted function
 is `R_xk R_kk⁻¹ R_kx ≈ R_xx` (Nystrom) — the proper low-rank GP model.
 
-The correlation function is Matérn 3/2 with the range parameter set to the
-data range (so correlation decays over the span of the data), which is the
-same order as mgcv's default range choice for `gp`. Override via
-`xt = Dict(:scale => ...)`.
+The default correlation function is Matérn 3/2, `(1 + √3 d)·exp(-√3 d)` with
+`d = distance/range`, and the range is the span of the data.
+
+Override both via `xt`: `xt = Dict(:corfun => :mgcv_m32, :scale => 2.0)`.
+Valid `:corfun` values are `:matern32` (default), `:mgcv_m32`, `:matern52`,
+`:exponential`, `:gaussian`/`:sqexp` and `:power_exp`.
+
+!!! note "This is not mgcv's `bs="gp"`"
+    mgcv's default `gp` correlation (`gpE` type 3) is `(1 + E)·exp(-E)` with
+    `E = distance/rho` and `rho` the largest pairwise distance — Matérn 3/2
+    with length-scale `rho/√3`, i.e. mgcv omits the `√3` this basis carries.
+    `:corfun => :mgcv_m32` reproduces that correlation function exactly, but
+    it does **not** make the fits agree, because the low-rank construction
+    differs more fundamentally: mgcv eigen-reduces the correlation matrix by
+    Lanczos (`slanczos`, as it does for `bs="tp"`), whereas this basis is the
+    Kammann & Wand Nyström cross-correlation. Measured on `s(x, k=10)` over
+    200 points of `sin(2πx) + N(0, 0.3²)`, edf is 7.98 here against mgcv's
+    7.53; switching to `:mgcv_m32` moves it only to 7.92. Treat `bs=:gp` as a
+    GP smoother in its own right, not as a port of mgcv's.
 """
 function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) == 1 ||
@@ -91,9 +114,10 @@ function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
     end
     nk = length(knots)
 
-    # Correlation function (default Matérn 3/2)
-    corfun = :matern32
-    params = Float64[]
+    # Correlation function. The default stays :matern32 — see the docstring for
+    # why matching mgcv's default correlation alone does NOT buy parity here.
+    corfun = Symbol(get(spec.xt, :corfun, :matern32))::Symbol
+    params = Vector{Float64}(get(spec.xt, :params, Float64[]))
 
     # Range parameter: the data range by default (documented above)
     x_range = maximum(x) - minimum(x)
@@ -154,8 +178,10 @@ function _predict_matrix(::GPSmooth, smooth::ConstructedSmooth, newdata)
         maximum(knots) - minimum(knots)
     end
 
-    corfun = :matern32
-    params = Float64[]
+    # Must match the construction-time choice, or prediction silently uses a
+    # different correlation function from the one the basis was built with.
+    corfun = Symbol(get(smooth.spec.xt, :corfun, :matern32))::Symbol
+    params = Vector{Float64}(get(smooth.spec.xt, :params, Float64[]))
 
     # Cross-correlation IS the basis — no factorization needed at predict
     X_new = zeros(length(x_new), nk)
