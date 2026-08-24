@@ -153,8 +153,10 @@ Evaluate estimated smooth terms on a grid of covariate values.
 - `n`: number of grid points per covariate
 - `data`: custom evaluation data (NamedTuple or Tables-compatible); if nothing,
   an evenly-spaced grid over the covariate range is generated
-- `unconditional`: NOT supported — no smoothing-parameter-corrected covariance
-  (mgcv's `Vc`) is computed by this package; passing `true` warns and uses `Vp`
+- `unconditional`: use the smoothing-parameter-corrected covariance `Vc`
+  (Wood, Pya & Säfken 2016) instead of `Vp`, widening the intervals to account
+  for having estimated the smoothing parameters — mgcv's `unconditional = TRUE`.
+  Warns and falls back to `Vp` for fits without it (see [`has_vc`](@ref))
 - `overall_uncertainty`: include uncertainty in the intercept. `true`
   (default) corresponds to mgcv's `type="iterms"`, `false` to `type="terms"`.
   These target **different estimands**, so their intervals are not
@@ -182,7 +184,6 @@ function smooth_estimates(m::GamModel;
     overall_uncertainty::Bool = true,
 )
     smooth_indices = _resolve_smooth_select(m, select)
-    _warn_unconditional(unconditional)
 
     all_labels = String[]
     all_estimates = Float64[]
@@ -190,7 +191,7 @@ function smooth_estimates(m::GamModel;
     # per-smooth covariate values, assembled into row-aligned vectors below
     smooth_cov_vals = Vector{Tuple{Vector{Symbol}, Dict{Symbol, Vector{Float64}}, Int}}()
 
-    Vcov = m.Vp
+    Vcov = _covariance_for(m, unconditional)
 
     for si in smooth_indices
         sm = m.smooths[si]
@@ -250,12 +251,6 @@ function smooth_estimates(m::GamModel;
     return SmoothEstimates(all_labels, all_covariates, all_estimates, all_se)
 end
 
-function _warn_unconditional(unconditional::Bool)
-    if unconditional
-        @warn "unconditional=true is not supported: GAM.jl does not compute a " *
-              "smoothing-parameter-corrected covariance (mgcv's Vc); using Vp" maxlog = 1
-    end
-end
 
 # ============================================================================
 # partial_residuals
@@ -387,6 +382,7 @@ function derivatives(m::GamModel;
     interval::Symbol = :confidence,
     n_sim::Int = 10000,
     seed = nothing,
+    unconditional::Bool = false,
 )
     type in (:forward, :backward, :central) ||
         throw(ArgumentError("type must be :forward, :backward, or :central"))
@@ -394,7 +390,7 @@ function derivatives(m::GamModel;
     0 < level < 1 || throw(ArgumentError("level must be in (0, 1)"))
 
     smooth_indices = _resolve_smooth_select(m, select)
-    Vcov = m.Vp
+    Vcov = _covariance_for(m, unconditional)
 
     all_labels = String[]
     all_x = Float64[]
@@ -478,8 +474,7 @@ function posterior_samples(m::GamModel;
     unconditional::Bool = false,
 )
     rng = seed === nothing ? default_rng() : MersenneTwister(seed)
-    _warn_unconditional(unconditional)
-    Vcov = m.Vp
+    Vcov = _covariance_for(m, unconditional)
     beta_hat = m.coefficients
     p = length(beta_hat)
 

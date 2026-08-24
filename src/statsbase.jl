@@ -16,6 +16,10 @@ function _likelihood_extra_dof(family)
         extra += family.estimate_phi ? 1.0 : 0.0
     elseif family isa TweedieFamily
         extra += family.estimate_p ? 1.0 : 0.0
+    elseif family isa ScatFamily
+        # Both ν and σ are estimated; the scale itself is fixed at 1
+        # (`_estimates_scale(::ScatFamily) = false`), so nothing is double-counted.
+        extra += family.estimate_theta ? 2.0 : 0.0
     end
     return extra
 end
@@ -25,8 +29,27 @@ end
 
 Effective degrees of freedom for the model, including estimated nuisance
 parameters such as scale or family-specific hyperparameters.
+
+Uses `sum(edf2)` — the Wood, Pya & Säfken (2016) degrees of freedom, which
+charge the model for having *estimated* the smoothing parameters rather than
+treating them as known — whenever the fit provides it (see `has_vc`), falling
+back to `sum(edf)` otherwise. This is the convention behind mgcv's `logLik.gam`
+and hence its `AIC()`. Use [`conditional_dof`](@ref) for the `sum(edf)` form.
 """
-dof(m::GamModel) = m.edf_total + _likelihood_extra_dof(m.family)
+function dof(m::GamModel)
+    base = has_vc(m) ? sum(m.edf2) : m.edf_total
+    return base + _likelihood_extra_dof(m.family)
+end
+
+"""
+    conditional_dof(m::GamModel)
+
+Degrees of freedom conditional on the smoothing parameters, `sum(edf)` plus
+estimated nuisance parameters — mgcv's `sum(m\$edf)` convention. Always
+available; see `dof` for the smoothing-parameter-uncertainty-corrected
+version that `aic` uses by default.
+"""
+conditional_dof(m::GamModel) = m.edf_total + _likelihood_extra_dof(m.family)
 
 """
     dof_residual(m::GamModel)
@@ -59,7 +82,7 @@ intervals — but not the maximiser of the likelihood the AIC is defined from.
 Quasi families (QuasiPoisson, QuasiBinomial) have no true likelihood and
 return `NaN` (R reports `NA` for their AIC).
 
-See [`aic`](@ref) for how this relates to mgcv's `AIC.gam`.
+See `aic` for how this relates to mgcv's `AIC.gam`.
 """
 function loglikelihood(m::GamModel)
     dev = deviance(m)
@@ -133,6 +156,10 @@ function loglikelihood(m::GamModel)
     elseif m.family isa Union{QuasiPoissonFamily, QuasiBinomialFamily}
         # Quasi-likelihood families have no true likelihood
         return NaN
+    elseif m.family isa ScatFamily
+        # Full scaled-t likelihood: the -dev/2 fallback drops the (ν,σ)-dependent
+        # constants, so AIC would be incomparable across fits with different ν, σ.
+        return _family_loglik(m.family, y, mu, w)
     elseif m.family isa ExtendedFamily
         return -dev / 2
     else
@@ -144,31 +171,42 @@ end
 """
     aic(m::GamModel)
 
-Akaike information criterion, `-2ℓ̂ + 2·dof(m)`, where `dof(m) = sum(edf) + 1`
-if the scale is estimated (`sum(edf)` otherwise). The smoothing penalty enters
+Akaike information criterion, `-2ℓ̂ + 2·dof(m)`. The smoothing penalty enters
 through the **effective** degrees of freedom: a heavily penalised smooth
 contributes far less than its basis dimension.
 
 # Relationship to mgcv
-This is exactly mgcv's `m$aic` field:
+This matches what an mgcv user gets from `AIC(m)`. mgcv has no `AIC.gam`
+method, so `AIC()` resolves through `stats::AIC.default` to `logLik.gam`,
+whose `df` attribute is built from `edf2` — the Wood, Pya & Säfken (2016)
+degrees of freedom, which charge the model for having *estimated* the
+smoothing parameters. Writing `fam_aic` for `family\$aic(y, n, μ̂, w, dev)`,
 
-    m$aic = family$aic(y, n, μ̂, w, dev) + 2·sum(m$edf)          # gam.outer
+    AIC(m)  = fam_aic + 2·sum(m\$edf2)          # via logLik.gam
+    m\$aic   = fam_aic + 2·sum(m\$edf)           # gam.outer — a *different* value
 
-mgcv's `AIC(m)` is *not* `m$aic`. `logLik.gam` reports a df attribute based on
-`edf2` — the Wood, Pya & Säfken (2016) correction for smoothing-parameter
-uncertainty — when the outer optimiser supplies `dβ/dρ`, so
+`aic(m)` returns the first. For the second — the conditional AIC, treating the
+smoothing parameters as known — use [`conditional_aic`](@ref).
 
-    AIC(m) = m\$aic + 2·(sum(m\$edf2) - sum(m\$edf))
+`edf2` is unavailable for fits where mgcv also leaves it unset (GCV/UBRE), for
+fits with every `sp` fixed, and for the `bam`/`scam`/`scasm`/GAMM paths; there
+`aic(m)` falls back to `sum(edf)` and the two conventions coincide — which is
+also why mgcv's `AIC(m)` and `m\$aic` agree for `method="GCV.Cp"` fits.
 
-with `edf2 ≥ edf` (capped at `edf1`). GAM.jl does not yet compute `edf2`
-(it needs the corrected covariance `Vc`; see the roadmap), so `aic(m)` is the
-**conditional** AIC, treating the smoothing parameters as known. Measured gaps
-against `AIC(m)` on typical single-smooth fits: ≈0.2–1.5.
-
-For `method="GCV.Cp"` fits mgcv leaves `edf2` unset and falls back to `edf`,
-so `AIC(m)` and `aic(m)` then use the *same* convention.
+Reading `aic(m)` triggers the deferred `Vc` computation the first time (see
+[`has_vc`](@ref)), which costs `O(M²)` extra P-IRLS refits.
 """
 aic(m::GamModel) = -2loglikelihood(m) + 2dof(m)
+
+"""
+    conditional_aic(m::GamModel)
+
+AIC conditional on the smoothing parameters, `-2ℓ̂ + 2·conditional_dof(m)` —
+exactly mgcv's `m\$aic` field. Cheaper than `aic`, which forces the
+smoothing-parameter uncertainty correction, and the right choice when
+comparing against code that uses the `sum(edf)` convention.
+"""
+conditional_aic(m::GamModel) = -2loglikelihood(m) + 2conditional_dof(m)
 
 function aicc(m::GamModel)
     k = dof(m)
@@ -296,9 +334,16 @@ function predict(m::GamModel; type::Symbol = :link)
 end
 
 """
-    predict(m::GamModel, newdata; type=:link, se=false)
+    predict(m::GamModel, newdata; type=:link, se=false, unconditional=false)
 
 Predict at new data points.
+
+- `type`: `:link`, `:response`, or `:terms`
+- `se`: also return standard errors
+- `unconditional`: compute standard errors from the smoothing-parameter-
+  corrected covariance `Vc` (Wood, Pya & Säfken 2016) rather than `Vp`, as in
+  mgcv's `predict.gam(..., unconditional = TRUE)`. Warns and falls back to
+  `Vp` for fits without it (see [`has_vc`](@ref)).
 """
 function _gam_parametric_matrix(m::GamModel, t)
     n_new = _table_nrows(t)
@@ -379,7 +424,8 @@ function _gam_prediction_matrix(m::GamModel, newdata)
 end
 
 function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false,
-    offset::Union{AbstractVector{<:Real}, Nothing} = nothing)
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    unconditional::Bool = false)
     type in (:link, :response, :terms) || throw(ArgumentError(
         "type must be :link, :response, or :terms, got :$type"))
     if type == :terms
@@ -396,8 +442,11 @@ function predict(m::GamModel, newdata; type::Symbol = :link, se::Bool = false,
     end
 
     if se
-        # Standard errors of predictions
-        se_eta = sqrt.(max.(vec(sum((X_new * m.Vp) .* X_new; dims = 2)), 0.0))
+        # Standard errors of predictions. `unconditional` selects mgcv's Vc,
+        # widening the interval to allow for the smoothing parameters having
+        # been estimated rather than known.
+        V = _covariance_for(m, unconditional)
+        se_eta = sqrt.(max.(vec(sum((X_new * V) .* X_new; dims = 2)), 0.0))
         if type == :response
             mu = _response_predictions(m.family, m.link, eta)
             dmu = GLM.mueta.(Ref(m.link), eta)
@@ -761,7 +810,7 @@ end
 
 Deviance explained: 1 - deviance/null_deviance. This is the quantity mgcv's
 `summary.gam` reports as "Deviance explained"; it differs from R² for
-non-Gaussian families, where [`r2`](@ref) is a response-scale quantity.
+non-Gaussian families, where `r2` (StatsAPI) is a response-scale quantity.
 
 # Example
 ```julia

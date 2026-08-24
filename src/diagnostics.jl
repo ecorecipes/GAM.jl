@@ -278,14 +278,19 @@ Result of `anova_gam`. Contains either a single-model smooth significance
 table or a multi-model deviance comparison table.
 
 # Fields
-- `smooth_table`: named tuple of vectors (label, edf, ref_df, statistic, p_value) for smooth terms
+- `smooth_table`: named tuple of vectors (label, edf, ref_df, test_rank,
+  statistic, p_value) for smooth terms. `ref_df` is mgcv's `Ref.df` column
+  (per-smooth `sum(edf1)`); `test_rank` is the integer rank the test statistic
+  was actually built with, which is what the p-value's reference distribution
+  uses.
 - `parametric_table`: named tuple of vectors (term, df, statistic, p_value) for parametric terms
 - `test_type`: `:F` or `:Chisq`
 - `model_table`: named tuple of vectors for multi-model comparison
 """
 struct AnovaGamResult
-    smooth_table::Union{Nothing, NamedTuple{(:label, :edf, :ref_df, :statistic, :p_value),
-        Tuple{Vector{String}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}}}
+    smooth_table::Union{Nothing, NamedTuple{(:label, :edf, :ref_df, :test_rank, :statistic, :p_value),
+        Tuple{Vector{String}, Vector{Float64}, Vector{Float64}, Vector{Float64},
+              Vector{Float64}, Vector{Float64}}}}
     parametric_table::Union{Nothing, NamedTuple{(:term, :df, :statistic, :p_value),
         Tuple{Vector{String}, Vector{Float64}, Vector{Float64}, Vector{Float64}}}}
     test_type::Symbol
@@ -322,33 +327,41 @@ function anova_gam(m::GamModel)
     labels = String[]
     edfs = Float64[]
     ref_dfs = Float64[]
+    test_ranks = Float64[]
     stats = Float64[]
     p_vals = Float64[]
 
     β = coef(m)
     Vp = m.Vp
+    # mgcv's `Ref.df` column is exactly the per-smooth sum of edf1 (verified
+    # against summary.gam: identical to the last bit). The p-values below,
+    # however, still use the integer-truncated rank the statistic was built
+    # with — see `_wood_test_statistic` — so the two are reported separately
+    # rather than conflated.
+    refdf_report = ref_df(m)
 
     for (i, sm) in enumerate(m.smooths)
         edf_i = m.edf[i]
-        T_stat, ref_df = _wood_test_statistic(m, i)
+        T_stat, rank_i = _wood_test_statistic(m, i)
 
         if use_f
-            F_stat = T_stat / ref_df
-            p_val = ccdf(FDist(ref_df, resid_df), F_stat)
+            F_stat = T_stat / rank_i
+            p_val = ccdf(FDist(rank_i, resid_df), F_stat)
             push!(stats, F_stat)
         else
             push!(stats, T_stat)
-            p_val = ccdf(Chisq(ref_df), T_stat)
+            p_val = ccdf(Chisq(rank_i), T_stat)
         end
 
         push!(labels, sm.spec.label)
         push!(edfs, edf_i)
-        push!(ref_dfs, ref_df)
+        push!(ref_dfs, refdf_report[i])
+        push!(test_ranks, rank_i)
         push!(p_vals, p_val)
     end
 
     smooth_table = (label=labels, edf=edfs, ref_df=ref_dfs,
-                    statistic=stats, p_value=p_vals)
+                    test_rank=test_ranks, statistic=stats, p_value=p_vals)
 
     return AnovaGamResult(smooth_table, nothing, test_type, nothing)
 end
@@ -366,11 +379,17 @@ what makes the χ²_r / F(r, ·) reference distribution approximately valid;
 inverting the full positive-definite block instead is anti-conservative
 for strongly penalized smooths.
 
-NOTE: this is a SIMPLIFICATION of mgcv's `testStat`. mgcv handles the
-fractional part of the rank via a weighted extra eigenvalue and uses
-edf1-based reference df; the hard truncation used here (`floor(edf)`, +1
-when the fractional part exceeds 0.05) means p-values can differ from
-mgcv's `summary.gam`, most noticeably for heavily penalized smooths.
+Returns the statistic and the **integer** rank it was built with. That rank,
+not `edf1`, is what the caller must use as the reference degrees of freedom.
+
+NOTE: this is a SIMPLIFICATION of mgcv's `testStat`. mgcv passes the fractional
+`min(ncol(Xt), sum(edf1))` as the rank and absorbs the fractional part with a
+weighted extra eigenvalue, so its reference df is fractional and equals the
+`Ref.df` it prints. Here the statistic uses a hard truncation (`floor(edf)`,
++1 when the fractional part exceeds 0.05), so p-values can differ from mgcv's
+`summary.gam`, most noticeably for heavily penalized smooths. `anova_gam`
+therefore reports mgcv's `Ref.df` (per-smooth `sum(edf1)`) and this integer
+`test_rank` as separate columns rather than pretending they agree.
 """
 function _wood_test_statistic(m::GamModel, i::Int)
     sm = m.smooths[i]

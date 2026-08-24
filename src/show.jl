@@ -68,6 +68,7 @@ function _show_gam(io::IO, m::GamModel)
             "Smooth", "edf", "Ref.df", stat_name, "p-value", "")
         println(io, "─" ^ 66)
         any_stars = false
+        rdf_fallback = ref_df(m)
         for (i, sm) in enumerate(m.smooths)
             if at !== nothing
                 t = at.smooth_table
@@ -77,8 +78,10 @@ function _show_gam(io::IO, m::GamModel)
                     sm.spec.label, t.edf[i], t.ref_df[i],
                     t.statistic[i], t.p_value[i], stars)
             else
-                @printf(io, "%-20s %8.2f %8d\n",
-                    sm.spec.label, m.edf[i], size(sm.X, 2))
+                # No test available: still show mgcv's Ref.df (per-smooth
+                # sum(edf1)) rather than the nominal basis dimension.
+                @printf(io, "%-20s %8.2f %8.2f\n",
+                    sm.spec.label, m.edf[i], rdf_fallback[i])
             end
         end
         println(io, "─" ^ 66)
@@ -102,6 +105,9 @@ function _show_gam(io::IO, m::GamModel)
         @printf(io, "Phi est. = %.4f   ", m.family.phi)
     elseif m.family isa TweedieFamily
         @printf(io, "Power = %.4f   ", m.family.p)
+    elseif m.family isa ScatFamily
+        @printf(io, "Nu est. = %.4f   Sigma est. = %.4f   ",
+            m.family.nu, m.family.sigma)
     end
     @printf(io, "n = %d\n", nobs(m))
 

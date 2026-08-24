@@ -73,7 +73,7 @@ function _validate_gam_family(family::UnivariateDistribution)
     hint = get(_FAMILY_HINTS, fname, "")
     msg = "Unsupported family for gam(): $(typeof(family)).\n" *
           "Supported families: Normal(), Poisson(), Binomial(), Bernoulli(), Gamma(), InverseGaussian().\n" *
-          "Extended families: NegBinFamily(), QuasiPoissonFamily(), QuasiBinomialFamily(), TweedieFamily(), BetaFamily()."
+          "Extended families: NegBinFamily(), QuasiPoissonFamily(), QuasiBinomialFamily(), TweedieFamily(), BetaFamily(), ScatFamily()."
     if !isempty(hint)
         msg *= "\nHint: $hint"
     end
@@ -183,18 +183,23 @@ function gam(f::FormulaTerm, data;
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
     optimizer::Symbol = :pirls,
-    weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    weights::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
     select::Bool = false,
     start::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
-    nchains::Int = 4)
+    nchains::Int = 4,
+    na_action::Symbol = :fail)
 
-    # Input validation
-    _validate_data_lengths(data)
+    # Input validation. `_na_prepare` subsumes `_validate_data_lengths` and
+    # validates weights/offset against the retained rows.
+    resp = f.lhs isa Term ? f.lhs.sym : nothing
+    data, _, weights, offset = _na_prepare(data, resp, _model_covariates(f),
+        na_action; weights = weights, offset = offset)
+    resp === nothing || _validate_response_in_data(resp, data)
     _validate_gam_family(family)
     link_eff = if family isa ExtendedFamily
         link === nothing ? _default_link(family) : link
@@ -285,18 +290,21 @@ function gam(gf::GamFormula, data;
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
     optimizer::Symbol = :pirls,
-    weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    weights::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
     select::Bool = false,
     start::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
-    nchains::Int = 4)
+    nchains::Int = 4,
+    na_action::Symbol = :fail)
 
-    # Input validation
-    _validate_data_lengths(data)
+    # Input validation. `_na_prepare` subsumes `_validate_data_lengths` and
+    # validates weights/offset against the retained rows.
+    data, _, weights, offset = _na_prepare(data, gf.response,
+        _model_covariates(gf), na_action; weights = weights, offset = offset)
     _validate_response_in_data(gf.response, data)
 
     # Nested effects (s_nest) use the dedicated joint Newton/EFS fitter
@@ -406,7 +414,11 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
     start::Union{AbstractVector{<:Real}, Nothing} = nothing)
     n, p = size(X)
 
-    # Weights
+    # Weights. Validated here as well as at the `gam` front-end, because
+    # `scam` calls this fitter directly; without it a negative weight
+    # surfaces as `DomainError` from `sqrt` deep inside P-IRLS.
+    _validate_weights(weights, n)
+    _validate_offset(offset, n)
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch(
         "weights length $(length(wts)) ≠ data length $n"))
@@ -473,13 +485,39 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
         scale_est = 1.0
     end
 
+    # Smoothing-parameter uncertainty. edf1 (mgcv's Ref.df) is free — F is
+    # already formed — so it is computed here. Vc/edf2 need O(M²) further
+    # P-IRLS refits, which would more than double the cost of an ordinary
+    # fit, and most fits never read them: defer to first access (`force_vc!`).
+    edf1_vec = edf1_from_F(F)
+    vc_thunk = let X = X, y = y, penalty = penalty, log_sp = log_sp,
+        family = family, link = link, wts = wts, off = off,
+        beta = result.coefficients, XtWX = XtWX, A_chol = A_chol, Vp = Vp,
+        edf1_vec = edf1_vec, scale_est = scale_est, dev = result.deviance,
+        control = control, method = method
+
+        () -> corrected_covariance(X, y, penalty, log_sp, family, link, wts,
+            off, beta, XtWX, A_chol, Vp, edf1_vec, scale_est, dev,
+            control, method, control.gamma)
+    end
+
     # Null deviance (intercept + offset model when an offset is present)
     null_dev = _null_deviance(family, link, y, wts, off, control)
 
-    # REML score (only the score is needed here — skip the gradient)
-    reml_val, _ = reml_score(X, y, penalty, log_sp, family, link,
+    # Achieved smoothness-selection score (only the score is needed here — skip
+    # the gradient). `reml_score` returns the score of whichever `method` was
+    # used, so this is the analogue of mgcv's `b$gcv.ubre`, which likewise holds
+    # the REML/ML score for method="REML"/"ML" and the GCV/UBRE score for
+    # method="GCV.Cp" (R/mgcv.r:1669, 1689, 1714; criterion chosen at 1946-1965).
+    # Store it in the field that matches the criterion, as SCAM already does:
+    # `reml` for the likelihood scores, `criterion` for GCV/UBRE. Splitting them
+    # keeps `show`'s existing footer branches (src/show.jl:24-26) correct.
+    sel_score, _ = reml_score(X, y, penalty, log_sp, family, link,
         wts, result; method = method, gamma = control.gamma,
         compute_gradient = false)
+    likelihood_score = method in (:REML, :ML)
+    reml_val = likelihood_score ? sel_score : NaN
+    criterion_val = likelihood_score ? NaN : sel_score
 
     return GamModel(
         f,
@@ -498,7 +536,7 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
         result.deviance,
         null_dev,
         reml_val,
-        NaN,
+        criterion_val,
         method,
         Vp, Ve,
         result.hat_diag,
@@ -509,6 +547,7 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
         n_parametric,
         control,
         Tables.columntable(data),
+        edf1_vec, Float64[], Matrix{Float64}(undef, 0, 0), vc_thunk,
     )
 end
 
@@ -613,6 +652,9 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
     offset = nothing, select::Bool = false)
     n, p = size(X)
 
+    # See `_fit_gam`: validated here too, for callers that bypass `gam`.
+    _validate_weights(weights, n)
+    _validate_offset(offset, n)
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch(
         "weights length $(length(wts)) ≠ data length $n"))
@@ -667,12 +709,28 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
     # REML/LAML score at the converged fit (the criterion the EFS iteration
     # targets, with ls = 0: extended-family deviance is already −2(ll−ll_sat),
     # so the score omits the family's saturated-likelihood constant).
-    reml_val = begin
+    laml_val = begin
         Dp = result.deviance + dot(result.coefficients, S_total * result.coefficients)
         Mp = p - sum(b.rank for b in penalty.blocks; init = 0)
         Dp / (2 * scale_est) + 0.5 * logdet(A_chol) -
             0.5 * _log_penalty_det(penalty, log_sp) -
             0.5 * Mp * log(2π * scale_est)
+    end
+
+    # Route the achieved score to the field matching the criterion, exactly as
+    # the standard path does. The LAML above is only the *selection* score when
+    # method is :REML/:ML; under :GCV/:UBRE the optimizer targeted those instead,
+    # so storing the LAML in `reml` would mislabel it. Formulas mirror
+    # `reml_score` (src/reml.jl:76-95) so the two paths cannot drift.
+    likelihood_score = method in (:REML, :ML)
+    reml_val = likelihood_score ? laml_val : NaN
+    criterion_val = if likelihood_score
+        NaN
+    elseif method == :GCV
+        n * result.deviance / (n - control.gamma * edf_total_val)^2
+    else  # :UBRE — known scale
+        sigma2 = _estimates_scale(family) ? scale_est : 1.0
+        result.deviance / n + 2 * control.gamma * edf_total_val * sigma2 / n - sigma2
     end
 
     return GamModel(
@@ -692,7 +750,7 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
         result.deviance,
         null_dev,
         reml_val,
-        NaN,
+        criterion_val,
         method,
         Vp, Ve,
         result.hat_diag,
@@ -703,5 +761,8 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
         n_parametric,
         control,
         Tables.columntable(data),
+        # edf1 (Ref.df) is a pure function of F, so extended families get it
+        # too; Vc/edf2 need the REML Hessian machinery and stay empty here.
+        edf1_from_F(F), Float64[], Matrix{Float64}(undef, 0, 0), nothing,
     )
 end

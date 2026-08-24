@@ -120,12 +120,19 @@ export
 
     # Diagnostics
     edf,
+    edf2,
+    ref_df,
+    has_vc,
+    vcov_corrected,
+    conditional_aic,
+    conditional_dof,
     k_check,
     concurvity,
     cooksdistance,
     leverage,
     anova_gam,
     AnovaGamResult,
+    na_omit_rows,
 
     # Visualization
     gamplot,
@@ -146,6 +153,7 @@ export
     QuasiBinomialFamily,
     TweedieFamily,
     BetaFamily,
+    ScatFamily,
 
     # BAM (Big Additive Models)
     bam,
@@ -250,6 +258,7 @@ export
     rootogram,
     RootogramData,
     model_edf,
+    sp_criterion,
     overview,
     OverviewTable,
 

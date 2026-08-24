@@ -221,12 +221,16 @@ Prediction cache for splines-on-the-sphere smooths (bs="sos"): stores the knot
 lat/lon, knot eigenvectors, eigenvalues, penalty order, and basis dimension.
 """
 struct SOSPredictCache <: AbstractSmoothPredictCache
-    lat_k::Vector{Float64}
-    lon_k::Vector{Float64}
+    lat_k::Vector{Float64}   # knot latitudes, ALWAYS stored in radians
+    lon_k::Vector{Float64}   # knot longitudes, ALWAYS stored in radians
     U_k::Matrix{Float64}
     lambda_k::Vector{Float64}
     m_order::Int
     k::Int
+    # Angle units of the *user-facing* covariates (:degrees or :radians).
+    # Resolved once at construction and read back here at prediction, so the
+    # two paths cannot disagree even if `spec.xt` is mutated in between.
+    units::Symbol
 end
 
 """
@@ -487,9 +491,19 @@ A fitted generalized additive model. Implements the StatsBase interface
 - `scale`: estimated or fixed scale parameter
 - `deviance_val`: model deviance
 - `null_deviance`: null model deviance
-- `reml`: REML/ML score at convergence (NaN when no such score is computed)
-- `criterion`: optimized GCV/UBRE criterion value for fits selected by direct
-  criterion optimization (currently SCAM GCV/UBRE); NaN otherwise
+- `reml`: REML/ML score at convergence when `method` is `:REML` or `:ML`;
+  NaN otherwise. Minimized, so it is the *negative* log marginal likelihood —
+  the same sign convention as mgcv, whose `b\$gcv.ubre` holds this quantity for
+  `method="REML"`/`"ML"` (`R/gam.fit3.r:611-614`).
+- `criterion`: achieved GCV/UBRE score when `method` is `:GCV` or `:UBRE`;
+  NaN otherwise. Also used by SCAM.
+
+  Between them these two fields are the analogue of mgcv's single
+  `b\$gcv.ubre`, which likewise stores whichever score the smoothness selection
+  actually optimized (`R/mgcv.r:1669, 1689, 1714`; mgcv picks the criterion
+  from `method` at `R/mgcv.r:1946-1965`, using GCV when the scale is estimated
+  and UBRE when it is known). Use [`sp_criterion`](@ref) to read whichever one
+  applies without branching on `method`.
 - `method`: smoothing method used (:REML, :ML, :GCV, :UBRE)
 - `Vp`: Bayesian posterior covariance of parameters
 - `Ve`: frequentist covariance of parameters
@@ -532,4 +546,159 @@ mutable struct GamModel{D, L<:GLM.Link}
     n_parametric::Int
     control::GamControl
     data::Any  # original data (for gratia-like smooth evaluation grids)
+    # Smoothing-parameter uncertainty (mgcv's edf1/edf2/Vc). Per-coefficient
+    # vectors of length p and a p×p matrix, matching mgcv's convention — note
+    # that `edf` above is per-*smooth*. Left empty by fitters that do not
+    # compute them (see the constructor below); consumers must treat empty as
+    # "unavailable" and fall back to the conditional quantities.
+    edf1::Vector{Float64}
+    edf2::Vector{Float64}
+    Vc::Matrix{Float64}
+    # Thunk producing `(Vc, edf2, Vρ)`, or `nothing` once resolved. Computing
+    # them costs O(M²) extra P-IRLS refits — enough to dominate the fit itself
+    # — and most fits never read them, so the work is deferred to the first
+    # `vcov_corrected`/`edf2`/`has_vc`/`dof` call and cached into the two
+    # fields above. `edf1` is *not* deferred: it is a pure function of F, which
+    # the fit has already formed.
+    vc_thunk::Any
+end
+
+# Constructor for the fitters that do not supply the smoothing-parameter
+# uncertainty quantities (bam, scam, scasm, the GAMM PQL path). Adding the
+# three fields positionally would otherwise break every one of those call
+# sites, and a missed site is exactly how the `criterion` field regressed the
+# non-Gaussian GAMM paths. Empty defaults are deliberate: they are detectable
+# by `has_vc`, and every consumer degrades to the conditional quantity rather
+# than silently using a zero correction.
+function GamModel(formula, y, X, coefficients, fitted_values, linear_predictor,
+    weights, family::D, link::L, smooths, penalty, sp, edf, edf_total, scale,
+    deviance_val, null_deviance, reml, criterion, method, Vp, Ve,
+    hat_matrix_diag, R, converged, iterations, n_smooth, n_parametric,
+    control, data) where {D, L <: GLM.Link}
+
+    return GamModel{D, L}(formula, y, X, coefficients, fitted_values,
+        linear_predictor, weights, family, link, smooths, penalty, sp, edf,
+        edf_total, scale, deviance_val, null_deviance, reml, criterion, method,
+        Vp, Ve, hat_matrix_diag, R, converged, iterations, n_smooth,
+        n_parametric, control, data,
+        Float64[], Float64[], Matrix{Float64}(undef, 0, 0), nothing)
+end
+
+"""
+    force_vc!(m) -> GamModel
+
+Resolve a deferred `Vc`/`edf2` computation, caching the result on `m`. Called
+by every consumer; direct field access (`m.Vc`, `m.edf2`) bypasses it and may
+see an empty placeholder, so prefer [`vcov_corrected`](@ref) and [`edf2`](@ref).
+"""
+function force_vc!(m::GamModel)
+    th = m.vc_thunk
+    th === nothing && return m
+    m.vc_thunk = nothing
+    result = th()
+    if result !== nothing
+        m.Vc = result[1]
+        m.edf2 = result[2]
+    end
+    return m
+end
+
+"""
+    has_vc(m) -> Bool
+
+Whether `m` carries the smoothing-parameter uncertainty correction — the
+`Vc` covariance of Wood, Pya & Säfken (2016) and the `edf2` degrees of freedom
+derived from it.
+
+It is available for `gam` fits selected by REML or ML with at least one free
+smoothing parameter. It is absent when every `sp` was fixed (there is then no
+uncertainty to propagate), when the criterion was GCV or UBRE (mgcv likewise
+leaves `Vc` unset there), and for the `bam`, `scam`, `scasm` and GAMM fitters.
+"""
+function has_vc(m::GamModel)
+    force_vc!(m)
+    return !isempty(m.edf2) && size(m.Vc, 1) == length(m.coefficients)
+end
+
+"""
+    sp_criterion(m) -> Float64
+
+The achieved smoothness-selection score at convergence — the value of whichever
+criterion `m.method` names. This is the analogue of mgcv's `b\$gcv.ubre`, which
+similarly holds the REML/ML score under `method="REML"`/`"ML"` and the GCV/UBRE
+score under `method="GCV.Cp"` (`R/mgcv.r:1669, 1689, 1714`).
+
+All four are minimized, so lower is better and REML/ML values are *negative*
+log marginal likelihoods, matching mgcv's sign. Comparisons are only meaningful
+between fits to the same response with the same criterion.
+
+Reads [`GamModel`](@ref)'s `reml` field for `:REML`/`:ML` and `criterion` for
+`:GCV`/`:UBRE`, so callers need not branch on `method`. Returns `NaN` when no
+score was recorded.
+
+# Examples
+```julia
+m = gam(@formula(y ~ s(x)), df; method = :GCV)
+sp_criterion(m)          # the achieved GCV score
+```
+"""
+function sp_criterion(m::GamModel)
+    return m.method in (:REML, :ML) ? m.reml : m.criterion
+end
+
+"""
+    edf2(m) -> Vector{Float64}
+
+Per-coefficient `edf2`, the Wood, Pya & Säfken (2016) degrees of freedom that
+account for having estimated the smoothing parameters:
+`edf2 = rowSums(Vc ∘ X'WX)/φ`, capped at `edf1`. `sum(edf2)` is the df behind
+mgcv's `AIC()`. Falls back to the per-coefficient `edf` when unavailable
+(see [`has_vc`](@ref)); triggers the deferred computation on first call.
+"""
+function edf2(m::GamModel)
+    has_vc(m) && return m.edf2
+    return isempty(m.edf1) ? Float64[] : copy(m.edf1)
+end
+
+"""
+    vcov_corrected(m) -> Matrix{Float64}
+
+The smoothing-parameter-uncertainty-corrected covariance `Vc` of Wood, Pya &
+Säfken (2016) — mgcv's `m\$Vc`, the matrix behind `predict.gam`'s
+`unconditional = TRUE`. Wider than the Bayesian `Vp`, which conditions on the
+selected smoothing parameters as if they were known. Falls back to `Vp` when
+unavailable; triggers the deferred computation on first call.
+"""
+vcov_corrected(m::GamModel) = has_vc(m) ? m.Vc : m.Vp
+
+"""
+    _covariance_for(m, unconditional) -> Matrix{Float64}
+
+Covariance to propagate into intervals: `Vc` when `unconditional = true` and
+the fit provides it, `Vp` otherwise. Mirrors mgcv's `unconditional` argument to
+`predict.gam`/`plot.gam` and gratia's to `smooth_estimates`/`derivatives`.
+Warns once when the correction is asked for but unavailable for this fit,
+rather than silently returning the narrower `Vp`.
+"""
+function _covariance_for(m::GamModel, unconditional::Bool)
+    unconditional || return m.Vp
+    has_vc(m) && return m.Vc
+    @warn "unconditional=true requested but this fit has no smoothing-" *
+          "parameter-corrected covariance (mgcv's Vc); using Vp. Vc is " *
+          "available for gam() fits selected by :REML or :ML with at least " *
+          "one free smoothing parameter." maxlog = 1
+    return m.Vp
+end
+
+
+"""
+    ref_df(m) -> Vector{Float64}
+
+Per-smooth reference degrees of freedom — the `Ref.df` column of mgcv's
+`summary.gam`, obtained by summing `edf1` over each smooth's coefficients.
+Falls back to the per-smooth `edf` for fits that do not compute `edf1`.
+"""
+function ref_df(m::GamModel)
+    isempty(m.edf1) && return copy(m.edf)
+    return smooth_edf(m.edf1, m.smooths)
 end
