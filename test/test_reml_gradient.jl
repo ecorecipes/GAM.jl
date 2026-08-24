@@ -32,7 +32,7 @@
             [rand(rng, Gamma(4.0, exp(0.5 * e + 0.3) / 4.0)) for e in ft]
         end
         data = DataFrame(x = x, z = z)
-        sm = tensor ? smooth_construct(te(:x, :z, k = 16), data) :
+        sm = tensor ? smooth_construct(te(:x, :z, k = 4), data) :   # 4×4 = 16, as before
              smooth_construct(s(:x, k = 8, bs = :cr), data)
         sm.first_para = 2
         sm.last_para = 1 + size(sm.X, 2)
@@ -56,7 +56,16 @@
         X, y, pen = _grad_case(family, link; tensor = tensor, seed = seed)
         n = length(y)
         w = use_weights ? (0.5 .+ collect(range(0.0, 1.0; length = n))) : ones(n)
-        off = use_offset ? fill(0.13, n) : zeros(n)
+        # A *constant* offset is absorbed exactly by the unpenalized
+        # intercept (and a linear one by the smooth's null space), leaving
+        # the fit — and hence the gradient — bit-identical to the no-offset
+        # case. Such a test is vacuous. Use a varying, non-collinear offset
+        # so the offset genuinely enters the working response and weights.
+        off = if use_offset
+            0.6 .* sin.(2.7 .* collect(range(-2.0, 2.0; length = n)))
+        else
+            zeros(n)
+        end
         ρ = lsp === nothing ? (tensor ? [0.4, -0.7] : [0.4]) : lsp
 
         _, analytic = _score_grad(X, y, pen, ρ, family, link, w, off;
@@ -127,5 +136,46 @@
         end
         prof_err = _check(Normal(), IdentityLink(); scale = prof_scale, tol = 1e-6)
         @test prof_err < gauss   # profiling strictly improves agreement
+
+        # ML now PROFILES the scale internally (mgcv's φ̂ = Dp/n for Gaussian;
+        # see `_ml_profiled_scale`), so the envelope-theorem condition the
+        # REML path violates is satisfied and the ML gradient sits in the
+        # exact regime even with the scale estimated internally. That is the
+        # opposite of the REML case immediately above, so pin the ordering.
+        ml_gauss = _check(Normal(), IdentityLink(); method = :ML, tol = 1e-4)
+        ml_gamma = _check(Gamma(), LogLink(); method = :ML, tol = 1e-2)
+        @test ml_gauss < gauss
+        @test ml_gamma < gamma
+    end
+
+    # ------------------------------------------------------------------
+    # GCV gradient (`_gcv_gradient`, reached via method = :GCV).
+    #
+    # This gradient is currently DEAD CODE: `_outer_iteration_criterion`
+    # optimizes GCV/UBRE by derivative-free Nelder-Mead and never calls it.
+    # It is pinned here because its accuracy is strongly family-dependent,
+    # and that fact governs whether it may be wired up:
+    #
+    #   * Gaussian/identity  → exact (finite-difference limited)
+    #   * non-Gaussian       → materially wrong (binomial ~20% at ρ = 0.4)
+    #
+    # So wiring gradient-based GCV optimization would be safe for Gaussian
+    # and actively harmful for binomial. Anyone tempted to enable it must
+    # fix the non-Gaussian implicit terms first and tighten these bounds.
+    # `:UBRE` returns a zero gradient and is not tested here.
+    @testset "GCV gradient — Gaussian exact, non-Gaussian approximate" begin
+        gauss_gcv = _check(Normal(), IdentityLink(); method = :GCV, tol = 1e-5)
+        @test gauss_gcv < 1e-5
+        @test _check(Normal(), IdentityLink(); method = :GCV, tensor = true,
+            tol = 1e-5) < 1e-5
+        @test _check(Normal(), IdentityLink(); method = :GCV, use_weights = true,
+            tol = 1e-5) < 1e-5
+
+        # Records the size of the non-Gaussian gap; NOT a correctness claim.
+        binom_gcv = _check(Bernoulli(), LogitLink(); method = :GCV, tol = 1.0)
+        pois_gcv = _check(Poisson(), LogLink(); method = :GCV, tol = 1.0)
+        @test binom_gcv > 1e-3   # gap is real, not numerical noise
+        @test pois_gcv > 1e-3
+        @test binom_gcv > gauss_gcv
     end
 end
