@@ -118,6 +118,13 @@ _has_extra_param(::QuasiBinomialFamily) = false
 _has_extra_param(f::TweedieFamily) = f.estimate_p
 _has_extra_param(f::BetaFamily) = f.estimate_phi
 
+"""Current value of the family's estimated extra parameter (NB θ, Tweedie p,
+Beta φ, ELF log σ), for convergence checks of the alternating estimation."""
+_extra_param_value(f::NegBinFamily) = f.theta
+_extra_param_value(f::TweedieFamily) = f.p
+_extra_param_value(f::BetaFamily) = f.phi
+_extra_param_value(f::ExtendedFamily) = hasproperty(f, :theta) ? f.theta : 0.0
+
 """Whether the family provides Dd derivatives for proper PIRLS working weights."""
 _has_Dd(::ExtendedFamily) = false
 _has_Dd(::TweedieFamily) = true
@@ -191,6 +198,15 @@ function _variance(f::BetaFamily, mu)
     return mu .* (1.0 .- mu) ./ (1.0 + f.phi)
 end
 
+# Scalar variance and dV/dμ for the Fletcher scale estimator
+# (mirrors _variance_scalar/_dvariance_scalar_mu for standard families)
+_variance_scalar(f::ExtendedFamily, mu::Float64) = float(_variance(f, mu))
+_dvariance_scalar_mu(f::NegBinFamily, mu::Float64) = 1.0 + 2.0 * mu / f.theta
+_dvariance_scalar_mu(::QuasiPoissonFamily, mu::Float64) = 1.0
+_dvariance_scalar_mu(::QuasiBinomialFamily, mu::Float64) = 1.0 - 2.0 * mu
+_dvariance_scalar_mu(f::TweedieFamily, mu::Float64) = f.p * mu^(f.p - 1.0)
+_dvariance_scalar_mu(f::BetaFamily, mu::Float64) = (1.0 - 2.0 * mu) / (1.0 + f.phi)
+
 # ============================================================================
 # Deviance functions
 # ============================================================================
@@ -247,38 +263,39 @@ function _deviance(::QuasiBinomialFamily, y, mu, wt)
     return dev
 end
 
+"""
+Tweedie unit deviance (without the leading factor 2):
+    y^(2-p)/((1-p)(2-p)) - y·μ^(1-p)/(1-p) + μ^(2-p)/(2-p)
+with the Poisson (p→1) and Gamma (p→2) limits handled explicitly.
+"""
+function _tweedie_unit_deviance(p::Real, yi::Real, mui::Real)
+    if abs(p - 1.0) < 1e-10
+        # Poisson limit
+        if yi > 0
+            return yi * log(yi / mui) - (yi - mui)
+        else
+            return mui
+        end
+    elseif abs(p - 2.0) < 1e-10
+        # Gamma limit
+        if yi > 0
+            return -log(yi / mui) + (yi - mui) / mui
+        else
+            return -log(eps() / mui) + (eps() - mui) / mui
+        end
+    else
+        t3 = yi > 0 ? yi^(2 - p) / ((1 - p) * (2 - p)) : 0.0
+        t2 = yi * mui^(1 - p) / (1 - p)
+        t1 = mui^(2 - p) / (2 - p)
+        return t3 - t2 + t1
+    end
+end
+
 function _deviance(f::TweedieFamily, y, mu, wt)
     p = f.p
     dev = 0.0
     for i in eachindex(y, mu, wt)
-        yi = y[i]
-        mui = max(mu[i], eps())
-        # Tweedie unit deviance: 2 * [y^(2-p)/((1-p)(2-p)) - y*mu^(1-p)/(1-p) + mu^(2-p)/(2-p)]
-        if abs(p - 1.0) < 1e-10
-            # Poisson limit
-            if yi > 0
-                d = yi * log(yi / mui) - (yi - mui)
-            else
-                d = mui
-            end
-        elseif abs(p - 2.0) < 1e-10
-            # Gamma limit
-            if yi > 0
-                d = -log(yi / mui) + (yi - mui) / mui
-            else
-                d = -log(eps() / mui) + (eps() - mui) / mui
-            end
-        else
-            if yi > 0
-                t3 = yi^(2 - p) / ((1 - p) * (2 - p))
-            else
-                t3 = 0.0
-            end
-            t2 = yi * mui^(1 - p) / (1 - p)
-            t1 = mui^(2 - p) / (2 - p)
-            d = t3 - t2 + t1
-        end
-        dev += wt[i] * d
+        dev += wt[i] * _tweedie_unit_deviance(p, y[i], max(mu[i], eps()))
     end
     return 2.0 * dev
 end
@@ -350,11 +367,8 @@ end
 
 function _deviance_residuals(f::TweedieFamily, y, mu, wt)
     r = similar(y)
-    dev_total = _deviance(f, y, mu, wt)
-    # Per-observation deviance
-    for i in eachindex(y, mu, wt)
-        f_single = TweedieFamily(p=f.p, estimate_p=false)
-        di = _deviance(f_single, [y[i]], [mu[i]], [wt[i]])
+    @inbounds for i in eachindex(y, mu, wt)
+        di = 2.0 * wt[i] * _tweedie_unit_deviance(f.p, y[i], max(mu[i], eps()))
         r[i] = sign(y[i] - mu[i]) * sqrt(max(di, 0.0))
     end
     return r
@@ -457,8 +471,14 @@ end
 """
     estimate_theta!(family::NegBinFamily, y, mu, wt, scale)
 
-Estimate NB shape parameter θ by Newton iteration on the
-log saturated likelihood. Uses digamma/trigamma.
+Estimate NB shape parameter θ by Newton iteration on the profile
+log-likelihood given μ (MASS `theta.ml`-style alternation, not mgcv's
+REML-embedded θ estimation). Uses digamma/trigamma.
+
+Called from two places by design: periodically inside the extended-family
+P-IRLS loop (every 3 iterations, so θ tracks μ as the fit evolves) and once
+per outer smoothing-parameter iteration (see `outer.jl`), so θ settles at the
+converged fit. Both call sites update the same `family.theta`.
 """
 function estimate_theta!(family::NegBinFamily, y, mu, wt, scale)
     !family.estimate_theta && return
@@ -483,14 +503,16 @@ function estimate_theta!(family::NegBinFamily, y, mu, wt, scale)
             g1 += wi * (digamma(yi + θ) - digamma(θ) + log(θ) - log(mui + θ) +
                         (mui - yi) / (mui + θ))
 
-            # Second derivative for Hessian
+            # Second derivative for Hessian: dg1/dθ
+            # d/dθ [digamma(y+θ) - digamma(θ) + log(θ) - log(μ+θ) + (μ-y)/(μ+θ)]
+            # = trigamma(y+θ) - trigamma(θ) + 1/θ - 2/(μ+θ) + (θ+y)/(μ+θ)²
+            # (matches MASS::theta.ml's information matrix)
             g2 += wi * (trigamma(yi + θ) - trigamma(θ) + 1.0 / θ -
-                        2.0 / (mui + θ) + (mui - yi) / (mui + θ)^2)
+                        2.0 / (mui + θ) + (θ + yi) / (mui + θ)^2)
         end
 
-        # Adjust for scale
-        g1 /= (2.0 * scale)
-        g2 /= (2.0 * scale)
+        # (No scale adjustment: the Newton step -g1/g2 is invariant to a
+        # common factor, and NB fixes the dispersion at 1 anyway.)
 
         # Operate on log(θ) for positivity: chain rule
         g1_log = g1 * θ

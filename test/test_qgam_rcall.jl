@@ -1,5 +1,6 @@
 using Test, GAM, RCall, Random, Statistics
-using StatsAPI: predict
+using StatsAPI: predict, fitted
+using StableRNGs
 
 R"library(qgam); library(mgcv)"
 
@@ -206,5 +207,31 @@ R"library(qgam); library(mgcv)"
         @test pred_link_jl ≈ pred_link_r atol=1e-10
         @test pred_resp_jl ≈ pred_resp_r atol=1e-10
         @test se_resp_jl ≈ se_resp_r atol=1e-10
+    end
+    # ── Round-4 parity: full smooth quantile fit at fixed lsig/err ─────────
+    # With lsig and err fixed on both sides, remaining differences come from
+    # the sp-selection embedding (GAM.jl: EFS on the extended path; R qgam:
+    # mgcv full REML) and a ~0.8% co difference (each side derives co from
+    # its own Gaussian preliminary fit). Measured: fitted max-abs 0.27,
+    # cor 0.9926, smooth-edf 5.66 vs 4.20. Tighter parity is the qgam
+    # full-calibration roadmap item.
+    @testset "qgam smooth fit vs R at fixed lsig" begin
+        rng = StableRNG(503)
+        n = 400
+        xq = rand(rng, n) .* 3
+        yq = 2 .* sin.(xq) .+ (0.5 .+ 0.3 .* xq) .* randn(rng, n)
+        dfq = (y=yq, x=xq)
+        mq = qgam(GAM.@formula(y ~ s(x, k=10, bs=:cr)), dfq, 0.5; lsig=-0.5, err=0.05)
+        @rput yq xq
+        RCall.reval("""
+        drq <- data.frame(y=yq, x=xq)
+        mrq <- qgam(y ~ s(x, k=10, bs="cr"), data=drq, qu=0.5, lsig=-0.5, err=0.05)
+        fit_rq <- as.vector(fitted(mrq)); edf_rq <- sum(summary(mrq)\$edf)
+        """)
+        fit_rq = rcopy(Vector{Float64}, R"fit_rq")
+        edf_rq = rcopy(Float64, R"edf_rq")
+        @test cor(fitted(mq), fit_rq) > 0.99
+        @test maximum(abs.(fitted(mq) .- fit_rq)) < 0.5
+        @test abs(mq.edf[1] - edf_rq) < 2.0
     end
 end

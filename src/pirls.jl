@@ -47,6 +47,49 @@ _clamp_mu_scalar(::Gamma, mu::Float64) = max(mu, eps())
 _clamp_mu_scalar(::InverseGaussian, mu::Float64) = max(mu, eps())
 _clamp_mu_scalar(::UnivariateDistribution, mu::Float64) = mu
 
+# Family-domain validity of an (unclamped) mean, mirroring mgcv's validmu():
+# used to force step-halving away from iterates whose linear predictor maps
+# outside the family's mean domain (e.g. Gamma with the canonical inverse
+# link when η crosses zero).
+_valid_mu_scalar(::Normal, mu::Float64) = isfinite(mu)
+_valid_mu_scalar(::BinomialLike, mu::Float64) = isfinite(mu) && 0.0 < mu < 1.0
+_valid_mu_scalar(::Poisson, mu::Float64) = isfinite(mu) && mu > 0.0
+_valid_mu_scalar(::Gamma, mu::Float64) = isfinite(mu) && mu > 0.0
+_valid_mu_scalar(::InverseGaussian, mu::Float64) = isfinite(mu) && mu > 0.0
+_valid_mu_scalar(::UnivariateDistribution, mu::Float64) = isfinite(mu)
+
+"""
+    _protected_cholesky!(A) -> Cholesky
+
+Cholesky factorization of `Symmetric(A)` (mutating `A`), with an escalating
+ridge fallback when `A` is numerically indefinite (rank deficiency,
+concurvity, or λ → 0 boundaries). Mirrors mgcv's use of regularized solves
+where plain Cholesky would abort the whole fit.
+"""
+function _protected_cholesky!(A::Matrix{Float64})
+    A_save = copy(A)
+    try
+        return cholesky!(Symmetric(A))
+    catch e
+        e isa LinearAlgebra.PosDefException || rethrow()
+    end
+    p = size(A_save, 1)
+    ridge = max(tr(A_save) / p, 1.0) * 1e-10
+    for _ in 1:8
+        copyto!(A, A_save)
+        @inbounds for i in 1:p
+            A[i, i] += ridge
+        end
+        try
+            return cholesky!(Symmetric(A))
+        catch e
+            e isa LinearAlgebra.PosDefException || rethrow()
+            ridge *= 100.0
+        end
+    end
+    throw(LinearAlgebra.PosDefException(1))
+end
+
 # Family-specific initialization (matches R's family$initialize)
 _mustart(::Normal, y::Float64, w::Float64) = y
 _mustart(::Poisson, y::Float64, w::Float64) = y + 0.1
@@ -116,13 +159,22 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
     # R initializes these to null.coef/null.eta, not mustart
     beta_old = copy(null_coef)
     eta_old = copy(null_eta)
+    # Validity (mgcv validmu) of the previous iterate's unclamped means:
+    # enforcement below only halves toward iterates that are themselves valid.
+    prev_valid = all(_valid_mu_scalar(family, GLM.linkinv(link, e)) for e in null_eta)
 
     for iter in 1:(control.maxit)
         n_iter = iter
 
-        # Working weights and working response (in-place, scalar ops)
+        # Working weights and working response (in-place, scalar ops).
+        # dμ/dη is floored at eps() in magnitude (as in R's family$mu.eta),
+        # so saturated observations (|η| huge, dμ/dη underflowing to 0)
+        # cannot give z = ±Inf and poison X'Wz.
         @inbounds for i in 1:n
             dm = GLM.mueta(link, eta[i])
+            if abs(dm) < eps()
+                dm = dm < 0 ? -eps() : eps()
+            end
             dmu_deta[i] = dm
             vm = _variance_scalar(family, mu[i])
             w[i] = clamp(weights[i] * dm * dm / max(vm, eps()), eps(), 1e10)
@@ -132,39 +184,64 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         # Build A = X'WX + S_total using BLAS (in-place)
         _build_penalized_system!(A, XtWz, X, w, z, S_total, p, n, Xw, wz_buf)
 
-        # Solve via Cholesky
-        A_chol = cholesky!(Symmetric(A))
+        # Solve via Cholesky, with escalating ridge fallback for
+        # near-singular A (rank deficiency / λ → 0 boundaries)
+        A_chol = _protected_cholesky!(A)
         ldiv!(beta_new, A_chol, XtWz)
 
-        # Update eta, mu
+        # Update eta, mu (tracking family-domain validity, mgcv's validmu)
         mul!(eta_new, X, beta_new)
         eta_new .+= offset
+        valid_new = true
         @inbounds for i in 1:n
-            mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
+            li = GLM.linkinv(link, eta_new[i])
+            valid_new &= _valid_mu_scalar(family, li)
+            mu_new[i] = _clamp_mu_scalar(family, li)
         end
         dev_new = _deviance(family, y, mu_new, weights)
         mul!(penalty_buf, S_total, beta_new)
         penalty_new = dot(beta_new, penalty_buf)
         pdev_new = dev_new + penalty_new
 
-        # Step halving if penalized deviance increased (matches R's gam.fit3)
+        # Step halving if the penalized deviance increased (R's gam.fit3), or
+        # if the proposal left the family's mean domain while the previous
+        # iterate was valid (mgcv halves on !validmu(mu) the same way).
         div_thresh = 10.0 * (0.1 + abs(pdev_old)) * sqrt(eps())
-        if pdev_new - pdev_old > div_thresh
+        if pdev_new - pdev_old > div_thresh || (prev_valid && !valid_new)
+            step_ok = false
             for ii in 1:100
                 @inbounds for j in 1:p
                     beta_new[j] = (beta_new[j] + beta_old[j]) / 2.0
                 end
+                valid_new = true
                 @inbounds for i in 1:n
                     eta_new[i] = (eta_new[i] + eta_old[i]) / 2.0
-                    mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
+                    li = GLM.linkinv(link, eta_new[i])
+                    valid_new &= _valid_mu_scalar(family, li)
+                    mu_new[i] = _clamp_mu_scalar(family, li)
                 end
                 dev_new = _deviance(family, y, mu_new, weights)
                 mul!(penalty_buf, S_total, beta_new)
                 penalty_new = dot(beta_new, penalty_buf)
                 pdev_new = dev_new + penalty_new
-                if pdev_new - pdev_old <= div_thresh
+                if pdev_new - pdev_old <= div_thresh && !(prev_valid && !valid_new)
+                    step_ok = true
                     break
                 end
+            end
+            if !step_ok
+                # mgcv raises "step failure" here; keep the previous
+                # (best) iterate and stop rather than accepting divergence
+                copyto!(beta, beta_old)
+                copyto!(eta, eta_old)
+                @inbounds for i in 1:n
+                    mu[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta[i]))
+                end
+                @warn "P-IRLS step failure: penalized deviance could not be " *
+                      "reduced after 100 step halvings; returning last " *
+                      "stable iterate" maxlog = 1
+                converged = false
+                break
             end
         end
 
@@ -178,11 +255,23 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         copyto!(eta, eta_new)
         copyto!(mu, mu_new)
         pdev_old = pdev_new
+        prev_valid = valid_new
 
         if crit < control.epsilon
             converged = true
             break
         end
+    end
+
+    # Warn if the final iterate still contains boundary-clamped means
+    # (unclamped linkinv outside the family domain) — mirrors mgcv, which
+    # warns when validmu enforcement cannot be fully satisfied.
+    n_invalid = count(i -> !_valid_mu_scalar(family, GLM.linkinv(link, eta[i])), 1:n)
+    if n_invalid > 0
+        @warn "P-IRLS converged with $n_invalid observation(s) whose linear " *
+              "predictor maps outside the $(nameof(typeof(family))) mean domain " *
+              "under $(nameof(typeof(link))); fitted values are clamped to the " *
+              "boundary there. Consider a different link (e.g. LogLink)." maxlog = 1
     end
 
     # Final unpenalized deviance
@@ -207,7 +296,7 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
     _build_XtWX_plus_S!(A, X, w, S_total, p, n, Xw)
 
     # Cholesky of A for R factor and EDF
-    A_chol_final = cholesky(Symmetric(A))
+    A_chol_final = _protected_cholesky!(copy(A))
 
     # Extract XtWX = A - S for EDF computation (avoid n×p allocation)
     XtWX = similar(A)
@@ -262,9 +351,10 @@ function pirls_gaussian(X::Matrix{Float64}, y::Vector{Float64},
         XtWy = X' * (weights .* y)
     end
 
-    # A = X'WX + S, solve A β = X'Wy
+    # A = X'WX + S, solve A β = X'Wy (protected against numerically
+    # indefinite A at λ → 0 boundaries)
     A = XtWX + S_total
-    A_chol = cholesky(Symmetric(A))
+    A_chol = _protected_cholesky!(A)
     beta = A_chol \ XtWy
 
     # Fitted values and linear predictor
@@ -407,13 +497,14 @@ function _deviance(d::InverseGaussian, y, mu, wt)
     return dev
 end
 
-# Fallback for other distributions
+# Unsupported distributions must fail loudly: a generic logpdf-based
+# "deviance" here would silently ignore the fitted means. Family support is
+# gated upstream by _validate_gam_family, so this is a safety net only.
 function _deviance(d::UnivariateDistribution, y, mu, wt)
-    ll = 0.0
-    for i in eachindex(y, mu, wt)
-        ll += wt[i] * logpdf(d, y[i])
-    end
-    return -2 * ll
+    throw(ArgumentError(
+        "no deviance implementation for family $(nameof(typeof(d))); " *
+        "supported families are Normal, Poisson, Bernoulli/Binomial, " *
+        "Gamma, and InverseGaussian (plus the ExtendedFamily types)"))
 end
 
 function _variance(d::Normal, mu)
@@ -463,3 +554,7 @@ end
 function _clamp_mu(::UnivariateDistribution, mu)
     return mu
 end
+
+# Extended families (non-UnivariateDistribution): no generic clamp
+_clamp_mu(::Any, mu) = mu
+

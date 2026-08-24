@@ -24,6 +24,69 @@ function smooth_construct(spec::SmoothSpec{B}, data, knots = nothing) where {B}
     end
     sm = _smooth_construct(spec.basis, spec, data, knots)
     _append_pc_constraints!(sm, data)
+    if spec.by !== nothing
+        _apply_by_variable!(sm, t)
+    end
+    return sm
+end
+
+"""
+    _apply_by_variable!(sm, t)
+
+Apply a `by=` variable to a constructed smooth (mgcv's varying-coefficient
+and factor-smooth machinery).
+
+- **Numeric by**: each row of the (constrained) basis is multiplied by the
+  by-variable, giving a varying-coefficient term `by · f(x)`. Note that the
+  smooth is centered, so include the by variable as a parametric main effect
+  if the model should contain `by · const`.
+- **Factor by**: the smooth is replicated once per level, each copy active
+  only on that level's rows and carrying its own penalty (and smoothing
+  parameter), as in mgcv. Include the factor main effect in the model for
+  level offsets.
+"""
+function _apply_by_variable!(sm::ConstructedSmooth, t)
+    by_sym = sm.spec.by
+    by_col = Tables.getcolumn(t, by_sym)
+    if eltype(by_col) <: Real
+        sm.X = sm.X .* Float64.(by_col)
+        return sm
+    end
+
+    # Factor by: replicate the smooth per level
+    if sm.Ain !== nothing || sm.Aeq !== nothing
+        throw(ArgumentError(
+            "factor by= is not supported for linear-constraint (scasm) smooths"))
+    end
+    levels = sort!(unique(collect(by_col)))
+    L = length(levels)
+    n, k = size(sm.X)
+    Xb = zeros(n, k * L)
+    S_new = Matrix{Float64}[]
+    for (l, lev) in enumerate(levels)
+        mask = by_col .== lev
+        cols = ((l - 1) * k + 1):(l * k)
+        Xb[mask, cols] .= sm.X[mask, :]
+        for Si in sm.S
+            Sfull = zeros(k * L, k * L)
+            Sfull[cols, cols] .= Si
+            push!(S_new, Sfull)
+        end
+    end
+    sm.X = Xb
+    sm.S = S_new
+    sm.null_dim *= L
+    sm.rank *= L
+    # Replicate the shape-constraint pattern per level so each level's smooth
+    # carries the same monotonicity/convexity constraint (SCAM factor-by).
+    # p_ident is read at fit time across the full k·L coefficient block; cmX
+    # and Sigma are left at the original width because the SCAM
+    # `_predict_matrix` rebuilds the per-level (k-wide) basis and the by-tiling
+    # in `predict_matrix` then replicates it.
+    if sm.p_ident !== nothing
+        sm.p_ident = repeat(sm.p_ident, L)
+    end
+    sm.spec.xt[:_by_levels] = levels
     return sm
 end
 
@@ -34,6 +97,32 @@ Construct the prediction matrix for `smooth` at new data points.
 """
 function predict_matrix(smooth::ConstructedSmooth{B}, newdata) where {B}
     Xp = _predict_matrix(smooth.spec.basis, smooth, newdata)
+    # Apply the by= transform with the SAME convention as fitting
+    # (before side-constraint column removal, which was determined on the
+    # post-by matrix)
+    if smooth.spec.by !== nothing
+        t = Tables.columntable(newdata)
+        by_col = Tables.getcolumn(t, smooth.spec.by)
+        if eltype(by_col) <: Real
+            Xp = Xp .* Float64.(by_col)
+        else
+            levels = smooth.spec.xt[:_by_levels]
+            k = size(Xp, 2)
+            Xb = zeros(size(Xp, 1), k * length(levels))
+            seen = falses(length(by_col))
+            for (l, lev) in enumerate(levels)
+                mask = by_col .== lev
+                seen .|= mask
+                Xb[mask, ((l - 1) * k + 1):(l * k)] .= Xp[mask, :]
+            end
+            if !all(seen)
+                unseen = unique(collect(by_col)[.!seen])
+                @warn "by= factor levels not seen during fitting get zero " *
+                      "contribution from $(smooth.spec.label): $(unseen)"
+            end
+            Xp = Xb
+        end
+    end
     # Apply side constraint column removal if needed
     if !isempty(smooth.del_index)
         keep = setdiff(1:size(Xp, 2), smooth.del_index)
@@ -72,11 +161,12 @@ end
 Apply identifiability constraint to smooth basis matrix and penalty.
 Default is sum-to-zero: the smooth sums to zero over the observed data.
 
-Returns `(X_new, S_new, C, qrc)` where:
+Returns `(X_new, S_new, C, nothing)` where:
 - `X_new`: constrained model matrix (n × (k-1))
 - `S_new`: constrained penalty matrices
 - `C`: constraint matrix
-- `qrc`: QR factorization used for absorption
+- the fourth element is retained for call-site compatibility (it was a
+  discarded QR factorization of `X_new`)
 """
 function absorb_constraints!(X::Matrix{Float64}, S::Vector{Matrix{Float64}};
     constraint::Symbol = :sum_to_zero,
@@ -121,7 +211,32 @@ function absorb_constraints!(X::Matrix{Float64}, S::Vector{Matrix{Float64}};
         end
     end
 
-    return X_new, S_new, Matrix(C), qr(X_new)
+    return X_new, S_new, Matrix(C), nothing
+end
+
+"""
+    _shrink_penalty(S::Matrix{Float64}; shrink=0.1) -> Matrix{Float64}
+
+mgcv-style shrinkage modification of a penalty matrix (used by the `ts` and
+`cs` bases). Eigen-decomposes `S` and raises the (near-)zero null-space
+eigenvalues to `shrink` times the smallest strictly positive eigenvalue,
+so a SINGLE penalty (with a single smoothing parameter) penalizes the whole
+coefficient space and the smooth can be shrunk entirely to zero. The factor
+0.1 matches mgcv's default `shrink` constant for `bs="ts"`/`bs="cs"`.
+"""
+function _shrink_penalty(S::Matrix{Float64}; shrink::Float64 = 0.1)
+    eig = eigen(Symmetric(S))
+    vals = copy(eig.values)
+    mx = maximum(abs.(vals))
+    mx > 0 || return Matrix{Float64}(I, size(S, 1), size(S, 2))
+    tol = mx * eps()^0.75
+    pos = vals .> tol
+    any(pos) || return Matrix{Float64}(I, size(S, 1), size(S, 2))
+    min_pos = minimum(vals[pos])
+    vals[.!pos] .= shrink * min_pos
+    vals .= max.(vals, 0.0)
+    S_new = eig.vectors * Diagonal(vals) * eig.vectors'
+    return Matrix(Symmetric(S_new))
 end
 
 """
@@ -213,6 +328,16 @@ function side_constrain!(smooths::Vector{<:ConstructedSmooth}, X_para::Matrix{Fl
     modified = false
     np = sum(size(sm.X, 2) for sm in smooths)  # total penalized params
 
+    # Column offset of each smooth within the smooth-only parameter block
+    # (used to place penalty-sqrt rows in the augmented matrices; this is
+    # independent of first_para, which counts parametric columns too).
+    sm_offset = Dict{Int, Int}()
+    off = 0
+    for (si, sm) in enumerate(smooths)
+        sm_offset[si] = off
+        off += size(sm.X, 2)
+    end
+
     for d in 1:max_dim
         for i in 1:m
             dim_i = length(smooths[i].spec.term_vars)
@@ -238,7 +363,7 @@ function side_constrain!(smooths::Vector{<:ConstructedSmooth}, X_para::Matrix{Fl
                     dj >= d && continue  # only lower-dimensional terms
                     push!(seen, j)
                     if with_pen
-                        push!(X1_parts, _augment_smooth_X(smooths[j], nobs, np))
+                        push!(X1_parts, _augment_smooth_X(smooths[j], nobs, np, sm_offset[j]))
                     else
                         push!(X1_parts, smooths[j].X)
                     end
@@ -253,7 +378,7 @@ function side_constrain!(smooths::Vector{<:ConstructedSmooth}, X_para::Matrix{Fl
 
             # Build X2 (augmented if with_pen)
             if with_pen
-                X2 = _augment_smooth_X(smooths[i], nobs, np)
+                X2 = _augment_smooth_X(smooths[i], nobs, np, sm_offset[i])
             else
                 X2 = smooths[i].X
             end
@@ -319,9 +444,11 @@ end
 
 """
 Augment smooth model matrix with scaled penalty sqrt for side constraint testing.
-Returns matrix of size (nobs + np) × k.
+Returns matrix of size (nobs + np) × k. `col_offset` is the smooth's column
+offset within the smooth-only parameter block (0-based), NOT `first_para`
+(which also counts parametric columns).
 """
-function _augment_smooth_X(sm::ConstructedSmooth, nobs::Int, np::Int)
+function _augment_smooth_X(sm::ConstructedSmooth, nobs::Int, np::Int, col_offset::Int)
     k = size(sm.X, 2)
     X_aug = zeros(nobs + np, k)
     X_aug[1:nobs, :] = sm.X
@@ -343,12 +470,12 @@ function _augment_smooth_X(sm::ConstructedSmooth, nobs::Int, np::Int)
         pos = eig.values .> max(maximum(eig.values), 1e-20) * 1e-10
         if any(pos)
             rS = eig.vectors[:, pos] * Diagonal(sqrt.(eig.values[pos]))
-            # Place in augmented rows (offset by smooth's position in param vector)
-            # Use first np rows after nobs, placing at columns 1:k
-            rows_start = nobs + sm.first_para
-            rows_end = min(nobs + sm.first_para + size(rS, 2) - 1, nobs + np)
+            # Place in the augmented rows corresponding to this smooth's
+            # position within the smooth-only parameter block.
+            rows_start = nobs + col_offset + 1
+            rows_end = min(rows_start + size(rS, 2) - 1, nobs + np)
             n_rows = rows_end - rows_start + 1
-            if n_rows > 0 && rows_start >= nobs + 1 && rows_end <= nobs + np
+            if n_rows > 0 && rows_end <= nobs + np
                 X_aug[rows_start:rows_end, :] = rS[:, 1:n_rows]'
             end
         end

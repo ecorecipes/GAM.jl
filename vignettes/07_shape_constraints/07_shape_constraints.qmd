@@ -129,7 +129,7 @@ Cost functions and accelerating growth curves are often convex.
 
 ### Simulate data
 
-True function: $f(x) = 2x^2$
+True function: $f(x) = 2x^2$ (generated with Gaussian noise by `vignettes/generate_data.jl`).
 
 ```{julia}
 df_cx = CSV.read("data_cx.csv", DataFrame)
@@ -152,13 +152,17 @@ println("RMSE (convex SCAM): ", round(rmse_cx, digits=4))
 
 ### Verify convexity
 
-For a convex function, second differences should be non-negative:
+For a convex function, second differences on an *evenly spaced* grid should be
+non-negative. (Raw second differences of the fitted values at the observed,
+unevenly spaced $x$ do not have the sign of $f''$, so we evaluate the fit on a
+uniform grid first.)
 
 ```{julia}
-first_diffs = diff(yhat_cx)
-second_diffs = diff(first_diffs)
-println("Min second difference: ", round(minimum(second_diffs), digits=6))
-println("All convex: ", all(second_diffs .>= -1e-10))
+x_even = collect(range(minimum(x_cx), maximum(x_cx); length=200))
+f_even = predict(m_cx, DataFrame(x=x_even))
+second_diffs = diff(diff(f_even))
+println("Min second difference (even grid): ", round(minimum(second_diffs), digits=6))
+println("All convex: ", all(second_diffs .>= -1e-8))
 ```
 
 ### Plot: Convex fit and second derivative
@@ -206,7 +210,7 @@ Many real-world relationships show diminishing returns: the function increases b
 
 ### Simulate data
 
-True function: $f(x) = 3\sqrt{x}$
+True function: $f(x) = 3\sqrt{x}$ (generated with Gaussian noise by `vignettes/generate_data.jl`).
 
 ```{julia}
 df_micv = CSV.read("data_micv.csv", DataFrame)
@@ -229,13 +233,18 @@ println("RMSE (monotone increasing + concave): ", round(rmse_micv, digits=4))
 
 ### Verify constraints
 
+Both checks are done on an evenly spaced grid: monotonicity needs only sorted
+$x$, but the sign of second differences is meaningful only under even spacing.
+
 ```{julia}
-first_diffs_micv = diff(yhat_micv)
+x_even_micv = collect(range(minimum(x_micv), maximum(x_micv); length=200))
+f_even_micv = predict(m_micv, DataFrame(x=x_even_micv))
+first_diffs_micv = diff(f_even_micv)
 second_diffs_micv = diff(first_diffs_micv)
 println("Min first difference (monotonicity): ", round(minimum(first_diffs_micv), digits=6))
 println("Max second difference (concavity): ", round(maximum(second_diffs_micv), digits=6))
-println("Monotone increasing: ", all(first_diffs_micv .>= -1e-10))
-println("Concave: ", all(second_diffs_micv .<= 1e-10))
+println("Monotone increasing: ", all(first_diffs_micv .>= -1e-8))
+println("Concave: ", all(second_diffs_micv .<= 1e-8))
 ```
 
 ### Plot: Monotone increasing & concave fit
@@ -401,4 +410,4 @@ plot(plots...; layout=(4, 2), size=(800, 900))
 | Mono. dec. + concave | `bs=:mdcv` | `bs="mdcv"` |
 | Control parameters | `gam_control()` | `scam.control()` |
 
-Shape constraints are enforced through the SCOP-spline reparameterization using the exponential function, ensuring constraints hold exactly at the spline knots and approximately between them. The legacy `scam()` and `scam_control()` helpers remain available for compatibility.
+Shape constraints are enforced through the SCOP-spline reparameterization using the exponential function. Because the constraint is imposed on the B-spline coefficients themselves, the fitted function satisfies the shape constraint *everywhere*, not just at the knots. The legacy `scam()` and `scam_control()` helpers remain available for compatibility.

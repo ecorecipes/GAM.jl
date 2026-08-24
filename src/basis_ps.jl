@@ -76,6 +76,16 @@ function _diff_penalty(k::Int, d::Int)
     return D' * D
 end
 
+"""
+    _smooth_construct(::PSpline, spec, data, user_knots)
+
+P-spline construction. Note that (as for `bs`, `ad`, `sc`, `scad`) the single
+`m` argument couples the spline degree and the penalty order: the difference
+penalty has order `m` and the B-spline degree is `m + 1` (order `m + 2`),
+so `m = 2` gives a cubic spline with a second-order difference penalty.
+mgcv's `bs="ps"` accepts a two-element `m` to decouple them; that is not
+currently supported here.
+"""
 function _smooth_construct(::PSpline, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) == 1 ||
         throw(ArgumentError("P-splines only support 1d smooths"))
@@ -88,32 +98,10 @@ function _smooth_construct(::PSpline, spec::SmoothSpec, data, user_knots)
     spline_order = m_order + 2  # B-spline order (degree + 1), default = cubic
 
     # R's mgcv P-spline knot placement (smooth.construct.pspline.smooth.spec):
-    # nk = k - m[2] + 1 evenly-spaced knots from min(x) to max(x)
-    # Then extend by m[2] = (spline_order-1) knots on each side
+    # nk = k - m[2] + 1 evenly-spaced knots spanning the slightly extended
+    # data range, then extend by m[2] = (spline_order-1) knots on each side.
     m2 = spline_order - 1  # = degree
-    nk = k - m2 + 1
-    nk >= 2 || throw(ArgumentError(
-        "k=$k too small for P-spline of order $spline_order (need k ≥ $(m2 + 2))"))
-
-    lo, hi = minimum(x), maximum(x)
-
-    if user_knots !== nothing
-        interior = Float64.(user_knots)
-        dk = length(interior) > 1 ? interior[2] - interior[1] : (hi - lo)
-        knot_vec = vcat(
-            [interior[1] - dk * i for i in m2:-1:1],
-            interior,
-            [interior[end] + dk * i for i in 1:m2],
-        )
-    else
-        k_new = range(lo, hi, length=nk) |> collect
-        dk = k_new[2] - k_new[1]
-        knot_vec = vcat(
-            [k_new[1] - dk * i for i in m2:-1:1],
-            k_new,
-            [k_new[end] + dk * i for i in 1:m2],
-        )
-    end
+    knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)
 
     # B-spline basis
     X = _bspline_basis(x, knot_vec, spline_order)
@@ -152,29 +140,7 @@ function _smooth_construct(::BSplineBasis, spec::SmoothSpec, data, user_knots)
     spline_order = m_order + 2
 
     m2 = spline_order - 1
-    nk = k - m2 + 1
-    nk >= 2 || throw(ArgumentError(
-        "k=$k too small for B-spline of order $spline_order (need k ≥ $(m2 + 2))"))
-
-    lo, hi = minimum(x), maximum(x)
-
-    if user_knots !== nothing
-        interior = Float64.(user_knots)
-        dk = length(interior) > 1 ? interior[2] - interior[1] : (hi - lo)
-        knot_vec = vcat(
-            [interior[1] - dk * i for i in m2:-1:1],
-            interior,
-            [interior[end] + dk * i for i in 1:m2],
-        )
-    else
-        k_new = range(lo, hi, length=nk) |> collect
-        dk = k_new[2] - k_new[1]
-        knot_vec = vcat(
-            [k_new[1] - dk * i for i in m2:-1:1],
-            k_new,
-            [k_new[end] + dk * i for i in 1:m2],
-        )
-    end
+    knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)
 
     X = _bspline_basis(x, knot_vec, spline_order)
     actual_k = size(X, 2)
@@ -201,8 +167,11 @@ end
 """
     _derivative_penalty(knots, order, deriv_order, n_basis) -> Matrix{Float64}
 
-Compute integrated squared derivative penalty for B-splines using
-Gauss-Legendre quadrature: S[i,j] = ∫ B_i^(d)(x) B_j^(d)(x) dx
+Compute the integrated squared derivative penalty for B-splines,
+S[i,j] = ∫ B_i^(d)(x) B_j^(d)(x) dx, by midpoint-rule quadrature on a fine
+grid. (The integrand is piecewise polynomial, so this is an approximation
+to the exact banded penalty mgcv computes; the grid is fine enough that the
+error is negligible relative to smoothing-parameter scales.)
 """
 function _derivative_penalty(knots::Vector{Float64}, order::Int,
     deriv_order::Int, n_basis::Int)
@@ -256,6 +225,51 @@ function _bspline_deriv_at(x::Float64, knots::Vector{Float64},
     return result
 end
 
+"""
+    _bspline_basis_extrap(x, knots, order) -> Matrix{Float64}
+
+Evaluate the B-spline basis at `x`, extending it LINEARLY beyond the
+support interval `[knots[order], knots[end - order + 1]]` using the basis
+value and exact first derivative at the boundary (mgcv's
+`Predict.matrix.pspline.smooth` behaviour). Inside the interval this is
+identical to `_bspline_basis`.
+"""
+function _bspline_basis_extrap(x::AbstractVector{<:Real}, knots::Vector{Float64},
+    order::Int)
+    n = length(x)
+    n_basis = length(knots) - order
+    lo = knots[order]
+    hi = knots[end - order + 1]
+
+    in_range = [lo <= xi <= hi for xi in x]
+    if all(in_range)
+        return _bspline_basis(x, knots, order)
+    end
+
+    X = zeros(n, n_basis)
+    idx_in = findall(in_range)
+    if !isempty(idx_in)
+        X[idx_in, :] .= _bspline_basis(x[idx_in], knots, order)
+    end
+
+    # Boundary values and exact first derivatives (evaluated just inside the
+    # boundary so the correct interval's polynomial piece is used)
+    b_lo = vec(_bspline_basis([lo], knots, order))
+    b_hi = vec(_bspline_basis([hi], knots, order))
+    d_lo = _bspline_deriv_at(lo, knots, order, 1, n_basis)
+    d_hi = _bspline_deriv_at(prevfloat(hi), knots, order, 1, n_basis)
+
+    @inbounds for i in 1:n
+        in_range[i] && continue
+        if x[i] < lo
+            X[i, :] .= b_lo .+ (x[i] - lo) .* d_lo
+        else
+            X[i, :] .= b_hi .+ (x[i] - hi) .* d_hi
+        end
+    end
+    return X
+end
+
 function _predict_matrix(::Union{PSpline, BSplineBasis},
     smooth::ConstructedSmooth, newdata)
     var = smooth.spec.term_vars[1]
@@ -264,7 +278,9 @@ function _predict_matrix(::Union{PSpline, BSplineBasis},
     m_order = smooth.spec.m === nothing ? 2 : smooth.spec.m
     spline_order = m_order + 2
 
-    X_new = _bspline_basis(x_new, knots, spline_order)
+    # Linear extrapolation outside the knot support range (mgcv behaviour),
+    # instead of silent all-zero basis rows.
+    X_new = _bspline_basis_extrap(x_new, knots, spline_order)
 
     if smooth.constraint !== nothing
         C = smooth.constraint

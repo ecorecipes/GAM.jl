@@ -67,41 +67,42 @@ df_pois = CSV.read("data_poisson.csv", DataFrame)
 x = df_pois.x
 n = nrow(df_pois)
 η = 1.0 .+ 1.5 .* sin.(2π .* x)
+ord = sortperm(x)
 ```
 
-    300-element Vector{Float64}:
-     1.0022515463804877
-     1.013013980830874
-     1.014801884538615
-     1.0214214724578388
-     1.037208399572455
-     1.0690982444331225
-     1.0742815178198883
-     1.165054158814009
-     1.1757202903086204
-     1.2015521628982468
-     ⋮
-     0.6508219129798084
-     0.69797588899615
-     0.7278818802184517
-     0.7517667995108033
-     0.7954284540183503
-     0.8368919812276477
-     0.8383703243966152
-     0.8953919908689525
-     0.9675123075811386
+    300-element Vector{Int64}:
+       1
+       2
+       3
+       4
+       5
+       6
+       7
+       8
+       9
+      10
+       ⋮
+     292
+     293
+     294
+     295
+     296
+     297
+     298
+     299
+     300
 
 ### Fitting the model
 
 ``` julia
-m_pois = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_pois;
+m_pois = gam(@formula(y ~ s(x, k = 15, bs = :cr)), df_pois;
     family = Poisson(), link = LogLink())
 m_pois
 ```
 
     Generalized Additive Model
 
-    Formula: y ~ 1
+    Formula: y ~ 1 + s(x,bs=cr)
 
     Family: Poisson
     Link:   LogLink
@@ -111,15 +112,15 @@ m_pois
     ──────────────────────────────────────────────────
                     Coef.  Std. Error      z  Pr(>|z|)
     ──────────────────────────────────────────────────
-    (Intercept)  0.939592   0.0468467  20.06    <1e-88
+    (Intercept)  0.939669   0.0468399  20.06    <1e-88
     ──────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
-    ──────────────────────────────────────────────────
-    Smooth                    edf   Ref.df
-    ──────────────────────────────────────────────────
-    s(x,bs=cr)               8.00       14
-    ──────────────────────────────────────────────────
+    ──────────────────────────────────────────────────────────────────
+    Smooth                    edf   Ref.df     Chi.sq    p-value
+    ──────────────────────────────────────────────────────────────────
+    s(x,bs=cr)               7.98     8.00    667.413 7.395e-139
+    ──────────────────────────────────────────────────────────────────
 
     R² (adj) = 0.764   Deviance explained = 76.4%
     n = 300
@@ -138,7 +139,7 @@ p1 = plot(x_grid, se_pois.estimate;
     xlabel = "x",
     ylabel = "f(x) [log scale]",
     title = "Poisson GAM — smooth on link scale")
-plot!(p1, x, η .- mean(η);
+plot!(p1, x[ord], (η .- mean(η))[ord];
     label = "true f(x)",
     linestyle = :dash,
     linewidth = 2,
@@ -178,41 +179,42 @@ $$y_i \sim \text{Bernoulli}(p_i), \quad \text{logit}(p_i) = -0.5 + 2\sin(2\pi x_
 df_bin = CSV.read("data_binomial.csv", DataFrame)
 x_bin = df_bin.x
 η_bin = -0.5 .+ 2.0 .* sin.(2π .* x_bin)
+ord_bin = sortperm(x_bin)
 ```
 
-    300-element Vector{Float64}:
-     -0.4377380740427925
-     -0.38854578391368955
-     -0.373831674500529
-     -0.3621071915006612
-     -0.3019464421915505
-     -0.268943862845824
-     -0.2102686483145333
-     -0.15644424465058399
-     -0.15584096852217055
-     -0.14604202493880453
-      ⋮
-     -0.7494849221391106
-     -0.7443595705245496
-     -0.7350585389053363
-     -0.7139247353867896
-     -0.7050111267006494
-     -0.5752349322611175
-     -0.5557362670383619
-     -0.5496105296196276
-     -0.5427940453659735
+    300-element Vector{Int64}:
+       1
+       2
+       3
+       4
+       5
+       6
+       7
+       8
+       9
+      10
+       ⋮
+     292
+     293
+     294
+     295
+     296
+     297
+     298
+     299
+     300
 
 ### Fitting the model
 
 ``` julia
-m_bin = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_bin;
+m_bin = gam(@formula(y ~ s(x, k = 15, bs = :cr)), df_bin;
     family = Binomial(), link = LogitLink())
 m_bin
 ```
 
     Generalized Additive Model
 
-    Formula: y ~ 1
+    Formula: y ~ 1 + s(x,bs=cr)
 
     Family: Binomial
     Link:   LogitLink
@@ -222,15 +224,15 @@ m_bin
     ───────────────────────────────────────────────────
                      Coef.  Std. Error      z  Pr(>|z|)
     ───────────────────────────────────────────────────
-    (Intercept)  -0.858846    0.159901  -5.37    <1e-07
+    (Intercept)  -0.857991    0.159647  -5.37    <1e-07
     ───────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
-    ──────────────────────────────────────────────────
-    Smooth                    edf   Ref.df
-    ──────────────────────────────────────────────────
-    s(x,bs=cr)               5.03       14
-    ──────────────────────────────────────────────────
+    ──────────────────────────────────────────────────────────────────
+    Smooth                    edf   Ref.df     Chi.sq    p-value
+    ──────────────────────────────────────────────────────────────────
+    s(x,bs=cr)               4.98     5.00     68.652  1.955e-13
+    ──────────────────────────────────────────────────────────────────
 
     R² (adj) = 0.295   Deviance explained = 25.5%
     n = 300
@@ -249,7 +251,7 @@ p3 = plot(x_grid_bin, se_bin.estimate;
     xlabel = "x",
     ylabel = "f(x) [logit scale]",
     title = "Binomial GAM — smooth on link scale")
-plot!(p3, x_bin, η_bin .- mean(η_bin);
+plot!(p3, x_bin[ord_bin], (η_bin .- mean(η_bin))[ord_bin];
     label = "true f(x)",
     linestyle = :dash,
     linewidth = 2,
@@ -290,29 +292,30 @@ $$y_i \sim \text{Gamma}(\text{shape}, \text{scale}_i), \quad \log(\mu_i) = 1 + \
 df_gam = CSV.read("data_gamma.csv", DataFrame)
 x_gam = df_gam.x
 η_gam = 1.0 .+ sin.(2π .* x_gam)
+ord_gam = sortperm(x_gam)
 ```
 
-    300-element Vector{Float64}:
-     1.000850704315502
-     1.0039634355393983
-     1.0264783803611617
-     1.0383131142818598
-     1.0751167938723143
-     1.0766376001001923
-     1.08050888736706
-     1.157843246765896
-     1.20089524015795
-     1.2452611220182526
-     ⋮
-     0.8188335469516427
-     0.819999062363841
-     0.8356988327736081
-     0.8772715675927307
-     0.8829807993731171
-     0.9580649708004427
-     0.9693231877198806
-     0.9749523420975444
-     0.9923732280689034
+    300-element Vector{Int64}:
+       1
+       2
+       3
+       4
+       5
+       6
+       7
+       8
+       9
+      10
+       ⋮
+     292
+     293
+     294
+     295
+     296
+     297
+     298
+     299
+     300
 
 ### Fitting the model
 
@@ -320,32 +323,32 @@ We use `Gamma()` with `LogLink()` (log link is more commonly used in
 practice than the canonical inverse link):
 
 ``` julia
-m_gam = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df_gam;
+m_gam = gam(@formula(y ~ s(x, k = 15, bs = :cr)), df_gam;
     family = Gamma(), link = LogLink())
 m_gam
 ```
 
     Generalized Additive Model
 
-    Formula: y ~ 1
+    Formula: y ~ 1 + s(x,bs=cr)
 
     Family: Gamma
     Link:   LogLink
     Method: REML
 
     Parametric coefficients:
-    ─────────────────────────────────────────────────
-                   Coef.  Std. Error      t  Pr(>|t|)
-    ─────────────────────────────────────────────────
-    (Intercept)  1.02611    0.024569  41.76    <1e-99
-    ─────────────────────────────────────────────────
+    ────────────────────────────────────────────────
+                  Coef.  Std. Error      t  Pr(>|t|)
+    ────────────────────────────────────────────────
+    (Intercept)  1.0261   0.0245675  41.77    <1e-99
+    ────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
-    ──────────────────────────────────────────────────
-    Smooth                    edf   Ref.df
-    ──────────────────────────────────────────────────
-    s(x,bs=cr)               6.23       14
-    ──────────────────────────────────────────────────
+    ──────────────────────────────────────────────────────────────────
+    Smooth                    edf   Ref.df          F    p-value
+    ──────────────────────────────────────────────────────────────────
+    s(x,bs=cr)               6.25     7.00     32.929  1.278e-33
+    ──────────────────────────────────────────────────────────────────
 
     R² (adj) = 0.362   Deviance explained = 41.6%
     Scale est. = 0.1811   n = 300
@@ -364,7 +367,7 @@ p5 = plot(x_grid_gam, se_gam.estimate;
     xlabel = "x",
     ylabel = "f(x) [log scale]",
     title = "Gamma GAM — smooth on link scale")
-plot!(p5, x_gam, η_gam .- mean(η_gam);
+plot!(p5, x_gam[ord_gam], (η_gam .- mean(η_gam))[ord_gam];
     label = "true f(x)",
     linestyle = :dash,
     linewidth = 2,
@@ -399,7 +402,7 @@ println("Family        EDF      Dev.Expl(%)   Scale")
 println("─" ^ 55)
 for (name, m) in [("Poisson", m_pois), ("Binomial", m_bin), ("Gamma", m_gam)]
     e = round(edf(m)[1]; digits = 2)
-    de = round(r2(m) * 100; digits = 1)
+    de = round(GAM.deviance_explained(m) * 100; digits = 1)
     sc = round(m.scale; digits = 4)
     println("$(rpad(name, 14))$(lpad(string(e), 6))  $(lpad(string(de), 12))  $(lpad(string(sc), 8))")
 end
@@ -407,9 +410,9 @@ end
 
     Family        EDF      Dev.Expl(%)   Scale
     ───────────────────────────────────────────────────────
-    Poisson          8.0          77.1       1.0
-    Binomial        5.03          30.7       1.0
-    Gamma           6.23          37.5    0.1811
+    Poisson         7.98          76.4       1.0
+    Binomial        4.98          25.5       1.0
+    Gamma           6.25          41.6    0.1811
 
 ### All smooth estimates together
 

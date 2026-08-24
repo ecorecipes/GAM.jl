@@ -93,22 +93,22 @@ $\varepsilon \sim N(0, 0.3^2)$.
 ### Frequentist reference
 
 ``` julia
-m_freq = gam(@formulak(y ~ s(x, k = 10)), dat)
+m_freq = gam(@formula(y ~ s(x, k = 10)), dat)
 freq_int = coef(m_freq)[1]
 freq_σ = sqrt(m_freq.scale)
 ```
 
-    0.3133626090202822
+    0.3133630107389731
 
     Frequentist: intercept = -0.1129, σ = 0.3134, edf = 7.8
 
 ### Bayesian fit
 
 To trigger Bayesian fitting, pass a `PriorSpec` to `gam()`. The same
-formula syntax is used — the dispatch is automatic:
+`@formula` syntax is used as in the frequentist fit:
 
 ``` julia
-m_bayes = gam(@formulak(y ~ s(x, k = 10)), dat;
+m_bayes = gam(@formula(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 2000, nchains = 2)
 ```
@@ -124,8 +124,8 @@ m_bayes = gam(@formulak(y ~ s(x, k = 10)), dat;
     ──────────────────────────────────────────────────────────
                     Estimate  Est.Error   l-95% CI    u-95% CI
     ──────────────────────────────────────────────────────────
-    (Intercept)    -0.112528  0.0224331  -0.155103  -0.0672135
-    s(x,bs=tp)_f1  -3.45313   1.02418    -5.38689   -1.40442
+    (Intercept)    -0.112422  0.0227072  -0.157404  -0.0675879
+    s(x,bs=tp)_f1   3.80214   1.02736     1.84165    5.74807
     ──────────────────────────────────────────────────────────
 
     Smooth terms: s(x,bs=tp)
@@ -135,9 +135,10 @@ m_bayes = gam(@formulak(y ~ s(x, k = 10)), dat;
 
 `PriorSpec` controls the prior distributions:
 
-- **`sds`**: Prior on $\sigma_s$, the SD of smooth random effects. An
-  `Exponential(1.0)` prior is weakly informative, allowing the data to
-  determine smoothness.
+- **`sds`**: Prior on $\sigma_s$, the SD of smooth random effects. Here
+  we choose `Exponential(1.0)`, which is weakly informative, allowing
+  the data to determine smoothness. (If `sds` is not specified, the
+  package default is a half Student-t, `truncated(TDist(3); lower=0)`.)
 - **`sigma`**: Prior on $\sigma_{obs}$, the residual SD (Gaussian family
   only). Default: `truncated(Normal(0, 2.5); lower=0)`.
 - **`b`**: Prior on fixed-effect coefficients. Default: `Normal(0, 10)`.
@@ -158,26 +159,26 @@ intervals:
     ──────────────────────────────────────────────────────────
                     Estimate  Est.Error   l-95% CI    u-95% CI
     ──────────────────────────────────────────────────────────
-    (Intercept)    -0.112528  0.0224331  -0.155103  -0.0672135
-    s(x,bs=tp)_f1  -3.45313   1.02418    -5.38689   -1.40442
+    (Intercept)    -0.112422  0.0227072  -0.157404  -0.0675879
+    s(x,bs=tp)_f1   3.80214   1.02736     1.84165    5.74807
     ──────────────────────────────────────────────────────────
 
 Credible intervals at different levels:
 
 
     Intercept CIs:
-      90%: [-0.1484, -0.0753]
-      95%: [-0.1551, -0.0672]
+      90%: [-0.1506, -0.0750]
+      95%: [-0.1574, -0.0676]
 
 ### Accessing posterior samples
 
 The full MCMC chains are accessible via `m_bayes.chains`:
 
-    σ_obs posterior: mean = 0.3162, sd = 0.0162, median = 0.3156
-      95% CI: [0.2859, 0.3500]
+    σ_obs posterior: mean = 0.3153, sd = 0.0158, median = 0.3149
+      95% CI: [0.2860, 0.3474]
       Frequentist σ: 0.3134
 
-    σ_s[1] posterior: mean = 1.6055, sd = 0.4114
+    σ_s[1] posterior: mean = 2.3535, sd = 0.5985
       Larger σ_s → more flexible smooth; smaller → smoother
 
 ### Posterior density of σ_obs
@@ -193,8 +194,8 @@ vline!([freq_σ]; color=:red, linewidth=2, label="frequentist σ")
 
 ### Comparing posteriors: frequentist vs Bayesian
 
-    Intercept: frequentist = -0.1129, Bayesian posterior mean = -0.1125
-    σ: frequentist = 0.3134, Bayesian posterior mean = 0.3162
+    Intercept: frequentist = -0.1129, Bayesian posterior mean = -0.1124
+    σ: frequentist = 0.3134, Bayesian posterior mean = 0.3153
 
 ### Posterior density of intercept β\[1\]
 
@@ -213,13 +214,13 @@ vline!([freq_int]; color=:red, linewidth=2, label="frequentist")
 We compare the posterior distribution of $\sigma_{obs}$ against the
 frequentist point estimate using the empirical CDF:
 
-    Frequentist σ = 0.3134 sits at 44.5% of the posterior ECDF
+    Frequentist σ = 0.3134 sits at 46.3% of the posterior ECDF
       (values near 50% indicate good agreement)
-      ECDF 2.5%: σ_obs = 0.2859
-      ECDF 25.0%: σ_obs = 0.3052
-      ECDF 50.0%: σ_obs = 0.3156
-      ECDF 75.0%: σ_obs = 0.3265
-      ECDF 97.5%: σ_obs = 0.3500
+      ECDF 2.5%: σ_obs = 0.2860
+      ECDF 25.0%: σ_obs = 0.3040
+      ECDF 50.0%: σ_obs = 0.3148
+      ECDF 75.0%: σ_obs = 0.3255
+      ECDF 97.5%: σ_obs = 0.3474
 
 ### Posterior predictive check
 
@@ -228,7 +229,7 @@ raw data and the frequentist fit:
 
 ``` julia
 # Reconstruct full design matrix
-X_para, smooths, _ = GAM.gam_matrices(@formulak(y ~ s(x, k = 10)), dat)
+X_para, smooths, _ = GAM.gam_matrices(@formula(y ~ s(x, k = 10)), dat)
 Xf = smooths[1].Xf
 Zs = smooths[1].Zs[1]
 
@@ -283,10 +284,10 @@ Count data with $\log(\lambda) = 1 + 1.5\sin(2\pi x)$.
 ### Frequentist vs Bayesian
 
 ``` julia
-m_freq2 = gam(@formulak(y ~ s(x, k = 10)), dat2;
+m_freq2 = gam(@formula(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink())
 
-m_bayes2 = gam(@formulak(y ~ s(x, k = 10)), dat2;
+m_bayes2 = gam(@formula(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink(),
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 2000, nchains = 2)
@@ -294,26 +295,26 @@ m_bayes2 = gam(@formulak(y ~ s(x, k = 10)), dat2;
 
 ### Posterior summary
 
-    ──────────────────────────────────────────────────────────
-                    Estimate  Est.Error   l-95% CI    u-95% CI
-    ──────────────────────────────────────────────────────────
-    (Intercept)     0.907036  0.0529497   0.802883   1.00678
-    s(x,bs=tp)_f1  -3.57651   1.68626    -6.6733    -0.0790281
-    ──────────────────────────────────────────────────────────
+    ──────────────────────────────────────────────────────
+                   Estimate  Est.Error  l-95% CI  u-95% CI
+    ──────────────────────────────────────────────────────
+    (Intercept)     0.90545  0.0542292  0.796082   1.00982
+    s(x,bs=tp)_f1   4.76697  1.82726    1.25054    8.56302
+    ──────────────────────────────────────────────────────
 
-    Intercept (log-scale): frequentist = 0.9094, Bayesian = 0.9070 (true = 1.0)
-    σ_s[1]: mean = 2.2494, sd = 0.6100
+    Intercept (log-scale): frequentist = 0.9094, Bayesian = 0.9054 (true = 1.0)
+    σ_s[1]: mean = 3.2244, sd = 0.8044
 
 ### ECDF comparison for intercept
 
-    Frequentist intercept = 0.9094 sits at 51.8% of Bayesian posterior
+    Frequentist intercept = 0.9094 sits at 52.2% of Bayesian posterior
     True intercept = 1.0 sits at 96.2% of posterior
 
 ### Poisson fit with credible intervals
 
 ``` julia
 # Reconstruct design matrix for Poisson model
-X_para2, smooths2, _ = GAM.gam_matrices(@formulak(y ~ s(x, k = 10)), dat2)
+X_para2, smooths2, _ = GAM.gam_matrices(@formula(y ~ s(x, k = 10)), dat2)
 Xf2 = smooths2[1].Xf
 Zs2 = smooths2[1].Zs[1]
 
@@ -355,10 +356,14 @@ plot!(x_sorted2, μ_lo80; fillrange=μ_hi80, alpha=0.25, color=:steelblue, label
 ## Cross-language comparison: GAM.jl vs brms vs mgcv
 
 We load posterior samples from R’s brms (Stan MCMC) and mgcv (Gaussian
-approximation) to compare with GAM.jl’s Turing posteriors. The key
-metric is the **pairwise ECDF correlation**: evaluate both ECDFs on a
-common grid and compute Pearson’s $r$. A value of 1.0 means the
-distributions are identical.
+approximation) to compare with GAM.jl’s Turing posteriors. We report two
+metrics per pair of samples: the **Kolmogorov–Smirnov statistic** (the
+maximum vertical distance between the two ECDFs — 0 means the samples
+are indistinguishable, and it is the honest measure of distributional
+agreement) and, for context, the **pairwise ECDF correlation**. Note
+that ECDF correlation is a very forgiving summary: materially different
+distributions can still correlate above 0.99, so the KS statistic is the
+number to watch.
 
     Loaded: brms Gaussian=2000, brms Poisson=2000, mgcv Gaussian=4000, mgcv Poisson=4000
 
@@ -373,26 +378,33 @@ function ecdf_cor(x::AbstractVector, y::AbstractVector; n_grid::Int = 500)
     ecdf_y = [count(≤(g), y) / length(y) for g in grid]
     return cor(ecdf_x, ecdf_y)
 end
+
+# Two-sample Kolmogorov–Smirnov statistic: sup_t |F̂_x(t) − F̂_y(t)|
+function ks_stat(x::AbstractVector, y::AbstractVector)
+    pts = sort(vcat(x, y))
+    return maximum(abs(count(≤(t), x) / length(x) - count(≤(t), y) / length(y))
+                   for t in pts)
+end
 ```
 
-    ecdf_cor (generic function with 1 method)
+    ks_stat (generic function with 1 method)
 
 ### Gaussian model
 
     Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)
     ------------------|-------------------|-------------------|--------------
-    sigma  mean       | 0.3162             | 0.3151             | 0.3145
-    sigma  sd         | 0.0162             | 0.0161             | 0.0160
-    Intercept mean    | -0.1125            | -0.1131            | -0.1123
-    Intercept sd      | 0.0224             | 0.0223             | 0.0221
+    sigma  mean       | 0.3153             | 0.3151             | 0.3145
+    sigma  sd         | 0.0158             | 0.0161             | 0.0160
+    Intercept mean    | -0.1124            | -0.1131            | -0.1123
+    Intercept sd      | 0.0227             | 0.0223             | 0.0221
 
 
-    Pairwise ECDF correlation (Gaussian model):
-    Comparison             | sigma ECDF cor | intercept ECDF cor
-    -----------------------|----------------|-------------------
-    GAM.jl vs brms         | 0.999581        | 0.999950
-    GAM.jl vs mgcv (approx)| 0.999296        | 0.999952
-    brms vs mgcv (approx)  | 0.999921        | 0.999904
+    KS statistic (0 = indistinguishable) and ECDF correlation (Gaussian model):
+    Comparison             | sigma KS | intercept KS | sigma ECDF cor | intercept ECDF cor
+    -----------------------|----------|--------------|----------------|-------------------
+    GAM.jl vs brms         | 0.0255   | 0.0232       | 0.999867       | 0.999874
+    GAM.jl vs mgcv (approx)| 0.0328   | 0.0195       | 0.999763       | 0.999938
+    brms vs mgcv (approx)  | 0.0215   | 0.0220       | 0.999921       | 0.999904
 
 ### ECDF comparison plots (Gaussian)
 
@@ -422,10 +434,10 @@ plot(p1, p2; layout=(1, 2), size=(900, 400), legend=:bottomright)
 
 ### Poisson model
 
-    Pairwise ECDF correlation (Poisson intercept):
-    GAM.jl vs brms:          0.999875
-    GAM.jl vs mgcv (approx): 0.999916
-    brms vs mgcv (approx):   0.999957
+    KS statistic / ECDF correlation (Poisson intercept):
+    GAM.jl vs brms:          KS = 0.0272, ECDF cor = 0.999811
+    GAM.jl vs mgcv (approx): KS = 0.0278, ECDF cor = 0.999815
+    brms vs mgcv (approx):   KS = 0.0172, ECDF cor = 0.999957
 
 ## Example 3: Custom priors — effect on smoothing
 
@@ -434,32 +446,32 @@ prior yields smoother fits:
 
 ``` julia
 # Tight prior: Exponential(0.1) → small σ_s → smoother
-m_tight = gam(@formulak(y ~ s(x, k = 10)), dat;
+m_tight = gam(@formula(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(0.1)),
     nsamples = 1000, nchains = 1)
 
 # Wide prior: Exponential(5.0) → large σ_s → wigglier
-m_wide = gam(@formulak(y ~ s(x, k = 10)), dat;
+m_wide = gam(@formula(y ~ s(x, k = 10)), dat;
     priors = PriorSpec(sds = Exponential(5.0)),
     nsamples = 1000, nchains = 1)
 ```
 
-    Tight prior (Exp(0.1)): posterior mean σ_s = 1.0012
-    Wide prior  (Exp(5.0)): posterior mean σ_s = 1.7732
-    Ratio: 1.8x
+    Tight prior (Exp(0.1)): posterior mean σ_s = 1.3774
+    Wide prior  (Exp(5.0)): posterior mean σ_s = 2.7445
+    Ratio: 2.0x
 
 ### Prior sensitivity: σ_s posterior
 
 ``` julia
 σ_s_tight = vec(m_tight.chains[Symbol("σ_s[1]")].data)
-σ_s_default = σ_s  # from default Exp(1.0) model
+σ_s_default = σ_s  # from the Exp(1.0) model fitted above
 σ_s_wide = vec(m_wide.chains[Symbol("σ_s[1]")].data)
 
 histogram(σ_s_tight; normalize=:pdf, bins=30, alpha=0.5, color=:steelblue,
     label="tight: Exp(0.1)", xlabel="σ_s", ylabel="density",
     title="Prior sensitivity: σ_s posterior")
 histogram!(σ_s_default; normalize=:pdf, bins=30, alpha=0.5, color=:darkorange,
-    label="default: Exp(1.0)")
+    label="reference: Exp(1.0)")
 histogram!(σ_s_wide; normalize=:pdf, bins=30, alpha=0.5, color=:green4,
     label="wide: Exp(5.0)")
 ```
@@ -475,11 +487,11 @@ evaluated smooth function:
 
 ``` julia
 # Create smooth components (mixed-model reparameterization)
-# Use bs=:tp to match the default in gam(@formulak(y ~ s(x, k=10)))
+# Use bs=:tp to match the default in gam(@formula(y ~ s(x, k=10)))
 sm = GAM.gam_smooth(:x, dat; k = 10, bs = :tp)
 ```
 
-    SmoothMixedModel([0.664327533630193; 0.6628743574512967; … ; -0.540699473296364; -0.5426167225557019;;], [[0.15438623644410757 -0.2577943937355174 … 0.03597281116708378 -0.7659102718826961; 0.15440736781494313 -0.25766668968864265 … 0.03788466790460092 -0.7616640417613573; … ; -0.13612135859607952 0.1606164144848799 … -0.6484895009581195 -0.03752349474514074; -0.13611571860612945 0.16045612470122486 … -0.6500996527498536 -0.04057732998841621]], [0.014406173358386995 -0.026837067992358504 … -0.05154417204031194 6.548037400304181e-16; 0.04344154074823492 0.004410031457064265 … 0.5600267625508373 -5.399717439754989e-15; … ; 0.05008586618744659 0.012165648317958355 … 0.5322891433528174 0.6649355842620508; 0.0445894270884288 0.010830586150330604 … 0.4738755611945613 -0.746900708784029], [0.10378107657020536, 0.11887176712494019, 0.17586602174257748, 0.21687423650163337, 0.3220134190502862, 0.5204293315056882, 0.5864653322533705, 2.1890584196924863, 1.0], [1, 1, 1, 1, 1, 1, 1, 1, 0], [1, 2, 3, 4, 5, 6, 7, 8], "s(x,bs=tp)", false)
+    SmoothMixedModel([-0.6643275336301891; -0.662874357451293; … ; 0.540699473296364; 0.5426167225557019;;], [[0.0991137135424773 0.16550024329927146 … -0.023094020448011326 0.49170323103320923; 0.09912727957455372 0.1654182591625266 … -0.02432140460725367 0.48897721318618304; … ; -0.08738792818353965 -0.10311339703677165 … 0.4163208075645793 0.024089536703147386; -0.08738430739219731 -0.10301049333196684 … 0.41735450154612547 0.026050054418193105]], [0.01440617335838694 0.02683706799235849 … 0.051544172040311885 1.712827709411649e-16; 0.04344154074823496 -0.004410031457064363 … -0.5600267625508363 -1.9808810827820657e-15; … ; 0.05008586618744615 -0.012165648317958355 … -0.5322891433528089 -0.6649355842620579; 0.044589427088428765 -0.010830586150330612 … -0.47387556119457125 0.7469007087840228], [0.06662593849830074, 0.07631394188027087, 0.11290342262575548, 0.139230098786353, 0.20672792152776043, 0.334108045315502, 0.37650219528861906, 1.405343598849226, 1.0], [1, 1, 1, 1, 1, 1, 1, 1, 0], [1, 2, 3, 4, 5, 6, 7, 8], "s(x,bs=tp)", false)
 
     Smooth component:
       Xf (null space): (200, 1)
@@ -501,26 +513,26 @@ custom_chains = sample(my_gam(dat.y, sm), NUTS(), MCMCThreads(), 2000, 2; progre
 ```
 
     ┌ Warning: Only a single thread available: MCMC chains are not sampled in parallel
-    └ @ AbstractMCMC ~/.julia/packages/AbstractMCMC/oqm6Y/src/sample.jl:544
+    └ @ AbstractMCMC ~/.julia/packages/AbstractMCMC/NK6XN/src/sample.jl:544
     ┌ Info: Found initial step size
-    └   ϵ = 0.0125
+    └   ϵ = 0.00625
     ┌ Info: Found initial step size
-    └   ϵ = 0.025
+    └   ϵ = 0.05
 
     Chains MCMC chain (2000×26×2 Array{Float64, 3}):
 
     Iterations        = 1001:1:3000
     Number of chains  = 2
     Samples per chain = 2000
-    Wall duration     = 24.44 seconds
-    Compute duration  = 23.16 seconds
-    parameters        = β0, σ, f.s_x.β_f[1], f.s_x.σ_s, f.s_x.z[1], f.s_x.z[2], f.s_x.z[3], f.s_x.z[4], f.s_x.z[5], f.s_x.z[6], f.s_x.z[7], f.s_x.z[8]
+    Wall duration     = 14.56 seconds
+    Compute duration  = 13.29 seconds
+    parameters        = β0, σ, f.s_x.β_f[1], f.s_x.σ_s[1], f.s_x.z[1], f.s_x.z[2], f.s_x.z[3], f.s_x.z[4], f.s_x.z[5], f.s_x.z[6], f.s_x.z[7], f.s_x.z[8]
     internals         = n_steps, is_accept, acceptance_rate, log_density, hamiltonian_energy, hamiltonian_energy_error, max_hamiltonian_energy_error, tree_depth, numerical_error, step_size, nom_step_size, logprior, loglikelihood, logjoint
 
     Use `describe(chains)` for summary statistics and quantiles.
 
-    Custom model σ posterior mean: 0.3157 (compare to 0.3162 from gam())
-    Custom model σ_s: 1.5980 (compare to 1.6055 from gam())
+    Custom model σ posterior mean: 0.3155 (compare to 0.3153 from gam())
+    Custom model σ_s: 2.3971 (compare to 2.3535 from gam())
 
 ### Comparing `smooth_prior` to the brms-like `gam()` interface
 
@@ -540,13 +552,13 @@ Zs_c = sm.Zs[1]
 for i in 1:n_draws_c
     β0_i = custom_chains[Symbol("β0")].data[i]
     βf_i = custom_chains[Symbol("f.s_x.β_f[1]")].data[i]
-    σ_s_i = custom_chains[Symbol("f.s_x.σ_s")].data[i]
+    σ_s_i = custom_chains[Symbol("f.s_x.σ_s[1]")].data[i]
     z_i = [custom_chains[Symbol("f.s_x.z[$j]")].data[i] for j in 1:size(Zs_c, 2)]
     η_custom[i, :] = β0_i .+ Xf_c * [βf_i] .+ σ_s_i .* (Zs_c * z_i)
 end
 
 # --- gam() brms-like fitted values (from m_bayes) ---
-X_b, sm_b, _ = GAM.gam_matrices(@formulak(y ~ s(x, k = 10)), dat)
+X_b, sm_b, _ = GAM.gam_matrices(@formula(y ~ s(x, k = 10)), dat)
 Xf_b = sm_b[1].Xf
 Zs_b = sm_b[1].Zs[1]
 chains_b = m_bayes.chains
@@ -610,12 +622,12 @@ plot(p1, p2, p3, p4; layout=(2, 2), size=(900, 700))
 ![](11_bayesian_gam_files/figure-commonmark/cell-35-output-1.svg)
 
     Posterior mean correlation:  r = 1.0000
-    Max |mean difference|:      0.027762
-    Mean CI width (smooth_prior): 0.2430
-    Mean CI width (gam()):        0.2418
+    Max |mean difference|:      0.002457
+    Mean CI width (smooth_prior): 0.2376
+    Mean CI width (gam()):        0.2397
 
-    σ posterior:  gam() mean=0.3162 sd=0.0162  |  smooth_prior mean=0.3157 sd=0.0162
-    σ_s posterior: gam() mean=1.6055 sd=0.4114  |  smooth_prior mean=1.5980 sd=0.4143
+    σ posterior:  gam() mean=0.3153 sd=0.0158  |  smooth_prior mean=0.3155 sd=0.0161
+    σ_s posterior: gam() mean=2.3535 sd=0.5985  |  smooth_prior mean=2.3971 sd=0.5825
 
 This is much cleaner than manually extracting matrices. For multiple
 smooths, give each a unique prefix:
@@ -639,11 +651,11 @@ For maximum control, extract the raw matrices with `gam_matrices()`:
 
 ``` julia
 # Extract matrices from a formula
-gf = @formulak(y ~ s(x, k = 10))
+gf = @formula(y ~ s(x, k = 10))
 X, sms, labels = GAM.gam_matrices(gf, dat)
 ```
 
-    ([1.0; 1.0; … ; 1.0; 1.0;;], SmoothMixedModel[SmoothMixedModel([0.664327533630193; 0.6628743574512967; … ; -0.540699473296364; -0.5426167225557019;;], [[0.15438623644410757 -0.2577943937355174 … 0.03597281116708378 -0.7659102718826961; 0.15440736781494313 -0.25766668968864265 … 0.03788466790460092 -0.7616640417613573; … ; -0.13612135859607952 0.1606164144848799 … -0.6484895009581195 -0.03752349474514074; -0.13611571860612945 0.16045612470122486 … -0.6500996527498536 -0.04057732998841621]], [0.014406173358386995 -0.026837067992358504 … -0.05154417204031194 6.548037400304181e-16; 0.04344154074823492 0.004410031457064265 … 0.5600267625508373 -5.399717439754989e-15; … ; 0.05008586618744659 0.012165648317958355 … 0.5322891433528174 0.6649355842620508; 0.0445894270884288 0.010830586150330604 … 0.4738755611945613 -0.746900708784029], [0.10378107657020536, 0.11887176712494019, 0.17586602174257748, 0.21687423650163337, 0.3220134190502862, 0.5204293315056882, 0.5864653322533705, 2.1890584196924863, 1.0], [1, 1, 1, 1, 1, 1, 1, 1, 0], [1, 2, 3, 4, 5, 6, 7, 8], "s(x,bs=tp)", false)], ["s(x,bs=tp)"])
+    ([1.0; 1.0; … ; 1.0; 1.0;;], SmoothMixedModel[SmoothMixedModel([-0.6643275336301891; -0.662874357451293; … ; 0.540699473296364; 0.5426167225557019;;], [[0.0991137135424773 0.16550024329927146 … -0.023094020448011326 0.49170323103320923; 0.09912727957455372 0.1654182591625266 … -0.02432140460725367 0.48897721318618304; … ; -0.08738792818353965 -0.10311339703677165 … 0.4163208075645793 0.024089536703147386; -0.08738430739219731 -0.10301049333196684 … 0.41735450154612547 0.026050054418193105]], [0.01440617335838694 0.02683706799235849 … 0.051544172040311885 1.712827709411649e-16; 0.04344154074823496 -0.004410031457064363 … -0.5600267625508363 -1.9808810827820657e-15; … ; 0.05008586618744615 -0.012165648317958355 … -0.5322891433528089 -0.6649355842620579; 0.044589427088428765 -0.010830586150330612 … -0.47387556119457125 0.7469007087840228], [0.06662593849830074, 0.07631394188027087, 0.11290342262575548, 0.139230098786353, 0.20672792152776043, 0.334108045315502, 0.37650219528861906, 1.405343598849226, 1.0], [1, 1, 1, 1, 1, 1, 1, 1, 0], [1, 2, 3, 4, 5, 6, 7, 8], "s(x,bs=tp)", false)], ["s(x,bs=tp)"])
 
     Fixed matrix X: (200, 1) (intercept)
     Smooth 's(x,bs=tp)':
@@ -666,9 +678,9 @@ X, sms, labels = GAM.gam_matrices(gf, dat)
 
 ### Key design choices
 
-1.  **Dispatch-based API**: The same `gam()` function handles both
-    frequentist and Bayesian fitting — the presence of `priors=`
-    triggers Bayesian mode via multiple dispatch.
+1.  **One entry point**: The same `gam()` function handles both
+    frequentist and Bayesian fitting — passing the `priors=` keyword
+    switches it into Bayesian mode.
 
 2.  **smooth2random decomposition**: Smooth terms are split into a fixed
     null-space (unpenalized, estimated via `β`) and random-effects

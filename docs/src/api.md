@@ -93,6 +93,18 @@ GAM.InverseGaussianLocationScale
 GAM.DistFamily
 ```
 
+## Nested Effects
+
+```@docs
+gam_nl
+s_nest
+GAM.TransLinear
+GAM.TransExpSmooth
+GAM.TransMGKS
+inner_coef
+NestedGamModel
+```
+
 ## SCAM (Shape Constraints)
 
 ```@docs
@@ -163,6 +175,13 @@ anova_gam
 AnovaGamResult
 ```
 
+## Influence Measures
+
+```@docs
+GAM.leverage(::GamModel)
+GAM.cooksdistance(::GamModel)
+```
+
 ## Gratia-Style Diagnostics
 
 ```@docs
@@ -178,6 +197,7 @@ GAM.AppraiseData
 rootogram
 GAM.RootogramData
 data_slice
+PartialResiduals
 ```
 
 ## Visualization

@@ -286,7 +286,7 @@ function scasm_pirls(X::Matrix{Float64}, y::Vector{Float64},
         div_thresh = 10.0 * (0.1 + abs(pdev_old)) * sqrt(eps())
         accepted_step = (pdev_new - pdev_old <= div_thresh) &&
                         _is_feasible(beta_new, Ain, bin, Aeq, beq)
-        if iter > 1 && feasible_old && pdev_new - pdev_old > div_thresh
+        if feasible_old && pdev_new - pdev_old > div_thresh
             beta_trial = copy(beta_new)
             eta_trial = similar(eta_new)
             mu_trial = similar(mu_new)
@@ -385,6 +385,7 @@ function scasm_outer_iteration(
     beq = nothing,
     method::Symbol = :REML,
     weights::Vector{Float64} = ones(length(y)),
+    offset::Vector{Float64} = zeros(length(y)),
     control::GamControl = scasm_control(),
     start::Union{Vector{Float64}, Nothing} = nothing,
 )
@@ -395,7 +396,7 @@ function scasm_outer_iteration(
         S_total = zeros(p, p)
         result = scasm_pirls(X, y, S_total, family, link;
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq,
-            weights = weights, start = start, control = control)
+            weights = weights, offset = offset, start = start, control = control)
         return Float64[], result
     end
 
@@ -412,7 +413,7 @@ function scasm_outer_iteration(
         total_penalty!(S_total, penalty, log_sp, p)
         result = scasm_pirls(X, y, S_total, family, link;
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq,
-            weights = weights,
+            weights = weights, offset = offset,
             start = prev_result === nothing ? start : prev_result.coefficients,
             control = control)
 
@@ -481,17 +482,34 @@ function scasm_outer_iteration(
     total_penalty!(S_total, penalty, log_sp, p)
     final_result = scasm_pirls(X, y, S_total, family, link;
         Ain = Ain, bin = bin, Aeq = Aeq, beq = beq,
-        weights = weights,
+        weights = weights, offset = offset,
         start = prev_result === nothing ? start : prev_result.coefficients,
         control = control)
     return log_sp, final_result
 end
 
+"""
+    _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, weights, control)
+
+Fit a linear-constraint smooth model (`bs=:sc`/`bs=:scad`) via constrained
+PIRLS with OSQP quadratic-programming solves.
+
+!!! note "Covariance is unconditional on active constraints"
+    The reported `Vp = (X'WX + S)⁻¹φ` and the penalty-based EDF do not
+    condition on the active inequality constraints at the solution: where a
+    constraint binds, standard errors overstate the sampling variability in
+    the constrained directions and the EDF counts dimensions the constraints
+    have removed. This matches the behavior of mgcv's `pcls`-based workflows,
+    but confidence intervals near binding constraints are conservative.
+"""
 function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, weights, control;
-                    start::Union{AbstractVector{<:Real}, Nothing} = nothing)
+                    start::Union{AbstractVector{<:Real}, Nothing} = nothing,
+                    offset = nothing)
     n, p = size(X)
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch("weights length $(length(wts)) ≠ data length $n"))
+    off = offset === nothing ? zeros(n) : Float64.(offset)
+    length(off) == n || throw(DimensionMismatch("offset length $(length(off)) ≠ data length $n"))
     control.sp_optimizer == :efs || throw(ArgumentError(
         "Linear-constraint fits currently support only control.sp_optimizer = :efs."
     ))
@@ -507,7 +525,7 @@ function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, 
 
     log_sp, result = scasm_outer_iteration(X, y, smooths, penalty, family, link;
         Ain = Ain, bin = bin, Aeq = Aeq, beq = beq,
-        method = method_eff, weights = wts, control = control,
+        method = method_eff, weights = wts, offset = off, control = control,
         start = start_vec)
 
     edf_per_smooth = smooth_edf(result.edf_vec, smooths)
@@ -526,7 +544,8 @@ function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, 
     end
     Vp = inv(A_chol)
     F = Vp * XtWX
-    Ve = Symmetric(F * Vp * F') |> Matrix
+    # Frequentist covariance Ve = F·Vp (mgcv's Ve <- F %*% Vb), not F·Vp·F'
+    Ve = Symmetric(F * Vp) |> Matrix
 
     if _needs_scale_estimate(family)
         scale_est = result.pearson / (n - edf_total_val)
@@ -536,9 +555,10 @@ function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, 
         scale_est = 1.0
     end
 
-    null_dev = _null_deviance(family, y, wts)
+    null_dev = _null_deviance(family, link, y, wts, off, control)
     reml_val, _ = reml_score(X, y, penalty, log_sp, family, link,
-        wts, result; method = method_eff, gamma = control.gamma)
+        wts, result; method = method_eff, gamma = control.gamma,
+        compute_gradient = false)
 
     return GamModel(
         f,
@@ -557,6 +577,7 @@ function _fit_scasm(y, X, smooths, n_parametric, f, data, family, link, method, 
         result.deviance,
         null_dev,
         reml_val,
+        NaN,
         method,
         Vp, Ve,
         result.hat_diag,

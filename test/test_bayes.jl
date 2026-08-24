@@ -47,18 +47,22 @@ using Statistics: mean
         @test length(smm_re.Zs) == 1
     end
 
-    @testset "Shrinkage smooths (multi-penalty)" begin
-        # TS (shrinkage): has 2 penalties (wiggle + null space)
+    @testset "Shrinkage smooths (single modified penalty)" begin
+        # TS (shrinkage): single modified penalty (null-space eigenvalues
+        # raised to a small positive value, mgcv-style) → one Z block and no
+        # unpenalized fixed part
         sm_ts = smooth_construct(s(:x, bs = :ts, k = 10), df)
         smm_ts = smooth2random(sm_ts)
-        @test length(smm_ts.Zs) == 2  # one per penalty
+        @test length(smm_ts.Zs) == 1
+        @test size(smm_ts.Xf, 2) == 0
         @test !smm_ts.fixed
         @test size(smm_ts.Xf, 1) == n
 
-        # CS (cubic shrinkage): also 2 penalties
+        # CS (cubic shrinkage): same structure
         sm_cs = smooth_construct(s(:x, bs = :cs, k = 10), df)
         smm_cs = smooth2random(sm_cs)
-        @test length(smm_cs.Zs) >= 1
+        @test length(smm_cs.Zs) == 1
+        @test size(smm_cs.Xf, 2) == 0
         @test !smm_cs.fixed
     end
 

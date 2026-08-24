@@ -33,20 +33,19 @@ const rng_sz = StableRNG(456)
         spec = s(:x, :group, bs=:sz, k=8)
         sm = smooth_construct(spec, data)
 
-        # k=8 TPRS → 7 cols after TPRS constraint
-        # Per-level constraint removes 1 more → 6 cols per level
-        # 3 levels × 6 = 18 total columns
-        k_eff = 7  # k - 1 for TPRS constraint
-        k_constrained = k_eff - 1  # -1 for per-level sz constraint
+        # Raw (uncentered) TPRS marginal: k = 8 columns per level; the
+        # sum-to-zero-across-levels constraint is absorbed via the
+        # (L-1)-column level-contrast basis Q_L: (L-1) * k columns total.
+        k_eff = 8
         n_levels = 3
-        expected_cols = n_levels * k_constrained
+        expected_cols = (n_levels - 1) * k_eff
         @test size(sm.X, 2) == expected_cols
     end
 
     @testset "Penalty structure correct (block diagonal)" begin
-        n = 200
+        n = 300
         x = randn(rng_sz, n)
-        group = repeat(["A", "B"], outer=ceil(Int, n/2))[1:n]
+        group = repeat(["A", "B", "C"], outer=ceil(Int, n/3))[1:n]
 
         data = DataFrame(x=x, group=group)
         spec = s(:x, :group, bs=:sz, k=8)
@@ -64,13 +63,17 @@ const rng_sz = StableRNG(456)
             @test all(evals .>= -1e-8)
         end
 
-        # Check block-diagonal structure: off-diagonal blocks should be zero
+        # Penalty is I_{L-1} ⊗ S_marginal in the contrast parameterization:
+        # block-diagonal across the L-1 contrast blocks, identical diagonal
+        # blocks, zero off-diagonal blocks.
         S = sm.S[1]
         ncols = size(sm.X, 2)
-        k_per_level = ncols ÷ 2  # 2 levels
-        # Off-diagonal block should be zero
-        off_block = S[1:k_per_level, (k_per_level+1):end]
+        n_blocks = 2            # L - 1 contrast blocks for 3 levels
+        k_per_block = ncols ÷ n_blocks
+        off_block = S[1:k_per_block, (k_per_block+1):end]
         @test norm(off_block) < 1e-10
+        @test S[1:k_per_block, 1:k_per_block] ≈
+              S[(k_per_block+1):end, (k_per_block+1):end]
     end
 
     @testset "GAM fitting works" begin
@@ -139,23 +142,24 @@ const rng_sz = StableRNG(456)
         @test_throws ArgumentError smooth_construct(spec, data)
     end
 
-    @testset "Observations zero for other levels" begin
-        # Each observation should only contribute to its own level's columns
+    @testset "Level smooths sum to zero across levels at each x" begin
+        # The defining sz constraint (mgcv): Σ_l f_l(x) = 0 for every x.
+        # In the contrast parameterization the design rows for the same x
+        # across all levels therefore sum to exactly zero.
         n = 100
         x = randn(rng_sz, n)
-        group = repeat(["A", "B"], outer=50)
+        group = repeat(["A", "B", "C"], outer=ceil(Int, n/3))[1:n]
 
         data = DataFrame(x=x, group=group)
         spec = s(:x, :group, bs=:sz, k=6)
         sm = smooth_construct(spec, data)
 
-        ncols = size(sm.X, 2)
-        k_per_level = ncols ÷ 2
-
-        # Observations in group A should have zeros in group B columns
-        mask_A = group .== "A"
-        mask_B = group .== "B"
-        @test norm(sm.X[mask_A, (k_per_level+1):end]) < 1e-10
-        @test norm(sm.X[mask_B, 1:k_per_level]) < 1e-10
+        x0 = collect(range(-1.5, 1.5; length=9))
+        row_sum = zeros(length(x0), size(sm.X, 2))
+        for g in ["A", "B", "C"]
+            nd = DataFrame(x=x0, group=fill(g, length(x0)))
+            row_sum .+= predict_matrix(sm, nd)
+        end
+        @test norm(row_sum) < 1e-10
     end
 end

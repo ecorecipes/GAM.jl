@@ -184,6 +184,8 @@ function gam(f::FormulaTerm, data;
     method::Symbol = :REML,
     optimizer::Symbol = :pirls,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    select::Bool = false,
     start::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
@@ -213,23 +215,34 @@ function gam(f::FormulaTerm, data;
     optimizer in (:pirls, :general) ||
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
+    # Nested effects (s_nest) use the dedicated joint Newton/EFS fitter
+    if _formula_has_nested(f)
+        family isa ExtendedFamily && throw(ArgumentError(
+            "s_nest supports Normal, Poisson, Bernoulli/Binomial, and Gamma families"))
+        _check_nested_kwargs(select, start, method)
+        return gam_nl(f, data; family = family, link = link,
+            offset = offset, weights = weights)
+    end
+
     if family isa ExtendedFamily
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
         _validate_response(y, family)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
-            method, weights, control; start = start)
+            method, weights, control; start = start, offset = offset, select = select)
     else
         y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
         _validate_response(y, family)
 
         if has_linear_constraints(smooths)
+            _reject_select(select, "shape/side-constrained (scasm)")
             return _fit_scasm(y, X, smooths, n_parametric, f, data, family, link_eff,
                 method, weights, control;
-                start = start)
+                start = start, offset = offset)
         end
 
         # Auto-detect shape constraints → use SCAM fitting
         if has_shape_constraints(smooths)
+            _reject_select(select, "shape-constrained (scam)")
             return _fit_scam(y, X, smooths, n_parametric, f, data, family, link_eff,
                 method, weights, scam_control(
                     epsilon = control.epsilon,
@@ -237,11 +250,33 @@ function gam(f::FormulaTerm, data;
                     outer_maxit = control.outer_maxit,
                     trace = control.trace,
                     gamma = control.gamma,
-                ))
+                ); offset = offset)
         end
 
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
-            method, optimizer, weights, control)
+            method, optimizer, weights, control;
+            offset = offset, select = select, start = start)
+    end
+end
+
+# Kwargs gam() accepts but the nested-effect fitter does not: error rather
+# than silently ignore (offset/weights ARE forwarded to gam_nl).
+function _check_nested_kwargs(select, start, method)
+    select && throw(ArgumentError(
+        "select=true is not supported for nested-effect models"))
+    start === nothing || throw(ArgumentError(
+        "start= is not supported for nested-effect models"))
+    method == :REML || throw(ArgumentError(
+        "nested-effect models use EFS (REML-flavored) smoothing selection; " *
+        "method=:$method is not supported"))
+    return nothing
+end
+
+# select=TRUE (double-penalty term selection) is implemented for ordinary and
+# extended-family GAMs; the constrained (SCAM/SCASM) solvers do not support it.
+function _reject_select(select, what)
+    if select
+        throw(ArgumentError("select=true is not supported for $what models"))
     end
 end
 
@@ -251,6 +286,8 @@ function gam(gf::GamFormula, data;
     method::Symbol = :REML,
     optimizer::Symbol = :pirls,
     weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    select::Bool = false,
     start::Union{AbstractVector{<:Real}, Nothing} = nothing,
     control::GamControl = gam_control(),
     priors::Union{PriorSpec, Nothing} = nothing,
@@ -261,6 +298,16 @@ function gam(gf::GamFormula, data;
     # Input validation
     _validate_data_lengths(data)
     _validate_response_in_data(gf.response, data)
+
+    # Nested effects (s_nest) use the dedicated joint Newton/EFS fitter
+    if has_nested_effects(gf.smooth_specs)
+        family isa ExtendedFamily && throw(ArgumentError(
+            "s_nest supports Normal, Poisson, Bernoulli/Binomial, and Gamma families"))
+        _check_nested_kwargs(select, start, method)
+        return gam_nl(gf, data; family = family, link = link,
+            offset = offset, weights = weights)
+    end
+
     _validate_has_smooths(gf.smooth_specs)
     _validate_formula_smooths(gf.smooth_specs, data)
     _validate_gam_family(family)
@@ -288,19 +335,21 @@ function gam(gf::GamFormula, data;
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
         _validate_response(y, family)
         return _fit_gam_extended(y, X, smooths, n_parametric, gf, data, family, link_eff,
-            method, weights, control; start = start)
+            method, weights, control; start = start, offset = offset, select = select)
     else
         y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
         _validate_response(y, family)
 
         if has_linear_constraints(smooths)
+            _reject_select(select, "shape/side-constrained (scasm)")
             return _fit_scasm(y, X, smooths, n_parametric, gf, data, family, link_eff,
                 method, weights, control;
-                start = start)
+                start = start, offset = offset)
         end
 
         # Auto-detect shape constraints → use SCAM fitting
         if has_shape_constraints(smooths)
+            _reject_select(select, "shape-constrained (scam)")
             return _fit_scam(y, X, smooths, n_parametric, gf, data, family, link_eff,
                 method, weights, scam_control(
                     epsilon = control.epsilon,
@@ -308,11 +357,12 @@ function gam(gf::GamFormula, data;
                     outer_maxit = control.outer_maxit,
                     trace = control.trace,
                     gamma = control.gamma,
-                ))
+                ); offset = offset)
         end
 
         return _fit_gam(y, X, smooths, n_parametric, gf, data, family, link_eff,
-            method, optimizer, weights, control)
+            method, optimizer, weights, control;
+            offset = offset, select = select, start = start)
     end
 end
 
@@ -342,28 +392,59 @@ function gam(formulas::AbstractVector, data, family::MultiParameterFamily; kwarg
     return gamlss(formulas, data, family; kwargs...)
 end
 
+# Positional family/link convenience (as shown in the README):
+#   gam(f, df, Poisson()), gam(f, df, Poisson(), LogLink())
+function gam(f::Union{FormulaTerm, GamFormula}, data,
+    family::Union{UnivariateDistribution, ExtendedFamily},
+    link::Union{GLM.Link, Nothing} = nothing; kwargs...)
+    return gam(f, data; family = family, link = link, kwargs...)
+end
+
 function _fit_gam(y, X, smooths, n_parametric, f, data,
-    family, link, method, optimizer, weights, control)
+    family, link, method, optimizer, weights, control;
+    offset = nothing, select::Bool = false,
+    start::Union{AbstractVector{<:Real}, Nothing} = nothing)
     n, p = size(X)
 
     # Weights
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch(
         "weights length $(length(wts)) ≠ data length $n"))
+    off = offset === nothing ? zeros(n) : Float64.(offset)
+    length(off) == n || throw(DimensionMismatch(
+        "offset length $(length(off)) ≠ data length $n"))
+    start_f = start === nothing ? nothing : Float64.(start)
+    start_f === nothing || length(start_f) == p || throw(DimensionMismatch(
+        "start length $(length(start_f)) ≠ number of coefficients $p"))
 
     # Setup penalties
-    penalty = setup_penalties(smooths, n_parametric)
+    penalty = setup_penalties(smooths, n_parametric; select = select)
 
     # Initialize smoothing parameters (mgcv's initial.sp heuristic)
     _initial_sp(X, penalty)
 
     # Outer iteration: optimize smoothing parameters
     if optimizer == :general
-        log_sp, result = outer_iteration_general(X, y, smooths, penalty, family, link;
-            method = method, weights = wts, control = control)
+        start_f === nothing || throw(ArgumentError(
+            "start= is not supported with optimizer = :general"))
+        log_sp, result, outer_converged, outer_iters =
+            outer_iteration_general(X, y, smooths, penalty, family, link;
+                method = method, weights = wts, offset = off, control = control)
     else
-        log_sp, result = outer_iteration(X, y, smooths, penalty, family, link;
-            method = method, weights = wts, control = control)
+        log_sp, result, outer_converged, outer_iters =
+            outer_iteration(X, y, smooths, penalty, family, link;
+                method = method, weights = wts, offset = off,
+                start = start_f, control = control)
+    end
+
+    if !result.converged
+        @warn "GAM fit did not fully converge: P-IRLS reached its iteration " *
+              "limit at the final smoothing parameters. Estimates may be " *
+              "unreliable; consider increasing maxit via gam_control()."
+    elseif !outer_converged && control.outer_maxit > 0
+        @warn "GAM fit did not fully converge: the smoothing parameter " *
+              "iteration reached outer_maxit with the parameters still " *
+              "changing. Consider increasing outer_maxit via gam_control()."
     end
 
     # Compute per-smooth EDF
@@ -374,27 +455,31 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
     S_total = total_penalty(penalty, log_sp, p)
     XtWX = X' * Diagonal(result.working_weights) * X
     A = XtWX + S_total
-    A_chol = cholesky(Symmetric(A))
+    A_chol = _protected_cholesky!(A)
     Vp = inv(A_chol)
+    # Frequentist covariance Ve = F*Vp (mgcv: Ve <- F %*% Vb), F = (X'WX+S)^-1 X'WX
     F = Vp * XtWX
-    Ve = F * Vp  # sandwich: F * Vp * F' but since Vp is symmetric...
-    Ve = Symmetric(F * Vp * F') |> Matrix
+    Ve = Symmetric(F * Vp) |> Matrix
 
-    # Scale parameter — estimated for Normal, Gamma, InverseGaussian (like mgcv)
+    # Scale parameter — estimated for Normal, Gamma, InverseGaussian (like
+    # mgcv), using the estimator selected by control.scale_est
     if _needs_scale_estimate(family)
-        scale_est = result.pearson / (n - edf_total_val)
+        scale_est = _estimate_scale(family, y, result.fitted_values, wts,
+            result.pearson, result.deviance, n, edf_total_val,
+            control.scale_est; trace = control.trace)
         Vp .*= scale_est
         Ve .*= scale_est
     else
         scale_est = 1.0
     end
 
-    # Null deviance
-    null_dev = _null_deviance(family, y, wts)
+    # Null deviance (intercept + offset model when an offset is present)
+    null_dev = _null_deviance(family, link, y, wts, off, control)
 
-    # REML score
+    # REML score (only the score is needed here — skip the gradient)
     reml_val, _ = reml_score(X, y, penalty, log_sp, family, link,
-        wts, result; method = method, gamma = control.gamma)
+        wts, result; method = method, gamma = control.gamma,
+        compute_gradient = false)
 
     return GamModel(
         f,
@@ -413,17 +498,53 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
         result.deviance,
         null_dev,
         reml_val,
+        NaN,
         method,
         Vp, Ve,
         result.hat_diag,
         result.R,
-        result.converged,
-        0,  # outer iterations tracked in outer_iteration
+        result.converged && outer_converged,
+        outer_iters,
         length(smooths),
         n_parametric,
         control,
         Tables.columntable(data),
     )
+end
+
+"""
+    _estimate_scale(family, y, mu, wts, pearson, dev, n, edf, method) -> Float64
+
+Scale (dispersion) estimator for the reported scale and covariance scaling.
+- `:pearson` — Pearson X² / (n − edf)
+- `:deviance` — deviance / (n − edf)
+- `:fletcher` — Fletcher (2012) corrected Pearson (mgcv's default):
+  φ̂_P/(1 + s̄), s̄ = mean(V′(μ)(y − μ)/V(μ))
+"""
+function _estimate_scale(family, y, mu, wts, pearson::Float64, dev::Float64,
+    n::Int, edf::Float64, method::Symbol; trace::Bool = false)
+    denom = max(n - edf, 1.0)
+    method === :deviance && return max(dev / denom, _scale_floor(y))
+    phi = pearson / denom
+    if method === :fletcher
+        # Prior-weighted mean of V′(μ)(y − μ)/V(μ), as in mgcv's weighted
+        # Fletcher estimator; reduces to the plain mean for unit weights.
+        s_num = 0.0
+        s_den = 0.0
+        @inbounds for i in eachindex(y)
+            vm = _variance_scalar(family, mu[i])
+            s_num += wts[i] * _dvariance_scalar_mu(family, mu[i]) *
+                     (y[i] - mu[i]) / max(vm, eps())
+            s_den += wts[i]
+        end
+        s_bar = s_num / max(s_den, eps())
+        if isfinite(s_bar) && 1.0 + s_bar > 0
+            phi /= 1.0 + s_bar
+        elseif trace
+            @info "Fletcher scale correction degenerate (s̄ = $s_bar); using the Pearson estimate"
+        end
+    end
+    return max(phi, _scale_floor(y))
 end
 
 # Convenience: fit(GamModel, formula, data; ...)
@@ -435,25 +556,50 @@ function StatsAPI.fit(::Type{GamModel}, gf::GamFormula, data; kwargs...)
     return gam(gf, data; kwargs...)
 end
 
+# Null model mean is the weighted mean (the MLE under prior weights,
+# including binomial trial counts).
+_weighted_mean(y, wt) = sum(wt .* y) / sum(wt)
+
+"""
+    _null_deviance(family, link, y, wt, off, control)
+
+Null deviance. With a nonzero offset, the null model is the intercept-plus-
+offset model (as in mgcv/R's glm), fit by an intercept-only P-IRLS; without
+one, the closed-form weighted-mean null model applies.
+"""
+function _null_deviance(family, link::GLM.Link, y, wt, off, control::GamControl)
+    if all(==(0.0), off)
+        return _null_deviance(family, y, wt)
+    end
+    X1 = ones(length(y), 1)
+    S0 = zeros(1, 1)
+    r = family isa ExtendedFamily ?
+        pirls_extended(X1, y, S0, family, link;
+            weights = wt, offset = off, control = control) :
+        pirls(X1, y, S0, family, link;
+            weights = wt, offset = off, control = control)
+    return r.deviance
+end
+
 function _null_deviance(family::Normal, y, wt)
-    mu = mean(y)
+    mu = _weighted_mean(y, wt)
     return sum(wt .* (y .- mu) .^ 2)
 end
 
 function _null_deviance(family::BinomialLike, y, wt)
-    mu = mean(y)
+    mu = _weighted_mean(y, wt)
     mu = clamp(mu, eps(), 1 - eps())
     return _deviance(family, y, fill(mu, length(y)), wt)
 end
 
 function _null_deviance(family::Poisson, y, wt)
-    mu = mean(y)
+    mu = _weighted_mean(y, wt)
     mu = max(mu, eps())
     return _deviance(family, y, fill(mu, length(y)), wt)
 end
 
 function _null_deviance(family::UnivariateDistribution, y, wt)
-    mu = mean(y)
+    mu = _weighted_mean(y, wt)
     return _deviance(family, y, fill(mu, length(y)), wt)
 end
 
@@ -463,21 +609,36 @@ end
 
 function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
     family::ExtendedFamily, link::GLM.Link, method, weights, control;
-    start::Union{AbstractVector{<:Real}, Nothing} = nothing)
+    start::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    offset = nothing, select::Bool = false)
     n, p = size(X)
 
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch(
         "weights length $(length(wts)) ≠ data length $n"))
+    off = offset === nothing ? zeros(n) : Float64.(offset)
+    length(off) == n || throw(DimensionMismatch(
+        "offset length $(length(off)) ≠ data length $n"))
 
-    penalty = setup_penalties(smooths, n_parametric)
+    penalty = setup_penalties(smooths, n_parametric; select = select)
     _initial_sp(X, penalty)
     Ain, bin, Aeq, beq = _global_linear_constraints(smooths, p)
 
-    log_sp, result = outer_iteration(X, y, smooths, penalty, family, link;
-        method = method, weights = wts, control = control,
-        start = start === nothing ? nothing : Float64.(start),
-        Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+    log_sp, result, outer_converged, outer_iters =
+        outer_iteration(X, y, smooths, penalty, family, link;
+            method = method, weights = wts, offset = off, control = control,
+            start = start === nothing ? nothing : Float64.(start),
+            Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+
+    if !result.converged
+        @warn "GAM fit did not fully converge: P-IRLS reached its iteration " *
+              "limit at the final smoothing parameters. Estimates may be " *
+              "unreliable; consider increasing maxit via gam_control()."
+    elseif !outer_converged && control.outer_maxit > 0
+        @warn "GAM fit did not fully converge: the smoothing parameter " *
+              "iteration reached outer_maxit with the parameters still " *
+              "changing. Consider increasing outer_maxit via gam_control()."
+    end
 
     edf_per_smooth = smooth_edf(result.edf_vec, smooths)
     edf_total_val = sum(result.edf_vec)
@@ -485,32 +646,34 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
     S_total = total_penalty(penalty, log_sp, p)
     XtWX = X' * Diagonal(result.working_weights) * X
     A = XtWX + S_total
-    A_chol = try
-        cholesky(Symmetric(A))
-    catch
-        A_reg = copy(A)
-        @inbounds for i in 1:p
-            A_reg[i, i] += 1e-8
-        end
-        cholesky(Symmetric(A_reg))
-    end
+    A_chol = _protected_cholesky!(copy(A))
     Vp = inv(A_chol)
     F = Vp * XtWX
-    Ve = Symmetric(F * Vp * F') |> Matrix
+    Ve = Symmetric(F * Vp) |> Matrix
 
-    # Scale parameter
+    # Scale parameter, honoring control.scale_est like the standard path
     if _estimates_scale(family)
-        scale_est = max(result.pearson / (n - edf_total_val), 1e-10)
+        scale_est = _estimate_scale(family, y, result.fitted_values, wts,
+            result.pearson, result.deviance, n, edf_total_val,
+            control.scale_est; trace = control.trace)
         Vp .*= scale_est
         Ve .*= scale_est
     else
         scale_est = 1.0
     end
 
-    null_dev = _null_deviance(family, y, wts)
+    null_dev = _null_deviance(family, link, y, wts, off, control)
 
-    # Simplified REML score for extended families
-    reml_val = result.deviance / 2.0
+    # REML/LAML score at the converged fit (the criterion the EFS iteration
+    # targets, with ls = 0: extended-family deviance is already −2(ll−ll_sat),
+    # so the score omits the family's saturated-likelihood constant).
+    reml_val = begin
+        Dp = result.deviance + dot(result.coefficients, S_total * result.coefficients)
+        Mp = p - sum(b.rank for b in penalty.blocks; init = 0)
+        Dp / (2 * scale_est) + 0.5 * logdet(A_chol) -
+            0.5 * _log_penalty_det(penalty, log_sp) -
+            0.5 * Mp * log(2π * scale_est)
+    end
 
     return GamModel(
         f,
@@ -529,12 +692,13 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
         result.deviance,
         null_dev,
         reml_val,
+        NaN,
         method,
         Vp, Ve,
         result.hat_diag,
         result.R,
-        result.converged,
-        0,
+        result.converged && outer_converged,
+        outer_iters,
         length(smooths),
         n_parametric,
         control,

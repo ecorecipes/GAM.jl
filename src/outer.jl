@@ -9,13 +9,21 @@
 
 using ForwardDiff
 
+# Response-magnitude-relative floor for scale estimates: an absolute 1e-10
+# floor silently inflates the scale (and hence the EFS smoothing-parameter
+# updates, oversmoothing) when the response lives on a tiny scale like 1e-8;
+# a relative floor keeps fits invariant to rescaling y.
+_scale_floor(y::AbstractVector{<:Real}) =
+    1e-10 * max(sum(abs2, y .- (sum(y) / length(y))) / max(length(y) - 1, 1), eps())
+
 """
     outer_iteration(X, y, smooths, penalty, family, link;
                     method, weights, control)
 
 Run the outer iteration to optimize smoothing parameters.
 Uses the Extended Fellner-Schall (EFS) method for robust convergence.
-Returns updated `log_sp` and final `PirlsResult`.
+Returns `(log_sp, result, outer_converged, outer_iterations)` — callers that
+destructure only the first two values keep working.
 """
 function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     smooths::Vector{<:ConstructedSmooth},
@@ -23,22 +31,42 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     family::UnivariateDistribution, link::GLM.Link;
     method::Symbol = :REML,
     weights::Vector{Float64} = ones(length(y)),
+    offset::Vector{Float64} = zeros(length(y)),
+    start::Union{Vector{Float64}, Nothing} = nothing,
     control::GamControl = gam_control())
 
     n, p = size(X)
     n_sp = length(penalty.sp)
 
-    if n_sp == 0
-        S_total = zeros(p, p)
+    if n_sp == 0 || all(penalty.fixed)
+        S_total = total_penalty(penalty, penalty.sp, p)
         result = pirls(X, y, S_total, family, link;
-            weights = weights, control = control)
-        return penalty.sp, result
+            weights = weights, offset = offset, start = start, control = control)
+        return penalty.sp, result, true, 0
+    end
+
+    # GCV/UBRE are optimized directly (criterion evaluated at full P-IRLS
+    # refits); the EFS/Newton machinery below targets REML/ML.
+    if method == :GCV || method == :UBRE
+        if method == :UBRE && _needs_scale_estimate(family)
+            throw(ArgumentError(
+                ":UBRE assumes a known scale parameter; use :GCV or :REML " *
+                "for $(typeof(family).name.name) models"))
+        end
+        return _outer_iteration_criterion(X, y, penalty, family, link,
+            method, weights, offset, start, control)
     end
 
     log_sp = copy(penalty.sp)
     prev_result = nothing
+    outer_converged = false
+    outer_iters = 0
 
-    is_gaussian_identity = family isa Normal && link isa GLM.IdentityLink
+    has_offset = any(!=(0.0), offset)
+    # The cached Gaussian fast path does not carry an offset; route offset
+    # fits through the general P-IRLS, which handles it.
+    is_gaussian_identity = family isa Normal && link isa GLM.IdentityLink &&
+                           !has_offset
     XtWX_cached = nothing
     Xty_cached = nothing
     Xw_buf = similar(X)  # pre-allocate buffer
@@ -77,25 +105,27 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             result = pirls_gaussian(X, y, S_total, XtWX_cached, Xty_cached;
                 weights = weights)
         else
-            start = prev_result === nothing ? nothing : prev_result.coefficients
+            beta_start = prev_result === nothing ? start : prev_result.coefficients
             result = pirls(X, y, S_total, family, link;
-                weights = weights, start = start, control = control)
+                weights = weights, offset = offset, start = beta_start,
+                control = control)
         end
 
         if !result.converged && control.trace
             @warn "P-IRLS did not converge at outer iteration $outer_iter"
         end
 
+        outer_iters = outer_iter
         beta = result.coefficients
         w = result.working_weights
         dev = result.deviance
 
-        # Estimate scale with EDoF correction (matching mgcv's efsudr)
+        # Estimate scale with EDoF correction (matching mgcv's efsudr):
+        # φ̂ = pearson / (n − edf)
         edf_total = sum(result.edf_vec)
         if _needs_scale_estimate(family)
-            # EDoF-corrected scale: φ̂ = pearson × n / (n − edf)²
-            # Equivalent to: (pearson / n) × n / (n − edf) = pearson / (n − edf)
-            scale_est = max(result.pearson / max(n - edf_total, 1.0), 1e-10)
+            scale_est = max(result.pearson / max(n - edf_total, 1.0),
+                _scale_floor(y))
         else
             scale_est = 1.0
         end
@@ -110,7 +140,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n, Xw_buf)
         end
         copyto!(A_buf_copy, A_buf)
-        A_chol = cholesky!(Symmetric(A_buf_copy))
+        A_chol = _protected_cholesky!(A_buf_copy)
         fill!(Ainv_buf, 0.0)
         @inbounds for i in 1:p
             Ainv_buf[i, i] = 1.0
@@ -167,6 +197,15 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
                     # Step succeeded — gradually restore mult toward 1
                     efs_mult = min(1.0, efs_mult * 2.0)
                 end
+
+                # Score-based convergence (mgcv's efsud): once the criterion
+                # stops moving, declare convergence even if the smoothing
+                # parameters still wander along a flat ridge — sp-change alone
+                # can limit-cycle with the step multiplier.
+                if abs(reml_new - reml_old) <
+                   control.epsilon * (abs(reml_old) + 0.1)
+                    max_change = 0.0
+                end
             end
         end
 
@@ -182,6 +221,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
         # Convergence check: smoothing parameter changes small
         if max_change < control.epsilon * 10
+            outer_converged = true
             if control.trace
                 println("Outer iteration converged at iteration $outer_iter")
             end
@@ -197,11 +237,164 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             weights = weights)
     else
         final_result = pirls(X, y, S_total, family, link;
-            weights = weights, start = prev_result.coefficients,
+            weights = weights, offset = offset,
+            start = prev_result === nothing ? start : prev_result.coefficients,
             control = control)
     end
 
-    return log_sp, final_result
+    return log_sp, final_result, outer_converged, outer_iters
+end
+
+# ============================================================================
+# Direct GCV/UBRE optimization
+# ============================================================================
+
+"""
+    _outer_iteration_criterion(X, y, penalty, family, link, method, weights,
+                               control)
+
+Optimize log smoothing parameters by direct minimization of the GCV or UBRE
+criterion. Each criterion evaluation refits P-IRLS to convergence at the
+trial smoothing parameters (mgcv-style outer optimization), so the criterion
+genuinely depends on `log_sp`. Nelder–Mead avoids needing criterion
+derivatives through the P-IRLS fixed point.
+"""
+function _outer_iteration_criterion(X::Matrix{Float64}, y::Vector{Float64},
+    penalty::PenaltySetup,
+    family::UnivariateDistribution, link::GLM.Link,
+    method::Symbol,
+    weights::Vector{Float64},
+    offset::Vector{Float64},
+    start::Union{Vector{Float64}, Nothing},
+    control::GamControl)
+
+    n, p = size(X)
+    gamma = control.gamma
+
+    # Only free (non user-fixed) smoothing parameters are optimized
+    free_idx = findall(.!penalty.fixed)
+    n_sp = length(free_idx)
+
+    has_offset = any(!=(0.0), offset)
+    is_gaussian_identity = family isa Normal && link isa GLM.IdentityLink &&
+                           !has_offset
+    XtWX_cached = nothing
+    Xty_cached = nothing
+    if is_gaussian_identity
+        XtWX_cached = X' * Diagonal(weights) * X
+        Xty_cached = X' * (weights .* y)
+    end
+
+    S_total = zeros(p, p)
+    best_score = Ref(Inf)
+    best_sp = Ref(copy(penalty.sp))
+    prev_coef = Ref{Union{Nothing, Vector{Float64}}}(start)
+
+    function crit(log_sp_free)
+        lsp = copy(penalty.sp)
+        lsp[free_idx] .= clamp.(log_sp_free, -15.0, 15.0)
+        total_penalty!(S_total, penalty, lsp, p)
+        result = if is_gaussian_identity
+            pirls_gaussian(X, y, S_total, XtWX_cached, Xty_cached;
+                weights = weights)
+        else
+            pirls(X, y, S_total, family, link;
+                weights = weights, offset = offset, start = prev_coef[],
+                control = control)
+        end
+        edf = sum(result.edf_vec)
+        dev = result.deviance
+        score = if method == :GCV
+            n * dev / max(n - gamma * edf, 1e-3)^2
+        else  # :UBRE with known scale σ² = 1
+            dev / n + 2 * gamma * edf / n - 1.0
+        end
+        if score < best_score[]
+            best_score[] = score
+            best_sp[] = copy(lsp)
+        end
+        prev_coef[] = result.coefficients
+        return score
+    end
+
+    _nelder_mead!(crit, clamp.(penalty.sp[free_idx], -12.0, 12.0);
+        maxit = 200 * n_sp, ftol = 1e-9)
+
+    penalty.sp .= best_sp[]
+    total_penalty!(S_total, penalty, penalty.sp, p)
+    final_result = if is_gaussian_identity
+        pirls_gaussian(X, y, S_total, XtWX_cached, Xty_cached;
+            weights = weights)
+    else
+        pirls(X, y, S_total, family, link;
+            weights = weights, offset = offset, start = prev_coef[],
+            control = control)
+    end
+    if control.trace
+        println("$(method) optimization: score=$(best_score[]), " *
+                "sp=[$(join([@sprintf("%.4f", exp(s)) for s in penalty.sp], ", "))]")
+    end
+    return copy(penalty.sp), final_result, isfinite(best_score[]), 0
+end
+
+"""
+    _nelder_mead!(f, x0; maxit, ftol, step)
+
+Minimal Nelder–Mead simplex minimizer (no derivative information).
+Returns the best point found. Used for direct GCV/UBRE optimization, where
+each evaluation involves a P-IRLS refit, so the dimension is small.
+"""
+function _nelder_mead!(f, x0::Vector{Float64};
+    maxit::Int = 500, ftol::Float64 = 1e-9, step::Float64 = 1.0)
+
+    n = length(x0)
+    n == 0 && return x0
+    pts = [copy(x0)]
+    for i in 1:n
+        xi = copy(x0)
+        xi[i] += step
+        push!(pts, xi)
+    end
+    fv = [f(x) for x in pts]
+    alpha, gam_e, rho, sigma = 1.0, 2.0, 0.5, 0.5
+
+    for _ in 1:maxit
+        ord = sortperm(fv)
+        pts = pts[ord]
+        fv = fv[ord]
+
+        if abs(fv[end] - fv[1]) <= ftol * (abs(fv[1]) + ftol)
+            break
+        end
+
+        centroid = sum(pts[1:n]) ./ n
+        xr = centroid .+ alpha .* (centroid .- pts[end])
+        fr = f(xr)
+        if fr < fv[1]
+            xe = centroid .+ gam_e .* (centroid .- pts[end])
+            fe = f(xe)
+            if fe < fr
+                pts[end], fv[end] = xe, fe
+            else
+                pts[end], fv[end] = xr, fr
+            end
+        elseif fr < fv[n]
+            pts[end], fv[end] = xr, fr
+        else
+            xc = centroid .+ rho .* (pts[end] .- centroid)
+            fc = f(xc)
+            if fc < fv[end]
+                pts[end], fv[end] = xc, fc
+            else
+                for i in 2:(n + 1)
+                    pts[i] = pts[1] .+ sigma .* (pts[i] .- pts[1])
+                    fv[i] = f(pts[i])
+                end
+            end
+        end
+    end
+    ord = sortperm(fv)
+    return pts[ord[1]]
 end
 
 # ============================================================================
@@ -222,28 +415,91 @@ function _efs_sp_update(log_sp::Vector{Float64}, beta::Vector{Float64},
     sp_idx = 1
     for block in penalty.blocks
         idx = block.start:block.stop
-        beta_block = beta[idx]
+        beta_block = view(beta, idx)
+        Ainv_block = view(Ainv, idx, idx)
 
-        for Si in block.S
+        # The EFS numerator needs λⱼ·∂log|S_λ|₊/∂λⱼ = λⱼ·tr(S_λ⁺ Sⱼ).
+        # For a single-penalty block this equals the penalty rank; for
+        # multi-penalty blocks (tensor smooths) the per-penalty terms differ
+        # and must sum to the block rank — using block.rank for each margin
+        # systematically oversmooths.
+        ldet_derivs = _block_logdet_derivs(block, view(log_sp, sp_idx:(sp_idx + length(block.S) - 1)))
+
+        for (j, Si) in enumerate(block.S)
+            if penalty.fixed[sp_idx]
+                sp_idx += 1
+                continue
+            end
             λ = exp(log_sp[sp_idx])
-            rank_j = Float64(block.rank)
 
-            bSb = dot(beta_block, Si * beta_block)
-            Ainv_block = Ainv[idx, idx]
-            trVS = tr(Ainv_block * Si)
+            bSb = dot(beta_block, Si, beta_block)
+            # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(k²), not O(k³)
+            trVS = dot(Ainv_block, Si)
 
-            a = max(0.0, rank_j / λ - trVS)
+            a = ldet_derivs[j] / λ - trVS
 
-            if a > 0 && bSb > eps()
+            # Degeneracy threshold relative to ‖β_block‖² so the test is
+            # invariant to the response scale (an absolute eps() floor
+            # misfires when y — and hence β — lives on a tiny scale).
+            bSb_floor = eps() * max(sum(abs2, beta_block), eps())
+            if bSb <= bSb_floor || !isfinite(bSb)
+                # β̂ (numerically) in the null space of Sⱼ: the REML optimum
+                # sends λⱼ → ∞; take a bounded step toward the upper limit
+                # (mgcv's efsud pushes to the boundary) instead of freezing.
+                log_sp_new[sp_idx] = clamp(log_sp[sp_idx] + 5.0 * mult,
+                    -15.0, 15.0)
+            elseif a > 0
                 r = scale_est * a / bSb
                 log_sp_new[sp_idx] = clamp(
                     log_sp[sp_idx] + log(max(r, 1e-15)) * mult, -15.0, 15.0)
+            else
+                # a ≤ 0: the update target is on the λⱼ → 0 boundary; take a
+                # bounded downward step (the step-acceptance check in the
+                # caller rejects it if the criterion worsens).
+                log_sp_new[sp_idx] = clamp(log_sp[sp_idx] - 5.0 * mult,
+                    -15.0, 15.0)
             end
 
             sp_idx += 1
         end
     end
     return log_sp_new
+end
+
+"""
+    _block_logdet_derivs(block, log_sp_block) -> Vector{Float64}
+
+For one penalty block, return λⱼ·tr(S_λ⁺ Sⱼ) for each penalty Sⱼ, where
+S_λ = Σⱼ λⱼSⱼ over the block and ⁺ is the Moore–Penrose pseudo-inverse.
+These are the derivatives ∂log|S_λ|₊/∂log λⱼ and sum to rank(S_λ).
+For single-penalty blocks this is just `[block.rank]` (no eigen needed).
+"""
+function _block_logdet_derivs(block, log_sp_block)
+    nS = length(block.S)
+    nS == 1 && return [Float64(block.rank)]
+
+    k = block.stop - block.start + 1
+    S_block = zeros(k, k)
+    for (j, Si) in enumerate(block.S)
+        S_block .+= exp(log_sp_block[j]) .* Si
+    end
+    eg = eigen(Symmetric(S_block))
+    tol = max(maximum(abs, eg.values), eps()) * 1e-9
+    # S_λ⁺ = U diag(1/λᵢ; λᵢ>tol) U'
+    keep = eg.values .> tol
+    U = eg.vectors[:, keep]
+    invvals = 1.0 ./ eg.values[keep]
+    derivs = Vector{Float64}(undef, nS)
+    for (j, Si) in enumerate(block.S)
+        # tr(S_λ⁺ Sⱼ) = Σᵢ (uᵢ'Sⱼuᵢ)/λᵢ over kept eigenpairs
+        t = 0.0
+        SU = Si * U
+        @inbounds for (c, iv) in enumerate(invvals)
+            t += iv * dot(view(U, :, c), view(SU, :, c))
+        end
+        derivs[j] = exp(log_sp_block[j]) * t
+    end
+    return derivs
 end
 
 """
@@ -289,6 +545,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     family::ExtendedFamily, link::GLM.Link;
     method::Symbol = :REML,
     weights::Vector{Float64} = ones(length(y)),
+    offset::Vector{Float64} = zeros(length(y)),
     control::GamControl = gam_control(),
     start::Union{Vector{Float64}, Nothing} = nothing,
     Ain = nothing,
@@ -299,23 +556,49 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     n, p = size(X)
     n_sp = length(penalty.sp)
 
-    if n_sp == 0
-        S_total = zeros(p, p)
+    if method == :GCV || method == :UBRE
+        throw(ArgumentError(
+            "Extended families support method = :REML or :ML only " *
+            "(got :$method)"))
+    end
+
+    if n_sp == 0 || all(penalty.fixed)
+        S_total = total_penalty(penalty, penalty.sp, p)
         result = pirls_extended(X, y, S_total, family, link;
-            weights = weights, start = start, control = control,
+            weights = weights, offset = offset, start = start, control = control,
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
-        return penalty.sp, result
+        # With no free smoothing parameters there is no outer EFS loop to
+        # alternate with, so converge the family's extra parameter (NB θ,
+        # Tweedie p, Beta φ) here by alternating refits — pirls_extended's
+        # internal updates alone leave it under-converged.
+        if _has_extra_param(family)
+            # Refit first, then compare: pirls_extended re-estimates the
+            # extra parameter internally given the refreshed fit, so each
+            # cycle alternates β̂ and θ̂ until θ̂ is stationary across cycles.
+            for _ in 1:10
+                theta_old = _extra_param_value(family)
+                result = pirls_extended(X, y, S_total, family, link;
+                    weights = weights, offset = offset,
+                    start = result.coefficients, control = control,
+                    Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
+                abs(_extra_param_value(family) - theta_old) <=
+                    1e-4 * (abs(theta_old) + 1e-8) && break
+            end
+        end
+        return penalty.sp, result, true, 0
     end
 
     log_sp = copy(penalty.sp)
     prev_result = nothing
     prev_dev = Inf
+    outer_converged = false
+    outer_iters = 0
     Xw_buf = similar(X)
     A_buf = zeros(p, p)
     A_buf_copy = zeros(p, p)
     Ainv_buf = zeros(p, p)
     S_total = zeros(p, p)
-    penalty_buf = zeros(p)
+    XtWX_cur_buf = zeros(p, p)
     efs_mult = 1.0
 
     for outer_iter in 1:(control.outer_maxit)
@@ -323,19 +606,21 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
         pirls_start = prev_result === nothing ? start : prev_result.coefficients
         result = pirls_extended(X, y, S_total, family, link;
-            weights = weights, start = pirls_start, control = control,
+            weights = weights, offset = offset, start = pirls_start, control = control,
             Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
         if !result.converged && control.trace
             @warn "P-IRLS did not converge at outer iteration $outer_iter"
         end
 
+        outer_iters = outer_iter
         beta = result.coefficients
         w = result.working_weights
         dev = result.deviance
         edf_total = sum(result.edf_vec)
         if _needs_scale_estimate(family)
-            scale_est = max(result.pearson / max(n - edf_total, 1.0), 1e-10)
+            scale_est = max(result.pearson / max(n - edf_total, 1.0),
+                _scale_floor(y))
         else
             scale_est = 1.0
         end
@@ -343,7 +628,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         # Build A = X'WX + S and compute Ainv for EFS
         _build_XtWX_plus_S!(A_buf, X, w, S_total, p, n, Xw_buf)
         copyto!(A_buf_copy, A_buf)
-        A_chol = cholesky!(Symmetric(A_buf_copy))
+        A_chol = _protected_cholesky!(A_buf_copy)
         fill!(Ainv_buf, 0.0)
         @inbounds for i in 1:p
             Ainv_buf[i, i] = 1.0
@@ -356,33 +641,41 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             scale_est, efs_mult)
         max_change = maximum(abs.(log_sp_new .- log_sp))
 
-        # Step halving: use penalized deviance as criterion for extended families
+        # Step halving via the conditional REML criterion (β, W held fixed),
+        # as in the standard-family path: each halved step is re-checked, and
+        # halving stops as soon as the criterion no longer worsens.
+        # (ls = 0: extended-family deviance is already −2(ll − ll_sat).)
         if outer_iter > 1 && max_change > control.epsilon
-            bSb = 0.0
-            sp_idx = 1
-            for block in penalty.blocks
-                idx = block.start:block.stop
-                beta_block = beta[idx]
-                for Si in block.S
-                    bSb += exp(log_sp[sp_idx]) * dot(beta_block, Si * beta_block)
-                    sp_idx += 1
-                end
+            @inbounds for j in 1:p, k in 1:p
+                XtWX_cur_buf[j, k] = A_buf[j, k] - S_total[j, k]
             end
-            pdev_old = prev_dev + begin
-                mul!(penalty_buf, S_total, prev_result.coefficients)
-                dot(prev_result.coefficients, penalty_buf)
-            end
-            pdev_new = dev + bSb
+            reml_old = _conditional_reml(log_sp, XtWX_cur_buf, beta, dev,
+                penalty, scale_est, n, p, edf_total, method,
+                control.gamma, 0.0)
+            reml_new = _conditional_reml(log_sp_new, XtWX_cur_buf, beta, dev,
+                penalty, scale_est, n, p, edf_total, method,
+                control.gamma, 0.0)
 
-            if pdev_new > pdev_old + control.epsilon * abs(pdev_old)
+            if reml_new > reml_old + control.epsilon * abs(reml_old)
                 for _halve in 1:4
                     efs_mult *= 0.5
                     log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
                         scale_est, efs_mult)
+                    reml_new = _conditional_reml(log_sp_new, XtWX_cur_buf,
+                        beta, dev, penalty, scale_est, n, p, edf_total,
+                        method, control.gamma, 0.0)
+                    reml_new <= reml_old + control.epsilon * abs(reml_old) &&
+                        break
                 end
                 max_change = maximum(abs.(log_sp_new .- log_sp))
             else
                 efs_mult = min(1.0, efs_mult * 2.0)
+            end
+
+            # Score-based convergence, matching the standard-family path.
+            if abs(reml_new - reml_old) <
+               control.epsilon * (abs(reml_old) + 0.1)
+                max_change = 0.0
             end
         end
 
@@ -408,6 +701,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         dev_converged = outer_iter > 3 && max_change < 1e-4 &&
             prev_dev_change < control.epsilon * abs(dev)
         if sp_converged || dev_converged
+            outer_converged = true
             if control.trace
                 println("Outer iteration converged at iteration $outer_iter")
             end
@@ -419,16 +713,43 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     penalty.sp .= log_sp
     total_penalty!(S_total, penalty, log_sp, p)
     final_result = pirls_extended(X, y, S_total, family, link;
-        weights = weights, start = prev_result.coefficients,
+        weights = weights, offset = offset,
+        start = prev_result === nothing ? start : prev_result.coefficients,
         control = control,
         Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
-    return log_sp, final_result
+    return log_sp, final_result, outer_converged, outer_iters
 end
 
 # ============================================================================
 # Newton + autodiff smoothing parameter update
 # ============================================================================
+
+"""
+    _protected_cholesky_any(A) -> Cholesky
+
+Type-generic (ForwardDiff-compatible) counterpart of
+[`_protected_cholesky!`](@ref): Cholesky with an escalating ridge fallback
+for numerically indefinite `A` (e.g. saturated fits at λ boundaries).
+"""
+function _protected_cholesky_any(A::AbstractMatrix)
+    try
+        return cholesky(Symmetric(A))
+    catch e
+        e isa LinearAlgebra.PosDefException || rethrow()
+    end
+    p = size(A, 1)
+    ridge = max(tr(A) / p, one(eltype(A))) * 1e-10
+    for _ in 1:8
+        try
+            return cholesky(Symmetric(A + ridge * I))
+        catch e
+            e isa LinearAlgebra.PosDefException || rethrow()
+            ridge *= 100.0
+        end
+    end
+    throw(LinearAlgebra.PosDefException(1))
+end
 
 """
     _conditional_reml(log_sp, XtWX, beta, dev, penalty, scale_est, n, p,
@@ -455,14 +776,15 @@ function _conditional_reml(log_sp::AbstractVector, XtWX::Matrix{Float64},
         A[j, k] = XtWX[j, k] + S_total[j, k]
     end
 
-    A_chol = cholesky(Symmetric(A))
+    A_chol = _protected_cholesky_any(A)
     log_det_A = logdet(A_chol)
 
     # Log pseudo-determinant of penalty
     log_det_S = _log_penalty_det(penalty, log_sp)
 
-    # Penalty null space dimension
-    Mp = sum(b.stop - b.start + 1 - b.rank for b in penalty.blocks; init = 0)
+    # Null space dimension of the total penalty over ALL p coefficients
+    # (unpenalized parametric terms included, as in mgcv)
+    Mp = p - sum(b.rank for b in penalty.blocks; init = 0)
 
     # Penalized deviance
     penalty_contrib = zero(T)
@@ -475,6 +797,9 @@ function _conditional_reml(log_sp::AbstractVector, XtWX::Matrix{Float64},
 
     if method == :GCV
         denom = n - gamma * edf_total
+        # edf ≥ n/γ leaves the criterion undefined: return Inf so the
+        # candidate step is rejected instead of dividing by ~0.
+        denom <= 0 && return T(Inf)
         return T(n * dev / denom^2)
     end
 
@@ -536,6 +861,8 @@ function _newton_sp_update(log_sp::Vector{Float64},
     # Newton step: Δρ = -H⁻¹ g
     step = -(eh.vectors * Diagonal(1.0 ./ ev) * eh.vectors') * grad
     step .= clamp.(step, -5.0, 5.0)
+    # User-fixed smoothing parameters (sp=) do not move
+    step[penalty.fixed] .= 0.0
 
     log_sp_new = clamp.(log_sp .+ step, -15.0, 15.0)
 

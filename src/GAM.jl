@@ -51,7 +51,8 @@ using Tables
     CauchitLink, CloglogLink, SqrtLink
 
 import Base: show, size
-import StatsAPI: coef, coeftable, coefnames, confint, deviance, nulldeviance,
+import StatsAPI: coef, coeftable, coefnames, confint, cooksdistance, deviance,
+    leverage, nulldeviance,
     aic, aicc, bic, dof, dof_residual, loglikelihood, nobs, stderror, vcov, residuals,
     predict, fitted, fit, response, r2, adjr2
 import StatsModels: apply_schema, modelcols, schema, hasintercept
@@ -115,11 +116,14 @@ export
     penalty_matrix,
     null_space_dim,
     ConstructedSmooth,
+    lpmatrix,
 
     # Diagnostics
     edf,
     k_check,
     concurvity,
+    cooksdistance,
+    leverage,
     anova_gam,
     AnovaGamResult,
 
@@ -166,8 +170,6 @@ export
     param_coef,
     param_eta,
     nll_total,
-    nll_derivs!,
-    nll_obs,
 
     # GAMLSS families and interface
     DistFamily,
@@ -182,9 +184,6 @@ export
     gamlss,
     GamlssControl,
     gamlss_control,
-    gamlss_rs!,
-    gamlss_cg!,
-    mp_laml,
 
     # EGPD families
     EGPD1Family,
@@ -206,6 +205,20 @@ export
     QGamCheck,
     quantile_residuals,
 
+    # Nested effects (gamFactory-style)
+    gam_nl,
+    NestedControl,
+    nested_control,
+    s_nest,
+    trans_linear,
+    trans_nexpsm,
+    trans_mgks,
+    inner_coef,
+    NestedGamModel,
+    NestedBasis,
+    NestedTransform,
+    has_nested_effects,
+
     # Shape-constrained smooths (SCAM)
     MonoIncBasis,
     MonoDecBasis,
@@ -218,13 +231,13 @@ export
     scam,
     scam_control,
     ScamControl,
-    softplus,
     has_shape_constraints,
 
     # Gratia-like diagnostics & visualization
     smooth_estimates,
     SmoothEstimates,
     partial_residuals,
+    PartialResiduals,
     data_slice,
     derivatives,
     DerivativeEstimates,
@@ -247,8 +260,6 @@ export
     @gamm_formula,
     RandomEffectSpec,
     ConstructedRandomEffect,
-    construct_random_effect,
-    predict_re_matrix,
     ranef,
     VarCorr,
     VarCorrResult,
@@ -268,7 +279,6 @@ export
     gam_smooth,
     smooth_prior,
     smooth_predictive,
-    s2r_predict,
     pointwise_loglikelihood,
     psis_loo,
     pareto_k_diagnostic,
@@ -315,6 +325,7 @@ include("priors.jl")
 include("bayes_types.jl")
 include("gamlss.jl")
 include("gamlss_solvers.jl")
+include("nested.jl")
 include("gamfit.jl")
 include("gamm.jl")
 include("bam.jl")

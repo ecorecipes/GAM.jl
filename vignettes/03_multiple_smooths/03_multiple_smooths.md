@@ -84,12 +84,12 @@ first(df, 5)
 ## Fitting the model
 
 ``` julia
-m = gam(@formulak(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
+m = gam(@formula(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
 ```
 
     Generalized Additive Model
 
-    Formula: y ~ 1
+    Formula: y ~ :(s(x0)) + :(s(x1)) + :(s(x2)) + :(s(x3))
 
     Family: Normal
     Link:   IdentityLink
@@ -103,14 +103,14 @@ m = gam(@formulak(y ~ s(x0) + s(x1) + s(x2) + s(x3)), df)
     ──────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
-    ──────────────────────────────────────────────────
-    Smooth                    edf   Ref.df
-    ──────────────────────────────────────────────────
-    s(x0,bs=tp)              3.43        9
-    s(x1,bs=tp)              3.20        9
-    s(x2,bs=tp)              7.83        9
-    s(x3,bs=tp)              1.89        9
-    ──────────────────────────────────────────────────
+    ──────────────────────────────────────────────────────────────────
+    Smooth                    edf   Ref.df          F    p-value
+    ──────────────────────────────────────────────────────────────────
+    s(x0,bs=tp)              3.43     4.00      9.430  2.803e-07
+    s(x1,bs=tp)              3.20     4.00     67.246  4.656e-43
+    s(x2,bs=tp)              7.83     8.00     73.421  1.382e-72
+    s(x3,bs=tp)              1.89     2.00      3.212    0.04137
+    ──────────────────────────────────────────────────────────────────
 
     R² (adj) = 0.685   Deviance explained = 69.8%
     Scale est. = 4.4158   n = 400
@@ -150,7 +150,8 @@ for (i, e) in enumerate(edf(m))
     println("$(rpad(sm.spec.label, 12)) EDF = $(round(e; digits = 2))")
 end
 println("\nTotal model EDF: ", round(m.edf_total; digits = 2))
-println("Deviance explained: ", round(r2(m) * 100; digits = 1), "%")
+println("Deviance explained: ", round(GAM.deviance_explained(m) * 100; digits = 1), "%")
+println("R² (response scale): ", round(r2(m); digits = 3))
 ```
 
     s(x0,bs=tp)  EDF = 3.43
@@ -160,6 +161,7 @@ println("Deviance explained: ", round(r2(m) * 100; digits = 1), "%")
 
     Total model EDF: 17.35
     Deviance explained: 69.8%
+    R² (response scale): 0.698
 
 ## Plotting each smooth
 
@@ -202,7 +204,10 @@ plot(plots...; layout = (2, 2), size = (800, 600))
 ![](03_multiple_smooths_files/figure-commonmark/cell-7-output-1.svg)
 
 Note that $f_3(x_3) = 0$ (the null smooth), and the model should
-estimate it as approximately flat with an EDF close to 0–1.
+estimate it as approximately flat with a small EDF (near 1 — without
+`select=true` a smooth’s EDF cannot shrink below its unpenalized null
+space, so exact removal requires the double-penalty approach of
+`gam(...; select=true)`).
 
 ## Concurvity
 
@@ -212,17 +217,20 @@ to 1 indicate potential confounding.
 
 ``` julia
 conc = concurvity(m; full = true)
-println("Worst-case concurvity per smooth:")
+println("Concurvity per smooth (worst / observed / estimate):")
 for (i, sm) in enumerate(m.smooths)
-    println("  $(rpad(sm.spec.label, 10)) $(round(conc[i]; digits = 3))")
+    println("  $(rpad(sm.spec.label, 10)) ",
+        "$(round(conc.worst[i]; digits = 3)) / ",
+        "$(round(conc.observed[i]; digits = 3)) / ",
+        "$(round(conc.estimate[i]; digits = 3))")
 end
 ```
 
-    Worst-case concurvity per smooth:
-      s(x0,bs=tp) 0.128
-      s(x1,bs=tp) 0.139
-      s(x2,bs=tp) 0.132
-      s(x3,bs=tp) 0.168
+    Concurvity per smooth (worst / observed / estimate):
+      s(x0,bs=tp) 0.128 / 0.041 / 0.081
+      s(x1,bs=tp) 0.139 / 0.053 / 0.061
+      s(x2,bs=tp) 0.132 / 0.053 / 0.086
+      s(x3,bs=tp) 0.168 / 0.058 / 0.047
 
 Since our covariates are independent (uniform draws), concurvity should
 be low.
@@ -244,10 +252,17 @@ Does the basis dimension `k` matter? Let us refit with smaller and
 larger `k`:
 
 ``` julia
-for k_val in [5, 10, 20, 30]
-    mk = gam(GamFormula(:y, Symbol[], true, [s(:x0, k=k_val), s(:x1, k=k_val), s(:x2, k=k_val), s(:x3, k=k_val)]), df)
+k_models = Dict(
+    5 => gam(@formula(y ~ s(x0, k=5) + s(x1, k=5) + s(x2, k=5) + s(x3, k=5)), df),
+    10 => gam(@formula(y ~ s(x0, k=10) + s(x1, k=10) + s(x2, k=10) + s(x3, k=10)), df),
+    20 => gam(@formula(y ~ s(x0, k=20) + s(x1, k=20) + s(x2, k=20) + s(x3, k=20)), df),
+    30 => gam(@formula(y ~ s(x0, k=30) + s(x1, k=30) + s(x2, k=30) + s(x3, k=30)), df),
+)
+
+for k_val in sort(collect(keys(k_models)))
+    mk = k_models[k_val]
     edfs = round.(edf(mk); digits = 2)
-    dev = round(r2(mk) * 100; digits = 1)
+    dev = round(GAM.deviance_explained(mk) * 100; digits = 1)
     println("k=$k_val  EDF=$(edfs)  Dev.Expl=$(dev)%")
 end
 ```
@@ -255,7 +270,7 @@ end
     k=5  EDF=[3.01, 3.09, 3.98, 1.55]  Dev.Expl=67.5%
     k=10  EDF=[3.43, 3.2, 7.83, 1.89]  Dev.Expl=69.8%
     k=20  EDF=[3.45, 3.24, 9.72, 1.89]  Dev.Expl=70.1%
-    k=30  EDF=[3.46, 3.25, 10.14, 1.87]  Dev.Expl=70.2%
+    k=30  EDF=[3.46, 3.25, 10.14, 1.88]  Dev.Expl=70.2%
 
 As long as `k` is large enough to capture the true complexity, results
 are similar — the penalty takes care of the rest.

@@ -47,10 +47,18 @@ gam(formula, data;
 ```
 
 The preferred interface is ordinary `gam(...)` with SCAM basis types such as
-`bs=:mpi` or `bs=:cx`. The unified `gam(...)` surface reuses
-`gam_control(...)`; the legacy `scam(...)` wrapper remains available for
-compatibility and still accepts `scam_control(...)` for the SCAM-specific
-`not_exp` option.
+`bs=:mpi` or `bs=:cx`; that route uses `gam()`'s default `method=:REML`
+(EFS updates). The standalone `scam(...)` wrapper instead defaults to
+`method=:GCV` — full GCV criterion optimization, matching R's scam — and
+accepts `scam_control(...)` for SCAM-specific options. For GCV/UBRE fits the
+optimized criterion value is stored in `m.criterion` (and `m.reml` is `NaN`,
+since no REML score is computed).
+
+!!! note "Standard errors"
+    SCAM standard errors are conditional on the estimated smoothing
+    parameters and constraints; in simulations they can understate full-refit
+    variability (a parametric bootstrap gave reported-SE/empirical-sd ratios
+    around 0.6, similar to R's scam).
 
 ## Examples
 

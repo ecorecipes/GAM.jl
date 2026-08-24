@@ -20,6 +20,7 @@ makedocs(;
         "Formula Syntax" => "formulas.md",
         "Families & Models" => "families.md",
         "GAMLSS" => "gamlss.md",
+        "Nested Effects" => "nested.md",
         "Shape Constraints (SCAM)" => "scam.md",
         "Quantile Regression (QGAM)" => "qgam.md",
         "Extreme Values (evgam)" => "evgam.md",
@@ -28,6 +29,7 @@ makedocs(;
         "Bayesian Inference" => "bayesian.md",
         "Diagnostics" => "diagnostics.md",
         "Comparison with mgcv" => "mgcv.md",
+        "Vignettes" => "vignettes.md",
         "API Reference" => "api.md",
     ],
 )

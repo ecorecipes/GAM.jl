@@ -5,6 +5,7 @@ using Random
 using RCall
 using LinearAlgebra
 using Statistics: cor, mean
+using StableRNGs
 using GLM: LogLink
 
 @testset "Gratia R comparison" begin
@@ -221,5 +222,38 @@ using GLM: LogLink
         c = cor(se_jl.estimate, est_r)
         @test c > 0.95
         println("Poisson smooth_estimates correlation: $c")
+    end
+
+    @testset "appraise qq reference vs gratia qq_plot" begin
+        # GAM.jl standardizes qq residuals by sqrt(scale); gratia plots raw
+        # deviance residuals — multiply by sqrt(scale) to compare. Observed:
+        # sorted residuals match to 4.1e-6, the simulated reference sits on
+        # gratia's band midpoint to 0.07 (simulation noise), and 100% of
+        # residuals fall inside gratia's simulated band.
+        rng_q = StableRNG(2024)
+        n_q = 300
+        x_q = sort(rand(rng_q, n_q)) .* 4
+        y_q = 3.0 ./ (1.0 .+ exp.(-2.0 .* (x_q .- 2.0))) .+ 0.3 .* randn(rng_q, n_q)
+        df_q = DataFrame(x = x_q, y = y_q)
+        m_q = gam(GAM.@formulak(y ~ s(x, k = 10, bs = :cr)), df_q)
+        app_q = appraise(m_q; n_sim = 100, seed = 11)
+        @rput y_q x_q
+        RCall.reval("""
+        library(gratia)
+        dat_q <- data.frame(x = x_q, y = y_q)
+        m_qr <- mgcv::gam(y ~ s(x, k = 10, bs = "cr"), data = dat_q, method = "REML")
+        qqd <- qq_plot(m_qr, method = "simulate", n_simulate = 100, seed = 11)[["data"]]
+        res_qr <- qqd[["residuals"]]; th_qr <- qqd[["theoretical"]]
+        lo_qr <- qqd[["lower"]]; up_qr <- qqd[["upper"]]
+        """)
+        res_r = sort(rcopy(Vector{Float64}, R"res_qr"))
+        th_r = rcopy(Vector{Float64}, R"th_qr")
+        lo_r = rcopy(Vector{Float64}, R"lo_qr")
+        up_r = rcopy(Vector{Float64}, R"up_qr")
+        sfac = sqrt(m_q.scale)
+        @test maximum(abs.(app_q.qq_sample .* sfac .- res_r)) < 1e-4
+        @test maximum(abs.(app_q.qq_theoretical .* sfac .- (lo_r .+ up_r) ./ 2)) < 0.3
+        @test mean((app_q.qq_sample .* sfac .>= lo_r) .&
+                   (app_q.qq_sample .* sfac .<= up_r)) > 0.95
     end
 end

@@ -22,16 +22,33 @@ estimated smooth values, and standard errors for one or more smooth terms.
 
 # Fields
 - `smooth`: smooth label per row (e.g. `"s(x)"`)
-- `covariates`: `Dict{Symbol, Vector{Float64}}` of covariate grid values
+- `covariates`: `Dict{Symbol, Vector{Float64}}` of covariate grid values.
+  Each vector has one entry per table ROW (aligned with `estimate`); rows
+  belonging to smooths that do not use a given covariate hold `NaN`.
 - `estimate`: estimated smooth effect f̂(x)
 - `se`: pointwise standard error of the estimate
-- `by_values`: optional by-variable values
 """
 struct SmoothEstimates
     smooth::Vector{String}
     covariates::Dict{Symbol, Vector{Float64}}
     estimate::Vector{Float64}
     se::Vector{Float64}
+end
+
+"""
+    PartialResiduals
+
+Tabular result from [`partial_residuals`](@ref), in long format: one row per
+(smooth, observation). `smooth` is the smooth's label, `xname` the covariate
+name, `x` the covariate value, and `residual` the partial residual
+f̂ⱼ(xᵢ) + ε̂ᵢ (working residuals, link scale). Plots.jl recipes overlay the
+residuals as scatter panels per smooth.
+"""
+struct PartialResiduals
+    smooth::Vector{String}
+    xname::Vector{String}
+    x::Vector{Float64}
+    residual::Vector{Float64}
 end
 
 """
@@ -72,7 +89,9 @@ Diagnostic data from [`appraise`](@ref) for creating model checking plots.
 - `linear_predictor`: η values
 - `observed`: observed response y
 - `fitted`: fitted values μ̂
-- `qq_theoretical`: theoretical N(0,1) quantiles for QQ plot
+- `qq_theoretical`: reference quantiles for the QQ plot (simulated envelope
+  midpoints under `method = :simulate`, the default; theoretical N(0,1)
+  quantiles under `method = :normal`)
 - `qq_sample`: sorted standardized deviance residuals (divided by √scale)
 """
 struct AppraiseData
@@ -134,11 +153,19 @@ Evaluate estimated smooth terms on a grid of covariate values.
 - `n`: number of grid points per covariate
 - `data`: custom evaluation data (NamedTuple or Tables-compatible); if nothing,
   an evenly-spaced grid over the covariate range is generated
-- `unconditional`: if true, use unconditional covariance (currently same as Vp)
+- `unconditional`: NOT supported — no smoothing-parameter-corrected covariance
+  (mgcv's `Vc`) is computed by this package; passing `true` warns and uses `Vp`
 - `overall_uncertainty`: include uncertainty in the intercept
 
 # Returns
 A [`SmoothEstimates`](@ref) struct.
+
+# Example
+```julia
+m = gam(@formula(y ~ s(x, k = 10)), df)
+se = smooth_estimates(m; n = 200)
+se.estimate, se.se          # fitted smooth and pointwise SEs on the grid
+```
 """
 function smooth_estimates(m::GamModel;
     select = nothing,
@@ -148,13 +175,15 @@ function smooth_estimates(m::GamModel;
     overall_uncertainty::Bool = true,
 )
     smooth_indices = _resolve_smooth_select(m, select)
+    _warn_unconditional(unconditional)
 
     all_labels = String[]
     all_estimates = Float64[]
     all_se = Float64[]
-    all_covariates = Dict{Symbol, Vector{Float64}}()
+    # per-smooth covariate values, assembled into row-aligned vectors below
+    smooth_cov_vals = Vector{Tuple{Vector{Symbol}, Dict{Symbol, Vector{Float64}}, Int}}()
 
-    Vcov = unconditional ? m.Vp : m.Vp
+    Vcov = m.Vp
 
     for si in smooth_indices
         sm = m.smooths[si]
@@ -190,17 +219,35 @@ function smooth_estimates(m::GamModel;
         append!(all_estimates, f_hat)
         append!(all_se, se_vec)
 
+        cov_dict = Dict{Symbol, Vector{Float64}}()
         for v in vars
-            vals = Float64.(collect(Tables.getcolumn(eval_data, v)))
-            if haskey(all_covariates, v)
-                append!(all_covariates[v], vals)
-            else
-                all_covariates[v] = copy(vals)
-            end
+            cov_dict[v] = Float64.(collect(Tables.getcolumn(eval_data, v)))
         end
+        push!(smooth_cov_vals, (collect(vars), cov_dict, n_pts))
+    end
+
+    # Assemble ROW-ALIGNED covariate vectors: one entry per table row, NaN
+    # for rows whose smooth does not use that covariate (so masking by the
+    # `smooth` column always lines up)
+    n_total = length(all_estimates)
+    all_covariates = Dict{Symbol, Vector{Float64}}()
+    row0 = 0
+    for (vars, cov_dict, n_pts) in smooth_cov_vals
+        for v in vars
+            haskey(all_covariates, v) || (all_covariates[v] = fill(NaN, n_total))
+            all_covariates[v][(row0 + 1):(row0 + n_pts)] .= cov_dict[v]
+        end
+        row0 += n_pts
     end
 
     return SmoothEstimates(all_labels, all_covariates, all_estimates, all_se)
+end
+
+function _warn_unconditional(unconditional::Bool)
+    if unconditional
+        @warn "unconditional=true is not supported: GAM.jl does not compute a " *
+              "smoothing-parameter-corrected covariance (mgcv's Vc); using Vp" maxlog = 1
+    end
 end
 
 # ============================================================================
@@ -213,13 +260,32 @@ end
 Compute partial residuals for selected smooth terms.
 Partial residuals = f̂_j(x) + ε̂, where ε̂ are the working residuals.
 
-Returns a Dict mapping smooth labels to (x_values, partial_resid_values).
+Returns a [`PartialResiduals`](@ref) struct in long format (one row per
+smooth × observation), with a Plots.jl recipe for scatter overlays.
+
+# Example
+```julia
+pr = partial_residuals(m)
+mask = pr.smooth .== "s(x)"
+scatter(pr.x[mask], pr.residual[mask])   # overlay on smooth_estimates
+```
 """
 function partial_residuals(m::GamModel; select = nothing)
     smooth_indices = _resolve_smooth_select(m, select)
-    resid = m.y .- m.fitted_values  # response residuals
+    # WORKING residuals (y - μ)·dη/dμ — on the link scale, where the smooth
+    # term contributions live (matching mgcv/gratia)
+    n = length(m.y)
+    resid = Vector{Float64}(undef, n)
+    @inbounds for i in 1:n
+        dm = GLM.mueta(m.link, m.linear_predictor[i])
+        dm = abs(dm) < eps() ? eps() : dm
+        resid[i] = (m.y[i] - m.fitted_values[i]) / dm
+    end
 
-    result = Dict{String, Tuple{Vector{Float64}, Vector{Float64}}}()
+    labels = String[]
+    xnames = String[]
+    xs = Float64[]
+    residuals_out = Float64[]
     for si in smooth_indices
         sm = m.smooths[si]
         spec = sm.spec
@@ -233,9 +299,12 @@ function partial_residuals(m::GamModel; select = nothing)
         var = spec.term_vars[1]
         x_vals = Float64.(collect(Tables.getcolumn(Tables.columntable(
             _extract_original_data(m, sm)), var)))
-        result[spec.label] = (x_vals, partial_r)
+        append!(labels, fill(spec.label, n))
+        append!(xnames, fill(string(var), n))
+        append!(xs, x_vals)
+        append!(residuals_out, partial_r)
     end
-    return result
+    return PartialResiduals(labels, xnames, xs, residuals_out)
 end
 
 # ============================================================================
@@ -249,6 +318,12 @@ Create an evaluation grid for `var` with `n` points, holding all other
 covariates at their typical (median for numeric, mode for categorical) values.
 
 Additional keyword arguments fix specific covariate values.
+
+# Example
+```julia
+ds = data_slice(m; var = :x, n = 100)    # grid over x, other vars at medians
+predict(m, ds)
+```
 """
 function data_slice(m::GamModel; var::Symbol, n::Int = 100, kwargs...)
     sm = nothing
@@ -288,6 +363,12 @@ Compute derivatives of estimated smooth terms via finite differences.
 
 # Returns
 A [`DerivativeEstimates`](@ref) struct.
+
+# Example
+```julia
+d = derivatives(m; select = 1, order = 1, n = 200)
+d.derivative, d.lower, d.upper           # slope with 95% CI over d.x
+```
 """
 function derivatives(m::GamModel;
     select = nothing,
@@ -312,6 +393,9 @@ function derivatives(m::GamModel;
     all_x = Float64[]
     all_deriv = Float64[]
     all_se = Float64[]
+    # (finite-difference design matrix, coefficient index range) per smooth,
+    # kept for simulating simultaneous intervals
+    sim_blocks = Tuple{Matrix{Float64}, UnitRange{Int}}[]
 
     for si in smooth_indices
         sm = m.smooths[si]
@@ -324,23 +408,31 @@ function derivatives(m::GamModel;
 
         grid = _make_smooth_grid(m, sm, n)
         x_vals = Float64.(collect(Tables.getcolumn(grid, var)))
+        # Shift the boundary points inward so central/second differences never
+        # step outside the data range (basis extrapolation) — as gratia does
+        if length(x_vals) >= 2
+            x_vals[1] += eps
+            x_vals[end] -= eps
+            grid = merge(grid, NamedTuple{(var,)}((x_vals,)))
+        end
 
         if order == 1
-            d_hat, d_se = _fd_derivative_1(sm, grid, var, x_vals, beta_s, Vp_s, eps, type)
+            d_hat, d_se, dX = _fd_derivative_1(sm, grid, var, beta_s, Vp_s, eps, type)
         else
-            d_hat, d_se = _fd_derivative_2(sm, grid, var, x_vals, beta_s, Vp_s, eps, type)
+            d_hat, d_se, dX = _fd_derivative_2(sm, grid, var, beta_s, Vp_s, eps, type)
         end
 
         append!(all_labels, fill(spec.label, length(d_hat)))
         append!(all_x, x_vals)
         append!(all_deriv, d_hat)
         append!(all_se, d_se)
+        push!(sim_blocks, (dX, sm_idx))
     end
 
     # Confidence intervals
     if interval == :simultaneous && !isempty(all_deriv)
         rng = seed === nothing ? default_rng() : MersenneTwister(seed)
-        crit = _simultaneous_critical(all_se, Vcov, m, smooth_indices, n_sim, level, rng)
+        crit = _simultaneous_critical(sim_blocks, all_se, Vcov, n_sim, level, rng)
     else
         crit = dquantile(DNormal(), (1 + level) / 2)
     end
@@ -362,7 +454,16 @@ end
 Draw `n` samples from the posterior distribution of model coefficients
 β̃ ~ MVN(β̂, Vp).
 
+`unconditional=true` is NOT supported (no smoothing-parameter-corrected
+covariance is available); it warns and uses `Vp`.
+
 Returns an `n × p` matrix where each row is a posterior draw.
+
+# Example
+```julia
+ps = posterior_samples(m; n = 1000, seed = 1)   # draws from N(β̂, Vp)
+size(ps)                                        # (n_coef, 1000)
+```
 """
 function posterior_samples(m::GamModel;
     n::Int = 1000,
@@ -370,7 +471,8 @@ function posterior_samples(m::GamModel;
     unconditional::Bool = false,
 )
     rng = seed === nothing ? default_rng() : MersenneTwister(seed)
-    Vcov = unconditional ? m.Vp : m.Vp
+    _warn_unconditional(unconditional)
+    Vcov = m.Vp
     beta_hat = m.coefficients
     p = length(beta_hat)
 
@@ -398,6 +500,12 @@ computes Xβ̃ (on the link or response scale).
 
 # Returns
 An `n_obs × n_draws` matrix of fitted value draws.
+
+# Example
+```julia
+fs = fitted_samples(m; n = 100, seed = 1)   # posterior draws of μ̂
+mean(fs; dims = 2)
+```
 """
 function fitted_samples(m::GamModel;
     n::Int = 100,
@@ -435,6 +543,11 @@ Draw posterior samples of smooth functions evaluated on a grid.
 # Returns
 A Dict mapping smooth labels to `(x_grid, samples_matrix)` where
 `samples_matrix` is `n_grid × n_draws`.
+
+# Example
+```julia
+ss = smooth_samples(m; select = 1, n = 50)  # posterior draws of one smooth
+```
 """
 function smooth_samples(m::GamModel;
     select = nothing,
@@ -472,6 +585,11 @@ Draw posterior predictive samples (fitted values + observation noise).
 
 # Returns
 An `n_obs × n_draws` matrix of predicted values.
+
+# Example
+```julia
+ys = predicted_samples(m; n = 100, seed = 1)  # new-response draws
+```
 """
 function predicted_samples(m::GamModel;
     n::Int = 100,
@@ -496,16 +614,35 @@ end
 # ============================================================================
 
 """
-    appraise(m::GamModel; type=:deviance, seed=nothing)
+    appraise(m::GamModel; type=:deviance, method=:simulate, n_sim=50, seed=nothing)
 
 Compute model diagnostic data for standard residual checking plots:
 QQ plot, residuals vs linear predictor, histogram of residuals,
 and observed vs fitted.
 
+`type` selects the residuals used for the QQ panel: `:deviance` (default),
+`:pearson`, or `:response`. `method` selects the QQ reference quantiles:
+`:simulate` (default, matching gratia) simulates `n_sim` response sets from
+the fitted model and uses the mean of the sorted simulated residuals as the
+reference; `:normal` uses normal-theory quantiles. Simulation is available
+for Normal, Poisson, Bernoulli/Binomial, Gamma, NegBin, and the quasi
+families; other families require `method=:normal`.
+
 Returns an [`AppraiseData`](@ref) struct.
+
+# Example
+```julia
+ad = appraise(m)                       # simulated reference bands (default)
+ad = appraise(m; method = :normal)     # normal-theory reference
+plot(ad)                               # with Plots.jl loaded
+```
 """
-function appraise(m::GamModel; type::Symbol = :deviance, seed = nothing)
-    rng = seed === nothing ? default_rng() : MersenneTwister(seed)
+function appraise(m::GamModel; type::Symbol = :deviance,
+    method::Symbol = :simulate, n_sim::Int = 50, seed = nothing)
+    type in (:deviance, :pearson, :response) || throw(ArgumentError(
+        "type must be :deviance, :pearson, or :response, got :$type"))
+    method in (:simulate, :normal) || throw(ArgumentError(
+        "method must be :simulate or :normal, got :$method"))
 
     dev_resid = residuals(m; type = :deviance)
     prs_resid = residuals(m; type = :pearson)
@@ -513,24 +650,68 @@ function appraise(m::GamModel; type::Symbol = :deviance, seed = nothing)
     y = m.y
     mu = m.fitted_values
 
-    # QQ plot data — standardized deviance residuals vs normal quantiles
-    # Divide by sqrt(scale) so that well-specified models show points on y=x
-    n = length(dev_resid)
+    # QQ plot data — standardized residuals of the requested type. Divide by
+    # sqrt(scale) so that well-specified models show points on y=x
+    qq_resid = type == :deviance ? dev_resid :
+               type == :pearson ? prs_resid :
+               residuals(m; type = :response)
+    n = length(qq_resid)
     sc = max(m.scale, eps())
-    sorted = sort(dev_resid ./ sqrt(sc))
-    theoretical = [dquantile(DNormal(), (i - 0.5) / n) for i in 1:n]
+    sorted = sort(qq_resid ./ sqrt(sc))
+
+    if method == :simulate
+        _appraise_can_simulate(m.family) || throw(ArgumentError(
+            "appraise(method=:simulate) does not support $(nameof(typeof(m.family))); " *
+            "use method=:normal"))
+        rng = seed === nothing ? default_rng() : MersenneTwister(seed)
+        # Reference quantiles: mean of sorted simulated standardized
+        # residuals under the fitted model (mgcv qq.gam / gratia convention)
+        acc = zeros(n)
+        ysim = Vector{Float64}(undef, n)
+        wt = m.weights
+        for _ in 1:n_sim
+            @inbounds for i in 1:n
+                ysim[i] = _random_from_family(rng, m.family, mu[i], m.scale)
+            end
+            r = type == :deviance ? _deviance_residuals(m.family, ysim, mu, wt) :
+                type == :pearson ?
+                sqrt.(wt) .* (ysim .- mu) ./ sqrt.(max.(_variance(m.family, mu), eps())) :
+                ysim .- mu
+            acc .+= sort(r ./ sqrt(sc))
+        end
+        theoretical = acc ./ n_sim
+    else
+        theoretical = [dquantile(DNormal(), (i - 0.5) / n) for i in 1:n]
+    end
 
     return AppraiseData(dev_resid, prs_resid, eta, y, mu, theoretical, sorted)
 end
 
+"""Families for which `appraise(method=:simulate)` can draw responses."""
+_appraise_can_simulate(family) =
+    family isa Union{Normal, Poisson, Bernoulli, Binomial, Gamma,
+        NegBinFamily, QuasiPoissonFamily, QuasiBinomialFamily}
+
 """
     rootogram(m::GamModel; max_count=nothing)
 
-Compute rootogram data for count models (Poisson, Negative Binomial).
+Compute rootogram data for count models (Poisson, quasi-Poisson,
+Negative Binomial). Other families throw an `ArgumentError`.
 
 Returns a [`RootogramData`](@ref) struct.
+
+# Example
+```julia
+m = gam(@formula(y ~ s(x)), df, Poisson())
+rg = rootogram(m)
+rg.observed, rg.expected
+```
 """
 function rootogram(m::GamModel; max_count = nothing)
+    (m.family isa Poisson || m.family isa QuasiPoissonFamily ||
+     m.family isa NegBinFamily) || throw(ArgumentError(
+        "rootogram supports count families (Poisson, quasi-Poisson, NegBin); " *
+        "got $(typeof(m.family))"))
     y_int = round.(Int, m.y)
     mu = m.fitted_values
 
@@ -572,6 +753,11 @@ end
 
 Overall effective degrees of freedom of the model (sum of all smooth EDFs
 plus parametric terms).
+
+# Example
+```julia
+model_edf(m)     # total effective degrees of freedom
+```
 """
 model_edf(m::GamModel) = m.edf_total
 
@@ -582,6 +768,11 @@ Tidy summary table of all smooth terms, their types, dimensions,
 basis sizes, and effective degrees of freedom.
 
 Returns an [`OverviewTable`](@ref) struct.
+
+# Example
+```julia
+overview(m)      # per-smooth basis, k, EDF, and EDF/k table
+```
 """
 function overview(m::GamModel)
     labels = String[]
@@ -623,6 +814,12 @@ end
 function Base.show(io::IO, de::DerivativeEstimates)
     unique_smooths = unique(de.smooth)
     println(io, "DerivativeEstimates (order=$(de.order), type=$(de.type)): $(length(unique_smooths)) smooth(s)")
+end
+
+function Base.show(io::IO, pr::PartialResiduals)
+    n_smooth = length(unique(pr.smooth))
+    println(io, "PartialResiduals: $(length(pr.residual)) rows across $n_smooth smooth(s)")
+    print(io, "  smooths: ", join(unique(pr.smooth), ", "))
 end
 
 function Base.show(io::IO, ad::AppraiseData)
@@ -721,12 +918,9 @@ function _get_covariate_from_model(m::GamModel, sm::ConstructedSmooth, varname::
             return Float64.(collect(Tables.getcolumn(ct, varname)))
         end
     end
-    # Fallback: use column of X with highest variance as proxy
-    sm_idx = sm.first_para:sm.last_para
-    X_s = m.X[:, sm_idx]
-    col_vars = [Statistics.var(c) for c in eachcol(X_s)]
-    _, col = findmax(col_vars)
-    return X_s[:, col]
+    throw(ArgumentError(
+        "Covariate :$varname for smooth $(sm.spec.label) is not available in " *
+        "the model's stored data — supply the evaluation data explicitly"))
 end
 
 """Extract original data for a smooth's covariates."""
@@ -745,101 +939,78 @@ function _build_prediction_matrix(m::GamModel, newdata)
     return _gam_prediction_matrix(m, newdata)
 end
 
-"""First-order finite difference derivative."""
-function _fd_derivative_1(sm, grid, var, x_vals, beta_s, Vp_s, eps, type)
-    n = length(x_vals)
-    d_hat = Vector{Float64}(undef, n)
-    d_se = Vector{Float64}(undef, n)
-
-    for i in 1:n
-        if type == :forward
-            g_plus = _shifted_grid(grid, var, i, eps)
-            X_plus = predict_matrix(sm, g_plus)
-            X_base = predict_matrix(sm, _point_grid(grid, i))
-            dX = (X_plus .- X_base) ./ eps
-        elseif type == :backward
-            g_minus = _shifted_grid(grid, var, i, -eps)
-            X_base = predict_matrix(sm, _point_grid(grid, i))
-            X_minus = predict_matrix(sm, g_minus)
-            dX = (X_base .- X_minus) ./ eps
-        else  # central
-            g_plus = _shifted_grid(grid, var, i, eps)
-            g_minus = _shifted_grid(grid, var, i, -eps)
-            X_plus = predict_matrix(sm, g_plus)
-            X_minus = predict_matrix(sm, g_minus)
-            dX = (X_plus .- X_minus) ./ (2 * eps)
-        end
-
-        d_hat[i] = (dX * beta_s)[1]
-        d_se[i] = sqrt(max((dX * Vp_s * dX')[1], 0.0))
+"""First-order finite difference derivative (whole grid in one basis call)."""
+function _fd_derivative_1(sm, grid, var, beta_s, Vp_s, eps, type)
+    if type == :forward
+        X_plus = predict_matrix(sm, _shifted_grid_all(grid, var, eps))
+        X_base = predict_matrix(sm, grid)
+        dX = (X_plus .- X_base) ./ eps
+    elseif type == :backward
+        X_base = predict_matrix(sm, grid)
+        X_minus = predict_matrix(sm, _shifted_grid_all(grid, var, -eps))
+        dX = (X_base .- X_minus) ./ eps
+    else  # central
+        X_plus = predict_matrix(sm, _shifted_grid_all(grid, var, eps))
+        X_minus = predict_matrix(sm, _shifted_grid_all(grid, var, -eps))
+        dX = (X_plus .- X_minus) ./ (2 * eps)
     end
-    return d_hat, d_se
+
+    d_hat = dX * beta_s
+    d_se = sqrt.(max.(vec(sum((dX * Vp_s) .* dX; dims = 2)), 0.0))
+    return d_hat, d_se, dX
 end
 
-"""Second-order finite difference derivative."""
-function _fd_derivative_2(sm, grid, var, x_vals, beta_s, Vp_s, eps, type)
-    n = length(x_vals)
-    d_hat = Vector{Float64}(undef, n)
-    d_se = Vector{Float64}(undef, n)
+"""Second-order finite difference derivative (whole grid in one basis call)."""
+function _fd_derivative_2(sm, grid, var, beta_s, Vp_s, eps, type)
+    X_plus = predict_matrix(sm, _shifted_grid_all(grid, var, eps))
+    X_minus = predict_matrix(sm, _shifted_grid_all(grid, var, -eps))
+    X_base = predict_matrix(sm, grid)
+    dX = (X_plus .- 2 .* X_base .+ X_minus) ./ (eps^2)
 
-    for i in 1:n
-        g_plus = _shifted_grid(grid, var, i, eps)
-        g_minus = _shifted_grid(grid, var, i, -eps)
-        g_base = _point_grid(grid, i)
-        X_plus = predict_matrix(sm, g_plus)
-        X_minus = predict_matrix(sm, g_minus)
-        X_base = predict_matrix(sm, g_base)
-        dX = (X_plus .- 2 .* X_base .+ X_minus) ./ (eps^2)
-
-        d_hat[i] = (dX * beta_s)[1]
-        d_se[i] = sqrt(max((dX * Vp_s * dX')[1], 0.0))
-    end
-    return d_hat, d_se
+    d_hat = dX * beta_s
+    d_se = sqrt.(max.(vec(sum((dX * Vp_s) .* dX; dims = 2)), 0.0))
+    return d_hat, d_se, dX
 end
 
-"""Create a single-row grid shifted in one variable."""
-function _shifted_grid(grid, var, idx, shift)
-    result = Dict{Symbol, Vector{Float64}}()
-    for (k, v) in pairs(grid)
-        if k == var
-            result[k] = [v[idx] + shift]
-        else
-            result[k] = [v[idx]]
-        end
-    end
+"""Copy of `grid` with the column `var` shifted by `shift` (all rows at once)."""
+function _shifted_grid_all(grid, var, shift)
     keys_tuple = Tuple(keys(grid))
-    return NamedTuple{keys_tuple}(Tuple(result[k] for k in keys_tuple))
+    return NamedTuple{keys_tuple}(Tuple(
+        k == var ? grid[k] .+ shift : grid[k] for k in keys_tuple))
 end
 
-"""Create a single-row grid at the i-th point."""
-function _point_grid(grid, idx)
-    result = Dict{Symbol, Vector{Float64}}()
-    for (k, v) in pairs(grid)
-        result[k] = [v[idx]]
-    end
-    keys_tuple = Tuple(keys(grid))
-    return NamedTuple{keys_tuple}(Tuple(result[k] for k in keys_tuple))
-end
-
-"""Critical value for simultaneous confidence intervals via MVN simulation."""
-function _simultaneous_critical(se_vec, Vcov, m, smooth_indices, n_sim, level, rng)
-    # Simulate the max |derivative / se| distribution
-    # For simplicity, use the standard normal approximation with Bonferroni-like correction
-    n_tests = length(se_vec)
-    p = length(m.coefficients)
-    Vp_sym = Symmetric(Vcov)
+"""
+Critical value for simultaneous confidence intervals via MVN simulation
+(Ruppert–Wand–Carroll): draw b ~ MVN(0, Vp), form the derivative draws
+through the stored finite-difference matrices, and take the `level`
+quantile of maxᵢ |dᵢ| / seᵢ over the whole grid.
+"""
+function _simultaneous_critical(sim_blocks, se_all, Vcov, n_sim, level, rng)
+    p = size(Vcov, 1)
+    Vp_sym = Symmetric(Matrix(Vcov))
     eig = eigen(Vp_sym)
     eig_vals = max.(eig.values, 0.0)
     L = eig.vectors * Diagonal(sqrt.(eig_vals))
 
-    # We need to transform coefficient draws to derivative draws.
-    # Since this is complex (need the finite difference matrices), we use a
-    # conservative quantile correction based on the number of simultaneous tests.
-    # This is equivalent to the Šidák correction: α_adj = 1 - (1-α)^(1/n_tests)
-    alpha = 1 - level
-    alpha_adj = 1 - (1 - alpha)^(1 / n_tests)
-    crit = dquantile(DNormal(), 1 - alpha_adj / 2)
-    return crit
+    max_t = Vector{Float64}(undef, n_sim)
+    z = Vector{Float64}(undef, p)
+    b = Vector{Float64}(undef, p)
+    for s in 1:n_sim
+        randn!(rng, z)
+        mul!(b, L, z)
+        t = 0.0
+        pos = 0
+        for (dX, idxr) in sim_blocks
+            db = dX * view(b, idxr)
+            @inbounds for i in eachindex(db)
+                pos += 1
+                sei = max(se_all[pos], eps())
+                t = max(t, abs(db[i]) / sei)
+            end
+        end
+        max_t[s] = t
+    end
+    return quantile(max_t, level)
 end
 
 """Generate a random observation from the model family."""
@@ -849,9 +1020,13 @@ function _random_from_family(rng::AbstractRNG, family, mu, scale)
     elseif family isa Poisson || family isa QuasiPoissonFamily
         lam = max(mu, 1e-10)
         return Float64(rand(rng, DPoisson(lam)))
-    elseif family isa Binomial || family isa QuasiBinomialFamily
+    elseif family isa Bernoulli || family isa Binomial || family isa QuasiBinomialFamily
         p = clamp(mu, 1e-10, 1 - 1e-10)
         return Float64(rand(rng) < p)
+    elseif family isa NegBinFamily
+        theta = family.theta
+        p_nb = theta / (theta + max(mu, 1e-10))
+        return Float64(rand(rng, DNegBin(theta, p_nb)))
     elseif family isa Gamma
         shape = 1.0 / scale
         sc = mu / shape
@@ -881,3 +1056,30 @@ function _short_type_name(full_name::String)
     m = match(r"(\w+)$", full_name)
     m === nothing ? full_name : m.captures[1]
 end
+
+# ============================================================================
+# Tables.jl interface — diagnostics results as column tables
+# ============================================================================
+# The long-format result structs are directly consumable by DataFrame(...) and
+# any Tables.jl sink. Scalar metadata fields (e.g. DerivativeEstimates.order)
+# are not columns.
+
+Tables.istable(::Type{PartialResiduals}) = true
+Tables.columnaccess(::Type{PartialResiduals}) = true
+Tables.columns(pr::PartialResiduals) =
+    (smooth = pr.smooth, xname = pr.xname, x = pr.x, residual = pr.residual)
+
+Tables.istable(::Type{SmoothEstimates}) = true
+Tables.columnaccess(::Type{SmoothEstimates}) = true
+function Tables.columns(se::SmoothEstimates)
+    cov_syms = sort(collect(keys(se.covariates)))
+    names = (:smooth, cov_syms..., :estimate, :se)
+    vals = (se.smooth, (se.covariates[v] for v in cov_syms)..., se.estimate, se.se)
+    return NamedTuple{names}(vals)
+end
+
+Tables.istable(::Type{DerivativeEstimates}) = true
+Tables.columnaccess(::Type{DerivativeEstimates}) = true
+Tables.columns(d::DerivativeEstimates) =
+    (smooth = d.smooth, x = d.x, derivative = d.derivative,
+     se = d.se, lower = d.lower, upper = d.upper)

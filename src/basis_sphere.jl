@@ -4,23 +4,32 @@
 # basis built from the TPS-like kernel η(d) = d^(2m-2) log(d).
 # Default penalty order m=2 gives η(d) = d² log(d).
 #
-# Reference: mgcv smooth.r lines 2990-3112 (Sos.smooth.construct)
+# NOTE: this is an APPROXIMATION of mgcv's bs="sos". mgcv uses Wahba's
+# spherical-spline reproducing kernels; here the PLANAR thin-plate kernel is
+# applied to great-circle distances. That kernel is not positive definite on
+# the sphere, so eigenpairs with non-positive eigenvalues are discarded
+# (reducing the effective basis dimension) to keep the basis/penalty pair
+# consistent and the penalty positive semi-definite. Fits will differ from
+# mgcv's sos.
 #
 # Algorithm:
 #   1. Input: latitude (radians) and longitude (radians)
 #   2. Compute pairwise geodesic distances via great-circle formula
 #   3. Build radial basis R_ij = η(d_ij)
-#   4. Eigendecompose R → top k eigenvectors as basis
+#   4. Eigendecompose R → top k POSITIVE eigenpairs as basis
 #   5. Penalty D = diag(1/eigenvalues)
 #   6. Null space: constant (null_dim = 1)
 
-"""Spline on the sphere basis (mgcv `bs=\"sos\"`)."""
+"""
+Spline on the sphere basis (registered as `bs=:sos`).
+
+Approximates mgcv's `bs="sos"` by applying the planar TPS kernel to
+great-circle distances (see the file header note); results differ from
+mgcv's Wahba-kernel construction.
+"""
 struct SphericalSpline <: AbstractBasisType end
 
 BASIS_TYPES[:sos] = SphericalSpline()
-
-# Module-level storage for prediction metadata
-const _SOS_INFO = Dict{UInt, Dict{Symbol, Any}}()
 
 """
     _geodesic_distance(lat1, lon1, lat2, lon2) -> Float64
@@ -127,14 +136,24 @@ function _smooth_construct(::SphericalSpline, spec::SmoothSpec, data, user_knots
     R = _sos_kernel_matrix(D_kk, m_order)
     R = (R + R') / 2  # ensure symmetry
 
-    # Eigendecompose
+    # Eigendecompose. The planar kernel is not positive definite on the
+    # sphere, so keep only strictly POSITIVE eigenpairs: this makes the
+    # penalty diag(1/λ) PSD and sign-consistent with the (signed) Nystrom
+    # projection. If fewer than k positive eigenpairs exist, the basis
+    # dimension is reduced accordingly.
     eig = eigen(Symmetric(R))
-    # Sort by absolute eigenvalue descending (like TPRS)
-    idx = sortperm(abs.(eig.values); rev=true)
+    idx_pos = findall(eig.values .> eps() * maximum(abs.(eig.values)))
+    idx_sorted = idx_pos[sortperm(eig.values[idx_pos]; rev=true)]
+    if length(idx_sorted) < k
+        @warn "sos smooth: only $(length(idx_sorted)) positive kernel " *
+              "eigenvalues available; reducing basis dimension from k=$k"
+        k = length(idx_sorted)
+    end
+    k >= 2 || throw(ArgumentError("sos smooth: too few positive kernel " *
+        "eigenvalues to build a basis"))
 
-    # Select top k eigenpairs
-    U_k = eig.vectors[:, idx[1:k]]
-    λ_k = eig.values[idx[1:k]]
+    U_k = eig.vectors[:, idx_sorted[1:k]]
+    λ_k = eig.values[idx_sorted[1:k]]
 
     # Build basis matrix
     if nk < n
@@ -143,15 +162,15 @@ function _smooth_construct(::SphericalSpline, spec::SmoothSpec, data, user_knots
         R_nk = _sos_kernel_matrix(D_nk, m_order)
         # Nystrom: U_data ≈ R_nk * U_k * diag(1/λ_k)
         # Basis X_eig = U_data (scaled so penalty is simple)
-        inv_λ = [abs(λ) > eps() ? 1.0 / λ : 0.0 for λ in λ_k]
+        inv_λ = 1.0 ./ λ_k
         X_eig = R_nk * U_k * Diagonal(inv_λ)
     else
         X_eig = U_k
     end
 
-    # Build penalty: D = diag(1/|eigenvalues|) for selected eigenvectors
-    # Larger eigenvalues → less penalized (smoother components)
-    pen_diag = [abs(λ) > eps() ? 1.0 / abs(λ) : 0.0 for λ in λ_k]
+    # Penalty: D = diag(1/λ) for the selected (positive) eigenpairs.
+    # Larger eigenvalues → less penalized (smoother components).
+    pen_diag = 1.0 ./ λ_k
     S_pen = Diagonal(pen_diag) |> Matrix{Float64}
 
     # Null space: constant function on sphere (null_dim = 1)
@@ -178,16 +197,10 @@ function _smooth_construct(::SphericalSpline, spec::SmoothSpec, data, user_knots
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
-    )
-
-    # Store prediction metadata
-    _SOS_INFO[objectid(sm)] = Dict{Symbol, Any}(
-        :lat_k => lat_k,
-        :lon_k => lon_k,
-        :U_k => U_k,
-        :lambda_k => λ_k,
-        :m_order => m_order,
-        :k => k,
+        predict_cache = SOSPredictCache(
+            Float64.(lat_k), Float64.(lon_k), Matrix{Float64}(U_k),
+            Float64.(λ_k), m_order, k,
+        ),
     )
 
     return sm
@@ -201,16 +214,16 @@ function _predict_matrix(::SphericalSpline, smooth::ConstructedSmooth, newdata)
     lon_new = Float64.(Tables.getcolumn(newdata, lon_var))
     n_new = length(lat_new)
 
-    info = get(_SOS_INFO, objectid(smooth), nothing)
-    info !== nothing ||
+    info = smooth.predict_cache
+    info isa SOSPredictCache ||
         throw(ArgumentError("Cannot find spherical spline metadata for prediction"))
 
-    lat_k = info[:lat_k]
-    lon_k = info[:lon_k]
-    U_k = info[:U_k]
-    λ_k = info[:lambda_k]
-    m_order = info[:m_order]
-    k = info[:k]
+    lat_k = info.lat_k
+    lon_k = info.lon_k
+    U_k = info.U_k
+    λ_k = info.lambda_k
+    m_order = info.m_order
+    k = info.k
 
     # Compute distances from new points to knots
     D_new = _geodesic_distance_matrix(lat_new, lon_new, lat_k, lon_k)

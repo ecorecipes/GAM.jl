@@ -3,7 +3,6 @@ module GAMPlotsExt
 using GAM
 using Plots: @recipe, @series
 using LinearAlgebra: diag
-using Statistics: var as svar
 
 # ─── Smooth effect plot recipe ───────────────────────────────────────────────
 
@@ -63,8 +62,16 @@ using Statistics: var as svar
                 markercolor --> :gray40
                 markerstrokewidth --> 0
 
+                # WORKING residuals (y-μ)·dη/dμ, so residuals live on the
+                # link scale like the smooth term itself
                 f_vals = X_col * beta_s
-                partial_resid = f_vals .+ (m.y .- m.fitted_values)
+                wresid = similar(m.y)
+                for i in eachindex(m.y)
+                    dm = GAM.GLM.mueta(m.link, m.linear_predictor[i])
+                    dm = abs(dm) < eps() ? eps() : dm
+                    wresid[i] = (m.y[i] - m.fitted_values[i]) / dm
+                end
+                partial_resid = f_vals .+ wresid
                 x_orig, partial_resid
             end
         end
@@ -91,12 +98,52 @@ end
     sm_idx = sm.first_para:sm.last_para
     beta_s = m.coefficients[sm_idx]
 
+    # Evaluate the smooth surface on a grid over the two covariates
+    n_grid = 50
+    x1_orig = _extract_var(m, var1)
+    x2_orig = _extract_var(m, var2)
+    x1_grid = collect(range(extrema(x1_orig)...; length = n_grid))
+    x2_grid = collect(range(extrema(x2_orig)...; length = n_grid))
+    # x1 varies fastest (column-major fill of Z)
+    x1_full = repeat(x1_grid, n_grid)
+    x2_full = repeat(x2_grid; inner = n_grid)
+    newdata = NamedTuple{(var1, var2)}((x1_full, x2_full))
+    f_hat = GAM.predict_matrix(sm, newdata) * beta_s
+    Z = reshape(f_hat, n_grid, n_grid)  # rows: x1, cols: x2
+
     seriestype --> :contourf
     xguide --> string(var1)
     yguide --> string(var2)
     title --> "$(spec.label), edf=$(round(m.edf[gcp.select]; digits=1))"
     colorbar_title --> "Effect"
     fillalpha --> 0.8
+    # Plots' contour expects z[j, i] over (x[i], y[j]): transpose so rows
+    # index x2 (y-axis) and columns index x1 (x-axis)
+    x1_grid, x2_grid, Z'
+end
+
+# ─── PartialResiduals recipe ────────────────────────────────────────────────
+
+@recipe function f(pr::GAM.PartialResiduals)
+    unique_smooths = unique(pr.smooth)
+    n_panels = length(unique_smooths)
+
+    layout --> (1, n_panels)
+    legend --> false
+
+    for (panel, label) in enumerate(unique_smooths)
+        mask = pr.smooth .== label
+        @series begin
+            subplot := panel
+            seriestype := :scatter
+            markersize --> 2
+            markeralpha --> 0.5
+            title --> label
+            xguide --> first(pr.xname[mask])
+            yguide --> "partial residual"
+            pr.x[mask], pr.residual[mask]
+        end
+    end
 end
 
 # ─── SmoothEstimates recipe ─────────────────────────────────────────────────
@@ -113,12 +160,15 @@ end
         est = se.estimate[mask]
         se_vals = se.se[mask]
 
-        # Find the first covariate that has values for this smooth
+        # Covariate vectors are row-aligned with the estimates table (NaN
+        # for rows whose smooth does not use that covariate) — pick the
+        # first covariate fully populated for this smooth's rows
         x_vals = nothing
         x_name = ""
         for (k, v) in se.covariates
-            if length(v) >= length(est)
-                x_vals = v[mask]
+            vals = v[mask]
+            if length(vals) == length(est) && !any(isnan, vals)
+                x_vals = vals
                 x_name = string(k)
                 break
             end
@@ -294,19 +344,17 @@ end
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function _extract_x(m::GAM.GamModel, sm::GAM.ConstructedSmooth)
-    # Use stored data if available
-    varname = sm.spec.term_vars[1]
+    return _extract_var(m, sm.spec.term_vars[1])
+end
+
+function _extract_var(m::GAM.GamModel, varname::Symbol)
     if m.data !== nothing
         ct = GAM.Tables.columntable(m.data)
         if varname in GAM.Tables.columnnames(ct)
             return Float64.(collect(GAM.Tables.getcolumn(ct, varname)))
         end
     end
-    # Fallback: column with highest variance
-    sm_idx = sm.first_para:sm.last_para
-    X_s = m.X[:, sm_idx]
-    _, col = findmax(svar.(eachcol(X_s)))
-    return X_s[:, col]
+    error("Covariate :$varname is not available in the model's stored data")
 end
 
 # ─── VisGamData recipe (2D surface / contour) ───────────────────────────────

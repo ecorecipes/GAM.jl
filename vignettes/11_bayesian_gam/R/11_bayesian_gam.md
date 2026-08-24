@@ -357,9 +357,9 @@ beta_post2 <- mvrnorm(n_samples, coef(m2), vcov(m2))
 
     ------------------|-------------------|-------------------|-------------------|------
 
-    Intercept mean    | 0.9083            | 0.9083            | 0.9092            | 1.0
+    Intercept mean    | 0.9083            | 0.9083            | 0.9094            | 1.0
 
-    Intercept sd      | 0.0529             | 0.0535             | 0.0536             |
+    Intercept sd      | 0.0529             | 0.0535             | 0.0535             |
 
 ### KS tests and ECDF
 
@@ -379,9 +379,9 @@ beta_post2 <- mvrnorm(n_samples, coef(m2), vcov(m2))
 
     GAM.jl vs brms         | 0.0120  | 0.9907  | 0.999962
 
-    GAM.jl vs mgcv (approx)| 0.0163  | 0.6664  | 0.999963
+    GAM.jl vs mgcv (approx)| 0.0193  | 0.4489  | 0.999963
 
-    brms vs mgcv (approx)  | 0.0172  | 0.8224  | 0.999957
+    brms vs mgcv (approx)  | 0.0160  | 0.8844  | 0.999958
 
 ``` r
 par(mfrow = c(1, 2))

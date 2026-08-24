@@ -352,6 +352,12 @@ function _logmeanexp(x::AbstractVector{<:Real})
     return xmax + log(sum(exp.(x .- xmax))) - log(length(x))
 end
 
+function _logsumexp(x::AbstractVector{<:Real})
+    isempty(x) && throw(ArgumentError("logsumexp requires at least one value"))
+    xmax = maximum(x)
+    return xmax + log(sum(exp.(x .- xmax)))
+end
+
 function _score_loglik_input(m::BayesGamModel, score_name::AbstractString)
     loglik = pointwise_loglikelihood(m)
     n_draws, n_obs = size(loglik)
@@ -413,7 +419,10 @@ function psis_loo(m::BayesGamModel; reff::Real=1.0, warn::Bool=false)
         ll_i = view(loglik, :, i)
         lw_i = view(psis_result.log_weights, :, 1, i)
         pointwise_lppd[i] = _logmeanexp(ll_i)
-        pointwise_elpd[i] = -_logmeanexp(lw_i)
+        # Canonical PSIS-LOO estimator (Vehtari, Gelman & Gabry 2017, eq. 10):
+        # elpd_i = log Σ_s w_s p(y_i|θ_s) - log Σ_s w_s, with PSIS-smoothed
+        # log-weights lw (unnormalized here, hence the explicit denominator)
+        pointwise_elpd[i] = _logsumexp(lw_i .+ ll_i) - _logsumexp(lw_i)
         pointwise_p[i] = pointwise_lppd[i] - pointwise_elpd[i]
     end
 

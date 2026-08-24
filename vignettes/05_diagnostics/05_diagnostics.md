@@ -78,13 +78,13 @@ first(df, 5)
 ## Fit the GAM
 
 ``` julia
-m = gam(@formulak(y ~ s(x0, k=10, bs=:cr) + s(x1, k=10, bs=:cr) +
+m = gam(@formula(y ~ s(x0, k=10, bs=:cr) + s(x1, k=10, bs=:cr) +
                           s(x2, k=10, bs=:cr) + s(x3, k=10, bs=:cr)), df)
 ```
 
     Generalized Additive Model
 
-    Formula: y ~ 1
+    Formula: y ~ 1 + s(x0,bs=cr) + s(x1,bs=cr) + s(x2,bs=cr) + s(x3,bs=cr)
 
     Family: Normal
     Link:   IdentityLink
@@ -94,21 +94,21 @@ m = gam(@formulak(y ~ s(x0, k=10, bs=:cr) + s(x1, k=10, bs=:cr) +
     ─────────────────────────────────────────────────
                    Coef.  Std. Error      t  Pr(>|t|)
     ─────────────────────────────────────────────────
-    (Intercept)  7.49514    0.105069  71.34    <1e-99
+    (Intercept)  7.49514    0.105068  71.34    <1e-99
     ─────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
-    ──────────────────────────────────────────────────
-    Smooth                    edf   Ref.df
-    ──────────────────────────────────────────────────
-    s(x0,bs=cr)              3.43        9
-    s(x1,bs=cr)              3.20        9
-    s(x2,bs=cr)              7.83        9
-    s(x3,bs=cr)              1.89        9
-    ──────────────────────────────────────────────────
+    ──────────────────────────────────────────────────────────────────
+    Smooth                    edf   Ref.df          F    p-value
+    ──────────────────────────────────────────────────────────────────
+    s(x0,bs=cr)              3.43     4.00      9.431  2.796e-07
+    s(x1,bs=cr)              3.20     4.00     67.251  4.633e-43
+    s(x2,bs=cr)              7.83     8.00     73.421  1.381e-72
+    s(x3,bs=cr)              1.89     2.00      3.207    0.04158
+    ──────────────────────────────────────────────────────────────────
 
     R² (adj) = 0.685   Deviance explained = 69.8%
-    Scale est. = 4.4158   n = 400
+    Scale est. = 4.4157   n = 400
 
 ## Model overview
 
@@ -125,7 +125,7 @@ ov = overview(m)
     Smooth               Type           Dim     k      EDF  k-ratio
     ─────────────────────────────────────────────────────────────────
     s(x0,bs=cr)          CubicSpline      1     9     3.43    0.381
-    s(x1,bs=cr)          CubicSpline      1     9     3.20    0.355
+    s(x1,bs=cr)          CubicSpline      1     9     3.20    0.356
     s(x2,bs=cr)          CubicSpline      1     9     7.83    0.870
     s(x3,bs=cr)          CubicSpline      1     9     1.89    0.210
     ─────────────────────────────────────────────────────────────────
@@ -206,7 +206,8 @@ for (i, xvar) in enumerate(x_vars)
     se_vals = se_i.se
 
     label_key = m.smooths[i].spec.label
-    xvals, resids = pr[label_key]
+    mask = pr.smooth .== label_key
+    xvals, resids = pr.x[mask], pr.residual[mask]
 
     p = plot(xgrid, est;
         ribbon=2 .* se_vals, fillalpha=0.2, color=:steelblue,
@@ -289,18 +290,20 @@ plot(d2.x, d2.derivative;
 
 `appraise` returns diagnostic data for the four standard residual plots:
 QQ plot, residuals vs linear predictor, histogram of residuals, and
-observed vs fitted values.
+observed vs fitted values. By default the QQ reference quantiles are a
+**simulated envelope** (`method=:simulate`, matching gratia and mgcv’s
+`qq.gam`); pass `method=:normal` for normal-theory quantiles.
 
 ``` julia
 diag_data = appraise(m)
 ```
 
     AppraiseData: 400 observations
-      Deviance residuals: min=-5.875, max=7.510
+      Deviance residuals: min=-5.875, max=7.509
 
 ``` julia
 p1 = scatter(diag_data.qq_theoretical, diag_data.qq_sample;
-    xlabel="Theoretical quantiles", ylabel="Standardized deviance residuals",
+    xlabel="Reference quantiles (simulated)", ylabel="Standardized deviance residuals",
     title="QQ plot", label="", markersize=2, alpha=0.5, color=:steelblue)
 lims = extrema(vcat(diag_data.qq_theoretical, diag_data.qq_sample))
 plot!(p1, [lims[1], lims[2]], [lims[1], lims[2]];
@@ -385,7 +388,7 @@ println("Median 95% CI width: ", round(median(upper95 .- lower95), digits=3))
 ```
 
     Fitted samples matrix size: (400, 200)
-    Median 95% CI width: 1.606
+    Median 95% CI width: 1.612
 
 ## Concurvity
 
@@ -396,11 +399,7 @@ analogue of multicollinearity). Values near 1 indicate high concurvity.
 conc_full = concurvity(m; full=true)
 ```
 
-    4-element Vector{Float64}:
-     0.12771464477604377
-     0.13917946213220714
-     0.1316305905556416
-     0.16780562169356655
+    (worst = [0.12771464477604377, 0.13917946213220714, 0.1316305905556416, 0.16780562169356655], observed = [0.04135751351745519, 0.05319755422178868, 0.053483323266848924, 0.05786181400853201], estimate = [0.06572652054279716, 0.07437164158906605, 0.06226494707212572, 0.07251361411323007])
 
 Pairwise concurvity matrix:
 
@@ -417,19 +416,22 @@ conc_pair = concurvity(m; full=false)
 ## Basis dimension check
 
 `k_check` assesses whether the basis dimension $k$ is adequate for each
-smooth. A high EDF-to-$k'$ ratio suggests the basis may be too small.
+smooth, using mgcv’s k-index: a variance ratio computed from differences
+of residuals for neighbouring covariate values. As in mgcv, a k-index
+**well below 1** together with a **small p-value** indicates that
+unmodelled pattern remains in the residuals and $k$ should be increased
+(note this is the opposite reading from a naive EDF/$k'$ ratio, where
+*high* values flag trouble).
 
 ``` julia
 kc = k_check(m)
-for item in kc
-    println("$(item.label): k' = $(item.k), edf = $(round(item.edf, digits=2)), ratio = $(round(item.k_ratio, digits=3))")
-end
 ```
 
-    s(x0,bs=cr): k' = 9, edf = 3.43, ratio = 0.381
-    s(x1,bs=cr): k' = 9, edf = 3.2, ratio = 0.355
-    s(x2,bs=cr): k' = 9, edf = 7.83, ratio = 0.87
-    s(x3,bs=cr): k' = 9, edf = 1.89, ratio = 0.21
+    4-element Vector{@NamedTuple{label::String, k::Int64, edf::Float64, k_index::Float64, p_value::Float64}}:
+     (label = "s(x0,bs=cr)", k = 9, edf = 3.4262656464864105, k_index = 1.0449332110085794, p_value = 0.755)
+     (label = "s(x1,bs=cr)", k = 9, edf = 3.202964845843242, k_index = 1.0172236314355263, p_value = 0.615)
+     (label = "s(x2,bs=cr)", k = 9, edf = 7.833821589051949, k_index = 1.0396460061058748, p_value = 0.775)
+     (label = "s(x3,bs=cr)", k = 9, edf = 1.8871672259901553, k_index = 0.9732144202730096, p_value = 0.28)
 
 ## Summary
 

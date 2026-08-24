@@ -34,6 +34,25 @@ function simulate_tweedie(rng, mu::AbstractVector{<:Real}, p::Real, phi::Real)
     return y
 end
 
+# ─── Outer wrapper ──────────────────────────────────────────────────────────
+# Everything below runs inside ONE outer testset: a bare top-level @testset
+# throws at its `end` when it contains failures, which previously aborted the
+# suite at the first failing section and skipped everything after it. With
+# the wrapper, failures are recorded, all sections still run, and the wrapper
+# reports the full summary (and throws, failing CI) once at the very end.
+# The body is deliberately not re-indented to keep diffs reviewable.
+@testset "GAM.jl test suite" begin
+
+# Static quality checks
+@eval using Aqua
+@testset "Aqua static checks" begin
+    Aqua.test_unbound_args(GAM)
+    Aqua.test_undefined_exports(GAM)
+    Aqua.test_piracies(GAM)
+    Aqua.test_stale_deps(GAM)
+    Aqua.test_ambiguities(GAM)
+end
+
 @testset "GAM.jl" begin
     @testset "SmoothSpec construction" begin
         sp = s(:x)
@@ -769,7 +788,9 @@ end
         @test m.converged
         @test m.scale > 1.0
         @test all(fitted(m) .> 0)
-        @test isfinite(loglikelihood(m))
+        # Quasi families have no true likelihood: loglikelihood/AIC follow
+        # R's NA convention and return NaN.
+        @test isnan(loglikelihood(m))
         @test length(residuals(m; type=:pearson)) == n
     end
 
@@ -946,9 +967,6 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         end
     end
 
-    # EGPD unit tests (no R needed)
-    @eval include("test_egpd.jl")
-
     # qgam R comparison tests
     if _rcall_available
         _qgam_available = try
@@ -977,6 +995,21 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
      if _scam_available
          @eval include("test_scam_rcall.jl")
      end
+    end
+
+    # gamFactory nested-effects comparison tests
+    if _rcall_available
+        _gamfactory_available = try
+            @eval RCall.reval("library(gamFactory)")
+            true
+        catch e
+            @warn "Skipping gamFactory comparison tests (gamFactory not available)" exception = e
+            false
+        end
+
+        if _gamfactory_available
+            @eval include("test_nested_rcall.jl")
+        end
     end
 
     # mgcv::scasm R comparison tests
@@ -1011,6 +1044,9 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     end
 end
 
+# EGPD unit tests (no R needed) — must run regardless of GAM_SKIP_RCALL
+@eval include("test_egpd.jl")
+
 # Quantile GAM (qgam) unit tests (no R needed)
 @eval include("test_qgam.jl")
 
@@ -1028,6 +1064,12 @@ end
 
 # General fit (WPS algorithm) tests
 @eval include("test_general_fit.jl")
+
+# Nested effects (s_nest / gam_nl, gamFactory-style)
+@eval include("test_nested.jl")
+
+# Seeded configuration fuzz (property test; round-4 regression seeds)
+@eval include("test_fuzz.jl")
 
 # GAMLSS tests
 @eval include("test_gamlss.jl")
@@ -1055,13 +1097,18 @@ end
 @eval include("test_gamm.jl")
 
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
-    try
+    # Check availability separately so genuine test failures are NOT swallowed:
+    # only the load/availability check is wrapped in try/catch; the include
+    # (which runs the @testsets) is not.
+    _gamm_rcall_ok = try
         @eval using RCall
         @eval RCall.reval("library(nlme)")
-        @eval include("test_gamm_rcall.jl")
+        true
     catch e
         @warn "Skipping GAMM R comparison tests (nlme/RCall not available)" exception = e
+        false
     end
+    _gamm_rcall_ok && @eval include("test_gamm_rcall.jl")
 end
 
 @eval include("test_side_constraints.jl")
@@ -1082,11 +1129,15 @@ end
 @eval include("test_soap.jl")
 
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
-    try
-        @eval include("test_side_constraints_rcall.jl")
+    _sidecon_rcall_ok = try
+        @eval using RCall
+        @eval RCall.reval("library(mgcv)")
+        true
     catch e
-        @warn "Skipping side constraint R comparison tests" exception = e
+        @warn "Skipping side constraint R comparison tests (RCall/mgcv not available)" exception = e
+        false
     end
+    _sidecon_rcall_ok && @eval include("test_side_constraints_rcall.jl")
 end
 
 @eval include("test_loess.jl")
@@ -1099,13 +1150,39 @@ end
 # SPDE Matérn smooth tests
 @eval include("test_spde.jl")
 
-# SPDE R comparison tests (uses pre-generated CSV data, not RCall)
-try
+# SPDE R comparison tests (uses pre-generated CSV data, not RCall).
+# Only the CSV availability check is guarded; the include is not, so test
+# failures surface instead of being downgraded to warnings.
+_spde_csv_ok = try
     @eval using CSV
-    @eval include("test_spde_rcall.jl")
+    true
 catch e
     @warn "Skipping SPDE R comparison tests (CSV not available)" exception = e
+    false
 end
+_spde_csv_ok && @eval include("test_spde_rcall.jl")
 
 # Input validation tests
 @eval include("test_validation.jl")
+
+# Regression tests for code-review fixes (no R needed)
+@eval include("test_review_fixes_core.jl")
+@eval include("test_review_fixes_select_scam.jl")
+@eval include("test_review_fixes_basis.jl")
+@eval include("test_review_fixes_ti.jl")
+@eval include("test_review_fixes_by.jl")
+@eval include("test_review_fixes_extended.jl")
+@eval include("test_review_fixes_serialization.jl")
+
+# Plotting tests — run only when Plots.jl (a weak dependency) is available.
+# Availability is checked separately so plotting test failures are not swallowed.
+_plots_available = try
+    @eval using Plots
+    true
+catch
+    @info "Skipping plotting tests (Plots.jl not available)"
+    false
+end
+_plots_available && @eval include("test_plots.jl")
+
+end # @testset "GAM.jl test suite"

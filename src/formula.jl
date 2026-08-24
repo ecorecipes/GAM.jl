@@ -19,7 +19,7 @@ end
 
 # Populated after basis-alias definitions in smoothspec.jl
 const _SMOOTH_ALIASES = Set{Function}()
-const _RAW_SMOOTH_FUNCTION_NAMES = (:s, :te, :ti, :t2, :cr, :tp, :ts, :cs, :cc, :ps, :cps)
+const _RAW_SMOOTH_FUNCTION_NAMES = (:s, :te, :ti, :t2, :cr, :tp, :ts, :cs, :cc, :ps, :cps, :s_nest)
 
 """
     _functionterm_to_smoothspec(ft::FunctionTerm) → SmoothSpec
@@ -86,6 +86,13 @@ Base.show(io::IO, t::AppliedSmoothTerm) = print(io, t.spec.label)
 
 # Schema application: SmoothTerm → AppliedSmoothTerm
 function StatsModels.apply_schema(t::SmoothTerm, sch, ::Type{<:Any})
+    return AppliedSmoothTerm(t.spec, nothing)
+end
+
+# Disambiguation vs StatsModels' apply_schema(::AbstractTerm, ::FullRank, ::Type)
+# (the untyped-sch method above is otherwise ambiguous with it for SmoothTerm)
+function StatsModels.apply_schema(t::SmoothTerm, sch::StatsModels.FullRank,
+    ::Type{<:Any})
     return AppliedSmoothTerm(t.spec, nothing)
 end
 
@@ -339,6 +346,28 @@ function _term_matrix(pt, t)
     end
 end
 
+"""
+    _apply_parametric_schema(para_terms, t) -> Vector{AbstractTerm}
+
+Apply a StatsModels schema (built from `t`) to raw parametric terms so that
+categorical/string columns are dummy-coded like any StatsModels model, instead
+of failing the `Float64.(...)` conversion in `_term_matrix`. Intercept and
+constant terms pass through unchanged. Pass the *training* data as `t` when
+building prediction matrices so factor levels stay consistent.
+"""
+function _apply_parametric_schema(para_terms::AbstractVector{<:StatsModels.AbstractTerm}, t)
+    isempty(para_terms) && return para_terms
+    needs_schema = any(para_terms) do pt
+        pt isa Term && !(eltype(Tables.getcolumn(t, pt.sym)) <: Real)
+    end
+    needs_schema || return para_terms
+    sch = StatsModels.schema(t)
+    return StatsModels.AbstractTerm[
+        pt isa Term ?
+            StatsModels.apply_schema(pt, sch, StatsModels.StatisticalModel) : pt
+        for pt in para_terms]
+end
+
 function _term_names(pt)
     if pt isa Term
         return [string(pt.sym)]
@@ -368,17 +397,117 @@ function _formula_parametric_names(f::FormulaTerm)
     return names
 end
 
-function _build_parametric_matrix(gf::GamFormula, t)
+"""
+    _parametric_term_groups(formula, data)
+        -> (colnames::Vector{String}, groups::Vector{Tuple{String, UnitRange{Int}}})
+
+One name per dummy-coded parametric *column* (matching the design matrix built
+by `_build_parametric_matrix`), plus the grouping of columns by originating
+term (intercept and each variable get one group) for `type=:terms` prediction.
+Needs the training `data` to know factor levels.
+"""
+function _parametric_term_groups(gf::GamFormula, data)
+    t = Tables.columntable(data)
+    colnames = String[]
+    groups = Tuple{String, UnitRange{Int}}[]
+    col = 0
+    if gf.has_intercept
+        push!(colnames, "(Intercept)")
+        push!(groups, ("(Intercept)", 1:1))
+        col = 1
+    end
+    for sym in gf.parametric
+        c = Tables.getcolumn(t, sym)
+        if eltype(c) <: Real
+            push!(colnames, string(sym))
+            push!(groups, (string(sym), (col + 1):(col + 1)))
+            col += 1
+        else
+            levels = sort!(unique(collect(c)))
+            ref = gf.has_intercept ? levels[2:end] : levels
+            for lev in ref
+                push!(colnames, string(sym, ": ", lev))
+            end
+            push!(groups, (string(sym), (col + 1):(col + length(ref))))
+            col += length(ref)
+        end
+    end
+    return colnames, groups
+end
+
+function _parametric_term_groups(f::FormulaTerm, data)
+    t = Tables.columntable(data)
+    _, para_terms = _split_formula_terms(f)
+    para_terms = _apply_parametric_schema(para_terms, t)
+    colnames = String[]
+    groups = Tuple{String, UnitRange{Int}}[]
+    col = 0
+    if _formula_has_intercept(para_terms)
+        push!(colnames, "(Intercept)")
+        push!(groups, ("(Intercept)", 1:1))
+        col = 1
+    end
+    for pt in para_terms
+        if pt isa InterceptTerm{true} || pt isa InterceptTerm{false} || pt isa ConstantTerm
+            continue
+        end
+        nms = _term_names(pt)
+        append!(colnames, nms)
+        label = pt isa Union{Term, ContinuousTerm, StatsModels.CategoricalTerm} ?
+                string(pt.sym) : (length(nms) == 1 ? nms[1] : string(pt))
+        push!(groups, (label, (col + 1):(col + length(nms))))
+        col += length(nms)
+    end
+    return colnames, groups
+end
+
+function _build_parametric_matrix(gf::GamFormula, t;
+    ref_levels::Union{Nothing, Dict{Symbol, Vector}} = nothing)
     n = _table_nrows(t)
     X_para = gf.has_intercept ? ones(n, 1) : Matrix{Float64}(undef, n, 0)
     para_names = gf.has_intercept ? String["(Intercept)"] : String[]
 
     for sym in gf.parametric
-        X_para = hcat(X_para, reshape(Float64.(Tables.getcolumn(t, sym)), n, 1))
-        push!(para_names, string(sym))
+        col = Tables.getcolumn(t, sym)
+        if eltype(col) <: Real
+            X_para = hcat(X_para, reshape(Float64.(col), n, 1))
+            push!(para_names, string(sym))
+        else
+            # Categorical / string parametric term: treatment (dummy) coding
+            # against the first sorted level (mgcv's default factor contrast),
+            # dropping the reference level when an intercept is present.
+            # Use ref_levels (the training levels) when supplied so prediction
+            # data with a subset of levels still produces the right columns.
+            levels = ref_levels !== nothing && haskey(ref_levels, sym) ?
+                     ref_levels[sym] : sort!(unique(collect(col)))
+            ref = gf.has_intercept ? levels[2:end] : levels
+            for lev in ref
+                X_para = hcat(X_para, Float64.(col .== lev))
+                push!(para_names, string(sym, ": ", lev))
+            end
+        end
     end
 
     return X_para, para_names
+end
+
+"""
+    _parametric_ref_levels(gf, data) -> Dict{Symbol, Vector}
+
+Collect the sorted unique levels of each non-numeric parametric term from the
+(training) `data`, so dummy coding can be reproduced consistently at
+prediction time regardless of which levels appear in the new data.
+"""
+function _parametric_ref_levels(gf::GamFormula, data)
+    t = Tables.columntable(data)
+    levels = Dict{Symbol, Vector}()
+    for sym in gf.parametric
+        col = Tables.getcolumn(t, sym)
+        if !(eltype(col) <: Real)
+            levels[sym] = sort!(unique(collect(col)))
+        end
+    end
+    return levels
 end
 
 function _build_parametric_matrix(para_terms::AbstractVector{<:StatsModels.AbstractTerm}, t)
@@ -399,8 +528,9 @@ function _build_parametric_matrix(para_terms::AbstractVector{<:StatsModels.Abstr
     return X_para, para_names
 end
 
-function _build_parametric_matrix(f::FormulaTerm, t)
+function _build_parametric_matrix(f::FormulaTerm, t; schema_data = t)
     _, para_terms = _split_formula_terms(f)
+    para_terms = _apply_parametric_schema(para_terms, Tables.columntable(schema_data))
     return _build_parametric_matrix(para_terms, t)
 end
 
@@ -411,17 +541,23 @@ function _build_smooth_call(ex::Expr)
     k_pos = nothing
     has_k_kw = false
 
+    # Keyword arguments that name a data column (so a bare identifier must be
+    # quoted into a Symbol, e.g. `by=g` → `by=:g`), matching the positional
+    # variable handling.
+    _quote_kw(name, val) =
+        (name in (:by, :id) && val isa Symbol) ? QuoteNode(val) : val
+
     for i in 2:length(ex.args)
         arg = ex.args[i]
         if arg isa Symbol
             push!(pos_args, QuoteNode(arg))
         elseif arg isa Expr && arg.head == :kw
-            push!(kw_args, Expr(:kw, arg.args[1], arg.args[2]))
+            push!(kw_args, Expr(:kw, arg.args[1], _quote_kw(arg.args[1], arg.args[2])))
             has_k_kw |= arg.args[1] == :k
         elseif arg isa Expr && arg.head == :parameters
             for kw in arg.args
                 if kw isa Expr && kw.head == :kw
-                    push!(kw_args, Expr(:kw, kw.args[1], kw.args[2]))
+                    push!(kw_args, Expr(:kw, kw.args[1], _quote_kw(kw.args[1], kw.args[2])))
                     has_k_kw |= kw.args[1] == :k
                 end
             end
@@ -483,26 +619,14 @@ function setup_gam(gf::GamFormula, data;
     end
 
     # Assign parameter indices to smooths
-    p_start = n_parametric + 1
-    for sm in smooths
-        k = size(sm.X, 2)
-        sm.first_para = p_start
-        sm.last_para = p_start + k - 1
-        p_start += k
-    end
+    _assign_smooth_indices!(smooths, n_parametric)
 
     # Apply side constraints for identifiability (mgcv's gam.side)
     if length(smooths) > 1
         modified = side_constrain!(smooths, X_para)
         if modified
             # Reassign parameter indices after column removal
-            p_start = n_parametric + 1
-            for sm in smooths
-                k = size(sm.X, 2)
-                sm.first_para = p_start
-                sm.last_para = p_start + k - 1
-                p_start += k
-            end
+            _assign_smooth_indices!(smooths, n_parametric)
         end
     end
 
@@ -523,6 +647,8 @@ function setup_gam(f::FormulaTerm, data;
     resp_col = f.lhs isa Term ? f.lhs.sym : error("LHS must be a single term")
     y = Float64.(Tables.getcolumn(t, resp_col))
     smooth_terms, para_terms = _split_formula_terms(f)
+    _validate_formula_smooths(SmoothSpec[st.spec for st in smooth_terms], t)
+    para_terms = _apply_parametric_schema(para_terms, t)
     X_para, para_names = _build_parametric_matrix(para_terms, t)
     n_parametric = size(X_para, 2)
 
@@ -533,12 +659,16 @@ function setup_gam(f::FormulaTerm, data;
         push!(smooths, sm)
     end
 
-    p_start = n_parametric + 1
-    for sm in smooths
-        k = size(sm.X, 2)
-        sm.first_para = p_start
-        sm.last_para = p_start + k - 1
-        p_start += k
+    _assign_smooth_indices!(smooths, n_parametric)
+
+    # Apply side constraints for identifiability (mgcv's gam.side), exactly
+    # as on the GamFormula path — without this, overlapping smooths (e.g.
+    # s(x) + te(x, z)) leave an unconstrained direction in the design.
+    if length(smooths) > 1
+        modified = side_constrain!(smooths, X_para)
+        if modified
+            _assign_smooth_indices!(smooths, n_parametric)
+        end
     end
 
     X_smooth_parts = [sm.X for sm in smooths]
