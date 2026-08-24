@@ -291,8 +291,22 @@ function s_nest(vars::Union{Symbol, StatsModels.AbstractTerm}...;
     k == -1 && (k = 10)   # default from the positional @formula path
     k >= 4 || throw(ArgumentError("s_nest requires k >= 4, got $k"))
     label = "s_nest(" * join(string.(syms), ",") * ")"
+    # Route through the shared validator so `sp=` is checked the same way as
+    # every other smooth constructor (positive, finite, real). A nested effect
+    # has exactly ONE outer penalty, so a vector is a user error rather than an
+    # unsupported feature — reject it with a message that says so, instead of
+    # the bare `MethodError: no method matching Float64(::Vector{Float64})`
+    # that the previous `Float64(sp)` produced.
+    sp_val = _normalize_sp(sp, "s_nest", syms)
+    if sp_val isa AbstractVector
+        throw(ArgumentError(
+            "s_nest($(join(string.(syms), ", ")), sp=$sp): a nested effect has a " *
+            "single outer penalty, so sp= must be a scalar, not a $(length(sp_val))-element " *
+            "vector. The inner transformation's smoothing parameters are selected " *
+            "automatically and cannot be fixed individually."))
+    end
     return SmoothSpec(syms, NestedBasis(trans), k, nothing, nothing,
-        sp === nothing ? nothing : Float64(sp), false, nothing, label)
+        sp_val, false, nothing, label)
 end
 
 """Whether any smooth spec in a collection is a nested effect."""

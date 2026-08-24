@@ -95,16 +95,34 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
         push!(blocks, block)
 
         # Initial smoothing parameters (log scale) — one per penalty matrix.
-        # A user-supplied sp= fixes every penalty of the smooth at that value.
+        # A scalar sp= fixes every penalty of the smooth at that value; a
+        # vector fixes them individually, one entry per penalty, which is how
+        # mgcv's per-penalty sp vector transfers for multi-penalty smooths
+        # (bs=:ad, t2, bs=:fs).
+        #
+        # The length check lives here rather than in the s()/te() constructors
+        # because the penalty count is only known once the basis has been
+        # built against data: an adaptive smooth's sub-penalty count depends
+        # on k and m, fs's on the marginal null-space dimension, t2's on the
+        # marginal block structure. Positivity was already checked at
+        # construction by `_normalize_sp`.
         sp_fixed = sm.spec.sp
-        for _ in S_list
+        if sp_fixed isa AbstractVector && length(sp_fixed) != length(S_list)
+            throw(ArgumentError(
+                "sp= has $(length(sp_fixed)) entries but $(sm.spec.label) has " *
+                "$(length(S_list)) $(length(S_list) == 1 ? "penalty" : "penalties"). " *
+                "Pass one entry per penalty, or a scalar to fix them all at " *
+                "the same value."))
+        end
+        for (j, _) in enumerate(S_list)
             if sp_fixed === nothing
                 push!(sp_all, 0.0)  # log(1.0) = 0, will be optimized
                 push!(fixed_all, false)
             else
-                sp_fixed > 0 || throw(ArgumentError(
-                    "sp= must be positive for $(sm.spec.label), got $sp_fixed"))
-                push!(sp_all, log(sp_fixed))
+                spj = sp_fixed isa AbstractVector ? sp_fixed[j] : sp_fixed
+                spj > 0 || throw(ArgumentError(
+                    "sp= must be positive for $(sm.spec.label), got $spj"))
+                push!(sp_all, log(spj))
                 push!(fixed_all, true)
             end
         end
