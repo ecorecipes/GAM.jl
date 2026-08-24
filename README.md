@@ -33,7 +33,7 @@ using Pkg
 Pkg.add(url="https://github.com/ecorecipes/GAM.jl")
 ```
 
-Requires Julia ≥ 1.9.
+Requires Julia ≥ 1.11.
 
 ## Quick Start
 

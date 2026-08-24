@@ -1,5 +1,6 @@
 name: CI
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
@@ -17,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['lts', '1']
+        version: ['1.11', '1']
         os: ['ubuntu-latest']
         include:
           - version: 1
