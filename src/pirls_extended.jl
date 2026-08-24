@@ -129,6 +129,11 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
 
     n, p = size(X)
 
+    # Data-dependent starting values for the family's own parameters (mgcv's
+    # `preinitialize`). Runs once per family object, so warm-started refits
+    # from the outer loop keep the values already estimated.
+    _preinitialize!(family, y)
+
     # Initialize
     if start !== nothing
         beta = copy(start)
@@ -325,7 +330,8 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
     if has_Dd
         dd_final = _family_Dd(family, y, mu, weights; level=0)
         dmu_deta .= GLM.mueta.(Ref(link), eta)
-        curv_mu = haskey(dd_final, :EDmu2) ? dd_final[:EDmu2] : dd_final[:Dmu2]
+        curv_mu = (_use_expected_information(family) && haskey(dd_final, :EDmu2)) ?
+                  dd_final[:EDmu2] : dd_final[:Dmu2]
         @inbounds for i in 1:n
             w[i] = clamp(0.5 * curv_mu[i] * dmu_deta[i]^2, eps(), 1e10)
         end

@@ -4,7 +4,8 @@
 # (e.g., NB theta, Tweedie power, Beta precision).
 # Kept separate from Distributions.UnivariateDistribution to avoid type confusion.
 
-using SpecialFunctions: digamma, trigamma, logabsgamma
+using SpecialFunctions: digamma, trigamma, logabsgamma, loggamma
+using ForwardDiff: ForwardDiff
 
 """
     ExtendedFamily
@@ -101,6 +102,80 @@ BetaFamily(; phi::Real=1.0, estimate_phi::Bool=true) =
     BetaFamily(Float64(phi), estimate_phi)
 
 # ============================================================================
+# Scaled t family (robust regression)
+# ============================================================================
+
+"""
+    ScatFamily(; nu=nothing, sigma=nothing, estimate_theta=true, min_df=3.0)
+
+Scaled t family for robust regression, matching mgcv's `scat()`. The response
+is modelled as `y = μ + σ·t_ν`, so that
+
+    V(μ) = σ²ν/(ν - 2)     (constant in μ, for ν > 2)
+
+Both the degrees of freedom `ν` and the scale `σ` are estimated by default.
+Heavy tails make the influence of a residual *redescend*: the curvature of the
+deviance turns negative once `|y - μ| > σ√ν`, so gross outliers are downweighted
+towards zero rather than dominating the fit as they do under `Normal()`.
+
+Following mgcv, `ν` is parameterised as `ν = exp(θ₁) + min_df` (default
+`min_df = 3`, which keeps the variance and the Fisher information finite) and
+`σ = exp(θ₂)`. Supplying `nu`/`sigma` sets the starting values; passing
+`estimate_theta=false` in addition holds them fixed, mirroring mgcv's
+`scat(theta = c(nu, sig))`. If `nu ≤ min_df`, `min_df` is reset to `0.9ν` with a
+warning, exactly as mgcv does.
+
+Default link: `IdentityLink()` (`LogLink()` and `InverseLink()` also permitted,
+as in mgcv).
+
+# Examples
+```julia
+m = gam(@formula(y ~ s(x)), df; family = ScatFamily())
+m.family.nu, m.family.sigma
+```
+
+# References
+- Wood, S. N., Pya, N. and Säfken, B. (2016). Smoothing parameter and model
+  selection for general smooth models. *JASA* 111, 1548–1575.
+"""
+mutable struct ScatFamily <: ExtendedFamily
+    nu::Float64
+    sigma::Float64
+    estimate_theta::Bool
+    min_df::Float64
+    # Whether (nu, sigma) have been given data-dependent starting values.
+    # mgcv does this in `preinitialize`; see `_preinitialize!`.
+    initialized::Bool
+end
+
+function ScatFamily(; nu::Union{Real, Nothing} = nothing,
+    sigma::Union{Real, Nothing} = nothing,
+    estimate_theta::Bool = true,
+    min_df::Real = 3.0)
+
+    min_df = Float64(min_df)
+    min_df >= 0.0 || throw(ArgumentError("ScatFamily: min_df must be ≥ 0, got $min_df"))
+
+    if nu === nothing && sigma === nothing
+        # mgcv's ini.theta = c(-2, -1) placeholder; overwritten by
+        # `_preinitialize!` once the response is available.
+        return ScatFamily(exp(-2.0) + min_df, exp(-1.0), estimate_theta, min_df, false)
+    end
+    (nu === nothing || sigma === nothing) &&
+        throw(ArgumentError("ScatFamily: supply both `nu` and `sigma`, or neither"))
+
+    ν = Float64(nu)
+    σ = Float64(sigma)
+    ν > 0.0 || throw(ArgumentError("ScatFamily: nu must be > 0, got $ν"))
+    σ > 0.0 || throw(ArgumentError("ScatFamily: sigma must be > 0, got $σ"))
+    if ν <= min_df
+        min_df = 0.9 * ν
+        @warn "ScatFamily: supplied nu is below min_df; min_df reset to $(min_df)"
+    end
+    return ScatFamily(ν, σ, estimate_theta, min_df, true)
+end
+
+# ============================================================================
 # Common interface
 # ============================================================================
 
@@ -110,6 +185,7 @@ _default_link(::QuasiPoissonFamily) = LogLink()
 _default_link(::QuasiBinomialFamily) = LogitLink()
 _default_link(::TweedieFamily) = LogLink()
 _default_link(::BetaFamily) = LogitLink()
+_default_link(::ScatFamily) = IdentityLink()
 
 """Whether the family has an extra parameter to estimate."""
 _has_extra_param(f::NegBinFamily) = f.estimate_theta
@@ -117,21 +193,31 @@ _has_extra_param(::QuasiPoissonFamily) = false
 _has_extra_param(::QuasiBinomialFamily) = false
 _has_extra_param(f::TweedieFamily) = f.estimate_p
 _has_extra_param(f::BetaFamily) = f.estimate_phi
+_has_extra_param(f::ScatFamily) = f.estimate_theta
 
 """Current value of the family's estimated extra parameter (NB θ, Tweedie p,
 Beta φ, ELF log σ), for convergence checks of the alternating estimation."""
 _extra_param_value(f::NegBinFamily) = f.theta
 _extra_param_value(f::TweedieFamily) = f.p
 _extra_param_value(f::BetaFamily) = f.phi
+# ν is the slower-moving of the two scat parameters (σ is pinned by the
+# residual scale within a single `estimate_theta!` call), so it governs the
+# alternation convergence test in `outer.jl`.
+_extra_param_value(f::ScatFamily) = f.nu
 _extra_param_value(f::ExtendedFamily) = hasproperty(f, :theta) ? f.theta : 0.0
 
 """Whether the family provides Dd derivatives for proper PIRLS working weights."""
 _has_Dd(::ExtendedFamily) = false
 _has_Dd(::TweedieFamily) = true
+# Required, not optional, for scat: V(μ) is constant, so the Fisher fallback
+# in `pirls_extended` would reduce the fit to unweighted least squares and
+# discard the family's entire robustness.
+_has_Dd(::ScatFamily) = true
 
 """Dd derivatives (override for families that provide them)."""
 _family_Dd(f::ExtendedFamily, y, mu, wt; level=0) = error("Dd not implemented for $(typeof(f))")
 _family_Dd(f::TweedieFamily, y, mu, wt; level=0) = tweedie_Dd(f, y, mu, wt; level=level)
+_family_Dd(f::ScatFamily, y, mu, wt; level=0) = scat_Dd(f, y, mu, wt; level=level)
 
 """
     tweedie_Dd(f::TweedieFamily, y, mu, wt; level=0)
@@ -172,6 +258,7 @@ _family_name(::QuasiPoissonFamily) = "QuasiPoisson"
 _family_name(::QuasiBinomialFamily) = "QuasiBinomial"
 _family_name(::TweedieFamily) = "Tweedie"
 _family_name(::BetaFamily) = "Beta"
+_family_name(::ScatFamily) = "Scaled t"
 
 # ============================================================================
 # Variance functions
@@ -198,6 +285,13 @@ function _variance(f::BetaFamily, mu)
     return mu .* (1.0 .- mu) ./ (1.0 + f.phi)
 end
 
+# Constant in μ: Var(μ + σ·t_ν) = σ²ν/(ν-2). The `zero(mu) +` keeps the method
+# usable for both a scalar (via `_variance_scalar`) and a vector of means.
+function _variance(f::ScatFamily, mu)
+    v = f.sigma^2 * f.nu / max(f.nu - 2.0, eps())
+    return @. zero(mu) + v
+end
+
 # Scalar variance and dV/dμ for the Fletcher scale estimator
 # (mirrors _variance_scalar/_dvariance_scalar_mu for standard families)
 _variance_scalar(f::ExtendedFamily, mu::Float64) = float(_variance(f, mu))
@@ -206,6 +300,8 @@ _dvariance_scalar_mu(::QuasiPoissonFamily, mu::Float64) = 1.0
 _dvariance_scalar_mu(::QuasiBinomialFamily, mu::Float64) = 1.0 - 2.0 * mu
 _dvariance_scalar_mu(f::TweedieFamily, mu::Float64) = f.p * mu^(f.p - 1.0)
 _dvariance_scalar_mu(f::BetaFamily, mu::Float64) = (1.0 - 2.0 * mu) / (1.0 + f.phi)
+# V(μ) = σ²ν/(ν-2) does not depend on μ.
+_dvariance_scalar_mu(::ScatFamily, ::Float64) = 0.0
 
 # ============================================================================
 # Deviance functions
@@ -315,6 +411,19 @@ function _deviance(f::BetaFamily, y, mu, wt)
     return dev
 end
 
+# mgcv scat(): dev.resids = wt (ν+1) log1p((1/ν)((y-μ)/σ)²), which is
+# 2(ℓ_saturated - ℓ) since the saturated fit μ = y zeroes the log1p term.
+function _deviance(f::ScatFamily, y, mu, wt)
+    ν = f.nu
+    σ = max(f.sigma, eps())
+    dev = 0.0
+    @inbounds for i in eachindex(y, mu, wt)
+        r = (Float64(y[i]) - Float64(mu[i])) / σ
+        dev += Float64(wt[i]) * (ν + 1.0) * log1p(r^2 / ν)
+    end
+    return dev
+end
+
 function _beta_loglik_single(y, mu, φ)
     a = mu * φ
     b = (1.0 - mu) * φ
@@ -387,6 +496,18 @@ function _deviance_residuals(f::BetaFamily, y, mu, wt)
     return r
 end
 
+function _deviance_residuals(f::ScatFamily, y, mu, wt)
+    ν = f.nu
+    σ = max(f.sigma, eps())
+    r = similar(y)
+    @inbounds for i in eachindex(y, mu, wt)
+        resid = Float64(y[i]) - Float64(mu[i])
+        di = Float64(wt[i]) * (ν + 1.0) * log1p((resid / σ)^2 / ν)
+        r[i] = sign(resid) * sqrt(max(di, 0.0))
+    end
+    return r
+end
+
 # ============================================================================
 # Mu clamping
 # ============================================================================
@@ -410,6 +531,9 @@ end
 function _clamp_mu(::BetaFamily, mu)
     return clamp.(mu, eps(), 1.0 - eps())
 end
+
+# μ is unrestricted on the real line (mgcv's validmu only checks finiteness).
+_clamp_mu(::ScatFamily, mu) = mu
 
 # ============================================================================
 # Null deviance
@@ -440,6 +564,27 @@ function _null_deviance(f::BetaFamily, y, wt)
     return _deviance(f, y, fill(mu, length(y)), wt)
 end
 
+# The intercept-only scat fit is an M-estimate of location, not the mean, so the
+# null deviance needs an actual 1-D minimisation (mgcv does the same via
+# `find.null.dev`, which runs IRLS on the intercept-only model). The deviance is
+# not convex in μ for a heavy-tailed t, so a Brent search over the data range is
+# used rather than a local Newton step from the mean.
+function _null_deviance(f::ScatFamily, y, wt)
+    n = length(y)
+    lo, hi = extrema(y)
+    lo == hi && return _deviance(f, y, fill(float(lo), n), wt)
+    mu_buf = Vector{Float64}(undef, n)
+    objective(m) = begin
+        fill!(mu_buf, Float64(m))
+        _deviance(f, y, mu_buf, wt)
+    end
+    mu_opt, dev_opt = _brent_minimize(objective, float(lo), float(hi);
+        tol = 1e-10 * max(hi - lo, 1.0), maxiter = 200)
+    # Guard against Brent settling in a local basin worse than the mean.
+    dev_mean = objective(mean(y))
+    return min(dev_opt, dev_mean)
+end
+
 # ============================================================================
 # Initialization
 # ============================================================================
@@ -463,6 +608,9 @@ end
 function _initialize_mu(::BetaFamily, y)
     return clamp.(y, 0.01, 0.99)
 end
+
+# mgcv scat(): mustart <- y + (y == 0) * 0.1
+_initialize_mu(::ScatFamily, y) = float.(y) .+ (y .== 0) .* 0.1
 
 # ============================================================================
 # Theta / extra parameter estimation
@@ -828,3 +976,263 @@ _estimates_scale(::QuasiPoissonFamily) = true
 _estimates_scale(::QuasiBinomialFamily) = true
 _estimates_scale(::TweedieFamily) = true
 _estimates_scale(::BetaFamily) = false
+# σ is a family parameter estimated by `estimate_theta!`, so the GLM
+# dispersion is fixed at 1 (mgcv reports `Scale est. = 1` for scat).
+_estimates_scale(::ScatFamily) = false
+
+# ============================================================================
+# Scaled t: deviance derivatives, likelihood and parameter estimation
+# ============================================================================
+
+"""
+    scat_Dd(f::ScatFamily, y, mu, wt; level=0)
+
+Deviance derivatives for the scaled t family, transcribed from mgcv's
+`scat()\$Dd` (mgcv 1.9-4). With `ν = exp(θ₁) + min_df` and `σ = exp(θ₂)`, and
+writing `r = y - μ`, `a = 1 + r²/(νσ²)`:
+
+- `level = 0` returns `Dmu`, `Dmu2` (observed curvature) and `EDmu2`
+  (expected curvature, `2w(ν+1)/(σ²(ν+3))`);
+- `level = 1` additionally returns the mixed derivatives with respect to the
+  two internal parameters `θ = (θ₁, θ₂)`: `Dth`, `Dmuth`, `Dmu2th`, `Dmu3`,
+  `EDmu3` and `EDmu2th`.
+
+`Dmu2` is *not* positive: it turns negative once `|r| > σ√ν`, which is the
+redescending influence that makes the family robust. `pirls_extended` floors
+the resulting working weight at `eps()`, so such observations contribute
+essentially nothing to the fit — the intended behaviour here, and the reason
+the Dd path (rather than the constant-variance Fisher fallback) is mandatory
+for this family.
+
+!!! note "Divergence from mgcv"
+    mgcv's `scat()` omits the prior weight from `EDmu2` and from the first
+    column of `EDmu2th`, while including it everywhere else (and while its own
+    `nb()` includes it in `EDmu2`). That looks like an oversight in mgcv; the
+    weight is included here, so results agree with mgcv for unit prior weights
+    and differ — in GAM.jl's favour — otherwise.
+"""
+function scat_Dd(f::ScatFamily, y, mu, wt; level::Int = 0)
+    level <= 1 || throw(ArgumentError(
+        "scat_Dd: only levels 0 and 1 are implemented (got level = $level)"))
+
+    ν = f.nu
+    σ = max(f.sigma, eps())
+    ν1 = ν + 1.0
+    ν2 = ν - f.min_df        # = exp(θ₁), i.e. dν/dθ₁
+    ν2ν = ν2 / ν
+    σ2 = σ^2
+    n = length(y)
+
+    Dmu = Vector{Float64}(undef, n)
+    Dmu2 = Vector{Float64}(undef, n)
+    EDmu2 = Vector{Float64}(undef, n)
+    edmu2_unit = 2.0 * ν1 / σ2 / (ν + 3.0)
+
+    if level == 0
+        @inbounds for i in eachindex(y, mu, wt)
+            wi = Float64(wt[i])
+            ym = Float64(y[i]) - Float64(mu[i])
+            a = 1.0 + (ym / σ)^2 / ν
+            nusig2a = ν * σ2 * a
+            fi = ν1 * ym / nusig2a
+            f1 = ym / nusig2a
+            Dmu[i] = -2.0 * wi * fi
+            Dmu2[i] = 2.0 * wi * ν1 * (1.0 / nusig2a - 2.0 * f1^2)
+            EDmu2[i] = wi * edmu2_unit
+        end
+        return Dict{Symbol, Any}(:Dmu => Dmu, :Dmu2 => Dmu2, :EDmu2 => EDmu2)
+    end
+
+    Dmu3 = Vector{Float64}(undef, n)
+    EDmu3 = zeros(n)
+    Dth = Matrix{Float64}(undef, n, 2)
+    Dmuth = Matrix{Float64}(undef, n, 2)
+    Dmu2th = Matrix{Float64}(undef, n, 2)
+    EDmu2th = Matrix{Float64}(undef, n, 2)
+    edmu2th1_unit = 4.0 / (σ2 * (ν + 3.0)^2) * ν2
+
+    @inbounds for i in eachindex(y, mu, wt)
+        wi = Float64(wt[i])
+        ym = Float64(y[i]) - Float64(mu[i])
+        a = 1.0 + (ym / σ)^2 / ν
+        sig2a = σ2 * a
+        nusig2a = ν * sig2a
+        fi = ν1 * ym / nusig2a
+        f1 = ym / nusig2a
+        fym = fi * ym
+        ff1 = fi * f1
+        f1ym = f1 * ym
+        fymf1 = fym * f1
+        ymsig2a = ym / sig2a
+        ν1nusig2a = ν1 / nusig2a
+
+        Dmu[i] = -2.0 * wi * fi
+        Dmu2[i] = 2.0 * wi * ν1 * (1.0 / nusig2a - 2.0 * f1^2)
+        EDmu2[i] = wi * edmu2_unit
+        Dmu3[i] = 4.0 * wi * fi * (3.0 / nusig2a - 4.0 * f1^2)
+
+        Dth[i, 1] = wi * ν2 * (log(a) - fym / ν)
+        Dth[i, 2] = -2.0 * wi * fym
+        Dmuth[i, 1] = 2.0 * wi * (fi - ymsig2a - fymf1) * ν2ν
+        Dmuth[i, 2] = 4.0 * wi * fi * (1.0 - f1ym)
+        Dmu2th[i, 1] = 2.0 * wi * (-ν1nusig2a + 1.0 / sig2a + 5.0 * ff1 -
+                                   2.0 * f1ym / sig2a - 4.0 * fymf1 * f1) * ν2ν
+        Dmu2th[i, 2] = 4.0 * wi * (-ν1nusig2a + 5.0 * ff1 - 4.0 * ff1 * f1ym)
+        EDmu2th[i, 1] = wi * edmu2th1_unit
+        EDmu2th[i, 2] = -2.0 * EDmu2[i]
+    end
+
+    return Dict{Symbol, Any}(
+        :Dmu => Dmu, :Dmu2 => Dmu2, :EDmu2 => EDmu2, :Dmu3 => Dmu3,
+        :EDmu3 => EDmu3, :Dth => Dth, :Dmuth => Dmuth, :Dmu2th => Dmu2th,
+        :EDmu2th => EDmu2th,
+    )
+end
+
+"""
+    _scat_loglik(ν, σ, y, mu, wt)
+
+Log-likelihood of the scaled t family. Kept generic in `ν` and `σ` so that
+`ForwardDiff` can differentiate it in `estimate_theta!`. Equals `-aic/2` from
+mgcv's `scat()\$aic`.
+"""
+function _scat_loglik(ν, σ, y, mu, wt)
+    const_term = loggamma((ν + 1) / 2) - loggamma(ν / 2) - log(σ) - log(π * ν) / 2
+    ll = zero(const_term)
+    half_ν1 = (ν + 1) / 2
+    @inbounds for i in eachindex(y, mu, wt)
+        r = (Float64(y[i]) - Float64(mu[i])) / σ
+        ll += Float64(wt[i]) * (const_term - half_ν1 * log1p(r^2 / ν))
+    end
+    return ll
+end
+
+"""Log-likelihood used for AIC; see [`_scat_loglik`](@ref)."""
+_family_loglik(f::ScatFamily, y, mu, wt) = _scat_loglik(f.nu, f.sigma, y, mu, wt)
+
+# Bounds on the internal parameters θ = (log(ν - min_df), log σ). The upper ν
+# bound corresponds to ν ≈ 1e6, which is numerically indistinguishable from the
+# Gaussian limit; mgcv likewise reports ν as Inf beyond exp(999).
+const _SCAT_LOGNU_LOWER = log(1e-6)
+const _SCAT_LOGNU_UPPER = log(1e6)
+const _SCAT_LOGSIG_LOWER = log(1e-10)
+const _SCAT_LOGSIG_UPPER = log(1e10)
+
+"""
+    estimate_theta!(family::ScatFamily, y, mu, wt, scale)
+
+Estimate the scaled t degrees of freedom `ν` and scale `σ` by maximising the
+conditional log-likelihood given the current `mu`, using safeguarded Newton
+steps on `θ = (log(ν - min_df), log σ)`.
+
+This follows the same alternating profile-likelihood scheme as
+[`estimate_theta!(::NegBinFamily, ...)`](@ref) rather than mgcv's
+REML-embedded θ estimation: `pirls_extended` calls it periodically as the fit
+evolves and once more at convergence, and `outer.jl` alternates it with the
+smoothing-parameter update. The two-dimensional gradient and Hessian are taken
+by `ForwardDiff` on [`_scat_loglik`](@ref); at two parameters this costs
+essentially nothing per call and removes the largest transcription risk in the
+family.
+
+`scale` is unused — the scaled t carries its own dispersion in `σ`, so the GLM
+scale is fixed at 1 (`_estimates_scale(::ScatFamily) = false`).
+"""
+function estimate_theta!(family::ScatFamily, y, mu, wt, scale)
+    family.estimate_theta || return nothing
+
+    min_df = family.min_df
+    nll(θ) = -_scat_loglik(exp(θ[1]) + min_df, exp(θ[2]), y, mu, wt)
+
+    θ = [clamp(log(max(family.nu - min_df, 1e-8)), _SCAT_LOGNU_LOWER, _SCAT_LOGNU_UPPER),
+         clamp(log(max(family.sigma, 1e-12)), _SCAT_LOGSIG_LOWER, _SCAT_LOGSIG_UPPER)]
+    fval = nll(θ)
+    isfinite(fval) || return nothing
+
+    θ_trial = similar(θ)
+    for _ in 1:50
+        g = ForwardDiff.gradient(nll, θ)
+        all(isfinite, g) || break
+        maximum(abs, g) < 1e-10 && break
+
+        H = ForwardDiff.hessian(nll, θ)
+        # Ridge the Hessian until it is positive definite, so the step is a
+        # descent direction even where the profile likelihood is flat in ν
+        # (which it is whenever the data are effectively Gaussian).
+        δ = nothing
+        base = max(1e-8 * maximum(abs, H), 1e-10)
+        for attempt in 0:10
+            Ht = attempt == 0 ? H : H + (base * 10.0^(attempt - 1)) * I
+            F = try
+                cholesky(Symmetric(Ht))
+            catch
+                nothing
+            end
+            if F !== nothing
+                δ = F \ g
+                break
+            end
+        end
+        δ === nothing && break
+
+        step = 1.0
+        improved = false
+        for _halve in 1:30
+            θ_trial[1] = clamp(θ[1] - step * δ[1], _SCAT_LOGNU_LOWER, _SCAT_LOGNU_UPPER)
+            θ_trial[2] = clamp(θ[2] - step * δ[2], _SCAT_LOGSIG_LOWER, _SCAT_LOGSIG_UPPER)
+            f_trial = nll(θ_trial)
+            if isfinite(f_trial) && f_trial < fval
+                improved = true
+                break
+            end
+            step *= 0.5
+        end
+        improved || break
+
+        moved = max(abs(θ_trial[1] - θ[1]), abs(θ_trial[2] - θ[2]))
+        copyto!(θ, θ_trial)
+        fval = nll(θ)
+        moved < 1e-10 && break
+    end
+
+    family.nu = exp(θ[1]) + min_df
+    family.sigma = exp(θ[2])
+    return nothing
+end
+
+"""
+    _preinitialize!(family, y)
+
+Give a family's extra parameters data-dependent starting values, mirroring
+mgcv's `preinitialize` hook. A no-op for every family except the scaled t,
+whose scale must start near the spread of the response for P-IRLS to make
+progress. Runs once per family object: warm-started refits keep the values
+carried over from the previous outer iteration.
+"""
+_preinitialize!(::ExtendedFamily, y) = nothing
+
+function _preinitialize!(f::ScatFamily, y)
+    f.initialized && return nothing
+    # mgcv scat(): Theta <- c(1.5, log(0.8 * sd(y)))
+    sd_y = length(y) > 1 ? std(y) : 1.0
+    isfinite(sd_y) && sd_y > 0 || (sd_y = 1.0)
+    f.nu = exp(1.5) + f.min_df
+    f.sigma = 0.8 * sd_y
+    f.initialized = true
+    return nothing
+end
+
+"""
+    _use_expected_information(family) -> Bool
+
+Whether `pirls_extended` should form the *final* working weights (those that
+determine the EDF, hat values and covariance matrix) from the expected
+curvature `EDmu2` rather than the observed curvature `Dmu2`.
+
+`true` by default. It is `false` for the scaled t, where `EDmu2` is constant in
+`μ`: using it would give the fit the effective degrees of freedom and standard
+errors of an ordinary least-squares fit, discarding precisely the outlier
+downweighting the family exists to provide. mgcv likewise reports scat EDFs
+from the Newton weights.
+"""
+_use_expected_information(::ExtendedFamily) = true
+_use_expected_information(::ScatFamily) = false
