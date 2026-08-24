@@ -23,6 +23,54 @@ function _check_sp_fx(sp, fx::Bool, call::String, vars)
 end
 
 """
+    _normalize_sp(sp, call, vars) -> Union{Float64, Vector{Float64}, Nothing}
+
+Coerce a user-supplied `sp=` to the stored representation, rejecting values
+that can never be valid smoothing parameters.
+
+A scalar fixes every penalty of the smooth at that value (mgcv allows this
+too, and it is what most smooths — which have a single penalty — need). A
+vector fixes them individually, one entry per penalty, matching mgcv's
+per-penalty `sp` vector for multi-penalty smooths such as `bs="ad"`, `t2`
+and `bs="fs"`.
+
+Positivity and element type are checked here because they are properties of
+the value alone, and failing in `s()`/`te()` points at the offending term.
+The *length* is deliberately NOT checked here: for several bases the penalty
+count is not known until the basis has been constructed against data (an
+adaptive smooth's sub-penalty count depends on `k` and `m`, `fs`'s on the
+marginal null-space dimension, `t2`'s on the marginal block structure), so
+that check lives in `setup_penalties` where `S_list` is in hand.
+"""
+function _normalize_sp(sp, call::String, vars)
+    sp === nothing && return nothing
+    varlist = join(string.(vars), ", ")
+
+    if sp isa AbstractVector
+        isempty(sp) && throw(ArgumentError(
+            "$call($varlist, sp=$sp): sp= must not be empty. Pass a scalar to " *
+            "fix every penalty at one value, or one entry per penalty."))
+        all(x -> x isa Real, sp) || throw(ArgumentError(
+            "$call($varlist, sp=$sp): sp= must contain real numbers."))
+        vals = Float64[Float64(x) for x in sp]
+        for (i, v) in enumerate(vals)
+            (isfinite(v) && v > 0) || throw(ArgumentError(
+                "$call($varlist, sp=$sp): sp= entries must be finite and " *
+                "positive, got $v at index $i."))
+        end
+        return vals
+    end
+
+    sp isa Real || throw(ArgumentError(
+        "$call($varlist, sp=$sp): sp= must be a positive number, or a vector " *
+        "of them with one entry per penalty, got $(typeof(sp))."))
+    v = Float64(sp)
+    (isfinite(v) && v > 0) || throw(ArgumentError(
+        "$call($varlist, sp=$sp): sp= must be finite and positive, got $v."))
+    return v
+end
+
+"""
     _check_sos_units(bs, xt, vars)
 
 Reject an invalid `xt[:units]` on an `sos` term at construction time.
@@ -99,7 +147,11 @@ Specify a smooth term for use in a GAM formula.
 - `id`: identifier for linking smooths sharing smoothing parameters
   (not yet supported — passing it errors at fit time)
 - `sp`: fixed smoothing parameter, held at this value (excluded from
-  optimization). `nothing` = estimate automatically
+  optimization). `nothing` = estimate automatically. A scalar fixes every
+  penalty of the smooth; for a multi-penalty smooth (`bs=:ad`, `bs=:fs`) pass a
+  vector with one entry per penalty, matching mgcv's per-penalty `sp` vector.
+  The length is checked once the basis is built, so a mismatch reports the
+  smooth's actual penalty count
 - `fx`: if `true`, smooth is unpenalized (fixed df)
 - `m`: penalty order (meaning depends on basis type; `nothing` = default)
 
@@ -148,7 +200,7 @@ function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
 
     by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
     id_sym = id isa Symbol ? id : nothing
-    sp_val = sp === nothing ? nothing : Float64(sp)
+    sp_val = _normalize_sp(sp, "s", vars)
     m_val = m === nothing ? nothing : Int(m)
     xt_norm = _normalize_xt(xt; pc = pc)
     _check_sos_units(bs, xt_norm, vars)
@@ -199,14 +251,17 @@ function te(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
     bs_vec = bs isa Symbol ? fill(bs, d) : bs
     length(bs_vec) == d || throw(ArgumentError("bs vector length must match number of variables"))
 
-    # Marginal basis dimensions. A scalar `k` is a TOTAL-dimension hint split
-    # as k^(1/d) per margin (mgcv's `k` is per-margin); pass a vector to set
-    # the marginal dimensions directly, as in mgcv's `k = c(4, 7)`.
+    # Marginal basis dimensions. A scalar `k` is the PER-MARGINAL dimension,
+    # recycled across margins as in mgcv; pass a vector to set them directly,
+    # as in mgcv's `k = c(4, 7)`. See `_tensor_marginal_k`.
     k_marginal = _tensor_marginal_k(k, d)
 
     by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
     id_sym = id isa Symbol ? id : nothing
-    sp_val = sp === nothing ? nothing : Float64(sp)
+    sp_val = _normalize_sp(sp, "te", vars)
+    # Marginals must not inherit a VECTOR sp: its entries index the tensor's
+    # own penalties, not a marginal's. A scalar still propagates, unchanged.
+    sp_marg = sp_val isa AbstractVector ? nothing : sp_val
     m_val = m === nothing ? nothing : Int(m)
     xt_vec = _normalize_tensor_xt(xt, d)
 
@@ -215,7 +270,7 @@ function te(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
         basis_i = resolve_basis_type(bs_vec[i])
         label_i = "s($(vars[i]),bs=$(bs_vec[i]))"
         push!(marginals, SmoothSpec([vars[i]], basis_i, k_marginal[i],
-                                    nothing, id_sym, sp_val, fx, m_val, label_i, xt_vec[i]))
+                                    nothing, id_sym, sp_marg, fx, m_val, label_i, xt_vec[i]))
     end
 
     label = _te_label(vars, by_sym, false)
@@ -262,7 +317,10 @@ function ti(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
 
     by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
     id_sym = id isa Symbol ? id : nothing
-    sp_val = sp === nothing ? nothing : Float64(sp)
+    sp_val = _normalize_sp(sp, "ti", vars)
+    # Marginals must not inherit a VECTOR sp: its entries index the tensor's
+    # own penalties, not a marginal's. A scalar still propagates, unchanged.
+    sp_marg = sp_val isa AbstractVector ? nothing : sp_val
     m_val = m === nothing ? nothing : Int(m)
     xt_vec = _normalize_tensor_xt(xt, d)
 
@@ -271,7 +329,7 @@ function ti(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
         basis_i = resolve_basis_type(bs_vec[i])
         label_i = "s($(vars[i]),bs=$(bs_vec[i]))"
         push!(marginals, SmoothSpec([vars[i]], basis_i, k_marginal[i],
-                                    nothing, id_sym, sp_val, fx, m_val, label_i, xt_vec[i]))
+                                    nothing, id_sym, sp_marg, fx, m_val, label_i, xt_vec[i]))
     end
 
     label = _te_label(vars, by_sym, true)
@@ -407,7 +465,10 @@ function t2(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
 
     by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
     id_sym = id isa Symbol ? id : nothing
-    sp_val = sp === nothing ? nothing : Float64(sp)
+    sp_val = _normalize_sp(sp, "t2", vars)
+    # Marginals must not inherit a VECTOR sp: its entries index the tensor's
+    # own penalties, not a marginal's. A scalar still propagates, unchanged.
+    sp_marg = sp_val isa AbstractVector ? nothing : sp_val
     m_val = m === nothing ? nothing : Int(m)
     xt_vec = _normalize_tensor_xt(xt, d)
 
@@ -416,7 +477,7 @@ function t2(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
         basis_i = resolve_basis_type(bs_vec[i])
         label_i = "s($(vars[i]),bs=$(bs_vec[i]))"
         push!(marginals, SmoothSpec([vars[i]], basis_i, k_marginal[i],
-                                    nothing, id_sym, sp_val, fx, m_val, label_i, xt_vec[i]))
+                                    nothing, id_sym, sp_marg, fx, m_val, label_i, xt_vec[i]))
     end
 
     label = _t2_label(vars, by_sym)

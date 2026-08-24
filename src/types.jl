@@ -148,7 +148,12 @@ construction algorithm is dispatched.
 - `k`: basis dimension (number of basis functions before constraint absorption)
 - `by`: optional `by` variable for varying-coefficient models
 - `id`: optional identifier for linking smooths
-- `sp`: optional fixed smoothing parameter (nothing = estimate)
+- `sp`: optional fixed smoothing parameter (nothing = estimate). A scalar fixes
+  every penalty of the smooth at that value; a vector fixes them individually
+  and must have one entry per penalty, which lets multi-penalty smooths
+  (`bs=:ad`, `t2`, `bs=:fs`) round-trip mgcv's per-penalty `sp` vector. The
+  length is checked against the constructed penalty count in `setup_penalties`,
+  since for several bases that count is not known until after construction.
 - `fx`: if true, do not penalize (fixed df smooth)
 - `m`: penalty order (meaning depends on basis type)
 - `label`: human-readable label for the smooth
@@ -159,7 +164,7 @@ struct SmoothSpec{B<:AbstractBasisType}
     k::Int
     by::Union{Symbol, Nothing}
     id::Union{Symbol, Nothing}
-    sp::Union{Float64, Nothing}
+    sp::Union{Float64, Vector{Float64}, Nothing}
     fx::Bool
     m::Union{Int, Nothing}
     label::String
