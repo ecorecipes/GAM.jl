@@ -89,7 +89,7 @@ use `GAM.@formula(...)` or `using GAM: @formula`.
 | `s(x, bs=:mrf)` | Markov random field | Spatial smoothing on discrete regions (requires an `xt` neighborhood structure) |
 | `s(x, y, bs=:so)` | Soap film | Smoothing over complex domains with boundaries (approximation of mgcv's construction) |
 | `s(x, y, bs=:fs)` | Factor-smooth interaction | Smooth varying by factor level |
-| `s(lat, lon, bs=:sos)` | Spherical spline | Smoothing on the sphere; approximation of mgcv's spline-on-the-sphere kernels |
+| `s(lat, lon, bs=:sos)` | Spherical spline | Smoothing on the sphere; port of mgcv's spline-on-the-sphere kernels (degrees, latitude first) |
 | `s(x, bs=:spde)` | SPDE Matérn | Stochastic PDE Matérn field |
 | `s(x, bs=:lo)` | Loess | Local regression basis |
 | `s(x, bs=:ad)` | Adaptive | Spatially adaptive smoothness (mgcv-style B-spline penalty weights) |
@@ -357,7 +357,7 @@ Xp = lpmatrix(m, newdata)
 
 ## Vignettes
 
-Fourteen Quarto vignettes walk through the package, each with an R companion in
+Fifteen Quarto vignettes walk through the package, each with an R companion in
 its `R/` subdirectory running the equivalent analysis (mgcv, scam, qgam,
 gamlss, evgam, gamFactory) on the same checked-in data.
 
@@ -365,6 +365,8 @@ gamlss, evgam, gamFactory) on the same checked-in data.
 from mgcv, read **13 (Migrating from mgcv)** early — it maps the API and spells
 out where the two packages genuinely differ. Then 14 for an end-to-end model
 selection workflow, 4–5 as needed, and 6–12 as your application requires.
+Reach for **15 (Large data and spatial models)** when your data outgrow
+`gam()` or acquire a map.
 
 1. [Introduction](vignettes/01_introduction/01_introduction.qmd)
 2. [Basis types](vignettes/02_basis_types/02_basis_types.qmd)
@@ -380,6 +382,7 @@ selection workflow, 4–5 as needed, and 6–12 as your application requires.
 12. [Nested effects](vignettes/12_nested_effects/12_nested_effects.qmd)
 13. [Migrating from mgcv](vignettes/13_migrating_from_mgcv/13_migrating_from_mgcv.qmd)
 14. [Model selection and diagnostics](vignettes/14_model_selection/14_model_selection.qmd)
+15. [Large data and spatial models](vignettes/15_large_and_spatial/15_large_and_spatial.qmd)
 
 Rendered GFM versions (`.md`) are checked in alongside the sources; see
 [vignettes/README.md](vignettes/README.md) for rendering and data-generation

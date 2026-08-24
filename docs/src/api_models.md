@@ -51,6 +51,9 @@ nll_total
 ```@docs
 gam_nl
 s_nest
+trans_linear
+trans_nexpsm
+trans_mgks
 GAM.TransLinear
 GAM.TransExpSmooth
 GAM.TransMGKS

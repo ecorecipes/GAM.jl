@@ -27,7 +27,7 @@ using StableRNGs
         # (2013) construction gives diagonal penalties with non-overlapping
         # support, one block per penalty. mgcv:::smooth2random on a t2 smooth
         # returns exactly this, e.g. pen.ind = 1,1,1,1,2,2,2,2,3,3,3,3,0,0,0.
-        sm2 = smooth_construct(t2(:x, :z, k = 25), df)
+        sm2 = smooth_construct(t2(:x, :z, k = 5), df)   # per-marginal: 5×5 = 25, as before
         smm2 = smooth2random(sm2)
         @test length(smm2.Zs) == length(sm2.S)
         group_counts = [count(==(i), smm2.pen_ind) for i in 1:length(sm2.S)]
@@ -45,7 +45,7 @@ using StableRNGs
         # mgcv:::smooth2random refuses te outright for the gamm4-style form
         # ("te smooths not useable with gamm4: use t2 instead"). We therefore
         # decompose te into a single structured block.
-        smte = smooth_construct(te(:x, :z, k = 25), df)
+        smte = smooth_construct(te(:x, :z, k = 5), df)   # per-marginal: 5×5 = 25, as before
         smmte = smooth2random(smte)
         @test length(smte.S) > 1
         @test length(smmte.Zs) == 1
@@ -85,7 +85,7 @@ using StableRNGs
         z = randn(rng, n)
         y = sin.(x) .+ cos.(z) .+ 0.15 .* randn(rng, n)
         data = DataFrame(x = x, z = z)
-        sm = smooth_construct(te(:x, :z, k = 25), data)
+        sm = smooth_construct(te(:x, :z, k = 5), data)  # per-marginal: 5×5 = 25, as before
         sm.first_para = 2
         sm.last_para = 1 + size(sm.X, 2)
         X = hcat(ones(n), sm.X)

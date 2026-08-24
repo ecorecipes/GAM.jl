@@ -80,7 +80,29 @@ On a matched tensor model the REML score at the optimum is `95.289118`
 (GAM.jl) versus `95.28912` (mgcv), the criterion surfaces correlate at
 `0.99994` over a grid spanning `log λ ∈ [-12, 12]`, and the located optima
 agree to about `1e-3` in log-sp under both REML and GCV. Pass
-`method = "REML"` in R (or `method = :GCV` in Julia) when comparing.
+`method = "REML"` in R when comparing.
+
+**`"GCV.Cp"` is not always `:GCV`.** mgcv picks the actual criterion from
+whether the scale is known (`R/mgcv.r:1946-1965`): with an estimated scale
+(Gaussian, Gamma) `method = "GCV.Cp"` optimizes **GCV**, but with a known
+scale (Poisson, Binomial) it optimizes **UBRE**. GAM.jl takes the criterion
+literally from `method`, so the Julia equivalent of `"GCV.Cp"` is `:GCV` for
+Gaussian/Gamma and `:UBRE` for Poisson/Binomial. Matching them accordingly
+reproduces mgcv closely — on a Poisson `s(x, bs="cr", k=10)` fit, `:UBRE`
+gives score `0.158781` against mgcv's `0.158781`, sp `129.97` vs `129.96`
+and EDF `5.9892` vs `5.9894` — whereas `:GCV` on the same data optimizes a
+genuinely different criterion (score `1.1676`, EDF `5.7504`).
+
+The achieved score is available as `sp_criterion(m)`, the analogue of mgcv's
+`b$gcv.ubre`. Both are minimized, so REML/ML values are negative log marginal
+likelihoods and lower is better.
+
+One known gap: GAM.jl's **`:ML` score differs from mgcv's** by roughly 1–8%
+(e.g. `50.5654` vs `46.6654` on a Gaussian reference fit). mgcv's ML changes
+the determinant terms rather than only dropping the `Mp` correction
+(`R/gam.fit3.r:545-546` sets `REML <- -1` for ML, feeding a different
+determinant path). `:REML`, `:GCV` and `:UBRE` all agree with mgcv to
+between `4e-12` and `2e-4`.
 
 ### Architecture
 
@@ -159,7 +181,7 @@ comparison there.
 | Cyclic P-splines (`:cps`) | ✅ | ✅ |
 | B-splines (`:bs`) | ✅ | ✅ |
 | Gaussian process (`:gp`) | ✅ | ✅ |
-| Duchon splines (`:ds`) | ✅ | ✅ |
+| Duchon splines (`:ds`) | ✅ | ⚠️ alias for `:tp` — warns; not Duchon's fractional-order basis |
 | Markov random field (`:mrf`) | ✅ | ✅ |
 | Soap film (`:so`) | ✅ | ✅ |
 | Factor-smooth (`:fs`) | ✅ | ✅ |
@@ -170,7 +192,7 @@ comparison there.
 | Side constraints (`gam.side`) | ✅ | ✅ |
 | `gam.check` diagnostics | ✅ | ✅ |
 | Adaptive smooths (`:ad`) | ✅ | ✅ |
-| Spherical splines (`:sos`) | ✅ | ⚠️ approximation |
+| Spherical splines (`:sos`) | ✅ | Port of mgcv's kernel (`m = -2…4`, default 0); degrees like mgcv (`xt=Dict(:units=>:radians)` to opt out). `sp` values are portable between the packages |
 | Soap film (`:so`) | ✅ | ⚠️ approximation |
 | `t2()` tensor construction (Wood–Scheipl–Faraway) | ✅ | ✅ (verified against mgcv: matching columns, penalty count, ranks, supports) |
 | Linear functional terms (matrix args) | ✅ | ❌ |

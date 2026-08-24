@@ -52,7 +52,7 @@ end
         x = randn(n); z = randn(n)
         y = sin.(x) .+ cos.(z) .+ 0.1 .* randn(n)
         df = DataFrame(x = x, z = z, y = y)
-        m = gam(GAM.@formulak(y ~ te(x, z, k = 25)), df)
+        m = gam(GAM.@formulak(y ~ te(x, z, k = 5)), df)
         check_serialization("te", m, df)
     end
 
@@ -63,7 +63,7 @@ end
         x = randn(n); z = randn(n)
         y = sin.(x) .* cos.(z) .+ 0.1 .* randn(n)
         df = DataFrame(x = x, z = z, y = y)
-        m = gam(GAM.@formulak(y ~ ti(x, z, k = 25, bs = :cr)), df)
+        m = gam(GAM.@formulak(y ~ ti(x, z, k = 5, bs = :cr)), df)
         check_serialization("ti", m, df)
     end
 
@@ -74,7 +74,7 @@ end
         x = randn(n); z = randn(n)
         y = sin.(x) .+ cos.(z) .+ 0.1 .* randn(n)
         df = DataFrame(x = x, z = z, y = y)
-        m = gam(GAM.@formulak(y ~ t2(x, z, k = 25)), df)
+        m = gam(GAM.@formulak(y ~ t2(x, z, k = 5)), df)
         check_serialization("t2", m, df)
     end
 

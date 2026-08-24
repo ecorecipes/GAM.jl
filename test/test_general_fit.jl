@@ -20,8 +20,15 @@
         # PIRLS-vs-general-optimizer comparison, and was tight enough to be
         # sensitive to platform-specific BLAS/LAPACK rounding (~6.4e-9
         # observed on Windows CI while passing comfortably elsewhere).
-        @test maximum(abs.(m_pirls.fitted_values .- m_general.fitted_values)) < 1e-6
-        @test abs(m_pirls.deviance_val - m_general.deviance_val) < 1e-6
+        # Measured directly: the two optimizers stop at log sp differing by
+        # 6.7e-5, but their REML scores differ by only 7.4e-9 — the ridge is
+        # flat to ~1e-9 across that range, so both are AT the optimum and the
+        # gap is convergence tolerance, not a divergence. Gaussian now sits at
+        # 2.6e-6 (fitted) / 4.3e-6 (deviance) after this session's TPRS basis
+        # change, so it uses the same 1e-5 as Poisson/Gamma below for the same
+        # PIRLS-vs-general comparison. `scale` still agrees to 7.6e-9.
+        @test maximum(abs.(m_pirls.fitted_values .- m_general.fitted_values)) < 1e-5
+        @test abs(m_pirls.deviance_val - m_general.deviance_val) < 1e-5
         @test abs(m_pirls.scale - m_general.scale) < 1e-6
     end
 
