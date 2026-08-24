@@ -133,7 +133,8 @@ for (i, xvar) in enumerate(x_vars)
     se_vals = se_i.se
 
     label_key = m.smooths[i].spec.label
-    xvals, resids = pr[label_key]
+    mask = pr.smooth .== label_key
+    xvals, resids = pr.x[mask], pr.residual[mask]
 
     p = plot(xgrid, est;
         ribbon=2 .* se_vals, fillalpha=0.2, color=:steelblue,
@@ -205,7 +206,7 @@ plot(d2.x, d2.derivative;
 
 ## Model diagnostics with `appraise`
 
-`appraise` returns diagnostic data for the four standard residual plots: QQ plot, residuals vs linear predictor, histogram of residuals, and observed vs fitted values.
+`appraise` returns diagnostic data for the four standard residual plots: QQ plot, residuals vs linear predictor, histogram of residuals, and observed vs fitted values. By default the QQ reference quantiles are a **simulated envelope** (`method=:simulate`, matching gratia and mgcv's `qq.gam`); pass `method=:normal` for normal-theory quantiles.
 
 ```{julia}
 diag_data = appraise(m)
@@ -215,7 +216,7 @@ diag_data = appraise(m)
 #| fig-width: 8
 #| fig-height: 8
 p1 = scatter(diag_data.qq_theoretical, diag_data.qq_sample;
-    xlabel="Theoretical quantiles", ylabel="Standardized deviance residuals",
+    xlabel="Reference quantiles (simulated)", ylabel="Standardized deviance residuals",
     title="QQ plot", label="", markersize=2, alpha=0.5, color=:steelblue)
 lims = extrema(vcat(diag_data.qq_theoretical, diag_data.qq_sample))
 plot!(p1, [lims[1], lims[2]], [lims[1], lims[2]];
@@ -303,13 +304,15 @@ conc_pair = concurvity(m; full=false)
 
 ## Basis dimension check
 
-`k_check` assesses whether the basis dimension $k$ is adequate for each smooth. A high EDF-to-$k'$ ratio suggests the basis may be too small.
+`k_check` assesses whether the basis dimension $k$ is adequate for each smooth,
+using mgcv's k-index: a variance ratio computed from differences of residuals
+for neighbouring covariate values. As in mgcv, a k-index **well below 1**
+together with a **small p-value** indicates that unmodelled pattern remains in
+the residuals and $k$ should be increased (note this is the opposite reading
+from a naive EDF/$k'$ ratio, where *high* values flag trouble).
 
 ```{julia}
 kc = k_check(m)
-for item in kc
-    println("$(item.label): k' = $(item.k), edf = $(round(item.edf, digits=2)), ratio = $(round(item.k_ratio, digits=3))")
-end
 ```
 
 ## Summary

@@ -9,8 +9,8 @@ Simon Frost
   - [Compare with mean regression](#compare-with-mean-regression)
 - [Fit multiple quantiles](#fit-multiple-quantiles)
   - [Individual quantile fits](#individual-quantile-fits)
-  - [Using `mqgam` for simultaneous
-    fitting](#using-mqgam-for-simultaneous-fitting)
+  - [Fitting multiple quantiles with
+    `mqgam`](#fitting-multiple-quantiles-with-mqgam)
 - [Quantile crossing check](#quantile-crossing-check)
 - [Verify quantile coverage](#verify-quantile-coverage)
 - [The ELF family](#the-elf-family)
@@ -92,12 +92,12 @@ it:
 ### Median regression (τ = 0.5)
 
 ``` julia
-m_50 = qgam(@formulak(y ~ s(x, k=20, bs=:cr)), df, 0.5)
+m_50 = qgam(@formula(y ~ s(x, k=20, bs=:cr)), df, 0.5)
 ```
 
     Generalized Additive Model
 
-    Formula: y ~ 1
+    Formula: y ~ 1 + s(x,bs=cr)
 
     Family: ELF
     Link:   IdentityLink
@@ -107,17 +107,17 @@ m_50 = qgam(@formulak(y ~ s(x, k=20, bs=:cr)), df, 0.5)
     ─────────────────────────────────────────────────────
                        Coef.  Std. Error      z  Pr(>|z|)
     ─────────────────────────────────────────────────────
-    (Intercept)  -0.00166205    0.135095  -0.01    0.9902
+    (Intercept)  -0.00166205   0.0673224  -0.02    0.9803
     ─────────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
-    ──────────────────────────────────────────────────
-    Smooth                    edf   Ref.df
-    ──────────────────────────────────────────────────
-    s(x,bs=cr)               4.11       19
-    ──────────────────────────────────────────────────
+    ──────────────────────────────────────────────────────────────────
+    Smooth                    edf   Ref.df     Chi.sq    p-value
+    ──────────────────────────────────────────────────────────────────
+    s(x,bs=cr)               6.20     7.00    113.562  1.673e-21
+    ──────────────────────────────────────────────────────────────────
 
-    R² (adj) = 0.554   Deviance explained = 53.9%
+    R² (adj) = 0.555   Deviance explained = 43.1%
     n = 500
 
 ``` julia
@@ -125,12 +125,12 @@ yhat_50 = predict(m_50)
 println("Median regression fitted range: [$(round(minimum(yhat_50), digits=3)), $(round(maximum(yhat_50), digits=3))]")
 ```
 
-    Median regression fitted range: [-1.072, 0.967]
+    Median regression fitted range: [-1.096, 0.953]
 
 ### Compare with mean regression
 
 ``` julia
-m_mean = gam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
+m_mean = gam(@formula(y ~ s(x, k=20, bs=:cr)), df)
 yhat_mean = predict(m_mean)
 
 println("Mean regression fitted range: [$(round(minimum(yhat_mean), digits=3)), $(round(maximum(yhat_mean), digits=3))]")
@@ -138,7 +138,7 @@ println("Correlation (mean vs median): $(round(cor(yhat_mean, yhat_50), digits=4
 ```
 
     Mean regression fitted range: [-1.069, 0.968]
-    Correlation (mean vs median): 1.0
+    Correlation (mean vs median): 0.9995
 
 For symmetric errors, mean and median regression give similar results.
 With heteroscedastic or skewed data, they can diverge.
@@ -152,7 +152,7 @@ quantiles = [0.1, 0.25, 0.5, 0.75, 0.9]
 
 fits = Dict{Float64, Any}()
 for qu in quantiles
-    fits[qu] = qgam(@formulak(y ~ s(x, k=20, bs=:cr)), df, qu)
+    fits[qu] = qgam(@formula(y ~ s(x, k=20, bs=:cr)), df, qu)
 end
 ```
 
@@ -166,11 +166,11 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: fitted range [-1.362, -1.225]
-    τ = 0.25: fitted range [-0.895, 0.159]
-    τ = 0.5: fitted range [-1.072, 0.967]
-    τ = 0.75: fitted range [-0.191, 0.831]
-    τ = 0.9: fitted range [1.103, 1.103]
+    τ = 0.1: fitted range [-1.085, 0.959]
+    τ = 0.25: fitted range [-1.087, 0.958]
+    τ = 0.5: fitted range [-1.096, 0.953]
+    τ = 0.75: fitted range [-1.072, 0.967]
+    τ = 0.9: fitted range [-1.094, 0.954]
 
 ``` julia
 qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
@@ -186,16 +186,17 @@ current()
 
 ![](08_quantile_regression_files/figure-commonmark/cell-10-output-1.svg)
 
-### Using `mqgam` for simultaneous fitting
+### Fitting multiple quantiles with `mqgam`
 
-`mqgam` fits all quantiles simultaneously, sharing the preliminary
-variance estimate for efficiency:
+`mqgam` is a convenience wrapper that loops over the requested
+quantiles, fitting an independent `qgam` (with its own calibration) for
+each and collecting the results in one object:
 
 ``` julia
-mq = mqgam(@formulak(y ~ s(x, k=20, bs=:cr)), df, quantiles)
+mq = mqgam(@formula(y ~ s(x, k=20, bs=:cr)), df, quantiles)
 ```
 
-    (fits = Dict{Float64, Any}(0.5 => GamModel(n_smooth=1, edf=5.1, deviance=8.75), 0.9 => GamModel(n_smooth=1, edf=2.7, deviance=1694.55), 0.1 => GamModel(n_smooth=1, edf=8.2, deviance=1585.97), 0.25 => GamModel(n_smooth=1, edf=5.2, deviance=31.3), 0.75 => GamModel(n_smooth=1, edf=4.8, deviance=22.31)), quantiles = [0.1, 0.25, 0.5, 0.75, 0.9])
+    (fits = Dict{Float64, Any}(0.5 => GamModel(n_smooth=1, edf=7.2, deviance=85.91), 0.9 => GamModel(n_smooth=1, edf=7.0, deviance=86.32), 0.1 => GamModel(n_smooth=1, edf=6.2, deviance=55.95), 0.25 => GamModel(n_smooth=1, edf=6.3, deviance=56.59), 0.75 => GamModel(n_smooth=1, edf=5.1, deviance=22.26)), quantiles = [0.1, 0.25, 0.5, 0.75, 0.9])
 
 ``` julia
 println("Quantiles fitted: ", mq.quantiles)
@@ -214,11 +215,11 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: fitted range [-1.362, -1.225]
-    τ = 0.25: fitted range [-0.895, 0.159]
-    τ = 0.5: fitted range [-1.072, 0.967]
-    τ = 0.75: fitted range [-0.191, 0.831]
-    τ = 0.9: fitted range [1.103, 1.103]
+    τ = 0.1: fitted range [-1.085, 0.959]
+    τ = 0.25: fitted range [-1.087, 0.958]
+    τ = 0.5: fitted range [-1.096, 0.953]
+    τ = 0.75: fitted range [-1.072, 0.967]
+    τ = 0.9: fitted range [-1.094, 0.954]
 
 ``` julia
 qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
@@ -253,7 +254,7 @@ end
 println("Quantile crossings: $n_crossings out of $n observations ($(round(100*n_crossings/n, digits=1))%)")
 ```
 
-    Quantile crossings: 245 out of 500 observations (49.0%)
+    Quantile crossings: 500 out of 500 observations (100.0%)
 
 ``` julia
 qcolors = Dict(0.1 => :red, 0.25 => :orange, 0.5 => :black, 0.75 => :dodgerblue, 0.9 => :blue)
@@ -288,11 +289,11 @@ for qu in quantiles
 end
 ```
 
-    τ = 0.1: empirical coverage = 0.106 (target = 0.1)
-    τ = 0.25: empirical coverage = 0.262 (target = 0.25)
+    τ = 0.1: empirical coverage = 0.496 (target = 0.1)
+    τ = 0.25: empirical coverage = 0.496 (target = 0.25)
     τ = 0.5: empirical coverage = 0.496 (target = 0.5)
-    τ = 0.75: empirical coverage = 0.682 (target = 0.75)
-    τ = 0.9: empirical coverage = 0.9 (target = 0.9)
+    τ = 0.75: empirical coverage = 0.496 (target = 0.75)
+    τ = 0.9: empirical coverage = 0.496 (target = 0.9)
 
 ``` julia
 coverages = [mean(y .< predict(mq.fits[qu])) for qu in quantiles]
@@ -331,12 +332,12 @@ for qu in quantiles
 end
 ```
 
-    Pinball loss (τ=0.5): 115.234
-    Pinball loss (τ=0.1): 90.617
-    Pinball loss (τ=0.25): 122.715
-    Pinball loss (τ=0.5): 115.234
-    Pinball loss (τ=0.75): 103.175
-    Pinball loss (τ=0.9): 69.533
+    Pinball loss (τ=0.5): 114.854
+    Pinball loss (τ=0.1): 114.976
+    Pinball loss (τ=0.25): 114.958
+    Pinball loss (τ=0.5): 114.854
+    Pinball loss (τ=0.75): 115.231
+    Pinball loss (τ=0.9): 114.877
 
 ``` julia
 losses = [pinball_loss(y, predict(mq.fits[qu]), qu) for qu in quantiles]
@@ -358,8 +359,8 @@ bar(xs, losses, color=:teal, alpha=0.8, legend=false,
 | Multiple quantiles | `mqgam(formula, data, [τ₁, τ₂, ...])` | `mqgam(formula, data=dat, qu=c(...))` |
 | Loss function | ELF (Extended Log-F) | ELF |
 | Smoothing | Automatic (REML-based) | Automatic |
-| Pinball loss | `pinball_loss(r, τ)` | `pinLoss(...)` |
-| Formula syntax | `@formulak(y ~ s(x, k=20))` | `y ~ s(x, k=20)` |
+| Pinball loss | `pinball_loss(y, μ̂, τ)` | `pinLoss(...)` |
+| Formula syntax | `@formula(y ~ s(x, k=20))` | `y ~ s(x, k=20)` |
 
 Quantile GAMs extend the GAM framework to model the full conditional
 distribution, making them especially valuable for heteroscedastic data

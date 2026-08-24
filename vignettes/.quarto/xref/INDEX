@@ -108,5 +108,11 @@
     "09_gamlss.md": "bc0cfefd",
     "09_gamlss.html": "c392ce8f",
     "09_gamlss.tex": "3fec962d"
+  },
+  "12_nested_effects/12_nested_effects.qmd": {
+    "12_nested_effects.md": "3430fa81"
+  },
+  "12_nested_effects/R/12_nested_effects.qmd": {
+    "12_nested_effects.md": "5332598a"
   }
 }

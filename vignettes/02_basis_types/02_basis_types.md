@@ -24,7 +24,7 @@ basis types:
 | `:tp` | Thin plate regression spline | Default. Optimal in a certain sense; no knot placement needed |
 | `:cr` | Cubic regression spline | Cubic spline with knots at data quantiles; efficient for 1D |
 | `:ps` | P-spline | B-spline basis with difference penalty |
-| `:gp` | Gaussian process | Squared-exponential covariance as a basis |
+| `:gp` | Gaussian process | Matérn 3/2 covariance as a basis |
 
 This vignette fits the same data with each basis and compares the
 results.
@@ -53,29 +53,30 @@ x = df.x
 y = df.y
 n = nrow(df)
 f_true = sin.(2π .* x) .+ 0.5 .* sin.(6π .* x)
+ord = sortperm(x)
 ```
 
-    300-element Vector{Float64}:
-      0.0037525705368858914
-      0.021688661920548687
-      0.02466788576849125
-      0.035696628985766546
-      0.061983472634466685
-      0.114968235996452
-      0.12355964591251725
-      0.2724256425429245
-      0.28965184715121356
-      0.3310682959041459
-      ⋮
-     -0.5567346453342871
-     -0.4870474705846718
-     -0.4415895321938606
-     -0.40465766851198026
-     -0.3358792607970992
-     -0.2692752238447488
-     -0.26688060706108724
-     -0.17366833625919342
-     -0.05412583454099407
+    300-element Vector{Int64}:
+       1
+       2
+       3
+       4
+       5
+       6
+       7
+       8
+       9
+      10
+       ⋮
+     292
+     293
+     294
+     295
+     296
+     297
+     298
+     299
+     300
 
 ## Fitting models with different bases
 
@@ -84,12 +85,19 @@ functions:
 
 ``` julia
 bases = [:tp, :cr, :ps, :gp]
-models = Dict{Symbol, GamModel}()
-
-for bs in bases
-    models[bs] = gam(GamFormula(:y, Symbol[], true, [s(:x, k=20, bs=bs)]), df)
-end
+models = Dict{Symbol, GamModel}(
+    :tp => gam(@formula(y ~ s(x, k=20, bs=:tp)), df),
+    :cr => gam(@formula(y ~ s(x, k=20, bs=:cr)), df),
+    :ps => gam(@formula(y ~ s(x, k=20, bs=:ps)), df),
+    :gp => gam(@formula(y ~ s(x, k=20, bs=:gp)), df),
+)
 ```
+
+    Dict{Symbol, GamModel} with 4 entries:
+      :cr => GamModel(n_smooth=1, edf=13.8, deviance=64.49)
+      :tp => GamModel(n_smooth=1, edf=13.8, deviance=64.49)
+      :gp => GamModel(n_smooth=1, edf=13.3, deviance=64.89)
+      :ps => GamModel(n_smooth=1, edf=12.7, deviance=64.63)
 
 ## Comparing EDF and deviance
 
@@ -100,7 +108,7 @@ for bs in bases
     m = models[bs]
     e = round(edf(m)[1]; digits = 2)
     d = round(deviance(m); digits = 2)
-    de = round(r2(m) * 100; digits = 1)
+    de = round(GAM.deviance_explained(m) * 100; digits = 1)
     println("$(rpad(bs, 8))$(lpad(string(e), 8))  $(lpad(string(d), 10))  $(lpad(string(de), 10))")
 end
 ```
@@ -109,8 +117,8 @@ end
     ──────────────────────────────────────────────────
     tp         12.78       64.49        75.1
     cr         12.78       64.49        75.1
-    ps         11.67       64.63        75.1
-    gp         14.03        65.9        74.6
+    ps         11.66       64.63        75.1
+    gp         12.25       64.89        75.0
 
 ## Comparing smooth estimates
 
@@ -130,7 +138,7 @@ for (i, bs) in enumerate(bases)
         color = colors[i])
 end
 
-plot!(p, x, f_true;
+plot!(p, x[ord], f_true[ord];
     label = "true f(x)",
     linestyle = :dash,
     linewidth = 2,
@@ -155,7 +163,7 @@ for (i, bs) in enumerate(bases)
         title = string(bs),
         xlabel = "x",
         ylabel = "f(x)")
-    plot!(pi, x, f_true;
+    plot!(pi, x[ord], f_true[ord];
         label = "truth",
         linestyle = :dash,
         color = :black)
@@ -173,8 +181,14 @@ columns for a small number of basis functions (`k = 8`):
 
 ``` julia
 plots_basis = []
+small_models = Dict{Symbol, GamModel}(
+    :tp => gam(@formula(y ~ s(x, k=8, bs=:tp)), df),
+    :cr => gam(@formula(y ~ s(x, k=8, bs=:cr)), df),
+    :ps => gam(@formula(y ~ s(x, k=8, bs=:ps)), df),
+    :gp => gam(@formula(y ~ s(x, k=8, bs=:gp)), df),
+)
 for (i, bs) in enumerate(bases)
-    m_small = gam(GamFormula(:y, Symbol[], true, [s(:x, k=8, bs=bs)]), df)
+    m_small = small_models[bs]
     X_smooth = m_small.smooths[1].X
     k_cols = size(X_smooth, 2)
     pi = plot(title = "$(bs) basis (k=8)", xlabel = "x", ylabel = "basis value",
@@ -205,9 +219,11 @@ plot(plots_basis...; layout = (2, 2), size = (800, 600))
   adjacent coefficients. Evenly spaced knots. Computationally efficient
   and well-behaved, especially for evenly sampled data.
 
-- **Gaussian process (`:gp`)**: Uses a squared-exponential covariance
-  kernel. Produces very smooth curves. Useful when the underlying
-  function is believed to be infinitely differentiable.
+- **Gaussian process (`:gp`)**: Uses a Matérn 3/2 covariance kernel,
+  whose sample paths are once-differentiable — smoother than an
+  exponential kernel but deliberately rougher than a
+  squared-exponential. A good choice when the underlying function is
+  smooth but not analytically so.
 
 ## Summary
 

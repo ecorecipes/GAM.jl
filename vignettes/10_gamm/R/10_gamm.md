@@ -39,7 +39,7 @@ library(mgcv)
 
     Loading required package: nlme
 
-    This is mgcv 1.9-3. For overview type 'help("mgcv-package")'.
+    This is mgcv 1.9-4. For overview type '?mgcv'.
 
 ``` r
 library(nlme)
@@ -58,7 +58,7 @@ cat(sprintf("n = %d, subjects = %d\n", nrow(dat), length(unique(dat$subject))))
 cat(sprintf("y range: [%.2f, %.2f]\n", min(dat$y), max(dat$y)))
 ```
 
-    y range: [-2.41, 2.38]
+    y range: [-2.47, 3.06]
 
 ### Fitting with `gamm()`
 
@@ -80,16 +80,16 @@ summary(m$gam)
 
     Parametric coefficients:
                 Estimate Std. Error t value Pr(>|t|)
-    (Intercept)  0.02575    0.05950   0.433    0.665
+    (Intercept)   0.1847     0.1297   1.424    0.155
 
     Approximate significance of smooth terms:
-           edf Ref.df    F p-value    
-    s(x) 9.044  9.044 62.6  <2e-16 ***
+           edf Ref.df     F p-value    
+    s(x) 11.67  11.67 328.8  <2e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
-    R-sq.(adj) =  0.854   
-      Scale est. = 0.16874   n = 480
+    R-sq.(adj) =  0.769   
+      Scale est. = 0.14724   n = 480
 
 ### Random effects
 
@@ -106,18 +106,18 @@ for (lev in rownames(re)) {
 }
 ```
 
-      Subject 1/1: b = -0.067
-      Subject 1/2: b = -0.017
-      Subject 1/3: b = +0.146
-      Subject 1/4: b = -0.226
-      Subject 1/5: b = -0.067
-      Subject 1/6: b = -0.090
-      Subject 1/7: b = +0.144
-      Subject 1/8: b = +0.261
-      Subject 1/9: b = +0.035
-      Subject 1/10: b = -0.123
-      Subject 1/11: b = +0.231
-      Subject 1/12: b = -0.226
+      Subject 1/1: b = +0.364
+      Subject 1/2: b = -0.503
+      Subject 1/3: b = -0.608
+      Subject 1/4: b = +0.404
+      Subject 1/5: b = +0.418
+      Subject 1/6: b = -0.362
+      Subject 1/7: b = +0.338
+      Subject 1/8: b = -0.177
+      Subject 1/9: b = -0.199
+      Subject 1/10: b = -0.441
+      Subject 1/11: b = -0.081
+      Subject 1/12: b = +0.847
 
 ### Variance components
 
@@ -128,22 +128,22 @@ print(vc)
 
                 Variance        StdDev   
     g =         pdIdnot(Xr - 1)          
-    Xr1         12.30976447     3.5085274
-    Xr2         12.30976447     3.5085274
-    Xr3         12.30976447     3.5085274
-    Xr4         12.30976447     3.5085274
-    Xr5         12.30976447     3.5085274
-    Xr6         12.30976447     3.5085274
-    Xr7         12.30976447     3.5085274
-    Xr8         12.30976447     3.5085274
-    Xr9         12.30976447     3.5085274
-    Xr10        12.30976447     3.5085274
-    Xr11        12.30976447     3.5085274
-    Xr12        12.30976447     3.5085274
-    Xr13        12.30976447     3.5085274
+    Xr1         52.9494478      7.2766371
+    Xr2         52.9494478      7.2766371
+    Xr3         52.9494478      7.2766371
+    Xr4         52.9494478      7.2766371
+    Xr5         52.9494478      7.2766371
+    Xr6         52.9494478      7.2766371
+    Xr7         52.9494478      7.2766371
+    Xr8         52.9494478      7.2766371
+    Xr9         52.9494478      7.2766371
+    Xr10        52.9494478      7.2766371
+    Xr11        52.9494478      7.2766371
+    Xr12        52.9494478      7.2766371
+    Xr13        52.9494478      7.2766371
     subject =   pdLogChol(1)             
-    (Intercept)  0.03817131     0.1953748
-    Residual     0.16873619     0.4107751
+    (Intercept)  0.1976426      0.4445702
+    Residual     0.1472440      0.3837238
 
 ``` r
 sigma_re <- as.numeric(vc[rownames(vc) == "(Intercept)", "StdDev"])
@@ -151,13 +151,13 @@ sigma_res <- as.numeric(vc[rownames(vc) == "Residual", "StdDev"])
 cat(sprintf("RE σ: %.4f (true: 0.6)\n", sigma_re))
 ```
 
-    RE σ: 0.1954 (true: 0.6)
+    RE σ: 0.4446 (true: 0.6)
 
 ``` r
 cat(sprintf("Residual σ: %.4f (true: 0.4)\n", sigma_res))
 ```
 
-    Residual σ: 0.4108 (true: 0.4)
+    Residual σ: 0.3837 (true: 0.4)
 
 ### Comparison with true values
 
@@ -167,7 +167,7 @@ cat(sprintf("Correlation of estimated vs true RE: %.4f\n",
             cor(re[, 1], true_re)))
 ```
 
-    Correlation of estimated vs true RE: 0.8319
+    Correlation of estimated vs true RE: 0.9874
 
 ### Equivalence with `s(subject, bs="re")`
 
@@ -181,7 +181,7 @@ cat(sprintf("Fitted values correlation (gamm vs gam+re): %.6f\n",
             cor(fitted(m$lme), fitted(m_gam))))
 ```
 
-    Fitted values correlation (gamm vs gam+re): 0.999996
+    Fitted values correlation (gamm vs gam+re): 1.000000
 
 ``` r
 cat(sprintf("Scale (gamm): %.6f\n", m$gam$scale))
@@ -193,7 +193,7 @@ cat(sprintf("Scale (gamm): %.6f\n", m$gam$scale))
 cat(sprintf("Scale (gam):  %.6f\n", m_gam$scale))
 ```
 
-    Scale (gam):  0.168889
+    Scale (gam):  0.147477
 
 ### Plot: Data by Subject with Population Smooth
 
@@ -274,8 +274,6 @@ m2 <- gamm(y ~ s(x, k = 15), random = list(site = ~1),
 
     iteration 4
 
-    iteration 5
-
 ``` r
 summary(m2$gam)
 ```
@@ -289,17 +287,17 @@ summary(m2$gam)
 
     Parametric coefficients:
                 Estimate Std. Error t value Pr(>|t|)    
-    (Intercept)  1.14153    0.03389   33.68   <2e-16 ***
+    (Intercept)   0.9314     0.1110   8.391 5.62e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     Approximate significance of smooth terms:
            edf Ref.df     F p-value    
-    s(x) 5.516  5.516 69.32  <2e-16 ***
+    s(x) 6.704  6.704 56.61  <2e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
-    R-sq.(adj) =  0.584   
+    R-sq.(adj) =  0.398   
       Scale est. = 1         n = 480
 
 ### Random effects
@@ -311,7 +309,7 @@ cat(sprintf("RE correlation with truth: %.4f\n",
             cor(re2[, 1], true_re2)))
 ```
 
-    RE correlation with truth: 0.6505
+    RE correlation with truth: 0.9202
 
 ### Plot: Data by Site with Population Smooth
 
@@ -362,10 +360,10 @@ abline(v = 0, lty = 2)
 
 | Feature | Julia (GAM.jl) | R (mgcv) |
 |----|----|----|
-| Random intercept | `gamm(@gamm_formula(y ~ s(x) + (1\|g)), df)` | `gamm(y ~ s(x), random=list(g=~1), data=df)` |
+| Random intercept | `gamm(@formula(y ~ s(x) + (1\|g)), df)` | `gamm(y ~ s(x), random=list(g=~1), data=df)` |
 | `@formula` path | `gamm(@formula(y ~ cr(x, 10) + (1\|g)), df)` | — |
 | `re()` shorthand | `gamm(@formula(y ~ cr(x, 10) + re(g)), df)` | — |
-| Equivalent GAM | `gam(@formulak(y ~ s(x) + s(g, bs=:re)), df)` | `gam(y ~ s(x) + s(g, bs="re"), data=df)` |
+| Equivalent GAM | `gam(@formula(y ~ s(x) + s(g, bs=:re)), df)` | `gam(y ~ s(x) + s(g, bs="re"), data=df)` |
 | Non-Gaussian | `gamm(..., Poisson())` | `gamm(..., family=poisson())` |
 | Extract RE | `ranef(m)` | `ranef(m$lme)` |
 | Variance components | `VarCorr(m)` | `VarCorr(m$lme)` |

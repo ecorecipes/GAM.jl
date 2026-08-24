@@ -44,7 +44,7 @@ library(mgcv)
 
     Loading required package: nlme
 
-    This is mgcv 1.9-3. For overview type 'help("mgcv-package")'.
+    This is mgcv 1.9-4. For overview type '?mgcv'.
 
 ``` r
 library(gratia)
@@ -232,7 +232,7 @@ gam.check(m)
 
     Method: REML   Optimizer: outer newton
     full convergence after 4 iterations.
-    Gradient range [-6.776588e-10,3.284431e-10]
+    Gradient range [-6.777441e-10,3.284573e-10]
     (score 49.74438 & scale 0.08402973).
     Hessian positive definite, eigenvalue range [3.328508,99.11809].
     Model rank =  15 / 15 
@@ -241,7 +241,7 @@ gam.check(m)
     indicate that k is too low, especially if edf is close to k'.
 
             k'   edf k-index p-value
-    s(x) 14.00  7.72    1.09     0.9
+    s(x) 14.00  7.72    1.09    0.92
 
 ``` r
 par(mfrow = c(1, 1))

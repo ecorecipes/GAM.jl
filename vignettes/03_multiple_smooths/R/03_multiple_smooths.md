@@ -34,7 +34,7 @@ library(mgcv)
 
     Loading required package: nlme
 
-    This is mgcv 1.9-3. For overview type 'help("mgcv-package")'.
+    This is mgcv 1.9-4. For overview type '?mgcv'.
 
 ``` r
 library(gratia)
@@ -118,14 +118,15 @@ overview(m)
 ```
 
 
-    Generalized Additive Model with 4 terms
+    Generalized Additive Model with 5 terms
 
-      term  type      k   edf statistic p.value 
-      <chr> <chr> <dbl> <dbl>     <dbl> <chr>   
-    1 s(x0) TPRS      9  3.42      8.83 < 0.001 
-    2 s(x1) TPRS      9  3.22     67.5  < 0.001 
-    3 s(x2) TPRS      9  7.90     67.8  < 0.001 
-    4 s(x3) TPRS      9  1.88      2.64 0.063622
+      term      type           k   edf ref.edf statistic p.value
+      <chr>     <chr>      <dbl> <dbl>   <dbl>     <dbl> <chr>  
+    1 Intercept parametric    NA  1       1        0.269 0.7882 
+    2 s(x0)     TPRS           9  3.42    4.24     8.83  <0.001 
+    3 s(x1)     TPRS           9  3.22    4.00    67.5   <0.001 
+    4 s(x2)     TPRS           9  7.90    8.68    67.8   <0.001 
+    5 s(x3)     TPRS           9  1.88    2.36     2.64  0.0636 
 
 Per-smooth EDF:
 

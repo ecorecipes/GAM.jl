@@ -33,7 +33,7 @@ library(mgcv)
 
     Loading required package: nlme
 
-    This is mgcv 1.9-3. For overview type 'help("mgcv-package")'.
+    This is mgcv 1.9-4. For overview type '?mgcv'.
 
 ## GEV model
 
@@ -217,13 +217,13 @@ xi_gpd_true <- 0.15
 summary(dat_gpd)
 ```
 
-           y                   x          
-     Min.   : 0.004085   Min.   :0.00159  
-     1st Qu.: 0.512490   1st Qu.:0.23906  
-     Median : 1.209800   Median :0.50556  
-     Mean   : 1.867355   Mean   :0.50020  
-     3rd Qu.: 2.606465   3rd Qu.:0.75056  
-     Max.   :12.351651   Max.   :0.99682  
+           y                   x           
+     Min.   :2.818e-04   Min.   :0.002145  
+     1st Qu.:2.376e-01   1st Qu.:0.254509  
+     Median :7.053e-01   Median :0.513022  
+     Mean   :1.198e+00   Mean   :0.505560  
+     3rd Qu.:1.551e+00   3rd Qu.:0.780828  
+     Max.   :2.259e+01   Max.   :0.999740  
 
 ### Fit the GPD model
 
@@ -242,17 +242,17 @@ summary(m_gpd)
 
     logscale
                 Estimate Std. Error t value Pr(>|t|)
-    (Intercept)     0.55       0.07    8.24   <2e-16
+    (Intercept)    -0.09       0.07   -1.33   0.0924
 
     shape
                 Estimate Std. Error t value Pr(>|t|)
-    (Intercept)     0.06       0.05    1.28    0.101
+    (Intercept)     0.19       0.05    3.69 0.000114
 
     ** Smooth terms **
 
     logscale
-         edf max.df Chi.sq Pr(>|t|)
-    s(x) 2.6      9  11.56  0.00614
+          edf max.df Chi.sq Pr(>|t|)
+    s(x) 2.64      9  38.07 3.01e-07
 
 ### Examine GPD estimates
 
@@ -261,19 +261,19 @@ psi_gpd_hat <- predict(m_gpd)$logscale
 cat("Log-scale fitted range:", range(psi_gpd_hat), "\n")
 ```
 
-    Log-scale fitted range: 0.3562527 0.898087 
+    Log-scale fitted range: -0.6840861 0.2342756 
 
 ``` r
 cat("Log-scale true range:", range(logsigma_gpd_true), "\n")
 ```
 
-    Log-scale true range: -0.4999986 0.4999976 
+    Log-scale true range: -0.4999779 0.4999539 
 
 ``` r
 cat("Correlation (log-scale):", cor(psi_gpd_hat, logsigma_gpd_true), "\n")
 ```
 
-    Correlation (log-scale): -0.2538327 
+    Correlation (log-scale): 0.8024528 
 
 ### GPD fitted vs true plots
 
@@ -321,7 +321,7 @@ structure:
 
 | R evgam | Julia GAM.jl |
 |----|----|
-| `evgam(list(y ~ s(x), ~ s(x), ~ 1), family="gev")` | `evgam([@formulak(y ~ s(x)), @formulak(y ~ s(x)), @formulak(y ~ 1)], GEVFamily())` |
+| `evgam(list(y ~ s(x), ~ s(x), ~ 1), family="gev")` | `evgam([@formula(y ~ s(x)), @formula(y ~ s(x)), @formula(y ~ 1)], GEVFamily())` |
 | `predict(m)$location` | `param_eta(m, 1)` |
 | `predict(m)$logscale` | `param_eta(m, 2)` |
 | `family = "gev"` | `GEVFamily()` |

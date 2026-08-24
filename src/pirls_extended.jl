@@ -4,6 +4,107 @@
 # estimation of extra parameters (NB theta, Beta phi) during iteration.
 
 """
+    _dd_stationary_polish!(beta, eta, mu, X, y, offset, weights, S_total,
+                           family, link, control) -> Bool
+
+Verify stationarity of the penalized deviance F(β) = D(β) + β'Sβ at the
+current iterate and, if the gradient is not negligible, run damped Newton
+steps on F using the *unclamped* deviance derivatives until stationarity
+(max|∇F| ≤ tol·(1 + |F|)) or the iteration budget is exhausted. Returns
+whether stationarity was achieved. Mutates `beta`, `eta`, `mu` in place.
+
+This exists because the clamped IRLS working system (weight floor at eps,
+±40 pseudodata clamp) discards the gradient contribution of low-curvature
+observations, so a deviance plateau does not imply a minimum — most
+acutely for the ELF (quantile) family, whose curvature vanishes outside a
+narrow sigmoid band while its gradient stays constant.
+"""
+function _dd_stationary_polish!(beta::Vector{Float64}, eta::Vector{Float64},
+    mu::Vector{Float64}, X::Matrix{Float64}, y::Vector{Float64},
+    offset::Vector{Float64}, weights::Vector{Float64},
+    S_total::Matrix{Float64}, family::ExtendedFamily, link::GLM.Link,
+    control::GamControl)
+
+    n, p = size(X)
+    tol_g = max(sqrt(control.epsilon), 1e-6)
+
+    Sb = S_total * beta
+    f_val = _deviance(family, y, mu, weights) + dot(beta, Sb)
+
+    wnewt = Vector{Float64}(undef, n)
+    geta = Vector{Float64}(undef, n)
+
+    for _ in 1:100
+        dd = _family_Dd(family, y, mu, weights; level = 0)
+        Dmu = dd[:Dmu]
+        Dmu2 = dd[:Dmu2]
+
+        @inbounds for i in 1:n
+            dme = GLM.mueta(link, eta[i])
+            gi = Dmu[i] * dme
+            ci = Dmu2[i] * dme^2 + Dmu[i] * _d2mu_deta2(link, mu[i], eta[i])
+            geta[i] = isfinite(gi) ? gi : 0.0
+            wnewt[i] = isfinite(ci) ? max(ci, 0.0) : 0.0
+        end
+
+        gvec = X' * geta .+ 2.0 .* Sb
+        gmax = maximum(abs, gvec)
+        gmax <= tol_g * (1.0 + abs(f_val)) && return true
+
+        # Newton system: PSD-floored curvature + penalty, ridge-protected
+        H = X' * Diagonal(wnewt) * X .+ 2.0 .* S_total
+        F = nothing
+        base = max(1e-8 * maximum(abs, diag(H)), 1e-10)
+        for attempt in 0:8
+            Ht = copy(H)
+            @inbounds for j in 1:p
+                Ht[j, j] += base * 10.0^attempt
+            end
+            F = try
+                cholesky(Symmetric(Ht))
+            catch
+                nothing
+            end
+            F !== nothing && break
+        end
+        F === nothing && return false
+
+        δ = F \ gvec
+        step = 1.0
+        improved = false
+        beta_t = similar(beta)
+        eta_t = similar(eta)
+        mu_t = similar(mu)
+        for _halve in 1:30
+            @inbounds for j in 1:p
+                beta_t[j] = beta[j] - step * δ[j]
+            end
+            mul!(eta_t, X, beta_t)
+            eta_t .+= offset
+            @inbounds for i in 1:n
+                mu_t[i] = _clamp_mu(family, GLM.linkinv(link, eta_t[i]))
+            end
+            f_t = _deviance(family, y, mu_t, weights) +
+                  dot(beta_t, S_total * beta_t)
+            if isfinite(f_t) && f_t < f_val - 1e-12 * (abs(f_val) + 1.0)
+                copyto!(beta, beta_t)
+                copyto!(eta, eta_t)
+                copyto!(mu, mu_t)
+                f_val = f_t
+                Sb = S_total * beta
+                improved = true
+                break
+            end
+            step *= 0.5
+        end
+        # No descent available along the Newton direction: accept as
+        # (approximately) stationary only under a looser tolerance.
+        improved || return gmax <= 10.0 * tol_g * (1.0 + abs(f_val))
+    end
+    return false
+end
+
+"""
     pirls_extended(X, y, S_total, family::ExtendedFamily, link::GLM.Link;
         weights, offset, start, control)
 
@@ -87,6 +188,10 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
                     continue
                 end
 
+                # Note the asymmetry when Deta2_i < 0: the weight is floored at
+                # eps() (Fisher-like) while the Newton step in z keeps the raw
+                # (clamped) ratio — a negative-curvature observation pushes the
+                # working response but carries ~zero weight.
                 denom = abs(Deta2_i) > eps() ? Deta2_i : copysign(eps(), Deta2_i == 0.0 ? 1.0 : Deta2_i)
                 w[i] = clamp(0.5 * Deta2_i, eps(), 1e10)
                 z[i] = eta[i] - offset[i] - clamp(Deta_i / denom, -40.0, 40.0)
@@ -172,7 +277,9 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
         mu .= mu_new
         feasible_old = _is_feasible(beta, Ain, bin, Aeq, beq)
 
-        # Estimate extra parameter periodically (every 3 iterations after burn-in)
+        # Estimate extra parameter periodically (every 3 iterations after burn-in).
+        # Scale uses n − p (not n − edf: the EDF is only available after the
+        # final factorization), which is conservative since p ≥ edf.
         if iter >= 3 && iter % 3 == 0 && _has_extra_param(family)
             scale = _estimates_scale(family) ? max(dev_new / (n - p), 1e-10) : 1.0
             estimate_theta!(family, y, mu, weights, scale)
@@ -184,7 +291,22 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
         dev_old = dev_new
 
         if crit < control.epsilon && feasible_old
-            converged = true
+            # For Dd families the working system clamps low-curvature
+            # observations (weight floor + ±40 pseudodata clamp), so the
+            # deviance can plateau at a non-stationary point (the round-4
+            # ELF defect: far-from-quantile observations carry a constant
+            # gradient but ~zero curvature, and the clamped IRLS drops
+            # their pull). Require stationarity of the penalized deviance
+            # before declaring convergence, polishing with unclamped
+            # Newton steps if needed.
+            if has_Dd && !((Ain !== nothing && size(Ain, 1) > 0) ||
+                           (Aeq !== nothing && size(Aeq, 1) > 0))
+                converged = _dd_stationary_polish!(beta, eta, mu, X, y,
+                    offset, weights, S_total, family, link, control)
+                dev_old = _deviance(family, y, mu, weights)
+            else
+                converged = true
+            end
             break
         end
     end
@@ -231,7 +353,6 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
         end
         cholesky(Symmetric(A_reg))
     end
-    XtWX = similar(A)
     @inbounds for j in 1:p, k in 1:p
         XtWX[j, k] = A[j, k] - S_total[j, k]
     end

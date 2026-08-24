@@ -101,7 +101,13 @@ _default_link(::ELFFamily) = IdentityLink()
 _family_name(::ELFFamily) = "ELF"
 _has_extra_param(f::ELFFamily) = f.estimate_theta
 _estimates_scale(::ELFFamily) = false
-_has_Dd(::ELFFamily) = false
+# ELF must use the Dd (deviance-derivative) working quantities: the Fisher
+# fallback's working response z = η + (y − μ) targets the *mean*, so with
+# _has_Dd = false every quantile level τ produced the same (mean) fit — the
+# round-4 non-stationarity defect. The Dd path uses the R-verified elf_Dd
+# gradient/curvature, and pirls_extended's stationarity polish handles the
+# low-curvature tails.
+_has_Dd(::ELFFamily) = true
 _family_Dd(f::ELFFamily, y, mu, wt; level=0) = elf_Dd(f, y, mu, wt; level=level)
 
 function _null_deviance(f::ELFFamily, y, wt)
@@ -214,16 +220,11 @@ function _deviance_residuals(f::ELFFamily, y, mu, wt)
                lam[i] * tau * log(tau) -
                (1.0 - tau) * z +
                lam[i] * log1pexp(z / lam[i])
+        # The unit deviance `term` is already zero at its minimizer
+        # z* = λ·log((1−τ)/τ) (the perfect-fit point), so no saturated
+        # constant is subtracted: r = sign(y−μ)·√d.
         di = 2.0 * wt[i] * term / sig[i]
-
-        # Saturated: z = 0 is NOT the saturated value for ELF
-        # Saturated log-lik uses y = mu case
-        sat = (1.0 - tau) * lam[i] * log1p(-tau) +
-              lam[i] * tau * log(tau)
-        di_sat = 2.0 * wt[i] * sat / sig[i]
-
-        residual_dev = max(di - di_sat, 0.0)
-        r[i] = sign(y[i] - mu[i]) * sqrt(residual_dev)
+        r[i] = sign(y[i] - mu[i]) * sqrt(max(di, 0.0))
     end
     return r
 end
@@ -246,7 +247,7 @@ function elf_aic(f::ELFFamily, y, mu, wt)
         # Full log-likelihood (not just deviance)
         ll_i = -(1.0 - tau) * z / sig[i] +
                lam[i] * log1pexp(z / lam[i]) / sig[i] +
-               log(lam[i] * exp(logabsbeta(lam[i] * (1.0 - tau) / sig[i], tau * lam[i] / sig[i])[1]))
+               log(lam[i]) + logabsbeta(lam[i] * (1.0 - tau) / sig[i], tau * lam[i] / sig[i])[1]
         aic += 2.0 * wt[i] * ll_i
     end
     return aic
@@ -502,7 +503,18 @@ following Fasiolo et al. (2020).
 - `qu`: target quantile ∈ (0, 1)
 - `lsig`: log learning rate for single-formula ELF fits. If `nothing`, it is calibrated automatically.
 - `co`: ELF smoothness constant for two-formula ELFLSS fits. If `nothing`, it is initialized from the response variance.
-- `err`: error bound for quantile curve. If `nothing`, estimated from data.
+- `err`: bound on the smoothing-induced quantile bias |F(μ̂) − F(μ₀)|.
+  Defaults to `0.05` (R qgam's default); smaller values reduce bias at the
+  cost of a rougher loss.
+
+!!! note "Calibration shortcut"
+    Automatic calibration of `lsig` (when `lsig=nothing`) uses bootstrap
+    out-of-sample pinball loss with the smoothing parameters **frozen** at
+    their initial Gaussian-fit values, rather than re-estimating them for
+    every candidate learning rate as R qgam's `tuneLearnFast` does. This is
+    much faster and usually accurate, but can bias the calibrated learning
+    rate when the Gaussian-fit smoothing parameters are far from the
+    ELF-optimal ones; pass `lsig` explicitly to bypass calibration.
 
 # Examples
 ```julia
@@ -530,7 +542,7 @@ function qgam(formula, data, qu::Real;
 
     # Step 2: Compute error parameter if not provided
     if err === nothing
-        err = _get_err_param(qu, var_hat, n)
+        err = _get_err_param()
     end
 
     # Step 3: Compute smoothness constant co
@@ -554,7 +566,7 @@ function _qgam_default_co(y::AbstractVector, qu::Real; err::Union{Nothing, Real}
     y_float = Float64.(y)
     n = length(y_float)
     var_hat = max(var(y_float; corrected=false), eps(Float64))
-    err_val = err === nothing ? _get_err_param(qu, var_hat, n) : Float64(err)
+    err_val = err === nothing ? _get_err_param() : Float64(err)
     return err_val * sqrt(2π * var_hat) / (2 * log(2))
 end
 
@@ -567,6 +579,11 @@ function qgam(formulas::AbstractVector, data, qu::Real;
               gamlss_ctrl::GamlssControl=gamlss_control(),
               kwargs...)
     0.0 < qu < 1.0 || throw(ArgumentError("qu must be in (0, 1)"))
+    # Canonicalize the method symbol: the gamlss-family entry points use
+    # lowercase (:efs, :local_ml, ...); accept uppercase spellings and treat
+    # :REML as the EFS default (EFS is the REML-flavored update).
+    method = Symbol(lowercase(String(method)))
+    method === :reml && (method = :efs)
     length(formulas) == 2 || throw(ArgumentError(
         "ELFLSS qgam expects exactly 2 formulas (mu and sigma), got $(length(formulas))."))
     length(links) == 2 || throw(ArgumentError(
@@ -585,6 +602,12 @@ end
 
 Fit smooth additive quantile regression models for multiple quantiles.
 
+Each quantile is fitted by an **independent** `qgam` call (including its own
+learning-rate calibration unless `lsig`/`co` are supplied); unlike R qgam's
+`mqgam`, no preliminary fit or calibration structure is shared across
+quantiles. Fitted curves for different quantiles may therefore cross;
+use `cqcheck` to diagnose.
+
 # Arguments
 - `formula`: GAM formula
 - `data`: data table
@@ -593,7 +616,7 @@ Fit smooth additive quantile regression models for multiple quantiles.
 - `co`: smoothness constant (scalar)
 
 # Returns
-A `NamedTuple` with `fits` (Dict of qu => GamModel) and shared structure.
+A `NamedTuple` with `fits` (Dict of qu => GamModel) and `quantiles`.
 """
 function mqgam(formula, data, qu::AbstractVector{<:Real};
                lsig::Union{Nothing, Real}=nothing,
@@ -628,14 +651,12 @@ end
 # ============================================================================
 
 """
-Automatic selection of the error parameter `err` following Fasiolo et al. (2020).
+Default error parameter `err` (the bound on |F(μ̂) − F(μ₀)| induced by the
+smoothed pinball loss). R qgam's default is `err = 0.05`; users can override
+via the `err` keyword of `qgam`/`mqgam`.
 """
-function _get_err_param(qu::Real, var_hat::Real, n::Int)
-    # Heuristic from qgam: err decreases with n, scaled by quantile extremity
-    qu_adj = min(qu, 1.0 - qu)
-    err = min(0.5, 5.0 / sqrt(n) / qu_adj)
-    return clamp(err, 0.01, 0.5)
-end
+# R qgam's default err (the bias budget of the smoothed pinball loss).
+_get_err_param() = 0.05
 
 # ============================================================================
 # Internal: Learning rate calibration (bootstrap + Brent search, matching R's tuneLearnFast)
@@ -1196,19 +1217,30 @@ function quantile_residuals(model::GamModel)
     qres = similar(y)
     for i in 1:n
         lam = co[i]
-        # ELF CDF: integral of ELF density from -∞ to y
-        # F_ELF(y|μ) is the logistic CDF with location μ and scale λ
-        # shifted by the asymmetry of τ
-        z = (y[i] - mu[i]) / lam
-        # CDF of the ELF: p = τ·sigmoid(z/τ) for z < 0, τ + (1-τ)·(1-sigmoid(-z/(1-τ))) for z ≥ 0
-        # Simplified: F(y|μ) = logistic(z) is the symmetric approximation
-        p = 1.0 / (1.0 + exp(-z))
-        # Clamp to avoid Inf in quantile transform
+        sig_i = length(fam.co) == 1 ? sig : sig * lam / (sum(co) / n)
+        p = _elf_cdf(y[i], mu[i], lam, sig_i, qu)
         p = clamp(p, 1e-10, 1 - 1e-10)
         qres[i] = quantile(Normal(), p)
     end
 
     return qres
+end
+
+"""
+    _elf_cdf(y, μ, λ, σ, τ) → F(y)
+
+Exact ELF CDF. Substituting u = sigmoid((y − μ)/λ) into the ELF density
+    f(y) ∝ exp{(1−τ)(y−μ)/σ} · (1 + e^{(y−μ)/λ})^{−λ/σ}
+gives a Beta(a, b) density in u with a = λ(1−τ)/σ and b = λτ/σ, so
+    F(y) = I_u(a, b),
+the regularized incomplete beta function at u = sigmoid((y − μ)/λ).
+"""
+function _elf_cdf(y::Real, mu::Real, lam::Real, sig::Real, tau::Real)
+    a = lam * (1.0 - tau) / sig
+    b = lam * tau / sig
+    u = 1.0 / (1.0 + exp(-(y - mu) / lam))
+    u = clamp(u, 1e-14, 1.0 - 1e-14)
+    return SpecialFunctions.beta_inc(a, b, u)[1]
 end
 
 function quantile_residuals(model::MultiParameterModel)
@@ -1217,9 +1249,10 @@ function quantile_residuals(model::MultiParameterModel)
     fam = model.family
     y = model.y
     mu = _elflss_location(model)
+    sigma = _apply_link_inv.(Ref(fam.links[2]), model.fitted_eta[2])
     qres = similar(y)
     for i in eachindex(y, mu)
-        p = 1.0 / (1.0 + exp(-(y[i] - mu[i]) / fam.co))
+        p = _elf_cdf(y[i], mu[i], fam.co, max(sigma[i], 1e-10), fam.qu)
         p = clamp(p, 1e-10, 1 - 1e-10)
         qres[i] = quantile(Normal(), p)
     end

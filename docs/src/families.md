@@ -40,13 +40,21 @@ df_gev = DataFrame(x=year, y=y_gev)
 
 These are used with `gam()` and work like GLM.jl families:
 
-| Family | Use case | Link |
-|--------|----------|------|
-| `Gaussian()` | Continuous data | `IdentityLink()` |
+| Family | Use case | Default (canonical) link |
+|--------|----------|--------------------------|
+| `Normal()` | Continuous data | `IdentityLink()` |
 | `Poisson()` | Count data | `LogLink()` |
-| `Binomial()` | Binary / proportion data | `LogitLink()` |
-| `Gamma()` | Positive continuous data | `InverseLink()` |
-| `InverseGaussian()` | Positive continuous data | `InverseSquaredLink()` |
+| `Binomial()` / `Bernoulli()` | Binary / proportion data | `LogitLink()` |
+| `Gamma()` | Positive continuous data | `InverseLink()` (consider `link=LogLink()`) |
+| `InverseGaussian()` | Positive continuous data | canonical 1/μ² |
+
+For `Gamma` and `InverseGaussian`, the canonical inverse-type links do not
+constrain the mean to be positive; `LogLink()` is often the safer practical
+choice, as in mgcv.
+
+Scale/dispersion for scale-estimating families is reported via the Fletcher
+(2012) estimator by default (`gam_control(scale_est=...)` selects
+`:fletcher`, `:pearson`, or `:deviance`), matching mgcv.
 
 ## Extended Families
 
@@ -93,6 +101,10 @@ nothing
 
 The unit variance function is `V(μ) = μ(1-μ)`, and the fitted dispersion is
 reported as `m.scale`.
+
+!!! note "Quasi-likelihood and AIC"
+    Quasi families have no true likelihood: `loglikelihood`, `aic`, and
+    `bic` return `NaN` for quasi fits, matching R's `NA` convention.
 
 ### Tweedie
 

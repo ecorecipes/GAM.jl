@@ -79,7 +79,16 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
             @test sm.Sigma !== nothing
             @test sm.cmX !== nothing
             @test sm.p_ident !== nothing
-            @test all(sm.p_ident)  # all coefficients constrained
+            # Pya & Wood (2015): for pure convex/concave SCOP-splines the first
+            # coefficient sets the boundary slope and must stay unexponentiated,
+            # so it is NOT sign-constrained; all others are. Monotone and
+            # combined constraints sign-constrain every coefficient.
+            if bs in (:cx, :cv)
+                @test !sm.p_ident[1]
+                @test all(sm.p_ident[2:end])
+            else
+                @test all(sm.p_ident)
+            end
         end
     end
 
@@ -206,7 +215,8 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         df = DataFrame(x = x, z = z, y = y)
 
         f = @formulak(y ~ z + s(x, bs = :mpi, k = 12))
-        m_scam = scam(f, df)
+        # Pin method=:REML so scam() (default :GCV) matches gam()'s routing.
+        m_scam = scam(f, df; method=:REML)
         m_gam = gam(f, df)
 
         @test m_scam.converged
@@ -266,5 +276,23 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
             nothing, false, nothing, "s(x)")
         sm_u = smooth_construct(spec_u, data)
         @test !GAM.has_shape_constraints([sm_u])
+    end
+
+    @testset "Criterion field semantics (round-3)" begin
+        rng_c = StableRNG(5)
+        n_c = 150
+        x_c = sort(rand(rng_c, n_c)) .* 5
+        y_c = 2.0 ./ (1 .+ exp.(-(x_c .- 2.5))) .+ 0.3 .* randn(rng_c, n_c)
+        df_c = DataFrame(x = x_c, y = y_c)
+        m_gcv = scam(GAM.@formulak(y ~ s(x, bs = :mpi, k = 10)), df_c)  # :GCV default
+        @test isfinite(m_gcv.criterion)
+        @test isnan(m_gcv.reml)
+        # the stored criterion matches its definition at the stored fit
+        @test m_gcv.criterion ≈ n_c * m_gcv.deviance_val /
+                                (n_c - m_gcv.edf_total)^2 rtol = 1e-6
+        m_reml = scam(GAM.@formulak(y ~ s(x, bs = :mpi, k = 10)), df_c;
+            method = :REML)
+        @test isnan(m_reml.criterion)
+        @test m_gcv.iterations > 0 && m_reml.iterations > 0
     end
 end

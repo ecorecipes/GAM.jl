@@ -154,3 +154,12 @@
         @test cor(μ_fit, μ_true) > 0.9
     end
 end
+
+@testset "gamlss_control method= canonical kwarg" begin
+    @test gamlss_control(method = :local_ml).sp_method == :local_ml
+    # deprecated alias still accepted (warns once)
+    c = gamlss_control(sp_method = :local_gcv)
+    @test c.sp_method == :local_gcv
+    @test_throws ArgumentError gamlss_control(method = :efs, sp_method = :local_ml)
+    @test_throws ArgumentError gamlss_control(method = :bogus)
+end

@@ -28,9 +28,6 @@ struct SPDESmooth <: AbstractBasisType end
 
 BASIS_TYPES[:spde] = SPDESmooth()
 
-# Module-level storage for prediction metadata (mesh nodes, dimension info)
-const _SPDE_INFO = Dict{UInt, Dict{Symbol, Any}}()
-
 # ---------------------------------------------------------------------------
 # 1D FEM helpers
 # ---------------------------------------------------------------------------
@@ -242,7 +239,7 @@ function _fem_matrices_2d_grid(x::AbstractVector{Float64},
             end
         end
 
-        if best_tri > 0 && A[j, :] == zeros(nk)
+        if best_tri > 0 && iszero(view(A, j, :))
             # Clamp to nearest triangle
             i1, i2, i3 = triangles[best_tri]
             l1 = max(best_lam[1], 0.0)
@@ -347,6 +344,11 @@ function _smooth_construct(::SPDESmooth, spec::SmoothSpec, data, user_knots)
     # Apply sum-to-zero constraint
     X_cons, S_cons, C_con, _ = absorb_constraints!(X, penalties)
 
+    # Store the L matrix for exact Matérn coupling reference:
+    # L = [2 4; 2 2; 2 0]  means log(λⱼ) = Lⱼ₁·log(τ) + Lⱼ₂·log(κ)
+    # i.e., λ₁ = τ²κ⁴, λ₂ = 2τ²κ², λ₃ = τ²
+    info[:L] = [2 4; 2 2; 2 0]
+
     sm = ConstructedSmooth(
         spec, X_cons, S_cons,
         Float64[],  # knots stored in metadata
@@ -354,13 +356,8 @@ function _smooth_construct(::SPDESmooth, spec::SmoothSpec, data, user_knots)
         C_con, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = SPDEPredictCache(info),
     )
-
-    # Store the L matrix for exact Matérn coupling reference:
-    # L = [2 4; 2 2; 2 0]  means log(λⱼ) = Lⱼ₁·log(τ) + Lⱼ₂·log(κ)
-    # i.e., λ₁ = τ²κ⁴, λ₂ = 2τ²κ², λ₃ = τ²
-    info[:L] = [2 4; 2 2; 2 0]
-    _SPDE_INFO[objectid(sm)] = info
 
     return sm
 end
@@ -373,10 +370,10 @@ function _predict_matrix(::SPDESmooth, smooth::ConstructedSmooth, newdata)
     spec = smooth.spec
     dim = length(spec.term_vars)
 
-    info = get(_SPDE_INFO, objectid(smooth), nothing)
-    info !== nothing || throw(ArgumentError(
-        "Cannot find SPDE smooth metadata for prediction. " *
-        "This can happen if the smooth object was serialized/deserialized."))
+    cache = smooth.predict_cache
+    cache isa SPDEPredictCache || throw(ArgumentError(
+        "Cannot find SPDE smooth metadata for prediction."))
+    info = cache.info
 
     if info[:precomputed]
         throw(ArgumentError(
@@ -456,7 +453,7 @@ function _predict_matrix(::SPDESmooth, smooth::ConstructedSmooth, newdata)
                 end
             end
 
-            if best_tri > 0 && all(A_new[j, :] .== 0.0)
+            if best_tri > 0 && iszero(view(A_new, j, :))
                 i1, i2, i3 = triangles[best_tri]
                 l1 = max(best_lam[1], 0.0)
                 l2 = max(best_lam[2], 0.0)

@@ -47,7 +47,7 @@ const fp_rng = MersenneTwister(456)
             xt = Dict{Symbol,Any}(:degree => 1, :y => y))
         sm = smooth_construct(spec, data)
 
-        powers = sm.spec.xt[:_selected_powers]
+        powers = sm.predict_cache.powers
         @test length(powers) == 1
         @test powers[1] ≈ 0.5  # should select p=0.5 for sqrt
     end
@@ -62,7 +62,7 @@ const fp_rng = MersenneTwister(456)
             xt = Dict{Symbol,Any}(:degree => 2, :y => y))
         sm = smooth_construct(spec, data)
 
-        powers = sm.spec.xt[:_selected_powers]
+        powers = sm.predict_cache.powers
         @test length(powers) == 2
         # Should select powers (1, 2) for linear + quadratic
         @test 1.0 in powers
@@ -79,7 +79,7 @@ const fp_rng = MersenneTwister(456)
             xt = Dict{Symbol,Any}(:degree => 1, :y => y))
         sm = smooth_construct(spec, data)
 
-        powers = sm.spec.xt[:_selected_powers]
+        powers = sm.predict_cache.powers
         @test length(powers) == 1
         @test powers[1] ≈ 0.0  # p=0 means log(x)
     end
@@ -112,7 +112,7 @@ const fp_rng = MersenneTwister(456)
         sm = smooth_construct(spec, data)
 
         @test sm isa ConstructedSmooth
-        x_shift = sm.spec.xt[:_x_shift]
+        x_shift = sm.predict_cache.x_shift
         @test x_shift > 0.0  # shift applied since x has non-positive values
         @test all(isfinite, sm.X)
 
@@ -134,7 +134,7 @@ const fp_rng = MersenneTwister(456)
             xt = Dict{Symbol,Any}(:degree => 1, :powers => custom_powers, :y => y))
         sm = smooth_construct(spec, data)
 
-        powers = sm.spec.xt[:_selected_powers]
+        powers = sm.predict_cache.powers
         @test powers[1] ≈ 3.0  # should pick cubic
     end
 
@@ -173,4 +173,19 @@ const fp_rng = MersenneTwister(456)
         @test sm isa ConstructedSmooth
         @test size(sm.X, 2) == 2
     end
+    @testset "Penalized (default) fp is auto-unpenalized, not an error" begin
+        rng_fp = StableRNG(77)
+        n = 100
+        x = rand(rng_fp, n) .* 2 .+ 0.5
+        y = sqrt.(x) .+ 0.05 .* randn(rng_fp, n)
+        df = DataFrame(x = x, y = y)
+        # Default kwargs (fx = false): previously a BoundsError from an empty
+        # penalty block; fp now stores an fx=true spec (unpenalized by design).
+        m = gam(GAM.@formula(y ~ s(x, bs = :fp, k = 4)), df)
+        @test m.converged
+        @test m.smooths[1].spec.fx           # auto-unpenalized
+        @test length(m.sp) == 0
+        @test cor(fitted(m), y) > 0.9
+    end
+
 end

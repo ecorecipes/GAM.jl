@@ -39,7 +39,7 @@ for comparison.
 library(scam)
 ```
 
-    This is scam 1.2-19.
+    This is scam 1.2-22.
 
 ``` r
 library(mgcv)
@@ -47,7 +47,7 @@ library(mgcv)
 
     Loading required package: nlme
 
-    This is mgcv 1.9-3. For overview type 'help("mgcv-package")'.
+    This is mgcv 1.9-4. For overview type '?mgcv'.
 
 ## Example 1: Monotone increasing (dose-response)
 
@@ -173,7 +173,7 @@ rmse_cx <- sqrt(mean((yhat_cx - f_true2)^2))
 cat("RMSE (convex SCAM):", round(rmse_cx, 4), "\n")
 ```
 
-    RMSE (convex SCAM): 6.7673 
+    RMSE (convex SCAM): 0.1527 
 
 ### Verify convexity
 
@@ -183,7 +183,7 @@ second_diffs <- diff(first_diffs)
 cat("Min second difference:", round(min(second_diffs), 6), "\n")
 ```
 
-    Min second difference: -0.061069 
+    Min second difference: -0.606757 
 
 ``` r
 cat("All convex:", all(second_diffs >= -1e-10), "\n")
@@ -262,7 +262,7 @@ rmse_micv <- sqrt(mean((yhat_micv - f_true3)^2))
 cat("RMSE (monotone increasing + concave):", round(rmse_micv, 4), "\n")
 ```
 
-    RMSE (monotone increasing + concave): 1.5225 
+    RMSE (monotone increasing + concave): 0.0458 
 
 ### Verify constraints
 
@@ -272,13 +272,13 @@ second_diffs_micv <- diff(first_diffs_micv)
 cat("Min first difference (monotonicity):", round(min(first_diffs_micv), 6), "\n")
 ```
 
-    Min first difference (monotonicity): 0 
+    Min first difference (monotonicity): 7.4e-05 
 
 ``` r
 cat("Max second difference (concavity):", round(max(second_diffs_micv), 6), "\n")
 ```
 
-    Max second difference (concavity): 0.032084 
+    Max second difference (concavity): 0.069508 
 
 ``` r
 cat("Monotone increasing:", all(first_diffs_micv >= -1e-10), "\n")
@@ -360,19 +360,18 @@ summary(m_cx)
 
     Parametric coefficients:
                 Estimate Std. Error t value Pr(>|t|)    
-    (Intercept)  1.74232    0.02041   85.37   <2e-16 ***
+    (Intercept)  6.23683    0.07553   82.58   <2e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     Approximate significance of smooth terms:
-           edf Ref.df     F p-value    
-    s(x) 1.857  2.189 289.6  <2e-16 ***
+         edf Ref.df    F p-value    
+    s(x)   2      2 2523  <2e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
-    Rank: 14/15
 
-    R-sq.(adj) =  0.7606   Deviance explained = 76.3%
-    GCV score = 0.08451  Scale est. = 0.083303  n = 200
+    R-sq.(adj) =  0.962   Deviance explained = 96.2%
+    GCV score = 1.1583  Scale est. = 1.1409    n = 200
 
 ``` r
 summary(m_micv)
@@ -387,22 +386,18 @@ summary(m_micv)
 
     Parametric coefficients:
                 Estimate Std. Error t value Pr(>|t|)    
-    (Intercept) 0.591117   0.007384   80.06   <2e-16 ***
+    (Intercept)  1.93277    0.02023   95.53   <2e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
     Approximate significance of smooth terms:
            edf Ref.df     F p-value    
-    s(x) 3.393  3.714 160.9  <2e-16 ***
+    s(x) 3.196  3.548 382.1  <2e-16 ***
     ---
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
-    Rank: 14/15
 
-    R-sq.(adj) =  0.7491   Deviance explained = 75.3%
-    GCV score = 0.011149  Scale est. = 0.010904  n = 200
-
-    BFGS termination condition:
-    1.99322e-05
+    R-sq.(adj) =  0.8717   Deviance explained = 87.4%
+    GCV score = 0.083613  Scale est. = 0.081858  n = 200
 
 ## Comparison table
 

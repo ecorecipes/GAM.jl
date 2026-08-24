@@ -4,8 +4,14 @@
 # GPD(ψ, ξ) — Generalized Pareto with log-scale ψ, shape ξ
 #
 # Each family provides nll_obs (AD-differentiable) and initial_eta.
-# nll_derivs! is computed automatically via ForwardDiff.
-# Hand-coded exact derivatives are kept as _exact! functions for reference/testing.
+# The main fitting path uses the hand-coded exact derivatives below (translated
+# from evgam's C++), which match ForwardDiff to machine precision; new families
+# without an nll_derivs! override fall back to AD automatically.
+#
+# All small-|ξ| branches share the _EV_XI_EPS threshold so the objective and
+# its derivatives switch to the Gumbel/exponential limit consistently.
+
+const _EV_XI_EPS = 1e-7
 
 # ============================================================================
 # GEV family
@@ -38,7 +44,7 @@ function nll_obs(::GEVFamily, yi::Real, η::AbstractVector)
     σ = exp(η[2])
     ξ = η[3]
     z = (yi - μ) / σ
-    if abs(ξ) < 1e-8
+    if abs(ξ) < _EV_XI_EPS
         # Gumbel limit
         return η[2] + z + exp(-z)
     end
@@ -89,7 +95,7 @@ function nll_obs(f::GPDFamily, yi::Real, η::AbstractVector)
     yj = yi - f.threshold
     σ = exp(η[1])
     ξ = η[2]
-    if abs(ξ) < 1e-8
+    if abs(ξ) < _EV_XI_EPS
         # Exponential limit
         return η[1] + yj / σ
     end
@@ -108,8 +114,8 @@ function initial_eta(f::GPDFamily, y::AbstractVector)
 end
 
 # ============================================================================
-# Hand-coded exact derivatives (kept for reference/testing, no longer used
-# in the main fitting path — AD via ForwardDiff is used instead)
+# Hand-coded exact derivatives (used by the nll_derivs! overrides below;
+# they match ForwardDiff AD to machine precision and are much faster)
 # ============================================================================
 
 """
@@ -129,7 +135,7 @@ function gev_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
         lpsi = ψvec[j]
         xi = ξvec[j]
 
-        if abs(xi) > 1e-7
+        if abs(xi) > _EV_XI_EPS
             ee1 = exp(lpsi)
             ee2 = yj - μ
             ee4 = xi * ee2 / ee1
@@ -167,23 +173,30 @@ function gev_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
                 (ee13 / (ee5^(ee6 + 2.0) * ee1) + (1.0 / ee12 - ee11 / (xi *
                 ee12)) / xi) * ee2 / ee1) / xi - (ee20 + 1.0 / (xi * xi)) * ee2 / ee9
         else
-            # Gumbel limit
+            # Gumbel limit: ξ → 0 limits of the exact GEV derivatives.
+            # From the expansion nll = ψ + z + e⁻ᶻ
+            #   + ξ[(z − z²/2) + e⁻ᶻ z²/2]
+            #   + ξ²[(z³/3 − z²/2) + e⁻ᶻ(z⁴/8 − z³/3)] + O(ξ³),
+            # the ξ-score and ξ-Hessian entries have NONZERO limits.
             ee1 = exp(lpsi)
             ee2 = yj - μ
-            ee3 = ee2 / ee1
-            ee5 = exp(-ee3)
-            ee7 = (ee3 - 1.0) * ee5 + 1.0
-            ee8 = ee5 - 1.0
+            z = ee2 / ee1
+            ez = exp(-z)
+            ee7 = (z - 1.0) * ez + 1.0
+            ee8 = ez - 1.0
+            # d/dz of the ξ-score limit: 1 − z + e⁻ᶻ(z − z²/2)
+            dxi_dz = 1.0 - z + ez * (z - 0.5 * z * z)
 
             out[j, 1] = ee8 / ee1
-            out[j, 2] = ee8 * ee2 / ee1 + 1.0
-            out[j, 3] = 0.0
-            out[j, 4] = ee5 / (ee1 * ee1)     # H[μ,μ]
-            out[j, 5] = ee7 / ee1               # H[μ,ψ]
-            out[j, 6] = ee7 * ee2 / ee1          # H[ψ,ψ]
-            out[j, 7] = 0.0                       # H[μ,ξ]
-            out[j, 8] = 0.0                       # H[ψ,ξ]
-            out[j, 9] = 0.0                       # H[ξ,ξ]
+            out[j, 2] = ee8 * z + 1.0
+            out[j, 3] = (z - 0.5 * z * z) + ez * 0.5 * z * z
+            out[j, 4] = ez / (ee1 * ee1)          # H[μ,μ]
+            out[j, 5] = ee7 / ee1                  # H[μ,ψ]
+            out[j, 6] = ee7 * z                     # H[ψ,ψ]
+            out[j, 7] = -dxi_dz / ee1               # H[μ,ξ]
+            out[j, 8] = -z * dxi_dz                  # H[ψ,ξ]
+            out[j, 9] = 2.0 * ((z^3 / 3.0 - 0.5 * z * z) +
+                               ez * (z^4 / 8.0 - z^3 / 3.0))  # H[ξ,ξ]
         end
     end
     return out
@@ -204,7 +217,7 @@ function gpd_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
         lpsi = ψvec[j]
         xi = ξvec[j]
 
-        if abs(xi) > 1e-7
+        if abs(xi) > _EV_XI_EPS
             ee1 = exp(lpsi)
             ee2 = xi * yj
             ee3 = ee2 / ee1
@@ -226,15 +239,18 @@ function gpd_nll_derivs_exact!(out::Matrix{Float64}, y::AbstractVector,
             out[j, 4] = -(yj * ((1.0 - ee10) * ee6 - ee5) / ee4)
             out[j, 5] = -((yj / ee4 - 2.0 * (ee8 / xi)) / ee7 + yj * (1.0 / ee7 + ee12) / ee4)
         else
-            # Exponential limit
+            # Exponential limit: ξ → 0 limits of the exact GPD derivatives.
+            # nll = ψ + z + ξ(z − z²/2) + ξ²(z³/3 − z²/2) + O(ξ³), z = y·e⁻ᵠ:
+            #   ∂ψ = 1 − z,  ∂ξ = z − z²/2,
+            #   ∂ψψ = z,  ∂ψξ = z² − z,  ∂ξξ = 2z³/3 − z².
             ee1 = exp(lpsi)
             z = yj / ee1
 
             out[j, 1] = 1.0 - z
-            out[j, 2] = 0.0
-            out[j, 3] = z * (z - 1.0)
-            out[j, 4] = 0.0
-            out[j, 5] = 0.0
+            out[j, 2] = z - 0.5 * z * z
+            out[j, 3] = z
+            out[j, 4] = z * z - z
+            out[j, 5] = 2.0 * z^3 / 3.0 - z * z
         end
     end
     return out
@@ -253,7 +269,7 @@ function nll_total(::GEVFamily, y::AbstractVector, η_list::Vector{<:AbstractVec
         μ = η_list[1][j]
         ψ = η_list[2][j]
         ξ = η_list[3][j]
-        if abs(ξ) > 1e-7
+        if abs(ξ) > _EV_XI_EPS
             t = ξ * (y[j] - μ) / exp(ψ)
             t <= -1.0 && return 1e20
             nllh += ψ + (1/ξ + 1) * log1p(t) + (1 + t)^(-1/ξ)
@@ -272,7 +288,7 @@ function nll_total(f::GPDFamily, y::AbstractVector, η_list::Vector{<:AbstractVe
         yj = y[j] - f.threshold
         ψ = η_list[1][j]
         ξ = η_list[2][j]
-        if abs(ξ) > 1e-7
+        if abs(ξ) > _EV_XI_EPS
             t = ξ * yj / exp(ψ)
             t <= -1.0 && return 1e20
             nllh += ψ + (1/ξ + 1) * log1p(t)

@@ -2,4 +2,9 @@
 docs/build/
 docs/Manifest.toml
 vignettes/Manifest.toml
+Manifest.toml
 *.cov
+# Rendered vignette outputs: GFM (.md) renders and their figure dirs are
+# checked in for browsing on GitHub; html/pdf renders are local-only.
+vignettes/**/*.html
+vignettes/**/*.pdf

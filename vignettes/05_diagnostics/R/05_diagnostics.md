@@ -35,7 +35,7 @@ library(mgcv)
 
     Loading required package: nlme
 
-    This is mgcv 1.9-3. For overview type 'help("mgcv-package")'.
+    This is mgcv 1.9-4. For overview type '?mgcv'.
 
 ``` r
 library(gratia)
@@ -109,14 +109,15 @@ overview(m)
 ```
 
 
-    Generalized Additive Model with 4 terms
+    Generalized Additive Model with 5 terms
 
-      term  type      k   edf statistic p.value 
-      <chr> <chr> <dbl> <dbl>     <dbl> <chr>   
-    1 s(x0) CRS       9  3.43      8.95 < 0.001 
-    2 s(x1) CRS       9  3.20     67.7  < 0.001 
-    3 s(x2) CRS       9  7.83     68.1  < 0.001 
-    4 s(x3) CRS       9  1.89      2.71 0.057796
+      term      type           k   edf ref.edf statistic p.value
+      <chr>     <chr>      <dbl> <dbl>   <dbl>     <dbl> <chr>  
+    1 Intercept parametric    NA  1       1        71.3  <0.001 
+    2 s(x0)     CRS            9  3.43    4.24      8.95 <0.001 
+    3 s(x1)     CRS            9  3.20    3.97     67.7  <0.001 
+    4 s(x2)     CRS            9  7.83    8.63     68.1  <0.001 
+    5 s(x3)     CRS            9  1.89    2.36      2.71 0.0578 
 
 ## Smooth estimates
 
@@ -347,17 +348,17 @@ model_concurvity(m)
     # A tibble: 15 × 3
        .type    .term .concurvity
        <chr>    <chr>       <dbl>
-     1 worst    para     2.37e-30
+     1 worst    para     4.24e-30
      2 worst    s(x0)    1.28e- 1
      3 worst    s(x1)    1.39e- 1
      4 worst    s(x2)    1.32e- 1
      5 worst    s(x3)    1.68e- 1
-     6 observed para     2.37e-30
+     6 observed para     4.24e-30
      7 observed s(x0)    4.14e- 2
      8 observed s(x1)    5.32e- 2
      9 observed s(x2)    5.35e- 2
     10 observed s(x3)    5.79e- 2
-    11 estimate para     2.37e-30
+    11 estimate para     4.24e-30
     12 estimate s(x0)    6.57e- 2
     13 estimate s(x1)    7.44e- 2
     14 estimate s(x2)    6.23e- 2
@@ -373,11 +374,11 @@ model_concurvity(m, pairwise = TRUE)
        .type .term .with .concurvity
        <chr> <chr> <chr>       <dbl>
      1 worst para  para     1   e+ 0
-     2 worst para  s(x0)    4.28e-31
-     3 worst para  s(x1)    3.05e-31
-     4 worst para  s(x2)    2.95e-31
-     5 worst para  s(x3)    4.67e-31
-     6 worst s(x0) para     3.45e-31
+     2 worst para  s(x0)    1.91e-30
+     3 worst para  s(x1)    3.11e-31
+     4 worst para  s(x2)    3.62e-31
+     5 worst para  s(x3)    3.54e-31
+     6 worst s(x0) para     2.47e-30
      7 worst s(x0) s(x0)    1   e+ 0
      8 worst s(x0) s(x1)    6.60e- 2
      9 worst s(x0) s(x2)    8.55e- 2
@@ -391,10 +392,10 @@ k.check(m)
 ```
 
           k'      edf   k-index p-value
-    s(x0)  9 3.426140 1.0475474  0.8000
-    s(x1)  9 3.199210 1.0197537  0.6525
-    s(x2)  9 7.833919 1.0422706  0.7900
-    s(x3)  9 1.886556 0.9756429  0.2925
+    s(x0)  9 3.426140 1.0475474  0.7925
+    s(x1)  9 3.199210 1.0197537  0.6300
+    s(x2)  9 7.833919 1.0422706  0.8025
+    s(x3)  9 1.886556 0.9756429  0.3125
 
 ## Summary
 

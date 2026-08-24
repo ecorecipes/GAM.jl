@@ -1,3 +1,4 @@
+using Random
 @testset "GINLA (Integrated Nested Laplace Approximation)" begin
     @testset "choldrop" begin
         # Build a known positive-definite matrix and its Cholesky
@@ -178,4 +179,22 @@
             @test abs(integral - 1.0) < 0.2
         end
     end
+    @testset "ginla select= convenience" begin
+        rng_s = Random.MersenneTwister(21)
+        n = 150
+        x = collect(range(0, 2π; length = n))
+        y = sin.(x) .+ 0.3 .* randn(rng_s, n)
+        df = DataFrame(x = x, y = y)
+        m = gam(GAM.@formula(y ~ s(x, k = 8, bs = :cr)), df)
+
+        sm = m.smooths[1]
+        r_sel = ginla(m; select = 1, nk = 8, nb = 40)
+        r_idx = ginla(m; A = collect(sm.first_para:sm.last_para), nk = 8, nb = 40)
+        @test size(r_sel.beta) == size(r_idx.beta)
+        @test r_sel.beta ≈ r_idx.beta
+        @test r_sel.density ≈ r_idx.density
+        @test_throws ArgumentError ginla(m; select = 1, A = [1])
+        @test_throws ArgumentError ginla(m; select = 99)
+    end
+
 end

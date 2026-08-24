@@ -46,6 +46,13 @@ using DataFrames
 using Plots
 ```
 
+    Precompiling packages...
+       6300.9 ms  ✓ GAM
+      1 dependency successfully precompiled in 11 seconds. 118 already precompiled.
+    Precompiling packages...
+       4948.3 ms  ✓ GAM → GAMPlotsExt
+      1 dependency successfully precompiled in 8 seconds. 239 already precompiled.
+
 ## Simulating data
 
 We simulate $n = 200$ observations from a sine curve with Gaussian
@@ -80,12 +87,12 @@ We fit a GAM with a cubic regression spline (`bs=:cr`) smooth of `x`
 using 15 basis functions:
 
 ``` julia
-m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df)
+m = gam(@formula(y ~ s(x, k = 15, bs = :cr)), df)
 ```
 
     Generalized Additive Model
 
-    Formula: y ~ 1
+    Formula: y ~ 1 + s(x,bs=cr)
 
     Family: Normal
     Link:   IdentityLink
@@ -99,11 +106,11 @@ m = gam(@formulak(y ~ s(x, k = 15, bs = :cr)), df)
     ───────────────────────────────────────────────────
 
     Approximate significance of smooth terms:
-    ──────────────────────────────────────────────────
-    Smooth                    edf   Ref.df
-    ──────────────────────────────────────────────────
-    s(x,bs=cr)               7.72       14
-    ──────────────────────────────────────────────────
+    ──────────────────────────────────────────────────────────────────
+    Smooth                    edf   Ref.df          F    p-value
+    ──────────────────────────────────────────────────────────────────
+    s(x,bs=cr)               7.72     8.00    143.385  1.535e-76
+    ──────────────────────────────────────────────────────────────────
 
     R² (adj) = 0.852   Deviance explained = 85.8%
     Scale est. = 0.0840   n = 200
@@ -116,7 +123,7 @@ deviance explained, and scale estimate.
 ``` julia
 println("Number of observations: ", nobs(m))
 println("EDF per smooth:         ", round.(edf(m); digits = 2))
-println("Deviance explained:     ", round(r2(m) * 100; digits = 1), "%")
+println("Deviance explained:     ", round(GAM.deviance_explained(m) * 100; digits = 1), "%")
 println("Scale estimate:         ", round(m.scale; digits = 4))
 ```
 
@@ -138,26 +145,26 @@ f_se = se.se
 ```
 
     200-element Vector{Float64}:
-     0.09763142425148784
-     0.09152560152988946
-     0.08590579072400169
-     0.0808676131106106
-     0.07649627121347419
-     0.07285701897984644
-     0.06998441454305089
-     0.06787288747794756
-     0.06647185293156631
-     0.06568775044547812
+     0.0976316345000991
+     0.09152575707543474
+     0.08590590067281131
+     0.08086768892930611
+     0.07649632646362478
+     0.0728570686577435
+     0.06998447397642744
+     0.06787297088819655
+     0.06647197194951471
+     0.06568791294903545
      ⋮
-     0.059569766769416506
-     0.062402813784693076
-     0.06630289603725327
-     0.07129730598466999
-     0.07733529538072287
-     0.08431009577733312
-     0.09208297834629607
-     0.1005022037481864
-     0.10941501399956634
+     0.05956981337022625
+     0.06240285920034748
+     0.06630296119939037
+     0.07129741297875006
+     0.07733546480573958
+     0.08431034509967834
+     0.09208332126850187
+     0.10050265025256583
+     0.10941557070229435
 
 We plot the smooth estimate with ±2 SE confidence bands, overlaying the
 true function:
@@ -224,9 +231,11 @@ The fitted model stores the estimated smoothing parameters:
 
 ``` julia
 println("Estimation method: ", m.method)
+println("Log smoothing parameters: ", round.(m.sp; digits = 3))
 ```
 
     Estimation method: REML
+    Log smoothing parameters: [4.279]
 
 ## Model diagnostics
 
@@ -246,11 +255,12 @@ gam_check(m)
     n = 200
 
     Basis dimension (k) checking results:
-    ────────────────────────────────────────────────────────────
-    Smooth                     k'      edf  k-index
-    ────────────────────────────────────────────────────────────
-    s(x,bs=cr)                 14     7.72    0.552
-    ────────────────────────────────────────────────────────────
+    Low k-index (< 1) with low p-value indicates k may be too low.
+    ──────────────────────────────────────────────────────────────────────
+    Smooth                     k'      edf  k-index  p-value
+    ──────────────────────────────────────────────────────────────────────
+    s(x,bs=cr)                 14     7.72    1.088    0.905
+    ──────────────────────────────────────────────────────────────────────
 
 
     Deviance explained = 85.8%

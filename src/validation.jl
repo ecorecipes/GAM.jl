@@ -92,18 +92,6 @@ function _validate_response_family(y, ::TweedieFamily)
     return nothing
 end
 
-function _validate_response_family(y, ::Union{Gamma, InverseGaussian})
-    ymin = minimum(y)
-    if ymin <= 0
-        throw(ArgumentError(
-            "Response must be strictly positive for $(nameof(typeof(y isa AbstractVector ? Gamma() : InverseGaussian()))) family, " *
-            "but got minimum value $(ymin). " *
-            "Use a different family or check your data."))
-    end
-    return nothing
-end
-
-# Explicit methods for Gamma and InverseGaussian to get name right
 function _validate_response_family(y, ::Gamma)
     ymin = minimum(y)
     if ymin <= 0

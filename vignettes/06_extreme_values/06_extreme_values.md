@@ -61,7 +61,16 @@ a covariate $x$:
 - Location: $\mu(x) = 5 + 2\sin(2\pi x)$
 - Log-scale: $\log\sigma(x) = -0.5 + 0.5x$, so
   $\sigma(x) = \exp(-0.5 + 0.5x)$
-- Shape: $\xi = 0.1$ (constant, light upper tail)
+- Shape: $\xi = 0.1$ (constant; $\xi > 0$ puts us in the heavy-tailed
+  Fréchet domain, though a shape this small gives only a mildly heavy
+  upper tail)
+
+Note the support condition: the GEV density is positive only where
+$1 + \xi(y-\mu)/\sigma > 0$ (and similarly $1 + \xi(y-u)/\sigma > 0$ for
+the GPD below).
+
+The dataset is produced by `vignettes/generate_data.jl`, which
+implements exactly this data-generating process with a fixed seed.
 
 ``` julia
 df_gev = CSV.read("data_gev.csv", DataFrame)
@@ -87,15 +96,13 @@ $\xi$.
 
 ``` julia
 m_gev = evgam(
-    [@formulak(y ~ s(x, k=10, bs=:cr)),   # location μ(x)
-     @formulak(y ~ s(x, k=8, bs=:cr)),    # log-scale ψ(x)
-     @formulak(y ~ 1)],                    # shape ξ (constant)
+    [@formula(y ~ s(x, k=10, bs=:cr)),   # location μ(x)
+     @formula(y ~ s(x, k=8, bs=:cr)),    # log-scale ψ(x)
+     @formula(y ~ 1)],                    # shape ξ (constant)
     df_gev,
     GEVFamily()
-)
+);
 ```
-
-    MultiParameterModel{GEVFamily}(GEVFamily(), [5.035778002949318, 1.056556449238359, 1.834870444257198, 1.7675205206517173, 0.7383015763486109, -0.6735083749353833, -1.8764531400150866, -1.8757104827917837, -1.0489110592057713, 0.13660245921791167, -0.28479095654890413, 0.0216394109069066, -0.004995967115800963, 0.19215017713130417, 0.07742984259272567, 0.3177612151515143, 0.27952933884526043, 0.5706466295866985, 0.14056249905715032], [[4.1265985843008774, 4.388457121551324, 6.969227642231471, 3.4181789958571334, 3.2132417642047937, 4.55248374148977, 3.047301711361056, 6.390840036324686, 3.1310893069657055, 3.0203688546345675  …  4.946536880569162, 5.050706468840767, 3.5128145897248015, 5.9584595289428925, 4.976604997970624, 6.809034846132027, 3.1029663169236468, 6.894225622326224, 6.675704422191898, 5.374717953956043], [-0.061140604392183384, 0.006535666609428842, -0.4095447373536006, -0.1665598888035414, -0.22443062981187722, -0.35321902255802046, -0.10313673306953487, -0.4403807113019337, -0.19272810192184833, -0.11590091095501875  …  0.16115630154717564, -0.30750498268852106, -0.1679229920824913, -0.23268561449091527, -0.3153182996479012, -0.4284784083342434, -0.11306662125140088, -0.3824188181880798, -0.4280330321528135, -0.6314883763761423], [0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032  …  0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032, 0.14056249905715032]], [[1.0 -0.12291896228955577 … 0.8438166805691196 0.0447707000334424; 1.0 -0.10509884017847805 … 0.7007569184507677 0.24801015341397553; … ; 1.0 0.24493175105466283 … -0.09659396556034533 -0.02903644711468786; 1.0 0.21491894137543824 … -0.28904064236840654 -0.08668591615307703], [1.0 -0.14143801811295187 … 0.700577309129319 0.24661821243013488; 1.0 -0.12337120529887255 … 0.535191584651037 0.42519514492899374; … ; 1.0 0.7263085982326665 … -0.13936080706666798 -0.05448994539787703; 1.0 -0.01898755923276018 … -0.34094434872632795 -0.13153300201052215], [1.0; 1.0; … ; 1.0; 1.0;;]], Vector{ConstructedSmooth}[[ConstructedSmooth(s(x,bs=cr), k=9, rank=8)], [ConstructedSmooth(s(x,bs=cr), k=7, rank=6)], []], [3.1442368125965396, 13.189105456111081], [0.9999999999999999, 0.8096370866340901, 0.898979904763738, 0.8669181108353329, 0.8200886160528188, 0.8511001796928317, 0.8431235877219819, 0.8582709669646502, 0.850310659872733, 0.7549550370151843, 0.9999999999999997, 0.09383872889810393, 0.014489960483629783, 0.0027494660956009316, 0.061872850739726704, 0.16496000385980034, 0.4488980731069676, 0.23147145415387954, 0.9999999999999999], [0.0015475098674477053 -0.00020556773079296223 … 0.00023744133032928093 -0.00045890992055891476; -0.00020556773079296223 0.009556289054786445 … -0.0012946855016136305 -3.75008465368012e-5; … ; 0.00023744133032928093 -0.0012946855016136305 … 0.005699586717268395 -5.155389881705624e-5; -0.00045890992055891476 -3.75008465368012e-5 … -5.155389881705624e-5 0.0012938820382817522], [0.0015475098674477053 -0.00020556773079296223 … 0.00023744133032928093 -0.00045890992055891476; -0.00020556773079296223 0.009556289054786445 … -0.0012946855016136305 -3.75008465368012e-5; … ; 0.00023744133032928093 -0.0012946855016136305 … 0.005699586717268395 -5.155389881705624e-5; -0.00045890992055891476 -3.75008465368012e-5 … -5.155389881705624e-5 0.0012938820382817522], 687.464980961885, 724.9306463160756, [3.61243275935754, 3.67482461810157, 9.62757006978756, 3.69647266955379, 2.71978270287675, 4.41916781818956, 5.22956108002974, 6.91351275491862, 2.94614214388403, 3.05242715532112  …  6.6881523752481, 6.13741568442759, 2.67682063492149, 5.60200152317484, 5.3446107515215, 7.51096177983951, 5.13960141854121, 7.06772185929518, 6.75388645855366, 5.87620827444264], 500, true, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3], [0, 10, 18, 19])
 
 ### Examine parameter estimates
 
@@ -108,8 +115,8 @@ println("REML score: ", round(m_gev.reml, digits=2))
 
     Number of parameters: 3
     Converged: true
-    Negative log-likelihood: 687.46
-    REML score: 724.93
+    Negative log-likelihood: 689.27
+    REML score: 725.2
 
 Location parameter coefficients and fitted values:
 
@@ -121,8 +128,8 @@ println("Location fitted range: [$(round(minimum(mu_hat), digits=2)), $(round(ma
 println("Location true range: [$(round(minimum(mu_true), digits=2)), $(round(maximum(mu_true), digits=2))]")
 ```
 
-    Location coefficients (first 5): [5.036, 1.057, 1.835, 1.768, 0.738]
-    Location fitted range: [3.02, 7.03]
+    Location coefficients (first 5): [5.037, 1.041, 1.814, 1.736, 0.708]
+    Location fitted range: [3.02, 7.01]
     Location true range: [3.0, 7.0]
 
 Log-scale parameter:
@@ -135,8 +142,8 @@ println("Log-scale fitted range: [$(round(minimum(psi_hat), digits=2)), $(round(
 println("Log-scale true range: [$(round(minimum(logsigma_true), digits=2)), $(round(maximum(logsigma_true), digits=2))]")
 ```
 
-    Log-scale coefficients (first 5): [-0.285, 0.022, -0.005, 0.192, 0.077]
-    Log-scale fitted range: [-0.72, 0.23]
+    Log-scale coefficients (first 5): [-0.281, -0.093, -0.04, 0.049, 0.139]
+    Log-scale fitted range: [-0.57, 0.02]
     Log-scale true range: [-0.5, -0.0]
 
 Shape parameter (constant):
@@ -147,7 +154,7 @@ println("Shape coefficient: ", round(xi_coefs[1], digits=4))
 println("True shape: ", xi_true)
 ```
 
-    Shape coefficient: 0.1406
+    Shape coefficient: 0.1412
     True shape: 0.1
 
 ### Compare fitted vs true functions
@@ -164,10 +171,10 @@ println("RMSE (location): ", round(sqrt(mean((mu_hat .- mu_true).^2)), digits=3)
 println("RMSE (log-scale): ", round(sqrt(mean((psi_hat .- logsigma_true).^2)), digits=3))
 ```
 
-    Correlation (fitted vs true location): 0.9952
-    Correlation (fitted vs true log-scale): 0.9293
-    RMSE (location): 0.138
-    RMSE (log-scale): 0.078
+    Correlation (fitted vs true location): 0.9958
+    Correlation (fitted vs true log-scale): 1.0
+    RMSE (location): 0.13
+    RMSE (log-scale): 0.039
 
 ### GEV fitted vs true plots
 
@@ -190,10 +197,15 @@ plot(p1, p2; layout=(1, 2), size=(800, 400))
 
 ``` julia
 resid_gev = y_gev .- mu_hat
+# Under a GEV, y − μ has mean σ(Γ(1−ξ) − 1)/ξ > 0, so the residual cloud is
+# centred above zero by construction; the dashed line marks that expectation.
+using Distributions: GeneralizedExtremeValue
+ξ̂ = param_coef(m_gev, 3)[1]
+gev_resid_mean = mean(mean(GeneralizedExtremeValue(0.0, s, ξ̂)) for s in exp.(psi_hat))
 scatter(mu_hat, resid_gev, xlabel="Fitted μ", ylabel="Residual (y − μ̂)",
         title="GEV Residuals vs Fitted", color=:steelblue, markersize=2, alpha=0.4,
         legend=false)
-hline!([0.0], color=:grey40, ls=:dash)
+hline!([gev_resid_mean], color=:grey40, ls=:dash)
 ```
 
 ![](06_extreme_values_files/figure-commonmark/cell-11-output-1.svg)
@@ -208,6 +220,9 @@ scale:
 - Log-scale: $\log\sigma(x) = 0.5\sin(2\pi x)$
 - Shape: $\xi = 0.15$ (constant)
 
+As with the GEV data, this dataset is generated by
+`vignettes/generate_data.jl` from exactly this process.
+
 ``` julia
 df_gpd = CSV.read("data_gpd.csv", DataFrame)
 n_gpd = nrow(df_gpd)
@@ -221,7 +236,7 @@ xi_gpd_true = 0.15
 println("GPD data: n = $(nrow(df_gpd)), y range = [$(round(minimum(y_gpd), digits=2)), $(round(maximum(y_gpd), digits=2))]")
 ```
 
-    GPD data: n = 500, y range = [0.0, 12.35]
+    GPD data: n = 500, y range = [0.0, 22.59]
 
 ### Fit the GPD model
 
@@ -230,14 +245,12 @@ $\xi$.
 
 ``` julia
 m_gpd = evgam(
-    [@formulak(y ~ s(x, k=10, bs=:cr)),   # log-scale ψ(x)
-     @formulak(y ~ 1)],                    # shape ξ (constant)
+    [@formula(y ~ s(x, k=10, bs=:cr)),   # log-scale ψ(x)
+     @formula(y ~ 1)],                    # shape ξ (constant)
     df_gpd,
     GPDFamily()
-)
+);
 ```
-
-    MultiParameterModel{GPDFamily}(GPDFamily(0.0), [0.5450726792017321, 0.01308663260846314, -0.08368522714542513, -0.1823945581407308, -0.23534058426636836, -0.20832192204361002, -0.11654555431262244, 0.013229783990656536, 0.16707406759524607, 0.3333888201061366, 0.06247172999182497], [[0.3577938124404233, 0.7794059674467192, 0.6544650805220348, 0.5075821471206035, 0.41492677725461413, 0.3743166074235446, 0.47851045169217393, 0.3618740399550536, 0.5381704783368083, 0.7259922538790741  …  0.4227635193107272, 0.483924281417209, 0.3861322376468369, 0.45114196600712014, 0.5093397608020036, 0.3733603250911834, 0.613764351202226, 0.5968936831687379, 0.36166372525704604, 0.3585344463765474], [0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497  …  0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497, 0.06247172999182497]], [[1.0 -0.12422550358987867 … -0.12041743435729216 -0.04021065844661172; 1.0 -0.13042251125561036 … 0.8517930129845936 0.012142638611563289; … ; 1.0 -0.12187198223679756 … -0.12133151977556947 -0.03914430141811146; 1.0 -0.10861130400117933 … -0.11520961231045118 -0.042781265610324345], [1.0; 1.0; … ; 1.0; 1.0;;]], Vector{ConstructedSmooth}[[ConstructedSmooth(s(x,bs=cr), k=9, rank=8)], []], [7.565781814938982], [1.0, 0.16404820731632294, 0.2243790013238758, 0.2370412220788987, 0.310949746201931, 0.27400622069294683, 0.3032657812172538, 0.23199555347861828, 0.4702909191464373, 0.38417629499060824, 1.0000000000000002], [0.00437409145597252 0.00030750181318067824 … -0.0003691846762570065 -0.002251355396011936; 0.00030750181318067824 0.0026879772317192577 … -0.0017151679667873735 -0.00033996961358779746; … ; -0.0003691846762570065 -0.0017151679667873735 … 0.01928444755219919 0.0003168644531699814; -0.002251355396011936 -0.00033996961358779746 … 0.0003168644531699814 0.0023876892360554175], [0.00437409145597252 0.00030750181318067824 … -0.0003691846762570065 -0.002251355396011936; 0.00030750181318067824 0.0026879772317192577 … -0.0017151679667873735 -0.00033996961358779746; … ; -0.0003691846762570065 -0.0017151679667873735 … 0.01928444755219919 0.0003168644531699814; -0.002251355396011936 -0.00033996961358779746 … 0.0003168644531699814 0.0023876892360554175], 803.7722049808459, 817.5679072960858, [0.298876567416734, 0.524216785894067, 1.04822076082263, 0.0130278358764623, 0.29082640401221, 1.19023184531972, 3.99792235758352, 1.25837987311792, 2.0204555276891, 6.86338808021889  …  0.770574164299274, 0.00416939151483722, 1.78205624511358, 0.311453594119774, 0.684430309093354, 0.599251905263417, 3.09788959300914, 3.16043401450683, 0.707524055537864, 0.205472579356741], 500, true, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2], [0, 10, 11])
 
 ### Examine GPD estimates
 
@@ -258,12 +271,12 @@ println("Correlation (fitted vs true log-scale): ", round(cor_gpd, digits=4))
 ```
 
     Converged: true
-    Negative log-likelihood: 803.77
-    Log-scale fitted range: [0.36, 0.9]
+    Negative log-likelihood: 551.9
+    Log-scale fitted range: [-0.68, 0.24]
     Log-scale true range: [-0.5, 0.5]
-    Shape estimate: 0.0625
+    Shape estimate: 0.1949
     True shape: 0.15
-    Correlation (fitted vs true log-scale): -0.2538
+    Correlation (fitted vs true log-scale): 0.8032
 
 ### GPD fitted vs true plots
 
@@ -290,10 +303,13 @@ plot(p3, p4; layout=(1, 2), size=(800, 400))
 ``` julia
 sigma_gpd_hat = exp.(psi_gpd_hat)
 resid_gpd = y_gpd ./ sigma_gpd_hat
+# E[y/σ] = 1/(1 − ξ) for a GPD, so the reference line sits at that value,
+# not at 1.
+ξ̂_gpd = xi_gpd_hat[1]
 scatter(sigma_gpd_hat, resid_gpd, xlabel="Fitted σ", ylabel="Standardized residual (y / σ̂)",
         title="GPD Residuals vs Fitted Scale", color=:steelblue, markersize=2, alpha=0.4,
         legend=false)
-hline!([1.0], color=:grey40, ls=:dash)
+hline!([1.0 / (1.0 - ξ̂_gpd)], color=:grey40, ls=:dash)
 ```
 
 ![](06_extreme_values_files/figure-commonmark/cell-16-output-1.svg)
@@ -312,8 +328,8 @@ println("Covariance matrix size: ", size(m_gev.Vp))
 
     Type: MultiParameterModel{GEVFamily}
     Total coefficients: 19
-    EDFs: [1.0, 0.81, 0.9, 0.87, 0.82, 0.85, 0.84, 0.86, 0.85, 0.75, 1.0, 0.09, 0.01, 0.0, 0.06, 0.16, 0.45, 0.23, 1.0]
-    Log smoothing parameters: [3.14, 13.19]
+    EDFs: [1.0, 0.8, 0.91, 0.87, 0.83, 0.84, 0.84, 0.85, 0.84, 0.78, 1.0, 0.1, 0.01, -0.0, 0.05, 0.16, 0.43, 0.26, 1.0]
+    Log smoothing parameters: [3.15, 15.0]
     Covariance matrix size: (19, 19)
 
 Standard errors via the posterior covariance:
@@ -323,7 +339,7 @@ se_all = sqrt.(diag(m_gev.Vp))
 println("Standard errors (first 5): ", round.(se_all[1:min(5, length(se_all))], digits=4))
 ```
 
-    Standard errors (first 5): [0.0393, 0.0978, 0.0854, 0.0912, 0.0974]
+    Standard errors (first 5): [0.0394, 0.0995, 0.0853, 0.0923, 0.0956]
 
 ## Summary
 

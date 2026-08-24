@@ -44,28 +44,29 @@ end
     _partition_of_unity_weights(n_rows, n_penalties) -> Vector{Vector{Float64}}
 
 Build smooth partition-of-unity weights for `n_rows` difference rows split
-into `n_penalties` regions. Uses Gaussian bumps centered at evenly spaced
-points, then normalizes so weights sum to 1 at each row.
+into `n_penalties` regions, using a B-spline basis over the row index
+(mgcv's `bs="ad"` weights the difference penalty by the columns of a small
+B-spline basis; dimension 5 by default). B-splines sum to one on the
+interior, giving an exact partition of unity there; a final normalization
+guards the (extended-knot) edges.
 """
 function _partition_of_unity_weights(n_rows::Int, n_penalties::Int)
     n_penalties >= 1 || throw(ArgumentError("n_penalties must be ≥ 1"))
-    if n_penalties == 1
-        return [ones(n_rows)]
+    if n_penalties == 1 || n_rows == 1
+        return [ones(n_rows) for _ in 1:1]
     end
 
-    centers = range(0.5, n_rows + 0.5, length = n_penalties)
-    # Width controls overlap — scale with spacing between centers
-    spacing = (n_rows) / (n_penalties - 1)
-    sigma = spacing * 0.75  # moderate overlap
+    # Quadratic B-spline basis (order 3) of dimension n_penalties over the
+    # row-index range [1, n_rows]; fall back to lower order if n_penalties
+    # is very small.
+    order = min(3, n_penalties)
+    idx = collect(1.0:n_rows)
+    knots = _bspline_knot_vector(idx, n_penalties, order - 1)
+    W = _bspline_basis(idx, knots, order)   # n_rows × n_penalties
 
-    weights = [zeros(n_rows) for _ in 1:n_penalties]
-    for j in 1:n_penalties
-        for i in 1:n_rows
-            weights[j][i] = exp(-0.5 * ((i - centers[j]) / sigma)^2)
-        end
-    end
+    weights = [W[:, j] for j in 1:n_penalties]
 
-    # Normalize to partition of unity
+    # Normalize (exact partition of unity, incl. edges)
     for i in 1:n_rows
         total = sum(weights[j][i] for j in 1:n_penalties)
         if total > 0
@@ -93,31 +94,9 @@ function _smooth_construct(basis::AdaptiveSmooth, spec::SmoothSpec, data, user_k
     n_penalties = get(spec.xt, :n_penalties, basis.n_penalties)::Int
     n_penalties >= 1 || throw(ArgumentError("n_penalties must be ≥ 1"))
 
-    # Build P-spline knot vector (same logic as PSpline)
+    # Build P-spline knot vector (same shared builder as PSpline)
     m2 = spline_order - 1
-    nk = k - m2 + 1
-    nk >= 2 || throw(ArgumentError(
-        "k=$k too small for adaptive smooth of order $spline_order (need k ≥ $(m2 + 2))"))
-
-    lo, hi = minimum(x), maximum(x)
-
-    if user_knots !== nothing
-        interior = Float64.(user_knots)
-        dk = length(interior) > 1 ? interior[2] - interior[1] : (hi - lo)
-        knot_vec = vcat(
-            [interior[1] - dk * i for i in m2:-1:1],
-            interior,
-            [interior[end] + dk * i for i in 1:m2],
-        )
-    else
-        k_new = range(lo, hi, length = nk) |> collect
-        dk = k_new[2] - k_new[1]
-        knot_vec = vcat(
-            [k_new[1] - dk * i for i in m2:-1:1],
-            k_new,
-            [k_new[end] + dk * i for i in 1:m2],
-        )
-    end
+    knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)
 
     # B-spline basis (identical to P-spline)
     X = _bspline_basis(x, knot_vec, spline_order)

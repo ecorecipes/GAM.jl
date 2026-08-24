@@ -42,6 +42,35 @@ jobs:
             ${{ runner.os }}-
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+  test-rcall:
+    name: Julia 1 - ubuntu-latest - R comparison (informative)
+    continue-on-error: true
+    env:
+      JULIA_NUM_THREADS: 2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - name: Install R packages
+        run: |
+          Rscript -e 'install.packages(c("mgcv", "scam", "qgam", "gamlss", "evd", "evgam", "gratia", "nlme", "remotes"))'
+          Rscript -e 'remotes::install_github("mfasiolo/gamFactory")' || echo "gamFactory install failed (comparison tests will be skipped)"
+          Rscript -e 'install.packages("egpd")' || echo "egpd install failed (comparison tests will be skipped)"
+      - uses: actions/cache@v4
+        env:
+          cache-name: cache-artifacts
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-rcall-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-rcall-${{ env.cache-name }}-
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
   docs:
     name: Documentation
     runs-on: ubuntu-latest

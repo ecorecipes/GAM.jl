@@ -43,29 +43,7 @@ function _raw_bspline_basis(spec::SmoothSpec, data, user_knots)
     spline_order = m_order + 2
 
     m2 = spline_order - 1
-    nk = k - m2 + 1
-    nk >= 2 || throw(ArgumentError(
-        "k=$k too small for B-spline of order $spline_order (need k ≥ $(m2 + 2))"))
-
-    lo, hi = minimum(x), maximum(x)
-
-    knot_vec = if user_knots !== nothing
-        interior = Float64.(user_knots)
-        dk = length(interior) > 1 ? interior[2] - interior[1] : (hi - lo)
-        vcat(
-            [interior[1] - dk * i for i in m2:-1:1],
-            interior,
-            [interior[end] + dk * i for i in 1:m2],
-        )
-    else
-        k_new = collect(range(lo, hi; length = nk))
-        dk = k_new[2] - k_new[1]
-        vcat(
-            [k_new[1] - dk * i for i in m2:-1:1],
-            k_new,
-            [k_new[end] + dk * i for i in 1:m2],
-        )
-    end
+    knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)
 
     X = _bspline_basis(x, knot_vec, spline_order)
     actual_k = size(X, 2)
@@ -90,28 +68,7 @@ function _raw_adaptive_basis(spec::SmoothSpec, data, user_knots)
     n_penalties = Int(get(spec.xt, :n_penalties, 5))
 
     m2 = spline_order - 1
-    nk = k - m2 + 1
-    nk >= 2 || throw(ArgumentError(
-        "k=$k too small for adaptive smooth of order $spline_order (need k ≥ $(m2 + 2))"))
-
-    lo, hi = minimum(x), maximum(x)
-    knot_vec = if user_knots !== nothing
-        interior = Float64.(user_knots)
-        dk = length(interior) > 1 ? interior[2] - interior[1] : (hi - lo)
-        vcat(
-            [interior[1] - dk * i for i in m2:-1:1],
-            interior,
-            [interior[end] + dk * i for i in 1:m2],
-        )
-    else
-        k_new = collect(range(lo, hi; length = nk))
-        dk = k_new[2] - k_new[1]
-        vcat(
-            [k_new[1] - dk * i for i in m2:-1:1],
-            k_new,
-            [k_new[end] + dk * i for i in 1:m2],
-        )
-    end
+    knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)
 
     X = _bspline_basis(x, knot_vec, spline_order)
     actual_k = size(X, 2)

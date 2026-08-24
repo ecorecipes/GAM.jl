@@ -47,11 +47,17 @@ Specify a smooth term for use in a GAM formula.
 
 # Arguments
 - `vars`: one or more variable names (as symbols or Term objects)
-- `bs`: basis type (`:tp`, `:ts`, `:cr`, `:cs`, `:cc`, `:ps`, `:bs`, `:re`, `:mrf`)
+- `bs`: basis type. Core types: `:tp`, `:ts`, `:cr`, `:cs`, `:cc`, `:ps`,
+  `:cps`, `:bs`, `:re`, `:mrf`; further registered types include `:gp`,
+  `:ds`, `:so`, `:fs`, `:sos`, `:sz`, `:spde`, `:lo`, `:ad`, `:fp`, the
+  SCAM shape constraints (`:mpi`, `:mpd`, `:cv`, `:cx`, `:micx`, `:micv`,
+  `:mdcx`, `:mdcv`) and SCASM (`:sc`, `:scad`) — see `GAM.BASIS_TYPES`
 - `k`: basis dimension. `-1` (default) uses a sensible default based on basis type
 - `by`: optional `by` variable for varying-coefficient models
-- `id`: optional identifier for linking smooths sharing smoothing parameters
-- `sp`: fixed smoothing parameter. `nothing` = estimate automatically
+- `id`: identifier for linking smooths sharing smoothing parameters
+  (not yet supported — passing it errors at fit time)
+- `sp`: fixed smoothing parameter, held at this value (excluded from
+  optimization). `nothing` = estimate automatically
 - `fx`: if `true`, smooth is unpenalized (fixed df)
 - `m`: penalty order (meaning depends on basis type; `nothing` = default)
 
@@ -240,15 +246,15 @@ function ti(vars::Union{Symbol, StatsModels.AbstractTerm}...; kwargs...)
     return ti(syms...; kwargs...)
 end
 
-# Module-level storage for marginal specs (keyed by objectid of SmoothSpec)
-const _MARGINAL_SPECS = Dict{UInt, Vector{SmoothSpec}}()
-
+# Marginal specs for tensor product smooths (te/ti/t2) are stored in the
+# spec's own `xt` Dict so they travel with the spec through serialization.
 function _register_marginals(spec::SmoothSpec, marginals::Vector{SmoothSpec})
-    _MARGINAL_SPECS[objectid(spec)] = marginals
+    spec.xt[:marginals] = marginals
+    return spec
 end
 
 function _get_marginals(spec::SmoothSpec)
-    return get(_MARGINAL_SPECS, objectid(spec), nothing)
+    return get(spec.xt, :marginals, nothing)
 end
 
 function _smooth_label(vars::Tuple, by, bs)
@@ -437,5 +443,5 @@ end
 
 # Register aliases so _is_smooth_function recognizes them
 function _register_smooth_aliases()
-    push!(_SMOOTH_ALIASES, cr, tp, ts, cs, cc, ps, cps)
+    push!(_SMOOTH_ALIASES, cr, tp, ts, cs, cc, ps, cps, s_nest)
 end

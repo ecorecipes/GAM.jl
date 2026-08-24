@@ -215,8 +215,10 @@ nothing
 
 ### `k_check` — Basis Dimension Adequacy
 
-Tests whether `k` is large enough. A significant p-value suggests you should
-increase `k` (equivalent to the basis dimension test in R's `gam.check()`):
+Tests whether `k` is large enough, using mgcv's k-index (variance ratio of
+covariate-ordered differenced residuals) with a permutation p-value. A
+k-index well below 1 with a small p-value suggests you should increase `k`
+(equivalent to the basis-dimension test in R's `gam.check()`):
 
 ```@example tutorial
 kc = k_check(m);

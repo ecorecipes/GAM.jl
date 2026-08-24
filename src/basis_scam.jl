@@ -240,11 +240,23 @@ function _smooth_construct(basis::AbstractConstrainedBasis, spec::SmoothSpec, da
 
     penalties = Matrix{Float64}[S]
 
-    # All coefficients must be positive (exponentiated during fitting)
+    # Coefficients that must be positive (exponentiated during fitting).
+    # For pure convex (:cx) / concave (:cv) SCOP-splines the FIRST coefficient
+    # must remain unexponentiated (Pya & Wood, 2015): it sets the boundary
+    # slope sign, which exp() would force positive, making decreasing
+    # convex/concave functions unrepresentable.
     p_ident = trues(ncol_X)
+    if basis isa ConvexBasis || basis isa ConcaveBasis
+        p_ident[1] = false
+    end
 
-    pen_rank = ncol_X - 1
-    null_dim = 2  # unpenalized space: straight line (2 DoF)
+    # Penalty rank: for drops_first types S = blkdiag(0, D₁ᵀD₁) with the
+    # inner block of size (ncol_X-1), so rank(S) = ncol_X - 2.
+    # Null space: for monotone types S = D₁ᵀD₁ on all ncol_X coefficients
+    # (nullity 1: constants); for drops_first types the unpenalized first
+    # coefficient adds one more dimension (nullity 2).
+    pen_rank = drops_first ? ncol_X - 2 : ncol_X - 1
+    null_dim = drops_first ? 2 : 1
 
     return ConstructedSmooth(
         spec, X, penalties,
@@ -283,10 +295,12 @@ function _predict_matrix(basis::AbstractConstrainedBasis, smooth::ConstructedSmo
     x_new = Float64.(Tables.getcolumn(newdata, var))
     n = length(x_new)
 
-    q = smooth.spec.k
     m = smooth.spec.m === nothing ? 2 : smooth.spec.m
     spline_order = m + 2
     xk = smooth.knots
+    # Recover the CONSTRUCTION-time basis dimension from the stored knots
+    # (q = min(spec.k, n) at fit time, which can be < spec.k for small n)
+    q = length(xk) - m - 2
     Sig = smooth.Sigma
     cmX = smooth.cmX
 

@@ -58,7 +58,7 @@ library(gamlss.add)
 
     Loading required package: mgcv
 
-    This is mgcv 1.9-3. For overview type 'help("mgcv-package")'.
+    This is mgcv 1.9-4. For overview type '?mgcv'.
 
 
     Attaching package: 'mgcv'
@@ -136,7 +136,7 @@ summary(m)
     ii) Std. Error for the linear terms maybe are not accurate. 
     ------------------------------------------------------------------
     No. of observations in the fit:  500 
-    Degrees of Freedom for the fit:  20.00004
+    Degrees of Freedom for the fit:  20.00005
           Residual Deg. of Freedom:  480 
                           at cycle:  4 
      

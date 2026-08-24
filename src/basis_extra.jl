@@ -1,11 +1,18 @@
 # Duchon spline smooth — bs="ds"
 #
-# Duchon splines generalize thin plate splines to allow non-integer
-# smoothness orders. They include TPRS as a special case.
-# For simplicity, this implementation uses the same TPRS algorithm
-# with configurable smoothness order m.
+# NOTE: this is currently an ALIAS for the TPRS basis. mgcv's bs="ds"
+# implements Duchon's (1977) generalization with fractional smoothness
+# orders m = (m1, m2); none of that is implemented here — :ds simply
+# delegates to :tp with integer m. Scripts ported from mgcv that rely on
+# non-default Duchon orders will get a plain thin-plate spline instead.
 
-"""Duchon spline basis (mgcv `bs="ds"`)."""
+"""
+Duchon spline basis (registered as `bs=:ds`).
+
+Currently an alias for [`ThinPlateSpline`](@ref): the fractional-order
+Duchon construction of mgcv's `bs="ds"` is not implemented, and `s(x, bs=:ds)`
+fits an ordinary TPRS.
+"""
 struct DuchonSpline <: AbstractBasisType end
 
 BASIS_TYPES[:ds] = DuchonSpline()
@@ -26,9 +33,6 @@ end
 struct MarkovRandomField <: AbstractBasisType end
 
 BASIS_TYPES[:mrf] = MarkovRandomField()
-
-# Module-level storage for MRF region labels (keyed by objectid of ConstructedSmooth)
-const _MRF_REGION_LABELS = Dict{UInt, Vector}()
 
 """
     _nb_to_adjacency(nb, n_regions) -> Matrix{Float64}
@@ -67,6 +71,44 @@ function _nb_to_adjacency(nb::AbstractVector{<:AbstractVector{<:Integer}}, n_reg
     return A
 end
 
+"""
+Prediction cache for rank-reduced MRF smooths: stores the region labels and
+the Laplacian eigenvector truncation `U_k` applied at construction (nothing
+when the MRF was built at full rank).
+"""
+struct MRFTruncPredictCache <: AbstractSmoothPredictCache
+    levels::Vector
+    U_k::Union{Matrix{Float64}, Nothing}
+end
+
+"""
+    _graph_components(A::Matrix{Float64}) -> Int
+
+Number of connected components of the undirected graph with adjacency A.
+"""
+function _graph_components(A::Matrix{Float64})
+    nr = size(A, 1)
+    seen = falses(nr)
+    ncomp = 0
+    stack = Int[]
+    for s in 1:nr
+        seen[s] && continue
+        ncomp += 1
+        push!(stack, s)
+        seen[s] = true
+        while !isempty(stack)
+            u = pop!(stack)
+            for v in 1:nr
+                if A[u, v] != 0 && !seen[v]
+                    seen[v] = true
+                    push!(stack, v)
+                end
+            end
+        end
+    end
+    return ncomp
+end
+
 function _smooth_construct(::MarkovRandomField, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) >= 1 ||
         throw(ArgumentError("MRF smooth requires at least one variable"))
@@ -88,7 +130,7 @@ function _smooth_construct(::MarkovRandomField, spec::SmoothSpec, data, user_kno
     nb = spec.xt[:nb]
     A = _nb_to_adjacency(nb, n_regions)
 
-    # k = n_regions unless user specified smaller
+    # k = n_regions unless user specified smaller (rank-reduced MRF below)
     k = spec.k > 0 ? min(spec.k, n_regions) : n_regions
 
     # Build indicator/dummy matrix (n × n_regions)
@@ -98,13 +140,27 @@ function _smooth_construct(::MarkovRandomField, spec::SmoothSpec, data, user_kno
         X[i, j] = 1.0
     end
 
-    # Build penalty: graph Laplacian S = D - A
+    # Build penalty: graph Laplacian S = D - A. Its null space has one
+    # dimension per connected component of the neighbourhood graph.
     D = Diagonal(vec(sum(A; dims = 2)))
     S_pen = Matrix{Float64}(D - A)
-    penalties = Matrix{Float64}[S_pen]
+    n_components = _graph_components(A)
 
-    null_dim = 1  # constant vector is in the null space
-    pen_rank = n_regions - 1
+    # Rank reduction (mgcv-style): if k < n_regions, project onto the k
+    # lowest-frequency Laplacian eigenvectors.
+    U_k = nothing
+    if k < n_regions
+        es = eigen(Symmetric(S_pen))
+        # eigenvalues ascending: keep the k smoothest (incl. constants)
+        U_k = es.vectors[:, 1:k]
+        X = X * U_k
+        S_pen = Matrix(Symmetric(U_k' * S_pen * U_k))
+        null_dim = min(n_components, k)
+    else
+        null_dim = n_components
+    end
+    pen_rank = size(X, 2) - null_dim
+    penalties = Matrix{Float64}[S_pen]
 
     # Apply sum-to-zero constraint (absorb like other smooths)
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)
@@ -116,10 +172,8 @@ function _smooth_construct(::MarkovRandomField, spec::SmoothSpec, data, user_kno
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = MRFTruncPredictCache(collect(levels), U_k),
     )
-
-    # Store region labels for prediction
-    _MRF_REGION_LABELS[objectid(sm)] = levels
 
     return sm
 end
@@ -129,13 +183,16 @@ function _predict_matrix(::MarkovRandomField, smooth::ConstructedSmooth, newdata
     col = Tables.getcolumn(newdata, var)
     n_new = length(col)
 
-    # Retrieve stored region labels
-    levels = get(_MRF_REGION_LABELS, objectid(smooth), nothing)
+    # Retrieve stored region labels (and eigen-truncation, if any)
+    cache = smooth.predict_cache
     n_regions = length(smooth.knots)
 
-    if levels === nothing
-        # Fallback: use integer indices 1:n_regions
-        levels = collect(1:n_regions)
+    levels, U_k = if cache isa MRFTruncPredictCache
+        cache.levels, cache.U_k
+    elseif cache isa MRFPredictCache
+        cache.levels, nothing
+    else
+        collect(1:n_regions), nothing
     end
 
     level_map = Dict(lev => i for (i, lev) in enumerate(levels))
@@ -148,6 +205,10 @@ function _predict_matrix(::MarkovRandomField, smooth::ConstructedSmooth, newdata
             X[i, j] = 1.0
         end
         # Unknown regions get zero rows (no contribution)
+    end
+
+    if U_k !== nothing
+        X = X * U_k
     end
 
     # Apply same constraint as training
@@ -177,20 +238,6 @@ struct FactorSmooth <: AbstractBasisType end
 
 BASIS_TYPES[:fs] = FactorSmooth()
 
-"""
-    FactorSmoothInfo
-
-Metadata for a factor-smooth interaction, stored for prediction.
-"""
-struct FactorSmoothInfo
-    levels::Vector{Any}
-    marginal_smooth::ConstructedSmooth
-    factor_var::Symbol
-end
-
-# Module-level storage for factor smooth metadata (keyed by objectid)
-const _FS_INFO = Dict{UInt, FactorSmoothInfo}()
-
 function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) >= 2 ||
         throw(ArgumentError("Factor-smooth interactions require at least 2 variables: " *
@@ -212,11 +259,14 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         "s($(join(cont_vars, ",")),bs=tp)",
     )
 
-    # Construct the marginal smooth WITH constraint absorption.
-    # The sum-to-zero constraint removes one column (the global constant direction),
-    # preventing linear dependence with the model intercept.
-    marginal_sm = _smooth_construct(ThinPlateSpline(), marginal_spec, data, user_knots)
-    X_marginal = marginal_sm.X    # n × k_eff (after constraint)
+    # Construct the marginal smooth WITHOUT constraint absorption, as mgcv's
+    # fs does: the uncentered basis keeps per-level constants (the
+    # random-intercept components) in the span. Identifiability with the
+    # model intercept comes from FULL penalization below, which is also what
+    # makes the gam.side exemption for fs safe.
+    marginal_sm = _construct_tprs(marginal_spec, data, user_knots;
+        absorb_cons = false)
+    X_marginal = marginal_sm.X    # n × k (uncentered)
     k_eff = size(X_marginal, 2)
 
     # Block-diagonal model matrix: one block per factor level
@@ -232,6 +282,7 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
     end
 
     # Block-diagonal penalties: replicate each marginal penalty L times
+    # (one shared smoothing parameter per marginal penalty, as in mgcv fs)
     penalties = Matrix{Float64}[]
     for S_j in marginal_sm.S
         S_fs = zeros(total_cols, total_cols)
@@ -242,10 +293,32 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         push!(penalties, S_fs)
     end
 
-    # The constrained marginal has penalty rank = marginal_sm.rank.
-    # Each level contributes k_eff columns with marginal_sm.rank penalized.
-    pen_rank = L * marginal_sm.rank
-    null_dim = total_cols - pen_rank
+    # Full penalization (mgcv fs: null.space.dim = 0): add a shared ridge
+    # penalty on the marginal-penalty null space of every level, so the
+    # per-level polynomial components (constants, slopes) are shrunk like
+    # random effects and the whole smooth is identifiable.
+    marg_nullity = _penalty_nullity(marginal_sm.S, k_eff)
+    if marg_nullity > 0
+        St = zeros(k_eff, k_eff)
+        for S_j in marginal_sm.S
+            nrm = opnorm(S_j)
+            nrm > 0 && (St .+= S_j ./ nrm)
+        end
+        es = eigen(Symmetric(St))
+        tolv = maximum(es.values) * eps()^0.75
+        U0 = es.vectors[:, es.values .< tolv]
+        P_null = U0 * U0'
+        S_null_fs = zeros(total_cols, total_cols)
+        for l in 1:L
+            rng = ((l - 1) * k_eff + 1):(l * k_eff)
+            S_null_fs[rng, rng] .= P_null
+        end
+        push!(penalties, Matrix(Symmetric(S_null_fs)))
+    end
+
+    # Fully penalized: no unpenalized directions remain
+    pen_rank = total_cols
+    null_dim = 0
 
     sm = ConstructedSmooth(
         spec, X, penalties,
@@ -254,15 +327,14 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
         nothing, nothing, 0, 0,   # no additional constraint on the full fs smooth
         nothing, nothing, nothing,
         Int[],
+        predict_cache = FactorSmoothPredictCache(collect(levels), marginal_sm, factor_var),
     )
-
-    _FS_INFO[objectid(sm)] = FactorSmoothInfo(levels, marginal_sm, factor_var)
     return sm
 end
 
 function _predict_matrix(::FactorSmooth, smooth::ConstructedSmooth, newdata)
-    info = get(_FS_INFO, objectid(smooth), nothing)
-    info !== nothing ||
+    info = smooth.predict_cache
+    info isa FactorSmoothPredictCache ||
         throw(ArgumentError("Cannot find factor smooth metadata for prediction"))
 
     factor_col = Tables.getcolumn(newdata, info.factor_var)
@@ -307,9 +379,6 @@ end
 struct SoapFilm <: AbstractBasisType end
 
 BASIS_TYPES[:so] = SoapFilm()
-
-# Module-level storage for soap film prediction data (keyed by smooth label)
-const _SOAP_PREDICT_DATA = Dict{String, Dict{Symbol, Any}}()
 
 # ── Point-in-polygon (ray casting) ───────────────────────────────────────
 
@@ -628,8 +697,13 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
     k_int_actual = length(knot_ij)
 
     # ── Solve PDE for interior (wiggly) basis ────────────────────────────
+    # Each basis function is b = u2 / mx2 with L·u2 = u1 (normalized), so the
+    # discrete Laplacian of b is ∇²b = (L·b)/dx² = u1 / (mx2·dx²). The soap
+    # penalty ∫(∇²f)² therefore needs the SOURCES u1 (suitably scaled), not
+    # the solutions u2. (This whole construction is a grid-PDE approximation
+    # of Wood, Bravington & Hedley's exact soap-film basis.)
     grid_int = zeros(ny, nx, k_int_actual)
-    g_mat    = zeros(ng, k_int_actual)        # for penalty construction
+    g_mat    = zeros(ng, k_int_actual)        # ∇² of each basis fn, for penalty
 
     for ki in 1:k_int_actual
         gi, gj = knot_ij[ki]
@@ -646,7 +720,8 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
         mx2 = maximum(abs, u2)
         mx2 > 0 && (u2 ./= mx2)
 
-        g_mat[:, ki] .= u2
+        # ∇²(u2/mx2) = u1/(mx2·dx²) — consistent with the basis normalization
+        g_mat[:, ki] .= u1 ./ (max(mx2, eps()) * dx^2)
 
         for j in 1:ny, i in 1:nx
             is_interior[j, i] || continue
@@ -690,7 +765,9 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
         S_bnd_full[a, b] = S_bnd[a, b] * irng[a] * irng[b]
     end
 
-    # 2. Interior: Gram matrix of PDE solutions (approximates ∫∫|∇²f|²)
+    # 2. Interior: Gram matrix of the basis LAPLACIANS (∫∫ ∇²b_a ∇²b_b),
+    # approximated by a grid sum with cell area dx·dy. Boundary-film basis
+    # functions are harmonic (∇² = 0) so they carry no interior penalty.
     S_int = g_mat' * g_mat * (dx * dy)
     S_int_full = zeros(p, p)
     for a in 1:k_int_actual, b in 1:k_int_actual
@@ -705,7 +782,7 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
 
     # ── Cache for prediction ─────────────────────────────────────────────
     grid_basis = cat(grid_bnd, grid_int; dims = 3)
-    _SOAP_PREDICT_DATA[spec.label] = Dict{Symbol, Any}(
+    soap_cache = SoapPredictCache(Dict{Symbol, Any}(
         :bnd    => bnd,
         :x0     => x0,  :y0  => y0,
         :dx     => dx,  :dy  => dy,
@@ -713,7 +790,7 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
         :inside => inside,
         :grid_basis => grid_basis,
         :irng   => irng,
-    )
+    ))
 
     # ── Absorb identifiability constraints ───────────────────────────────
     null_dim = 1
@@ -727,16 +804,18 @@ function _smooth_construct(::SoapFilm, spec::SmoothSpec, data, user_knots)
         C, nothing, 0, 0,
         nothing, nothing, nothing,
         Int[],
+        predict_cache = soap_cache,
     )
 end
 
 # ── Prediction ───────────────────────────────────────────────────────────
 
 function _predict_matrix(::SoapFilm, smooth::ConstructedSmooth, newdata)
-    sd = get(_SOAP_PREDICT_DATA, smooth.spec.label, nothing)
-    sd === nothing && throw(ArgumentError(
+    cache = smooth.predict_cache
+    cache isa SoapPredictCache || throw(ArgumentError(
         "No cached soap-film data for '$(smooth.spec.label)'. " *
-        "Was the smooth constructed in this session?"))
+        "Was the smooth constructed correctly?"))
+    sd = cache.data
 
     xv = Float64.(Tables.getcolumn(newdata, smooth.spec.term_vars[1]))
     yv = Float64.(Tables.getcolumn(newdata, smooth.spec.term_vars[2]))

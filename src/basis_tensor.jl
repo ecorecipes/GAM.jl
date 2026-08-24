@@ -4,8 +4,11 @@
 # The model matrix is the row-wise Kronecker product of marginal bases.
 # Penalties are Sⱼ ⊗ (⊗_{i≠j} Iₖᵢ), one per marginal dimension.
 #
-# Marginal bases are constructed WITHOUT absorbing identifiability constraints.
-# Constraints are applied only to the full tensor product.
+# For te(), marginal bases are constructed WITHOUT absorbing identifiability
+# constraints; a single overall sum-to-zero constraint is applied to the full
+# tensor product. For ti(), a sum-to-zero constraint is absorbed into EACH
+# marginal before forming the tensor product (mgcv's mc=TRUE convention), so
+# the ti() span excludes the constant and all marginal main effects.
 
 """
     RawMarginalBasis
@@ -50,9 +53,6 @@ function RawMarginalBasis(X::Matrix{Float64}, S::Vector{Matrix{Float64}},
     end
     return RawMarginalBasis(X, S, null_dim, knots, spec, Ain, bin, Aeq, beq, template)
 end
-
-# Module-level storage for marginal info (keyed by objectid of ConstructedSmooth)
-const _TENSOR_MARGINALS = Dict{UInt, Vector{RawMarginalBasis}}()
 
 function _embed_tensor_constraint(A::Matrix{Float64}, pos::Int, marginal_dims::Vector{Int})
     P = Matrix{Float64}(I, 1, 1)
@@ -146,8 +146,9 @@ function _build_raw_marginal(::CubicShrink, spec::SmoothSpec, data, user_knots)
     knots = user_knots !== nothing ? Float64.(user_knots) : place_knots(x, k)
     k = length(knots)
     X, S = _cr_basis(x, knots)
-    S_shrink = Matrix{Float64}(I, k, k) .* (1e-2 * tr(S) / k)
-    return RawMarginalBasis(X, [S, S_shrink], 2, knots, spec)
+    # Single modified penalty (mgcv cs), consistent with _construct_cr
+    S = _shrink_penalty(S)
+    return RawMarginalBasis(X, [S], 0, knots, spec)
 end
 
 function _build_raw_marginal(::CyclicCubic, spec::SmoothSpec, data, user_knots)
@@ -160,7 +161,7 @@ function _build_raw_marginal(::CyclicCubic, spec::SmoothSpec, data, user_knots)
     return RawMarginalBasis(X, [S], 1, knots, spec)
 end
 
-# P-spline marginal
+# P-spline marginal — same knot construction as s(x, bs=:ps), no constraint
 function _build_raw_marginal(::PSpline, spec::SmoothSpec, data, user_knots)
     var = spec.term_vars[1]
     x = Float64.(Tables.getcolumn(data, var))
@@ -168,15 +169,9 @@ function _build_raw_marginal(::PSpline, spec::SmoothSpec, data, user_knots)
     k = min(spec.k, n)
     m_order = spec.m === nothing ? 2 : spec.m
     spline_order = m_order + 2
+    m2 = spline_order - 1
 
-    n_interior = k - spline_order
-    n_interior >= 1 || throw(ArgumentError(
-        "k=$k too small for P-spline of order $spline_order"))
-
-    lo, hi = minimum(x), maximum(x)
-    dx = (hi - lo) * 0.001
-    interior = user_knots !== nothing ? Float64.(user_knots) : knot_quantiles(x, n_interior)
-    knot_vec = vcat(fill(lo - dx, spline_order), interior, fill(hi + dx, spline_order))
+    knot_vec = _bspline_knot_vector(x, k, m2; user_knots = user_knots)
 
     X = _bspline_basis(x, knot_vec, spline_order)
     actual_k = size(X, 2)
@@ -184,61 +179,15 @@ function _build_raw_marginal(::PSpline, spec::SmoothSpec, data, user_knots)
     return RawMarginalBasis(X, [S], m_order, knot_vec, spec)
 end
 
-# TPRS marginal — simplified 1d version
+# TPRS marginal — the real TPRS construction, without constraint absorption.
+# The returned template carries a working TPRSPredictCache so tensor smooths
+# with tp margins can be predicted at new data.
 function _build_raw_marginal(::Union{ThinPlateSpline, ThinPlateShrink},
                              spec::SmoothSpec, data, user_knots)
-    var = spec.term_vars[1]
-    x = Float64.(Tables.getcolumn(data, var))
-    n = length(x)
-    k = min(spec.k, n)
-    m_order = spec.m === nothing ? 2 : spec.m
-    M = m_order  # null space dim for 1d
-
-    xk = if user_knots !== nothing && length(user_knots) >= k
-        Float64.(user_knots[1:k])
-    elseif n > max(k * 3, 200)
-        place_knots(x, k)
-    else
-        x
-    end
-
-    E = _tps_penalty_matrix(xk, m_order)
-    T_null = _tps_null_space_basis(xk, m_order)
-
-    eig = eigen(Symmetric(E))
-    idx = sortperm(eig.values; rev=true)
-    n_basis = k - M
-    Uk = eig.vectors[:, idx[1:n_basis]]
-    Dk = eig.values[idx[1:n_basis]]
-
-    if length(xk) < n
-        E_nk = zeros(n, length(xk))
-        for j in eachindex(xk), i in 1:n
-            E_nk[i, j] = _tps_eta(abs(x[i] - xk[j]), m_order, 1)
-        end
-        X_eigbasis = E_nk * Uk * Diagonal(1.0 ./ Dk)
-        T_data = _tps_null_space_basis(x, m_order)
-    else
-        X_eigbasis = Uk
-        T_data = T_null
-    end
-
-    X_full = hcat(X_eigbasis, T_data)
-    S_diag = zeros(k)
-    S_diag[1:n_basis] .= 1.0 ./ max.(abs.(Dk), eps())
-    S_mat = Matrix(Diagonal(S_diag))
-
-    penalties = Matrix{Float64}[S_mat]
-    if spec.basis isa ThinPlateShrink
-        S_shrink = zeros(k, k)
-        for i in (n_basis + 1):k
-            S_shrink[i, i] = 1.0
-        end
-        push!(penalties, S_shrink)
-    end
-
-    knots_out = length(xk) > 0 ? Float64.(xk) : Float64[]
-    return RawMarginalBasis(X_full, penalties, M, knots_out, spec)
+    sm = _construct_tprs(spec, data, user_knots;
+        shrink = spec.basis isa ThinPlateShrink, absorb_cons = false)
+    return RawMarginalBasis(sm.X, sm.S, sm.null_dim, sm.knots, spec;
+        rank = sm.rank, template = sm)
 end
 
 # Fallback: build via the normal path (uses constraint absorption, less ideal)
@@ -261,39 +210,51 @@ function _raw_predict_marginal(raw::RawMarginalBasis, newdata)
 end
 
 """
-    _ti_select_columns(marginal_dims, marginal_null_dims) -> Vector{Int}
+    _penalty_nullity(S::Vector{Matrix{Float64}}, k::Int) -> Int
 
-For ti(), select only interaction columns from the tensor product.
-A column indexed by (j₁, j₂, ..., jd) is an interaction term if
-ALL margins contribute a range-space basis function (index > null_dim).
-
-In the unconstrained basis, the first null_dim columns span the penalty null
-space (polynomials). Interaction terms require every margin to contribute
-at least one "wiggle" (range-space) function.
+Numerically compute the dimension of the joint null space of a set of
+penalty matrices acting on a k-dimensional coefficient space.
 """
-function _ti_select_columns(marginal_dims::Vector{Int},
-                            marginal_null_dims::Vector{Int})
-    d = length(marginal_dims)
-    total_k = prod(marginal_dims)
-    keep = Int[]
-
-    for col in 1:total_k
-        idx = col - 1
-        margin_indices = zeros(Int, d)
-        for j in d:-1:1
-            margin_indices[j] = (idx % marginal_dims[j]) + 1
-            idx = div(idx, marginal_dims[j])
-        end
-
-        # Keep only if ALL margins contribute a range-space function
-        # Range-space functions have index > null_dim
-        all_range = all(j -> margin_indices[j] > marginal_null_dims[j], 1:d)
-        if all_range
-            push!(keep, col)
+function _penalty_nullity(S::Vector{Matrix{Float64}}, k::Int)
+    isempty(S) && return k
+    St = zeros(k, k)
+    for Si in S
+        nrm = opnorm(Si)
+        if nrm > 0
+            St .+= Si ./ nrm
         end
     end
+    eigs = eigvals(Symmetric(St))
+    mx = maximum(eigs)
+    mx <= 0 && return k
+    return count(e -> e < mx * eps()^0.75, eigs)
+end
 
-    return keep
+"""
+    _merge_ti_constraint_blocks(raw_marginals, marginal_Zs, cons_dims, which)
+
+Like `_merge_tensor_constraint_blocks`, but for ti(): each marginal's
+linear constraint matrix is first mapped into the constrained marginal
+coordinates via A_j Z_j before being embedded in the tensor product.
+"""
+function _merge_ti_constraint_blocks(raw_marginals::Vector{RawMarginalBasis},
+                                     marginal_Zs::Vector{Matrix{Float64}},
+                                     cons_dims::Vector{Int},
+                                     which::Symbol)
+    A_merged = nothing
+    b_merged = nothing
+    rhs_field = which === :Ain ? :bin : :beq
+    for (i, rm) in enumerate(raw_marginals)
+        A = getfield(rm, which)
+        b = getfield(rm, rhs_field)
+        if A !== nothing && b !== nothing && size(A, 1) > 0
+            A_cons = A * marginal_Zs[i]
+            A_full = _embed_tensor_constraint(A_cons, i, cons_dims)
+            b_full = _repeat_tensor_rhs(b, i, cons_dims)
+            A_merged, b_merged = _append_constraint_block(A_merged, b_merged, A_full, b_full)
+        end
+    end
+    return A_merged, b_merged
 end
 
 function _smooth_construct(::TensorProduct, spec::SmoothSpec, data, user_knots)
@@ -311,18 +272,33 @@ end
 """
     _construct_tensor(spec, data, user_knots; interaction_only)
 
+!!! note
+    mgcv's default `np=TRUE` reparameterization of each te marginal to the
+    function-value parameterization (for smoothing-parameter scale
+    invariance) is NOT applied here; the model space is the same but
+    estimated smoothing parameters are on a different scale than mgcv's.
+
 Core tensor product smooth construction:
 1. Build unconstrained marginal bases
-2. Form row-wise Kronecker product
-3. Assemble tensor product penalties
-4. For ti(): remove main-effect columns
-5. Absorb identifiability constraints on the full product
+2. For ti(): absorb a sum-to-zero constraint into each marginal (X̃ⱼ = Xⱼ Zⱼ,
+   S̃ⱼ = Zⱼ' Sⱼ Zⱼ), then form the row-wise Kronecker product of the
+   constrained marginals — no further constraint is needed
+3. For te(): form the row-wise Kronecker product of the raw marginals,
+   assemble tensor product penalties, and absorb a single overall
+   sum-to-zero constraint on the full product
 """
 function _construct_tensor(spec::SmoothSpec, data, user_knots;
                            interaction_only::Bool=false)
     marginal_specs = _get_marginals(spec)
     marginal_specs !== nothing ||
         throw(ArgumentError("No marginal specs registered. Use te() or ti()."))
+
+    # A single knot vector cannot be unambiguously assigned to multiple
+    # marginals; per-margin knots are not currently supported.
+    user_knots === nothing || throw(ArgumentError(
+        "user-supplied knots are not supported for tensor product smooths " *
+        "(they cannot be assigned unambiguously to the marginals); " *
+        "control the marginals via k= instead"))
 
     d = length(marginal_specs)
 
@@ -335,6 +311,88 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
     marginal_Xs = [rm.X for rm in raw_marginals]
     marginal_dims = [size(X, 2) for X in marginal_Xs]
     marginal_null_dims = [rm.null_dim for rm in raw_marginals]
+
+    # For ti(): absorb a sum-to-zero constraint into EACH marginal BEFORE
+    # forming the tensor product (mgcv's mc=TRUE convention). The constrained
+    # marginal X̃_j = X_j Z_j contains neither the constant nor any function
+    # with non-zero data mean, so the row-wise Kronecker product of the X̃_j
+    # contains no marginal main effects and no constant by construction.
+    if interaction_only
+        marginal_Zs = Matrix{Float64}[]
+        cons_Xs = Matrix{Float64}[]
+        cons_Ss = Vector{Matrix{Float64}}[]
+        for rm in raw_marginals
+            kj = size(rm.X, 2)
+            # Reuse the deterministic QR-based absorption used for ordinary
+            # smooths so fit and predict transforms match exactly.
+            S_work = [copy(Si) for Si in rm.S]
+            Xc, Sc, Cj, _ = absorb_constraints!(copy(rm.X), S_work)
+            Zj = _constraint_basis(Cj, kj)
+            push!(marginal_Zs, Zj)
+            push!(cons_Xs, Xc)
+            push!(cons_Ss, Sc)
+        end
+
+        cons_dims = [size(Xc, 2) for Xc in cons_Xs]
+
+        # Row-wise Kronecker product of CONSTRAINED marginals
+        X_tensor = _row_kronecker(cons_Xs)
+
+        # Tensor product penalties from constrained marginal penalties:
+        # S_i = I ⊗ … ⊗ S̃_i ⊗ … ⊗ I
+        penalties = Matrix{Float64}[]
+        for j in 1:d
+            for Sj in cons_Ss[j]
+                P = ones(1, 1)
+                for i in 1:d
+                    if i == j
+                        P = kron(P, Sj)
+                    else
+                        P = kron(P, Matrix{Float64}(I, cons_dims[i], cons_dims[i]))
+                    end
+                end
+                push!(penalties, P)
+            end
+        end
+
+        # mgcv-style penalty rescaling relative to the tensor model matrix
+        # (mirrors the scale_penalty block in absorb_constraints!, which is
+        # not called on the full ti product).
+        maXX = opnorm(X_tensor, Inf)^2
+        if maXX > 0
+            for i in eachindex(penalties)
+                nS = opnorm(penalties[i], 1)
+                if nS > 0
+                    penalties[i] = penalties[i] * (maXX / nS)
+                end
+            end
+        end
+
+        Ain, bin = _merge_ti_constraint_blocks(raw_marginals, marginal_Zs, cons_dims, :Ain)
+        Aeq, beq = _merge_ti_constraint_blocks(raw_marginals, marginal_Zs, cons_dims, :Aeq)
+
+        total_k = size(X_tensor, 2)
+
+        # Null space of the ti block = tensor product of the constrained
+        # marginal penalty null spaces. Compute each nullity numerically.
+        nullities = [_penalty_nullity(cons_Ss[j], cons_dims[j]) for j in 1:d]
+        null_dim = prod(nullities)
+        pen_rank = max(total_k - null_dim, 0)
+
+        # Identifiability constraints are already absorbed in the marginals;
+        # no further overall constraint is applied (constraint = nothing).
+        sm = ConstructedSmooth(
+            spec, X_tensor, penalties,
+            Float64[],
+            null_dim, pen_rank,
+            nothing, nothing, 0, 0,
+            nothing, nothing, nothing,
+            Int[],
+            Ain, bin, Aeq, beq,
+            predict_cache = TensorPredictCache(raw_marginals, marginal_Zs),
+        )
+        return sm
+    end
 
     # 2. Row-wise Kronecker product
     X_tensor = _row_kronecker(marginal_Xs)
@@ -358,32 +416,13 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
     Ain, bin = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Ain)
     Aeq, beq = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Aeq)
 
-    # 4. For ti(): keep only interaction columns
-    #    R mgcv overrides marginal null_dim to 1 for ti() — only the constant is
-    #    treated as "null space" so that ti() removes main effects (constant-valued
-    #    in one marginal) but keeps linear×linear and higher interactions.
-    if interaction_only
-        ti_null_dims = fill(1, d)
-        keep_cols = _ti_select_columns(marginal_dims, ti_null_dims)
-        if !isempty(keep_cols)
-            X_tensor = X_tensor[:, keep_cols]
-            penalties = [S[keep_cols, keep_cols] for S in penalties]
-            if Ain !== nothing
-                Ain = Ain[:, keep_cols]
-            end
-            if Aeq !== nothing
-                Aeq = Aeq[:, keep_cols]
-            end
-        end
-    end
-
     total_k = size(X_tensor, 2)
 
     # Null space dimension
-    null_dim = interaction_only ? 0 : prod(marginal_null_dims)
+    null_dim = prod(marginal_null_dims)
     pen_rank = max(total_k - null_dim, 0)
 
-    # 5. Absorb identifiability constraints
+    # 4. Absorb identifiability constraints
     X_cons, S_cons, C, _ = absorb_constraints!(X_tensor, penalties)
     Z = _constraint_basis(C, size(X_tensor, 2))
     Ain_cons = Ain === nothing ? nothing : Ain * Z
@@ -397,37 +436,34 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
         nothing, nothing, nothing,
         Int[],
         Ain_cons, bin, Aeq_cons, beq,
+        predict_cache = TensorPredictCache(raw_marginals, Matrix{Float64}[]),
     )
-
-    _TENSOR_MARGINALS[objectid(sm)] = raw_marginals
     return sm
 end
 
 function _predict_matrix(::Union{TensorProduct, TensorInteraction},
                          smooth::ConstructedSmooth, newdata)
-    raw_marginals = get(_TENSOR_MARGINALS, objectid(smooth), nothing)
-    raw_marginals !== nothing ||
+    cache = smooth.predict_cache
+    cache isa TensorPredictCache ||
         throw(ArgumentError("Cannot find marginal info for tensor product prediction"))
+    raw_marginals = cache.raw_marginals
 
     interaction_only = smooth.spec.basis isa TensorInteraction
 
     marginal_Xs = [_raw_predict_marginal(rm, newdata) for rm in raw_marginals]
-    marginal_dims = [size(X, 2) for X in marginal_Xs]
-    marginal_null_dims = [rm.null_dim for rm in raw_marginals]
-
-    X_tensor = _row_kronecker(marginal_Xs)
 
     if interaction_only
-        # Use null_dim=1 per marginal (matching R's ti() convention: only
-        # the constant is in the null space for interaction column selection)
-        d = length(raw_marginals)
-        ti_null_dims = fill(1, d)
-        orig_dims = [size(rm.X, 2) for rm in raw_marginals]
-        keep_cols = _ti_select_columns(orig_dims, ti_null_dims)
-        if !isempty(keep_cols) && length(keep_cols) <= size(X_tensor, 2)
-            X_tensor = X_tensor[:, keep_cols]
-        end
+        # Apply the SAME marginal constraint transforms Z_j that were absorbed
+        # at construction time, then form the row-wise Kronecker product.
+        # No further constraint applies (smooth.constraint === nothing).
+        marginal_Zs = cache.marginal_Zs
+        !isempty(marginal_Zs) ||
+            throw(ArgumentError("Cannot find marginal constraint transforms for ti() prediction"))
+        cons_Xs = [marginal_Xs[j] * marginal_Zs[j] for j in eachindex(marginal_Zs)]
+        return _row_kronecker(cons_Xs)
     end
+
+    X_tensor = _row_kronecker(marginal_Xs)
 
     if smooth.constraint !== nothing
         C = smooth.constraint
@@ -450,15 +486,27 @@ Construct a t2() tensor product smooth. The basis matrix is the same as te()
 For d marginals, each with penalties S_j^(m):
 - For each marginal m and each penalty j of that marginal:
   P = I_1 ⊗ ... ⊗ S_j^(m) ⊗ ... ⊗ I_d  (penalty in position m, identity elsewhere)
-- Plus a "full interaction" penalty: S_1^(1) ⊗ S_1^(2) ⊗ ... ⊗ S_1^(d)
+- Plus a "full interaction" penalty: S⁺_1 ⊗ S⁺_2 ⊗ ... ⊗ S⁺_d, where S⁺_m is
+  the positive-semidefinite part of the marginal's (first) penalty.
 
-For 2 marginals each with 1 penalty, this gives 3 penalties:
-  S^(1) ⊗ I_2, I_1 ⊗ S^(2), S^(1) ⊗ S^(2)
+!!! note
+    This is NOT mgcv's t2() construction (Wood, Scheipl & Faraway 2013),
+    which reparameterizes each marginal into orthogonal null/range parts and
+    builds non-overlapping subspace penalties. The construction here uses
+    overlapping penalties (the ⊗-identity terms also penalize the
+    interaction subspace) and therefore selects different smoothing
+    parameters than mgcv's t2 on the same model. It is a valid smoother,
+    but results are not directly comparable with mgcv's t2().
 """
 function _construct_t2(spec::SmoothSpec, data, user_knots)
     marginal_specs = _get_marginals(spec)
     marginal_specs !== nothing ||
         throw(ArgumentError("No marginal specs registered. Use t2()."))
+
+    user_knots === nothing || throw(ArgumentError(
+        "user-supplied knots are not supported for tensor product smooths " *
+        "(they cannot be assigned unambiguously to the marginals); " *
+        "control the marginals via k= instead"))
 
     d = length(marginal_specs)
 
@@ -491,11 +539,16 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
     Ain, bin = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Ain)
     Aeq, beq = _merge_tensor_constraint_blocks(raw_marginals, marginal_dims, :Aeq)
 
-    # Full interaction penalty: kronecker of first penalty from each marginal
+    # Full interaction penalty: kronecker of the PSD part of each marginal's
+    # first penalty. (TPRS marginal penalties can carry tiny negative
+    # eigenvalues from the truncated eigen construction; a Kronecker product
+    # of indefinite factors would not be a valid penalty.)
     P_full = Matrix{Float64}(I, 1, 1)
     for m in 1:d
         Sm = raw_marginals[m].S[1]
-        P_full = kron(P_full, Sm)
+        es = eigen(Symmetric(Sm))
+        S_psd = es.vectors * Diagonal(max.(es.values, 0.0)) * es.vectors'
+        P_full = kron(P_full, Matrix(Symmetric(S_psd)))
     end
     push!(penalties, P_full)
 
@@ -517,9 +570,8 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
         nothing, nothing, nothing,
         Int[],
         Ain_cons, bin, Aeq_cons, beq,
+        predict_cache = TensorPredictCache(raw_marginals, Matrix{Float64}[]),
     )
-
-    _TENSOR_MARGINALS[objectid(sm)] = raw_marginals
     return sm
 end
 
@@ -543,9 +595,10 @@ function _t2_single_penalty(Sj::Matrix{Float64}, pos::Int,
 end
 
 function _predict_matrix(::T2TensorProduct, smooth::ConstructedSmooth, newdata)
-    raw_marginals = get(_TENSOR_MARGINALS, objectid(smooth), nothing)
-    raw_marginals !== nothing ||
+    cache = smooth.predict_cache
+    cache isa TensorPredictCache ||
         throw(ArgumentError("Cannot find marginal info for t2 tensor product prediction"))
+    raw_marginals = cache.raw_marginals
 
     marginal_Xs = [_raw_predict_marginal(rm, newdata) for rm in raw_marginals]
     X_tensor = _row_kronecker(marginal_Xs)
