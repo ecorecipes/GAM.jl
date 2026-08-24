@@ -16,7 +16,7 @@ equivalence is verified separately — see below).
 | Basis type | `bs="cr"` | `bs=:cr` |
 | Family | `family=poisson()` | `family=Poisson()` |
 | Link | implicit | `link=LogLink()` |
-| Method | `method="REML"` | `method=:REML` |
+| Method | `method="REML"` (default: `"GCV.Cp"`) | `method=:REML` (default: `:REML`) |
 | Summary | `summary(m)` | `m` (pretty-printed) |
 | Coefficients | `coef(m)` | `coef(m)` |
 | Deviance | `deviance(m)` | `deviance(m)` |
@@ -27,6 +27,60 @@ equivalence is verified separately — see below).
 | BAM | `bam(y ~ s(x))` | `bam(@formula(y ~ s(x)), df)` |
 | GAMM | `gamm(y ~ s(x))` | `gamm(@formula(y ~ s(x) + (1 \| group)), df)` |
 | Nested effects | gamFactory `gam_nl` / `s_nest` | `gam_nl(@formula(y ~ s_nest(l1, l2, l3, trans=trans_linear())), df)` |
+
+### ⚠️ Two conventions that differ — read before comparing side by side
+
+Both of these make *correct* code in each language fit a **different model**,
+which is the most common source of "GAM.jl doesn't match mgcv" reports.
+
+#### 1. `k` counts basis functions **per margin** in mgcv, **in total** in GAM.jl
+
+For tensor smooths (`te`, `ti`, `t2`), mgcv's `k` is the dimension of *each*
+marginal basis, so the tensor has `k^d` columns. GAM.jl's `k` is the *total*
+target dimension, split as `round(Int, k^(1/d))` per margin (floored at 3).
+Measured, for `te(x, z)` after the identifiability constraint:
+
+| `k` | mgcv columns | GAM.jl columns |
+|-----|--------------|----------------|
+| 4   | 15           | 8              |
+| 5   | 24           | 8              |
+| 9   | 80           | 8              |
+| 16  | 255          | 15             |
+| 25  | 624          | 24             |
+
+So `te(x, z, k=5)` is a 24-column smooth in mgcv and an 8-column smooth in
+GAM.jl — a threefold difference in flexibility from identical source text.
+(Because of the floor at 3 per margin, `k=4`, `5` and `9` all give 8 columns.)
+
+**To match mgcv, raise `k` to the power of the number of covariates:**
+
+```julia
+# mgcv:  te(x, z, k = 5)          → 5 per margin, 24 columns
+# GAM.jl equivalent:
+te(:x, :z, k = 25)                # 25^(1/2) = 5 per margin, 24 columns
+
+# mgcv:  te(x, y, z, k = 4)       → 4 per margin, 63 columns
+te(:x, :y, :z, k = 64)            # 64^(1/3) = 4 per margin
+```
+
+In general `k_julia = k_mgcv^d`. Per-margin dimensions can also be given
+directly as a vector, `te(:x, :z, k = [4, 7])`, which sidesteps the
+conversion entirely.
+
+Plain `s()` smooths are unaffected: `k` means the same thing in both.
+
+#### 2. The default smoothing-parameter method differs
+
+mgcv's `gam()` defaults to `method = "GCV.Cp"`; GAM.jl's `gam()` defaults to
+`method = :REML`. Comparing defaults therefore compares two different
+criteria, and REML generally selects smoother fits than GCV.
+
+**When the methods are matched, the engines agree to numerical precision.**
+On a matched tensor model the REML score at the optimum is `95.289118`
+(GAM.jl) versus `95.28912` (mgcv), the criterion surfaces correlate at
+`0.99994` over a grid spanning `log λ ∈ [-12, 12]`, and the located optima
+agree to about `1e-3` in log-sp under both REML and GCV. Pass
+`method = "REML"` in R (or `method = :GCV` in Julia) when comparing.
 
 ### Architecture
 
@@ -39,8 +93,30 @@ equivalence is verified separately — see below).
 
 ### Smoothing Parameter Estimation
 
-Both use the Extended Fellner-Schall (EFS) method as the default optimizer.
-GAM.jl's EFS implementation follows Wood & Fasiolo (2017).
+The **criteria** are the same; the **optimizers** are not.
+
+mgcv defaults to `optimizer = c("outer", "newton")` — Newton's method on the
+smoothness criterion using exact analytic first and second derivatives, with
+the stable reparameterization of Wood (2011, Appendix B). GAM.jl defaults to
+the Extended Fellner-Schall fixed point of Wood & Fasiolo (2017), which needs
+no second derivatives (mgcv offers the same via `optimizer = "efs"`).
+
+They locate the same optima: on a matched tensor model the REML score at the
+optimum agrees to `95.289118` vs `95.28912` and the criterion surfaces
+correlate at `0.99994`. GAM.jl typically needs more outer iterations to get
+there. The omitted stable reparameterization was measured not to degrade the
+surface: disagreement with mgcv does not grow with the smoothing-parameter
+ratio out to `e^24`, and the criterion shows no kinking.
+
+### Other algorithmic differences (measured)
+
+| Component | mgcv / R package | GAM.jl | Measured consequence |
+|-----------|------------------|--------|----------------------|
+| SCAM smoothness selection | BFGS on analytic GCV derivatives | coarse global scan + bracketed golden section | GAM.jl's selected GCV is **equal or lower on all six datasets tested**; because the criterion is flat, the selected EDF can still differ |
+| QGAM calibration | `tuneLearnFast` re-solves smoothing parameters inside the loss | smoothing parameters frozen at the preliminary fit | GAM.jl's calibration error is **smaller** (0.010/0.000/0.013 vs R's 0.020/0.013/0.023 at τ = 0.2/0.5/0.8); EDF is roughly 2× smaller, i.e. right levels with smoother curves |
+| Nested effects | gamFactory: hand-coded derivative blocks, LAML/BFGS | Gauss–Newton with automatic differentiation, EFS | outputs verified equal (index directions to \|cosine\| > 0.999, fitted correlation > 0.999) |
+| `bam` normal equations | block QR updating | chunked accumulation of `X'WX` | equivalent in practice: for realistic spline designs `cond(X)` stays in the tens, and at genuine rank deficiency **both** approaches fail alike |
+| GAMLSS | R gamlss RS/CG | same RS/CG algorithms | outputs verified equivalent |
 
 ### Numerical Accuracy (measured, asserted in the test suite)
 

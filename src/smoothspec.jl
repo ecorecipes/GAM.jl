@@ -144,7 +144,7 @@ te(:x1, :x2, k=25)        # k^(1/2) ≈ 5 per margin
 te(:x1, :x2, bs=:ps)      # P-spline margins
 ```
 """
-function te(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
+function te(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
             by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
             xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("te() requires at least 2 variables"))
@@ -154,13 +154,10 @@ function te(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
     bs_vec = bs isa Symbol ? fill(bs, d) : bs
     length(bs_vec) == d || throw(ArgumentError("bs vector length must match number of variables"))
 
-    # Marginal basis dimensions
-    if k == -1
-        k_marginal = fill(5, d)
-    else
-        km = max(3, round(Int, k^(1/d)))
-        k_marginal = fill(km, d)
-    end
+    # Marginal basis dimensions. A scalar `k` is a TOTAL-dimension hint split
+    # as k^(1/d) per margin (mgcv's `k` is per-margin); pass a vector to set
+    # the marginal dimensions directly, as in mgcv's `k = c(4, 7)`.
+    k_marginal = _tensor_marginal_k(k, d)
 
     by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
     id_sym = id isa Symbol ? id : nothing
@@ -191,8 +188,22 @@ end
 
 Specify a tensor product interaction smooth (main effects removed).
 Like `te()` but only includes interaction terms, useful in ANOVA-like decompositions.
+
+`k` is a total-dimension hint split across the margins; pass a vector for
+per-marginal dimensions (mgcv's convention), e.g. `k = [4, 7]`.
+
+# Example
+```julia
+using GAM, DataFrames
+df = DataFrame(x = rand(200), z = rand(200), y = randn(200))
+
+# main effects plus a pure interaction (ANOVA decomposition)
+m = gam(@formula(y ~ s(x) + s(z) + ti(x, z, k = 25)), df)
+
+ti(:x, :z, k = [4, 7])        # per-marginal basis dimensions
+```
 """
-function ti(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
+function ti(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
             by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
             xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("ti() requires at least 2 variables"))
@@ -201,12 +212,7 @@ function ti(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
     bs_vec = bs isa Symbol ? fill(bs, d) : bs
     length(bs_vec) == d || throw(ArgumentError("bs vector length must match number of variables"))
 
-    if k == -1
-        k_marginal = fill(5, d)
-    else
-        km = max(3, round(Int, k^(1/d)))
-        k_marginal = fill(km, d)
-    end
+    k_marginal = _tensor_marginal_k(k, d)
 
     by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
     id_sym = id isa Symbol ? id : nothing
@@ -246,9 +252,30 @@ function ti(vars::Union{Symbol, StatsModels.AbstractTerm}...; kwargs...)
     return ti(syms...; kwargs...)
 end
 
+"""
+    _tensor_marginal_k(k, d) -> Vector{Int}
+
+Resolve the per-marginal basis dimensions for a tensor smooth over `d`
+variables. A scalar `k` is a *total* dimension hint, split as `k^(1/d)` per
+margin and floored at 3; `k = -1` selects the default of 5 per margin. A
+vector gives the marginal dimensions directly, matching mgcv's per-margin
+`k` (e.g. `k = [4, 7]` ≙ mgcv's `k = c(4, 7)`).
+"""
+function _tensor_marginal_k(k, d::Int)
+    if k isa AbstractVector
+        length(k) == d || throw(ArgumentError(
+            "k vector has length $(length(k)) but there are $d variables"))
+        all(>=(3), k) || throw(ArgumentError(
+            "each marginal k must be >= 3, got $(collect(k))"))
+        return collect(Int, k)
+    end
+    k == -1 && return fill(5, d)
+    return fill(max(3, round(Int, k^(1 / d))), d)
+end
+
 # Marginal specs for tensor product smooths (te/ti/t2) are stored in the
 # spec's own `xt` Dict so they travel with the spec through serialization.
-function _register_marginals(spec::SmoothSpec, marginals::Vector{SmoothSpec})
+function _register_marginals(spec::SmoothSpec, marginals::AbstractVector{<:SmoothSpec})
     spec.xt[:marginals] = marginals
     return spec
 end
@@ -305,7 +332,7 @@ t2(:x1, :x2, k=25)        # k^(1/2) ≈ 5 per margin
 t2(:x1, :x2, bs=:ps)      # P-spline margins
 ```
 """
-function t2(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
+function t2(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
             by=nothing, id=nothing, sp=nothing, fx::Bool=false, m=nothing,
             xt=nothing, pc=nothing)
     length(vars) >= 2 || throw(ArgumentError("t2() requires at least 2 variables"))
@@ -314,12 +341,7 @@ function t2(vars::Symbol...; k::Int=-1, bs::Union{Symbol,Vector{Symbol}}=:cr,
     bs_vec = bs isa Symbol ? fill(bs, d) : bs
     length(bs_vec) == d || throw(ArgumentError("bs vector length must match number of variables"))
 
-    if k == -1
-        k_marginal = fill(5, d)
-    else
-        km = max(3, round(Int, k^(1/d)))
-        k_marginal = fill(km, d)
-    end
+    k_marginal = _tensor_marginal_k(k, d)
 
     by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
     id_sym = id isa Symbol ? id : nothing

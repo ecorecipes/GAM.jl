@@ -1,5 +1,78 @@
 # Changelog
 
+## Unreleased
+
+Round-5 review follow-up. The review found the engines match mgcv more closely
+than earlier rounds assumed, and relocated the real risks: a fix that had been
+applied to only one of five P-IRLS loops, an identifiability constraint correct
+on training data but not off it, and two undocumented conventions that make
+correct side-by-side code compare different models.
+
+### Breaking / behavior changes
+
+- **`scam` now enforces the family mean domain** (mgcv's `validmu`) during
+  step halving, as `gam` has since 0.2.0. Previously a Gamma model with its
+  canonical inverse link could report convergence while a fraction of the
+  fitted means lay outside the family's support, with a nonsensical scale and
+  no warning (and, on some data, a hard LAPACK failure). Such a fit now warns,
+  naming the violation and suggesting a log link, and reports
+  `converged = false` rather than claiming success. `scasm` was affected by
+  the same omission and is fixed with it.
+- **`t2()` penalty-block ordering** now matches mgcv's (blocks ordered by
+  descending range-mask), so `pen_ind` and the random-effect block order from
+  `smooth2random` line up with `mgcv:::smooth2random` for unequal block sizes
+  as well as equal ones. Investigation of a suspected constraint defect found
+  none: our fitting-basis constraint is byte-for-byte mgcv's `C`. (mgcv builds
+  a *second* constraint, `Cp`, used only for its separate prediction
+  parameterization — comparing against that basis is what made the two look
+  different. Documented in `_construct_t2`.)
+- **`MultiParameterModel.Vc` renamed to `Ve`**, matching `GamModel` and
+  avoiding a name collision with mgcv's `Vc` (which means the
+  smoothing-parameter-uncertainty correction, something different).
+
+### Added
+
+- **Per-marginal `k` for tensor smooths**: `te(:x, :z, k = [4, 7])` sets the
+  marginal basis dimensions directly, alongside the existing scalar form
+  (which specifies the *total* dimension).
+
+### Fixed
+
+- Smoothing-parameter selection no longer walks to the clamp along a flat
+  criterion in `scam` and the `:general` optimizer path (the fix `bam`
+  received in 0.2.0).
+- QGAM calibration is substantially faster: the stationarity polish is
+  relaxed inside bootstrap replicates, which only need the loss value.
+- Thin-plate basis construction — the dominant cost in a typical fit — no
+  longer loses type inference during assembly (an `hcat` that dispatches
+  generically once SparseArrays is loaded, causing ~580,000 boxed element
+  accesses), and avoids per-column copies and a temporary per distance pair.
+  Allocations drop 3.9–6.5× (15.2 → 3.9 MiB at n=5000, k=20). Fits are
+  numerically unchanged (end-to-end agreement ≤2e-13; exact-mgcv parity
+  assertions still hold).
+
+### Documentation
+
+- **Documented the two conventions that differ from mgcv**: `k` counts basis
+  functions per margin in mgcv but in total in GAM.jl for tensor smooths
+  (`te(x, z, k=5)` is 24 columns in mgcv, 8 here — use `k_julia = k_mgcv^d`
+  or the new vector form), and mgcv's `gam()` defaults to `method="GCV.Cp"`
+  while GAM.jl defaults to `:REML`. Both are now in the README, the mgcv
+  comparison page, `smooths.md`, and the migration vignette.
+- Documented the remaining algorithmic differences with their measured
+  consequences (EFS vs mgcv's outer Newton; `scam`'s scan-and-refine vs R
+  scam's BFGS; `qgam`'s frozen smoothing parameters during calibration;
+  Gauss-Newton with automatic differentiation vs gamFactory's hand-coded
+  blocks). Corrected the claim that mgcv also defaults to EFS — it defaults
+  to outer Newton.
+- Quantified `bam`'s crossover: about 21x slower than `gam` at n = 1,000,
+  break-even near n ≈ 5,000-10,000, about 4x faster at n = 100,000.
+- Marked the benchmark snapshot provisional: it predates several correctness
+  fixes, and the SCAM and QGAM rows are now slower by design.
+- Disclosed five further gaps against mgcv: `edf1`/`edf2` with the
+  Wood-Pya-Säfken corrected AIC, `NCV`, `scat`, `mvn`, gamlss `SHASH`/`twlss`,
+  and `paraPen`.
+
 ## 0.2.0 (2026-08-23)
 
 A full review-and-fix release: four deep code reviews, three package-wide

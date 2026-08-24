@@ -131,8 +131,21 @@ function smooth_prior end
 """
     smooth_predictive(sm, Xf_new, Zs_new; sds_prior, fixed_prior)
 
-Like `smooth_prior` but evaluates the smooth at new covariate values.
-Requires `using Turing`.
+Like [`smooth_prior`](@ref) but evaluates the smooth at new covariate values,
+for posterior-predictive draws inside a user-written Turing model. Build the
+new-data blocks with [`s2r_predict`](@ref). Requires `using Turing`.
+
+# Example
+```julia
+using Turing
+sm = gam_smooth(:x, df; k = 10)
+Xf_new, Zs_new = s2r_predict(sm, newdata)
+
+Turing.@model function my_model(y, sm, Xf_new, Zs_new)
+    f_new ~ to_submodel(smooth_predictive(sm, Xf_new, Zs_new))
+    # ... use f_new as the smooth's contribution at `newdata`
+end
+```
 """
 function smooth_predictive end
 

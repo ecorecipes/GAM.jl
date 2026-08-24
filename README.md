@@ -102,6 +102,31 @@ gam(@formula(y ~ z + s(x, by=z)), df)        # numeric by: z * f(x)
 gam(@formula(y ~ g + s(x, by=g)), df)        # factor by: one smooth per level of g
 ```
 
+### `k` in tensor smooths differs from mgcv
+
+For `te`, `ti` and `t2`, mgcv's `k` is the dimension of **each marginal**
+basis (so the tensor has `k^d` columns); GAM.jl's `k` is the **total** target
+dimension, split as `round(Int, k^(1/d))` per margin and floored at 3. The
+same source text therefore builds different models:
+
+| `k` in `te(x, z, k=…)` | mgcv columns | GAM.jl columns |
+|------|------|------|
+| 4 | 15 | 8 |
+| 5 | 24 | 8 |
+| 16 | 255 | 15 |
+| 25 | 624 | 24 |
+
+To reproduce an mgcv model, raise `k` to the power of the number of
+covariates (`k_julia = k_mgcv^d`), or give the marginal dimensions directly:
+
+```julia
+te(:x, :z, k = 25)        # ≡ mgcv's te(x, z, k = 5): 5 per margin, 24 columns
+te(:x, :z, k = [4, 7])    # marginal dimensions given explicitly
+```
+
+Plain `s()` smooths use the same meaning of `k` in both packages. See the
+[migrating from mgcv](vignettes/13_migrating_from_mgcv/) vignette.
+
 ## Family and Link Support
 
 The six core GLM families — `Normal`, `Poisson`, `Binomial`, `Bernoulli`, `Gamma`, `InverseGaussian` — are supported with their standard links, plus package-specific extended families:
@@ -239,7 +264,11 @@ gamFactory live when it is installed.
 ## Large-Scale Fitting (BAM)
 
 For large datasets, `bam` fits via chunked accumulation of the normal equations
-(keeping memory bounded regardless of row count):
+(keeping memory bounded regardless of row count). `bam` carries fixed overhead
+that only pays off with enough rows — measured against `gam` on the same
+model, it is about **21x slower at n = 1,000**, roughly break-even by
+**n ≈ 5,000–10,000**, and about **4x faster at n = 100,000**. Use `gam` below
+the crossover:
 
 ```julia
 m = bam(@formula(y ~ s(x1, k=20) + s(x2, k=20)), df)
@@ -348,6 +377,14 @@ details.
 ## Performance
 
 <!-- BENCH-REFRESH -->
+> **Provisional.** The checked-in snapshot predates several correctness fixes
+> (the SCAM optimizer rebuild, the QGAM ELF fit, the Gauss-Newton nested
+> fitter, the t2 reconstruction) and is pending regeneration on an idle
+> machine. Two rows are known to have moved materially: **SCAM** and **QGAM**
+> are now slower, having purchased correctness — the old SCAM was fast because
+> it settled on a degenerate near-linear fit (EDF 0.999), and the old QGAM was
+> fast because it never actually solved the quantile problem.
+
 The latest checked-in benchmark snapshot (`benchmark/results.txt`, 2026-08-23) shows an overall geometric mean speedup of **11.16x** over R on Julia 1.12.5 / R 4.6.1 / macOS ARM64. Both sides use the same data, knot count `k`, and `method="REML"`; Julia timings exclude JIT compilation (warm-up runs) and R timings exclude interpreter startup. The harness measures *fitting time*, not fit equivalence — it does not assert that the two implementations return identical coefficients (correctness is covered by the elementwise R-comparison tests instead). The BAM row compares Julia's chunked accumulation against mgcv's `bam(method="fREML")` without `discrete=TRUE`, i.e. different algorithms; the BAM and SCAM "families" are each a single benchmark, and the SCAM figure reflects that `scam()` now performs full GCV criterion optimization (matching R scam's method) rather than the faster REML-flavored EFS updates.
 
 | Benchmark family | Speedup |
@@ -378,6 +415,10 @@ GAM.jl is not a line-for-line port of mgcv. Notable mgcv features that are **not
 - AR1 residual correlation in `bam`; `bam`'s covariate discretization (`discrete=TRUE`) — `bam` uses chunked accumulation of the normal equations only
 - Smoothing-parameter-uncertainty corrections (mgcv's `Vc`); `unconditional=true` in `smooth_estimates`/`posterior_samples` warns and uses the conditional covariance
 - Smooth-term test statistics use a documented simplification of mgcv's `testStat` (EDFs and p-value conclusions match mgcv; the statistics themselves can differ for heavily penalized smooths)
+- `edf1`/`edf2` alternative effective-degrees-of-freedom and the Wood-Pya-Säfken (2016) corrected AIC for REML fits (AIC currently uses plain EDF, differing from mgcv's by ~0.5)
+- Neighbourhood cross-validation (`NCV`, mgcv ≥ 1.9) as a smoothness-selection criterion
+- Further families: `scat` (heavy-tailed *t*), `mvn` (multivariate normal), and the gamlss `SHASH` / `twlss` distributions
+- Penalized parametric terms (`paraPen`)
 
 Some behaviors differ from R by design: quasi families report `NaN`
 log-likelihood/AIC (R's `NA` convention), and nested effects (`s_nest`) support
@@ -389,6 +430,17 @@ Some basis types are documented approximations rather than exact ports of their
 mgcv namesakes: `:sos` (planar kernel on great-circle distances), `:so` (grid-PDE
 soap film), and `:ds` (alias of `:tp`). Fits with these bases will differ from
 mgcv's.
+
+Some algorithms differ from their R counterparts while targeting the same
+criterion, with measured consequences: smoothing parameters are selected by
+Extended Fellner-Schall rather than mgcv's outer Newton (same optima; more
+iterations), `scam` uses a global scan plus golden section rather than R
+scam's BFGS (our GCV is equal or lower on every dataset tested, though EDF
+can differ where the criterion is flat), and `qgam` freezes smoothing
+parameters during calibration (our calibration error is smaller than R's,
+with roughly half the EDF). Note also that mgcv's `gam()` defaults to
+`method="GCV.Cp"` while GAM.jl defaults to `:REML` — match the methods
+before comparing. See [Comparison with mgcv](docs/src/mgcv.md).
 
 `offset` and `by` variables work for ordinary, extended-family, and shape-constrained (SCAM) fits; factor-`by` is not supported for the linear-constraint (SCASM) solver, and `select=true` applies to ordinary and extended-family GAMs (not the constrained solvers).
 

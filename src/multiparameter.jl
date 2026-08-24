@@ -268,7 +268,9 @@ struct MultiParameterModel{F<:MultiParameterFamily}
     sp::Vector{Float64}              # log smoothing parameters
     edf::Vector{Float64}             # effective degrees of freedom per coefficient
     Vp::Matrix{Float64}              # posterior covariance (Bayesian)
-    Vc::Matrix{Float64}              # corrected covariance (frequentist)
+    Ve::Matrix{Float64}              # frequentist covariance (analogous to
+                                     # GamModel.Ve; currently equal to Vp —
+                                     # not mgcv's smoothing-parameter-corrected Vc)
     nll::Float64                     # negative log-likelihood at optimum
     reml::Float64                    # REML score at optimum
     laml::Float64                    # Laplace approx marginal likelihood

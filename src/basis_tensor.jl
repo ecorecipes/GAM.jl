@@ -572,8 +572,12 @@ function _t2_blocks(range_dims::Vector{Int}, marginal_dims::Vector{Int})
         labels[c + 1] = mask
     end
 
+    # mgcv orders the penalized blocks by DESCENDING range-mask, where bit
+    # (i-1) is set when marginal i contributes a range factor: for d=2 that is
+    # rr, nr, rn; for d=3, rrr, nrr, rnr, nnr, rrn, nrn, rnn. Matching it keeps
+    # our `S`, `rank` and `pen_ind` orderings identical to mgcv's.
     blocks = Vector{Vector{Int}}()
-    for mask in 1:((1 << d) - 1)
+    for mask in ((1 << d) - 1):-1:1
         cols = findall(==(mask), labels)
         isempty(cols) || push!(blocks, cols)
     end
@@ -672,6 +676,17 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
     #    the all-null block, so — as in mgcv — the constraint acts ONLY on
     #    that block, leaving the penalized blocks (and hence the diagonal,
     #    non-overlapping penalty structure) untouched.
+    #
+    #    This reproduces mgcv's FITTING constraint for t2 exactly. mgcv builds
+    #    `C = [0 ... 0, colSums(X_null)]` (smooth.construct.t2.smooth.spec) and
+    #    additionally stores a second, full-column-sum constraint `Cp`, which
+    #    `smoothCon(absorb.cons = TRUE)` uses to build a SEPARATE prediction
+    #    parameterization. We keep one self-consistent basis instead, so
+    #    `predict_matrix` is exactly the same linear map of the raw tensor
+    #    basis that construction used. Comparing our basis against mgcv's
+    #    `PredictMat` output therefore shows a constraint-convention
+    #    difference, not an error: our constrained coefficient subspace is
+    #    identical to mgcv's fitting subspace (verified in test_t2.jl).
     n_null = length(null_block)
     if n_null >= 1
         c_null = vec(sum(X_repar[:, (n_pen_cols + 1):total_k]; dims = 1))

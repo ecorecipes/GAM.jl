@@ -746,7 +746,7 @@ end
 # Covariance matrices
 # ============================================================================
 
-"""Compute Vp (posterior covariance) and Vc (corrected covariance)."""
+"""Compute Vp (posterior covariance) and Ve (frequentist covariance)."""
 function mp_covariance(family::MultiParameterFamily, y::AbstractVector,
                        X_list::Vector{Matrix{Float64}}, β::Vector{Float64},
                        S::Matrix{Float64}, param_offsets::Vector{Int};
@@ -771,10 +771,10 @@ function mp_covariance(family::MultiParameterFamily, y::AbstractVector,
         Vp = pinv(H)
     end
 
-    # For now Vc = Vp (corrected covariance requires smoothing parameter uncertainty)
-    Vc = copy(Vp)
+    # For now Ve = Vp; a genuine correction needs smoothing-parameter uncertainty
+    Ve = copy(Vp)
 
-    return Vp, Vc, H0
+    return Vp, Ve, H0
 end
 
 # ============================================================================
@@ -791,7 +791,14 @@ const EvgamControl = MPFitControl
 """
     evgam_control(; kwargs...) → EvgamControl
 
-Create control parameters for `evgam`. See `mp_control` for keyword arguments.
+Create control parameters for [`evgam`](@ref). An alias for [`mp_control`](@ref)
+(`EvgamControl === MPFitControl`); see it for the full keyword list.
+
+# Example
+```julia
+ctrl = evgam_control(inner_maxit = 200, outer_maxit = 50, trace = true)
+m = evgam([@formula(y ~ s(x)), @formula(y ~ 1)], df, GEVFamily(); control = ctrl)
+```
 """
 const evgam_control = mp_control
 
@@ -918,7 +925,7 @@ function evgam(formulas, data, family::MultiParameterFamily;
     end
 
     # Covariance
-    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets;
+    Vp, Ve, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets;
                                off_list = off_list)
 
     # EDF
@@ -941,7 +948,7 @@ function evgam(formulas, data, family::MultiParameterFamily;
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas,
+        edf, Vp, Ve, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas,
         off_list
     )
 end

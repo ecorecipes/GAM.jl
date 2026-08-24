@@ -23,10 +23,10 @@ function _dd_stationary_polish!(beta::Vector{Float64}, eta::Vector{Float64},
     mu::Vector{Float64}, X::Matrix{Float64}, y::Vector{Float64},
     offset::Vector{Float64}, weights::Vector{Float64},
     S_total::Matrix{Float64}, family::ExtendedFamily, link::GLM.Link,
-    control::GamControl)
+    control::GamControl; maxit::Int = 100, tol_scale::Real = 1.0)
 
     n, p = size(X)
-    tol_g = max(sqrt(control.epsilon), 1e-6)
+    tol_g = max(sqrt(control.epsilon), 1e-6) * tol_scale
 
     Sb = S_total * beta
     f_val = _deviance(family, y, mu, weights) + dot(beta, Sb)
@@ -34,7 +34,7 @@ function _dd_stationary_polish!(beta::Vector{Float64}, eta::Vector{Float64},
     wnewt = Vector{Float64}(undef, n)
     geta = Vector{Float64}(undef, n)
 
-    for _ in 1:100
+    for _ in 1:maxit
         dd = _family_Dd(family, y, mu, weights; level = 0)
         Dmu = dd[:Dmu]
         Dmu2 = dd[:Dmu2]
@@ -123,7 +123,9 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
     Ain = nothing,
     bin = nothing,
     Aeq = nothing,
-    beq = nothing)
+    beq = nothing,
+    polish_maxit::Int = 100,
+    polish_tol_scale::Real = 1.0)
 
     n, p = size(X)
 
@@ -302,7 +304,8 @@ function pirls_extended(X::Matrix{Float64}, y::Vector{Float64},
             if has_Dd && !((Ain !== nothing && size(Ain, 1) > 0) ||
                            (Aeq !== nothing && size(Aeq, 1) > 0))
                 converged = _dd_stationary_polish!(beta, eta, mu, X, y,
-                    offset, weights, S_total, family, link, control)
+                    offset, weights, S_total, family, link, control;
+                    maxit = polish_maxit, tol_scale = polish_tol_scale)
                 dev_old = _deviance(family, y, mu, weights)
             else
                 converged = true

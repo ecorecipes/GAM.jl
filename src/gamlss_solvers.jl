@@ -1011,7 +1011,7 @@ function _gamlss_fit_rscg(method::Symbol, formulas, family::MultiParameterFamily
         end
     end
 
-    Vp, Vc, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets;
+    Vp, Ve, H0 = mp_covariance(family, y, X_list, β_opt, S, param_offsets;
                                off_list = off_list)
     edf = diag(Vp * H0)
     nll_val = nll_total(family, y, η_fit)
@@ -1031,6 +1031,6 @@ function _gamlss_fit_rscg(method::Symbol, formulas, family::MultiParameterFamily
 
     return MultiParameterModel(
         family, β_opt, η_fit, X_list, smooths_list, log_sp,
-        edf, Vp, Vc, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas,
+        edf, Vp, Ve, nll_val, reml_val, laml, y, n, conv, iterations, idpars, param_offsets, formulas,
         off_list)
 end

@@ -195,4 +195,65 @@ using DataFrames
         @test gf.smooth_specs[1].term_vars == [:x, :z]
     end
 
+    @testset "penalty block order matches mgcv" begin
+        # mgcv orders t2 blocks by descending range-mask (bit i-1 set when
+        # marginal i contributes a range factor): d=2 -> rr, nr, rn; d=3 ->
+        # rrr, nrr, rnr, nnr, rrn, nrn, rnn. Verified against mgcv 1.9.4,
+        # whose `rank` vectors for these smooths are [9,6,6] and
+        # [1,2,2,4,2,4,4] respectively.
+        rng_o = StableRNG(77)
+        n = 200
+        d2 = (x = rand(rng_o, n), z = rand(rng_o, n), w = rand(rng_o, n))
+
+        sm2 = smooth_construct(t2(:x, :z, k = 25), d2)
+        @test [rank(S; rtol = 1e-8) for S in sm2.S] == [9, 6, 6]
+
+        sm3 = smooth_construct(t2(:x, :z, :w, k = 27), d2)
+        @test [rank(S; rtol = 1e-8) for S in sm3.S] == [1, 2, 2, 4, 2, 4, 4]
+    end
+
+    @testset "per-marginal k" begin
+        # A vector k sets the marginal dimensions directly, matching mgcv's
+        # k = c(4, 7); mgcv gives 27 columns, ranks [10, 10, 4], null dim 3.
+        rng_k = StableRNG(78)
+        n = 200
+        dk = (x = rand(rng_k, n), z = rand(rng_k, n))
+
+        smk = smooth_construct(t2(:x, :z, k = [4, 7]), dk)
+        @test size(smk.X, 2) == 27
+        @test [rank(S; rtol = 1e-8) for S in smk.S] == [10, 10, 4]
+        @test smk.null_dim == 3
+
+        # te takes the same convention
+        @test size(smooth_construct(te(:x, :z, k = [4, 7]), dk).X, 2) == 27
+
+        # a scalar k remains a TOTAL-dimension hint
+        @test size(smooth_construct(t2(:x, :z, k = 25), dk).X, 2) == 24
+
+        @test_throws ArgumentError t2(:x, :z, k = [4, 7, 9])
+        @test_throws ArgumentError t2(:x, :z, k = [2, 7])
+    end
+
+    @testset "prediction is a fixed linear map of the raw basis" begin
+        # The identifiability constraint reproduces mgcv's FITTING constraint
+        # (`C` = column sums over the all-null block). Unlike mgcv — which
+        # additionally builds a separate `Cp`-based parameterization used only
+        # by PredictMat — we keep ONE basis, so predict must be exactly the
+        # same linear map of the raw tensor basis that construction used.
+        rng_p = StableRNG(79)
+        n = 200
+        dp = (x = rand(rng_p, n), z = rand(rng_p, n))
+        newp = (x = rand(rng_p, 90), z = rand(rng_p, 90))
+
+        spec = t2(:x, :z, k = 25)
+        sm = smooth_construct(spec, dp)
+        rms = [GAM._build_raw_marginal(m, dp, nothing) for m in GAM._get_marginals(spec)]
+        X_raw_tr = GAM._row_kronecker([rm.X for rm in rms])
+        X_raw_new = GAM._row_kronecker([GAM._raw_predict_marginal(rm, newp) for rm in rms])
+
+        M = X_raw_tr \ sm.X                      # the construction-time map
+        @test maximum(abs, X_raw_tr * M - sm.X) < 1e-8
+        @test maximum(abs, X_raw_new * M - predict_matrix(sm, newp)) < 1e-8
+    end
+
 end

@@ -629,7 +629,8 @@ function mqgam(formula, data, qu::AbstractVector{<:Real};
     elseif formula isa FormulaTerm
         Symbol(formula.lhs)
     else
-        error("Unsupported formula type: $(typeof(formula))")
+        throw(ArgumentError("unsupported formula type $(typeof(formula)); " *
+                            "expected a GamFormula or FormulaTerm"))
     end
     y = Tables.getcolumn(Tables.columns(data), resp_name)
     n = length(y)
@@ -776,9 +777,13 @@ function _eval_one_bootstrap_fast(X, y, S_total, elf, link,
                                   boot_w, start_coefs, control, qu)
     n = length(y)
     try
-        # Single PIRLS solve with fixed SP — no outer loop
+        # Single PIRLS solve with fixed SP — no outer loop.
+        # Calibration only needs the out-of-bag loss VALUE, not a stationary
+        # fit, so the Dd stationarity polish runs with a loose tolerance and
+        # a small iteration cap here; the final fit is polished in full.
         result = pirls_extended(X, y, S_total, elf, link;
-            weights=boot_w, start=start_coefs, control=control)
+            weights=boot_w, start=start_coefs, control=control,
+            polish_maxit=3, polish_tol_scale=1e3)
 
         mu_b = result.fitted_values
 

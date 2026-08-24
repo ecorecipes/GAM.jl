@@ -323,12 +323,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         n_iter = iter
 
         # Working weights and working response (scalar ops)
-        @inbounds for i in 1:n
-            dm = GLM.mueta(link, eta[i])
-            vm = _variance_scalar(family, mu[i])
-            w[i] = clamp(weights[i] * dm * dm / max(vm, eps()), eps(), 1e10)
-            z[i] = eta[i] - offset[i] + (y[i] - mu[i]) / dm
-        end
+        _pirls_working!(w, z, y, mu, eta, offset, weights, family, link)
 
         # Chunk-wise accumulation of X'WX and X'Wz
         _accumulate_XtWX_XtWz_chunked!(XtWX, XtWz, X, w, z, chunk_size)

@@ -693,7 +693,15 @@ end
 """
     deviance_explained(m::GamModel)
 
-Deviance explained: 1 - deviance/null_deviance (different from R² for non-Gaussian).
+Deviance explained: 1 - deviance/null_deviance. This is the quantity mgcv's
+`summary.gam` reports as "Deviance explained"; it differs from R² for
+non-Gaussian families, where [`r2`](@ref) is a response-scale quantity.
+
+# Example
+```julia
+m = gam(@formula(y ~ s(x)), df; family = Poisson(), link = LogLink())
+deviance_explained(m)   # e.g. 0.83
+```
 """
 deviance_explained(m::GamModel) = 1.0 - deviance(m) / nulldeviance(m)
 
