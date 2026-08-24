@@ -373,13 +373,20 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
         beta = result.coefficients
         w = result.working_weights
 
-        # Scale estimation
+        # Scale for the EFS update. This MUST match the PIRLS path
+        # (`outer.jl`, the `_efs_criterion_scale` call) or the two optimizers
+        # target different objectives and converge to different smoothing
+        # parameters: mgcv evaluates the REML score at its profiled
+        # `reml.scale`, not the Pearson/Fletcher estimate it reports as
+        # `b$scale`, so a plugged-in `pearson/(n − edf)` here made `:general`
+        # stop where the plugged-in-scale gradient vanishes while the reported
+        # score was still moving. Gaussian and known-scale families are
+        # unaffected — `_efs_criterion_scale` returns the historical estimator
+        # for them.
         edf_total = sum(result.edf_vec)
-        if _needs_scale_estimate(family)
-            scale_est = max(result.pearson / (n - edf_total), 1e-10)
-        else
-            scale_est = 1.0
-        end
+        scale_est = _efs_criterion_scale(family, y, weights, result.deviance,
+            beta, S_total, result.pearson, edf_total, n, p, penalty, method,
+            control.gamma)
 
         # EFS update — delegated to _efs_sp_update, which handles the
         # per-penalty log-det derivatives for multi-penalty blocks and

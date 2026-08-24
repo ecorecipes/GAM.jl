@@ -120,15 +120,15 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         w = result.working_weights
         dev = result.deviance
 
-        # Estimate scale with EDoF correction (matching mgcv's efsudr):
-        # φ̂ = pearson / (n − edf)
+        # Scale for the EFS update and its step-control score. For Gaussian
+        # this is mgcv's efsudr rule, φ̂ = pearson / (n − edf); for other
+        # families with an estimated scale it is the profiling root, so the
+        # optimizer targets the same criterion `reml_score` reports. See
+        # `_efs_criterion_scale`.
         edf_total = sum(result.edf_vec)
-        if _needs_scale_estimate(family)
-            scale_est = max(result.pearson / max(n - edf_total, 1.0),
-                _scale_floor(y))
-        else
-            scale_est = 1.0
-        end
+        scale_est = _efs_criterion_scale(family, y, weights, dev, beta,
+            S_total, result.pearson, edf_total, n, p, penalty, method,
+            control.gamma)
 
         # Smoothing parameter update
         if XtWX_cached !== nothing
@@ -473,8 +473,22 @@ For one penalty block, return λⱼ·tr(S_λ⁺ Sⱼ) for each penalty Sⱼ, whe
 S_λ = Σⱼ λⱼSⱼ over the block and ⁺ is the Moore–Penrose pseudo-inverse.
 These are the derivatives ∂log|S_λ|₊/∂log λⱼ and sum to rank(S_λ).
 For single-penalty blocks this is just `[block.rank]` (no eigen needed).
+
+Multi-penalty blocks delegate to `_stable_block_logdet_derivs`, which ports
+mgcv's `gam.reparam`/`get_stableS` similarity transform. The naive form below
+is kept for reference and for the single-penalty path: forming
+`S_λ = Σⱼ λⱼSⱼ` directly loses the sub-dominant components entirely once the
+within-block λ ratio is large, giving 1.33 nats of error against mgcv at a
+ratio of 1e16 and `NaN` by 1e24. Such ratios are ordinary when one tensor
+marginal is driven toward linearity, and `select = true` pushes further.
 """
 function _block_logdet_derivs(block, log_sp_block)
+    nS = length(block.S)
+    nS == 1 && return [Float64(block.rank)]
+    return _stable_block_logdet_derivs(block, log_sp_block)
+end
+
+function _block_logdet_derivs_naive(block, log_sp_block)
     nS = length(block.S)
     nS == 1 && return [Float64(block.rank)]
 

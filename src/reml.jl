@@ -25,22 +25,27 @@ non-Gaussian families. Validated against central differences in
 |:-------|:-------------------|
 | Known-scale families (Poisson, Binomial), incl. weights/offsets/tensor | `~1e-9` |
 | Estimated-scale families with `scale` supplied explicitly | `~1e-8` |
-| **Estimated-scale families with `scale` estimated (default)** | **up to `1e-1`** |
+| Gamma/InverseGaussian REML, and all ML fits, with `scale` estimated | `~1e-8` |
+| **Gaussian REML with `scale` estimated (default)** | **`~1e-3`** |
 
-The last row is a genuine limitation, not noise. When `scale < 0` the scale is
-re-estimated from `pirls_result` as `pearson/(n − edf)` at every `ρ`, so the
-profiled score acquires a `dσ̂²/dρ` dependence that the gradient does not
-include. Treating σ² as constant is valid only when σ̂²(ρ) satisfies the
-score's own stationarity condition `∂score/∂σ² = 0` (envelope theorem), which
-the Pearson/Fletcher estimator does not. Supplying the REML-profiling scale
-`σ̂² = Dp/(n − Mp)` restores agreement for Gaussian (relative error `4e-10`);
-for Gamma a residual `~5e-3` remains because its saturated likelihood carries
-digamma terms, so `Dp/(n − Mp)` is not the profiling value there either.
+The last row is a genuine limitation, not noise, and it is now confined to
+Gaussian REML. Treating σ² as constant in the gradient is valid only when
+σ̂²(ρ) satisfies the score's own stationarity condition `∂score/∂σ² = 0`
+(the envelope theorem). mgcv's **profiled** scale satisfies it by
+construction; the Pearson/Fletcher estimator does not.
 
-**Consequence for callers.** Use the gradient freely for known-scale families
-or when passing `scale` explicitly. A future exact Newton-REML optimizer must
-either profile the scale analytically (as mgcv does) or add the `dσ̂²/dρ` chain
-term; no current fitting path consumes this gradient.
+Gamma and InverseGaussian REML, and all ML fits, now use the profiled scale
+(see `_profiled_scale`), so the envelope condition holds and their gradients
+sit in the exact regime — Gamma REML measures `6.2e-9`, against roughly `1e-1`
+when `pearson/(n − edf)` was plugged in. Gaussian REML deliberately keeps
+`pearson/(n − edf)`, which is mgcv's own rule on that path and coincides with
+the profiled root at the optimum, so its `dσ̂²/dρ` term is still omitted and a
+`~1e-3` gap remains.
+
+**Consequence for callers.** Use the gradient freely except for Gaussian REML
+with an internally estimated scale; there, pass `scale` explicitly (supplying
+`σ̂² = Dp/(n − Mp)` restores agreement to `4e-10`). No current fitting path
+consumes this gradient — smoothing parameters are selected by EFS.
 """
 function reml_score(X::Matrix{Float64}, y::Vector{Float64},
     penalty::PenaltySetup,
@@ -66,7 +71,15 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
     # does not throw PosDefException while computing its final score
     A = XtWX + S_total
     A_chol = _protected_cholesky!(A)
-    log_det_A = logdet(A_chol)
+
+    # For a non-canonical link mgcv evaluates log|X'WX+S| with full Newton
+    # (observed-information) weights, not Fisher ones — see the derivation at
+    # `_score_XtWX`. Canonical links are unaffected, and the EDF below
+    # deliberately stays on the Fisher factorization, as mgcv does.
+    XtWX_score = _score_XtWX(X, XtWX, w, y, pirls_result.fitted_values,
+        pirls_result.linear_predictor, family, link)
+    log_det_A = XtWX_score === XtWX ? logdet(A_chol) :
+        _score_log_det(XtWX_score + S_total, A_chol)
 
     # EDF
     F = A_chol \ XtWX
@@ -136,8 +149,46 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
                     # the root solved numerically; see `_ml_profiled_scale`.
                     scale_est = _ml_profiled_scale(family, y, weights, Dp, n,
                         pirls_result.pearson / (n - edf_total))
-                else
+                elseif family isa Normal
+                    # mgcv PROFILES the REML scale too (see the branch below),
+                    # and for Gaussian the profiled root is exactly Dp/(n - Mp).
+                    # At the REML optimum that coincides with pearson/(n - edf)
+                    # — mgcv reports `b$scale`, `b$reml.scale` and
+                    # pearson/(n - edf) as equal to 12 significant figures for a
+                    # Gaussian fit — so the Gaussian score is already exact and
+                    # the historical estimator is kept here deliberately, to
+                    # avoid perturbing the optimizer path of every Gaussian fit
+                    # in the package for no measurable gain.
+                    #
+                    # The two do NOT agree away from the optimum (measured
+                    # reml.scale / pearson ratios of 0.96 at sp = 1e-3 and 1.55
+                    # at sp = 1e3), which is precisely why the REML *gradient*
+                    # is inexact for an estimated scale: see this file's
+                    # docstring, and round 5's finding that substituting
+                    # Dp/(n - Mp) restores the envelope-theorem condition.
                     scale_est = pirls_result.pearson / (n - edf_total)
+                else
+                    # mgcv evaluates the REML score at `reml.scale`, the root of
+                    # its own profiling equation (R/gam.fit3.r:629 with
+                    # remlInd = 1), NOT at the Pearson/Fletcher estimate it
+                    # reports as `b$scale`. The two are different quantities:
+                    # for a reference Gamma fit mgcv gives
+                    #     b$scale      = 0.00447411844238   (Fletcher)
+                    #     b$reml.scale = 0.00461804454675   (profiled)
+                    # and reconstructing mgcv's own score from mgcv's own
+                    # log|A|, log|S₊|, `ls` and `Mp` reproduces `b$gcv.ubre`
+                    # = -113.810025421882 exactly at `reml.scale`, but gives
+                    # -113.759796979458 at `b$scale`.
+                    #
+                    # Using pearson/(n - edf) here left Gamma 3.4% away from
+                    # mgcv on that fit even though the deviance, edf and
+                    # coefficients all agreed to ~1e-15. Gaussian escapes only
+                    # because its profiled root coincides with pearson/(n - edf)
+                    # AT the optimum; Gamma's does not, because the digamma
+                    # terms in `ls` shift the root (measured Dp/(n - Mp) is
+                    # itself 0.5–0.9% away from the true root for Gamma).
+                    scale_est = _reml_profiled_scale(family, y, weights, Dp, n,
+                        Mp, gamma, pirls_result.pearson / (n - edf_total))
                 end
                 # Response-relative floor (see _scale_floor): an absolute
                 # 1e-10 clip distorts the REML surface itself for responses
@@ -189,8 +240,13 @@ function reml_score(X::Matrix{Float64}, y::Vector{Float64},
             # applied a correction far too small — measured REML−ML gap 0.63
             # against mgcv's 4.53 on the reference Gaussian fit.
             Y = _penalty_range_basis(penalty, p)
-            A_ml = Symmetric(Y' * (XtWX + S_total) * Y)
-            log_det_A_ml = logdet(_protected_cholesky!(Matrix(A_ml)))
+            # Same Fisher/Newton rule as the REML branch above.
+            A_ml = Symmetric(Y' * (XtWX_score + S_total) * Y)
+            # LU, not Cholesky: Newton weights can make this indefinite.
+            log_det_A_ml = XtWX_score === XtWX ?
+                logdet(_protected_cholesky!(Matrix(A_ml))) :
+                _score_log_det(Matrix(A_ml),
+                    _protected_cholesky!(Matrix(Symmetric(Y' * (XtWX + S_total) * Y))))
             score = (Dp / (2 * scale_est) - ls) / gamma +
                     0.5 * log_det_A_ml -
                     0.5 * log_det_S
@@ -251,6 +307,283 @@ function _penalty_range_basis(penalty::PenaltySetup, p::Int)
     return es.vectors[:, keep]
 end
 
+# mgcv's tolerances from `gam.reparam` (R/gam.fit3.r:32-34): `d.tol` groups
+# "similar sized" penalties into the dominant set; `r.tol` (<< d.tol) does rank
+# determination. Kept identical so the partition and rank decisions match.
+const _REPARAM_D_TOL = eps(Float64)^0.3
+const _REPARAM_R_TOL = eps(Float64)^0.75
+# Rank threshold for the component square roots, matching how mgcv's callers
+# build `rS` before handing them to `gam.reparam`.
+const _ROOT_TOL = eps(Float64)^0.8
+
+"""
+    _total_range_basis(Ss) -> Matrix{Float64}
+
+Orthonormal basis for the range of `Σⱼ λⱼ Sⱼ` under any strictly positive `λ`.
+That range is the sum of the components' ranges and so does not depend on `λ`;
+it is found from the Frobenius-normalised sum, which stays well conditioned even
+when the raw penalties differ by many orders of magnitude.
+
+mgcv arrives here differently: `gam.reparam` *assumes* its inputs are already
+projected into the total penalty's range (`R/gam.fit3.r:15-16`, via
+`totalPenaltySpace`/`mini.roots`), which is what lets it take a plain
+determinant at the end. We project explicitly instead.
+"""
+function _total_range_basis(Ss::AbstractVector{<:AbstractMatrix{Float64}})
+    k = size(Ss[1], 1)
+    Snorm = zeros(Float64, k, k)
+    for S in Ss
+        nrm = sqrt(sum(abs2, S))
+        nrm > 0 || continue
+        @inbounds for j in 1:k, m in 1:k
+            Snorm[j, m] += S[j, m] / nrm
+        end
+    end
+    e = eigen(Symmetric(Snorm))
+    mx = maximum(e.values)
+    mx > 0 || return zeros(Float64, k, 0)
+    return e.vectors[:, e.values .> mx * _REPARAM_R_TOL]
+end
+
+"""
+    _stable_penalty_factor(Ss, lsp) -> NamedTuple or nothing
+
+Port of mgcv's `get_stableS` (`src/gdi.c:550-792`), reached from `gam.reparam`
+(`R/gam.fit3.r:9-63`).
+
+`Σⱼ λⱼ Sⱼ` is projected into its range space and then similarity-transformed by
+an orthogonal `Qf`, so that no component's "large zeros" leak across the scale
+boundaries between components. The transform preserves the determinant, so
+`log|St| = log|Σⱼ λⱼ Sⱼ|₊` — but `St` is actually computable, where a direct
+eigen-solve on the raw sum silently loses the sub-dominant components once the
+`λ` ratio approaches `1/eps`. Measured against a 256-bit reference: a `te`
+smooth lost 0.1 nats at ratio 1e16 and 108 nats at 1e24, and `t2` lost 96 nats
+from 1e16 on.
+
+Each pass (a) splits the remaining components into a dominant and a
+sub-dominant set by `‖Sᵢ‖_F·λᵢ` against `d.tol`, (b) eigen-decomposes the
+dominant sum, (c) writes its `r` eigenvalues onto the leading diagonal, and
+(d) deflates the sub-dominant components onto the dominant term's null space,
+recursing on the smaller block.
+
+Returns `nothing` when the penalty has no range at all (every component zero).
+"""
+function _stable_penalty_factor(Ss::AbstractVector{<:AbstractMatrix{Float64}},
+                                lsp::AbstractVector{Float64})
+    M = length(Ss)
+    Z = _total_range_basis(Ss)
+    d = size(Z, 2)
+    d == 0 && return nothing
+
+    sp = exp.(lsp)
+    Si = [Matrix{Float64}(transpose(Z) * S * Z) for S in Ss]
+    St = zeros(Float64, d, d)
+    Qf = Matrix{Float64}(I, d, d)
+
+    # Component square roots, carried through the transform alongside `St`
+    # (gdi.c:733-746). The derivatives MUST be built from these rather than from
+    # the raw `Sⱼ`: `St` deliberately drops each dominant term's tail below
+    # `r.tol`, and `St⁻¹` is conditioned like the λ ratio itself, so pairing an
+    # untransformed `Sⱼ` with `St⁻¹` amplifies that discrepancy without bound
+    # (measured: Σⱼ λⱼ·tr(S⁺Sⱼ) reached 4.1e9 instead of the rank, 21, at ratio
+    # 1e24). Zeroing the dominant tails here keeps score and gradient consistent.
+    R = Vector{Matrix{Float64}}(undef, M)
+    for j in 1:M
+        e = eigen(Symmetric(Si[j]))
+        mx = maximum(e.values)
+        keep = mx > 0 ? (e.values .> mx * _ROOT_TOL) : falses(length(e.values))
+        R[j] = any(keep) ?
+               e.vectors[:, keep] * Diagonal(sqrt.(e.values[keep])) :
+               zeros(Float64, d, 0)
+    end
+
+    K = 0
+    Q = d
+    gamma = trues(M)
+    frob = zeros(Float64, M)
+    iter = 0
+
+    while true
+        iter += 1
+        max_frob = 0.0
+        @inbounds for i in 1:M
+            gamma[i] || continue
+            frob[i] = sqrt(sum(abs2, Si[i]))
+            max_frob = max(max_frob, frob[i] * sp[i])
+        end
+        alpha = falses(M)
+        gamma1 = falses(M)
+        n_g1 = 0
+        @inbounds for i in 1:M
+            gamma[i] || continue
+            if frob[i] * sp[i] > max_frob * _REPARAM_D_TOL
+                alpha[i] = true
+            else
+                gamma1[i] = true
+                n_g1 += 1
+            end
+        end
+
+        # Rank of the dominant set, measured on the Frobenius-scaled sum so the
+        # threshold is scale free (gdi.c:659-665; eigenvalues ascending there).
+        r = Q
+        if n_g1 > 0
+            Sb = zeros(Float64, Q, Q)
+            for i in 1:M
+                (alpha[i] && frob[i] > 0) || continue
+                Sb .+= Si[i] ./ frob[i]
+            end
+            ev = eigvals(Symmetric(Sb))
+            r = 1
+            while r < Q && ev[Q - r] > ev[Q] * _REPARAM_R_TOL
+                r += 1
+            end
+        end
+
+        if Q == r
+            # Nothing sub-dominant left to separate: the plain sum is already
+            # well scaled (gdi.c:672-685). On the first pass that means no
+            # transform is needed at all and `Qf` stays the identity.
+            if iter == 1
+                for i in 1:M
+                    St .+= sp[i] .* Si[i]
+                end
+            end
+            break
+        end
+
+        Sb = zeros(Float64, Q, Q)
+        for i in 1:M
+            alpha[i] && (Sb .+= sp[i] .* Si[i])
+        end
+        F = eigen(Symmetric(Sb))
+        ord = sortperm(F.values; rev = true)   # mgcv works descending here
+        ev = F.values[ord]
+        U = F.vectors[:, ord]
+
+        Sg = zeros(Float64, Q, Q)
+        for i in 1:M
+            gamma1[i] && (Sg .+= sp[i] .* Si[i])
+        end
+
+        Qf[:, (K + 1):(K + Q)] = Qf[:, (K + 1):(K + Q)] * U
+
+        if K > 0                                # rotate the frozen coupling
+            B = St[1:K, (K + 1):(K + Q)] * U
+            St[1:K, (K + 1):(K + Q)] = B
+            St[(K + 1):(K + Q), 1:K] = transpose(B)
+        end
+
+        C = transpose(U) * Sg * U
+        @inbounds for i in 1:r
+            C[i, i] += ev[i]
+        end
+        St[(K + 1):(K + Q), (K + 1):(K + Q)] = C
+
+        # Transform the square roots in step with `St` (gdi.c:733-746). A
+        # dominant term keeps only its leading `r` rows — the rest is the tail
+        # that `St` dropped, so it is zeroed rather than carried.
+        for j in 1:M
+            size(R[j], 2) == 0 && continue
+            rows = (K + 1):(K + Q)
+            if alpha[j]
+                R[j][(K + 1):(K + r), :] = transpose(view(U, :, 1:r)) * R[j][rows, :]
+                R[j][(K + r + 1):(K + Q), :] .= 0.0
+            elseif gamma1[j]
+                R[j][rows, :] = transpose(U) * R[j][rows, :]
+            end
+        end
+
+        Un = U[:, (r + 1):Q]
+        for i in 1:M
+            gamma1[i] && (Si[i] = transpose(Un) * Si[i] * Un)
+        end
+
+        K += r
+        Q -= r
+        gamma = gamma1
+    end
+
+    St .= (St .+ transpose(St)) ./ 2
+    # Diagonal pre-conditioning, as mgcv does before taking its root
+    # (R/gam.fit3.r:44-49). With the transform in place each diagonal entry is a
+    # genuine scale, so this leaves a well-conditioned matrix.
+    p = sqrt.(abs.(diag(St)))
+    @inbounds for i in eachindex(p)
+        (p[i] > 0 && isfinite(p[i])) || (p[i] = 1.0)
+    end
+    Stp = St ./ p ./ transpose(p)
+    Stp .= (Stp .+ transpose(Stp)) ./ 2
+    return (St = St, Qf = Qf, Z = Z, p = p, Stp = Stp, R = R,
+            chol = cholesky(Symmetric(Stp); check = false))
+end
+
+"""
+    _stable_penalty_logdet(st) -> Float64
+
+`log|Σⱼ λⱼ Sⱼ|₊` from a `_stable_penalty_factor` result. The pre-conditioned
+Cholesky is the fast path; a rank-revealing eigen-solve covers the rare case
+where round-off leaves the transformed matrix not quite positive definite.
+"""
+function _stable_penalty_logdet(st)::Float64
+    ld_p = 2 * sum(log, st.p)
+    issuccess(st.chol) && return 2 * sum(log, diag(st.chol.U)) + ld_p
+    ev = eigvals(Symmetric(st.Stp))
+    mx = maximum(ev)
+    mx > 0 || return -Inf
+    tot = ld_p
+    for e in ev
+        e > mx * _REPARAM_R_TOL && (tot += log(e))
+    end
+    return tot
+end
+
+"""
+    _stable_penalty_derivs(st, lsp) -> Vector{Float64}
+
+`∂log|S_λ|₊/∂log λⱼ = λⱼ·tr(S_λ⁺ Sⱼ)`, from the transformed square roots so it
+inherits exactly the conditioning — and the approximations — of the
+determinant. mgcv computes it the same way, `tr(rSⱼ' S⁻¹ rSⱼ)·spⱼ` against its
+own transformed inverse (`gdi.c:769-772`).
+
+With `Sⱼ = rSⱼ rSⱼ'` and `St = P·Stp·P`, cyclicity of the trace gives
+`tr(S_λ⁺ Sⱼ) = tr(Rpⱼ' Stp⁻¹ Rpⱼ)` with `Rpⱼ = P⁻¹ rSⱼ`, so the same
+pre-conditioning that stabilised the determinant applies unchanged.
+"""
+function _stable_penalty_derivs(st, lsp::AbstractVector{Float64})
+    ok = issuccess(st.chol)
+    Sinv = ok ? nothing : pinv(Symmetric(st.Stp))
+    derivs = Vector{Float64}(undef, length(st.R))
+    for j in eachindex(st.R)
+        Rj = st.R[j]
+        if size(Rj, 2) == 0
+            derivs[j] = 0.0
+            continue
+        end
+        Rp = Rj ./ st.p
+        W = ok ? (st.chol \ Rp) : (Sinv * Rp)
+        derivs[j] = exp(lsp[j]) * sum(Rp .* W)
+    end
+    return derivs
+end
+
+"""
+    _stable_block_logdet_derivs(block, log_sp_block) -> Vector{Float64}
+
+Stable replacement for `_block_logdet_derivs` on multi-penalty blocks. The
+single-penalty answer is exactly `block.rank` and needs no linear algebra, so it
+is returned directly — identical to the existing routine.
+"""
+function _stable_block_logdet_derivs(block, log_sp_block)
+    nS = length(block.S)
+    nS == 1 && return [Float64(block.rank)]
+    Ss = [Matrix{Float64}(Si) for Si in block.S]
+    lsp = Float64[Float64(log_sp_block[j]) for j in 1:nS]
+    st = _stable_penalty_factor(Ss, lsp)
+    st === nothing && return zeros(Float64, nS)
+    return _stable_penalty_derivs(st, lsp)
+end
+
 """
     _log_penalty_det(penalty, log_sp)
 
@@ -264,13 +597,25 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
     for block in penalty.blocks
         k = block.stop - block.start + 1
         nS = length(block.S)
-        # Factor out the largest λ in the block:
-        #   log|Σλⱼ Sⱼ|₊ = r·log(λmax) + log|Σ(λⱼ/λmax)Sⱼ|₊
-        # so the eigen threshold operates on ratios λⱼ/λmax ≤ 1 instead of
-        # raw λ values spanning up to e³⁰ — genuine small eigenvalues of a
-        # weakly-weighted margin are no longer dropped. (mgcv goes further
-        # with the full similarity-transform reparameterization of
-        # Wood 2011 / gam.reparam; that remains future work.)
+        if nS > 1
+            # Multi-penalty block (te/ti/t2, adaptive, fs). Factoring out λmax
+            # is not enough here: once the within-block λ ratio approaches
+            # 1/eps the sub-dominant components fall below the eigen threshold
+            # and their contribution is silently lost. Use mgcv's similarity
+            # transform instead — see `_stable_penalty_factor`.
+            lsp_block = Float64[Float64(log_sp[sp_idx + j - 1]) for j in 1:nS]
+            Ss = [Matrix{Float64}(Si) for Si in block.S]
+            st = _stable_penalty_factor(Ss, lsp_block)
+            if st !== nothing
+                ldet += _stable_penalty_logdet(st)
+                sp_idx += nS
+                continue
+            end
+            # No range space at all: fall through to the generic path below.
+        end
+        # Single-penalty blocks (the common case) keep the original arithmetic
+        # untouched: with one term λmax factoring is exact, and this path is
+        # bit-identical to what it computed before.
         lsp_max = log_sp[sp_idx]
         for j in 1:nS
             lsp_max = max(lsp_max, log_sp[sp_idx + j - 1])
@@ -314,11 +659,13 @@ collapses to the closed form `φ̂ = Dp/n` (the REML analogue, carrying the extr
 `phi0` seeds the bracket and is returned unchanged if the solve fails, so a
 pathological fit degrades to the previous behaviour rather than throwing.
 """
-function _ml_profiled_scale(family::UnivariateDistribution, y::Vector{Float64},
-    weights::Vector{Float64}, Dp::Float64, n::Int, phi0::Float64)
+function _profiled_scale(family::UnivariateDistribution, y::Vector{Float64},
+    weights::Vector{Float64}, Dp::Float64, n::Int, phi0::Float64;
+    Mp::Int = 0, reml::Bool = false, gamma::Real = 1.0)
 
-    # Gaussian: exact closed form, and avoids the numerical solve entirely.
-    family isa Normal && return Dp / n
+    # Gaussian: exact closed forms, and avoids the numerical solve entirely.
+    # ML drops the `Mp` term (remlInd = 0); REML keeps it.
+    family isa Normal && return reml ? Dp / (n - Mp) : Dp / n
 
     (isfinite(phi0) && phi0 > 0) || return phi0
 
@@ -327,7 +674,12 @@ function _ml_profiled_scale(family::UnivariateDistribution, y::Vector{Float64},
         (_log_saturated_likelihood(family, y, weights, phi + h) -
          _log_saturated_likelihood(family, y, weights, phi - h)) / (2h)
     end
-    g(phi::Float64) = -Dp / (2 * phi) - phi * dls(phi)
+    # mgcv R/gam.fit3.r:629
+    #     dlr.dlphi <- (-Dp/(2*scale) - ls[2]*scale)/gamma - Mp/2*remlInd
+    # Dividing by `gamma` cannot move the root on its own (gamma > 0), but it
+    # matters once the `Mp` term is present, so it is carried explicitly.
+    reml_shift = reml ? 0.5 * Mp : 0.0
+    g(phi::Float64) = (-Dp / (2 * phi) - phi * dls(phi)) / gamma - reml_shift
 
     lo = hi = phi0
     glo = g(lo)
@@ -359,6 +711,68 @@ function _ml_profiled_scale(family::UnivariateDistribution, y::Vector{Float64},
     end
     phi = sqrt(lo * hi)
     return (isfinite(phi) && phi > 0) ? phi : phi0
+end
+
+"""
+    _ml_profiled_scale(family, y, weights, Dp, n, phi0) -> Float64
+
+The `method = "ML"` case of [`_profiled_scale`](@ref) (`remlInd = 0`).
+"""
+_ml_profiled_scale(family::UnivariateDistribution, y::Vector{Float64},
+    weights::Vector{Float64}, Dp::Float64, n::Int, phi0::Float64) =
+    _profiled_scale(family, y, weights, Dp, n, phi0; reml = false)
+
+"""
+    _reml_profiled_scale(family, y, weights, Dp, n, Mp, gamma, phi0) -> Float64
+
+The `method = "REML"` case of [`_profiled_scale`](@ref) (`remlInd = 1`).
+"""
+_reml_profiled_scale(family::UnivariateDistribution, y::Vector{Float64},
+    weights::Vector{Float64}, Dp::Float64, n::Int, Mp::Int, gamma::Real,
+    phi0::Float64) =
+    _profiled_scale(family, y, weights, Dp, n, phi0;
+        Mp = Mp, reml = true, gamma = gamma)
+
+"""
+    _efs_criterion_scale(family, y, weights, dev, beta, S_total, pearson,
+                         edf_total, n, p, penalty, method, gamma) -> Float64
+
+The scale the EFS outer loop should use, chosen so the optimizer targets the
+same criterion `reml_score` reports.
+
+mgcv's own `efsudr` (R/gam.fit4.r:886) plugs `fit\$scale` — the Pearson/Fletcher
+estimate — into the score it monitors, because `gam.fit3` with
+`scoreType = "EFS"` takes the scale from the last element of `sp`
+(R/gam.fit3.r:121-123) rather than solving for it, and sets
+`reml.scale <- scale` (:638). mgcv's *outer Newton* path instead carries
+`log φ` as an optimization coordinate with gradient `dlr.dlphi` (:627) and
+drives it to the profiling root, which is why a Newton fit reports
+`b\$reml.scale != b\$scale` (measured 0.22369343 vs 0.22132831 on a reference
+Gamma fit).
+
+Since `reml_score` now evaluates at the profiling root to match mgcv's
+*reported* score, EFS must target the same quantity, or it converges where the
+plugged-in-scale gradient vanishes while the reported score is still moving.
+
+Gaussian deliberately stays on `pearson/(n − edf)`: that is mgcv's own rule on
+that path, the profiled and plugged-in roots coincide at the Gaussian optimum,
+and it keeps Gaussian fits bit-identical.
+"""
+function _efs_criterion_scale(family::UnivariateDistribution,
+    y::Vector{Float64}, weights::Vector{Float64}, dev::Float64,
+    beta::Vector{Float64}, S_total::Matrix{Float64}, pearson::Float64,
+    edf_total::Float64, n::Int, p::Int, penalty::PenaltySetup,
+    method::Symbol, gamma::Real)
+
+    _needs_scale_estimate(family) || return 1.0
+    phi0 = max(pearson / max(n - edf_total, 1.0), _scale_floor(y))
+    (method === :REML || method === :ML) && !(family isa Normal) || return phi0
+
+    Mp = p - sum(b.rank for b in penalty.blocks; init = 0)
+    Dp = dev + dot(beta, S_total * beta)
+    phi = _profiled_scale(family, y, weights, Dp, n, phi0;
+        Mp = Mp, reml = (method === :REML), gamma = gamma)
+    return isfinite(phi) && phi > 0 ? max(phi, _scale_floor(y)) : phi0
 end
 
 """
@@ -485,10 +899,40 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
     # operator below, in the determinant terms ONLY. `b1_j = dβ/dρⱼ` keeps the
     # true A⁻¹: the coefficient derivative is a property of the fit, not of the
     # criterion being optimised.
-    det_op = Ainv
+    # The same split applies to the Fisher/Newton weight choice: for a
+    # non-canonical link the score's determinant is over the NEWTON-weighted
+    # A (see `_score_XtWX`), so its derivative needs that A⁻¹ here — while
+    # `b1_j` again keeps the Fisher A⁻¹, being a property of the fit.
+    use_newton = _use_newton_score_weights(family, link)
+    w_score = w
+    if use_newton
+        wn = similar(w)
+        if _newton_score_weights!(wn, w, y, mu, GLM.linkfun.(Ref(link), mu),
+                                  family, link) && _newton_weights_differ(wn, w)
+            w_score = wn
+        else
+            use_newton = false      # canonical pair (alpha ≡ 1) or unusable
+        end
+    end
+
+    # `fit_op` is the inverse Hessian of the penalised objective (observed
+    # information under Newton weights); `det_op` is the operator the score's
+    # determinant is taken over. They differ under ML (range-space projection).
+    fit_op = Ainv
+    if use_newton
+        newton_inv = try
+            inv(lu(X' * Diagonal(w_score) * X + S_total))
+        catch
+            use_newton = false
+            nothing
+        end
+        newton_inv === nothing || (fit_op = newton_inv)
+    end
+
+    det_op = fit_op
     if method === :ML
         Y_rng = _penalty_range_basis(penalty, p)
-        A_full = X' * Diagonal(w) * X + S_total
+        A_full = X' * Diagonal(w_score) * X + S_total
         det_op = Y_rng * (Symmetric(Y_rng' * A_full * Y_rng) \ Y_rng')
     end
 
@@ -516,6 +960,24 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
             #   dw/dη = weights·(2·g1·g2·V − g1³·V′(μ)) / V²
             dw_deta[i] = weights[i] * (2.0 * g1 * g2 * vm - g1^2 * dvm * g1) / (vm * vm)
         end
+
+        # For a non-canonical link the score differentiates the NEWTON weight
+        # w·α, not the Fisher weight, so dw/dη must follow. α's η-derivative
+        # needs V″ and a third link derivative; rather than hand-derive those
+        # (a repeated source of sign errors here) take a central difference of
+        # the scalar weight function per observation — n cheap evaluations,
+        # accurate to ~1e-10 relative, well inside the ~1e-6 tolerances the
+        # gradient is held to.
+        if use_newton
+            @inbounds for i in 1:n
+                eta_i = GLM.linkfun(link, mu[i])
+                h = max(1e-7, 1e-7 * abs(eta_i))
+                wp = _newton_weight_at_eta(family, link, weights[i], y[i], eta_i + h)
+                wm = _newton_weight_at_eta(family, link, weights[i], y[i], eta_i - h)
+                d = (wp - wm) / (2h)
+                isfinite(d) && (dw_deta[i] = d)
+            end
+        end
     end
 
     sp_idx = 1
@@ -525,7 +987,11 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
 
         # λⱼ·tr(S_λ⁺Sⱼ) per penalty: equals block.rank for single-penalty
         # blocks; differs per margin for multi-penalty (tensor) blocks.
-        ldet_derivs = _block_logdet_derivs(block,
+        # Uses the similarity-transformed route so the gradient stays
+        # consistent with `_log_penalty_det`'s score — the plain eigen-solve in
+        # `_block_logdet_derivs` drops sub-dominant components at the same
+        # within-block λ ratios where the score used to lose them.
+        ldet_derivs = _stable_block_logdet_derivs(block,
             view(log_sp, sp_idx:(sp_idx + length(block.S) - 1)))
 
         for (j_pen, Si) in enumerate(block.S)
@@ -549,7 +1015,11 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
                 # where b1_j = -A⁻¹(λ_j S_j β)
                 rhs = zeros(p)
                 rhs[idx] .= λ .* (Si * beta_block)
-                b1_j = -(Ainv * rhs)
+                # dβ/dρⱼ = −H⁻¹ λⱼSⱼβ, where H is the Hessian of the PENALISED
+                # OBJECTIVE β̂ minimises — i.e. observed information, not Fisher.
+                # The two coincide for a canonical link, which is why `Ainv`
+                # sufficed until Newton weights were introduced.
+                b1_j = -(fit_op * rhs)
 
                 # dη = X b1_j
                 deta_j = X * b1_j
@@ -611,6 +1081,153 @@ _dvariance_scalar_mu(::Poisson, mu::Float64) = 1.0
 _dvariance_scalar_mu(::Gamma, mu::Float64) = 2.0 * mu
 _dvariance_scalar_mu(::InverseGaussian, mu::Float64) = 3.0 * mu * mu
 _dvariance_scalar_mu(::UnivariateDistribution, mu::Float64) = 0.0
+
+# ── Fisher vs Newton working weights in the smoothness-selection score ──────
+#
+# mgcv (`R/gam.fit3.r:118`):
+#     if (family$link==family$canonical) fisher <- TRUE else fisher=FALSE
+# For a NON-canonical link mgcv uses full Newton (observed-information)
+# weights `w = wf * alpha` inside `log|X'WX+S|`, where (`:508-515`)
+#     alpha = 1 + (y-μ)·(V'(μ)/V(μ) + link''(μ)·dμ/dη).
+# Since link''(μ) = -g2/g1³ with g1 = dμ/dη and g2 = d²μ/dη², that is
+#     alpha = 1 + (y-μ)·(V'(μ)/V(μ) - g2/g1²).
+# Sanity check, Gamma+log: V'/V = 2/μ, g1 = g2 = μ, so alpha = y/μ — matched
+# against mgcv to 4.4e-16.
+#
+# SCOPE: this affects ONLY the log-determinant term of the REML/ML score.
+# It deliberately does NOT touch the EDF, which mgcv keeps on Fisher weights
+# (`:514` `wf <- ... ## Fisher weights for EDF calculation`). Verified on a
+# Gamma+log reference fit: tr(A_fisher⁻¹·X'W_fisher X) = 7.226896244 equals
+# mgcv's `sum(b$edf)` exactly, whereas the mixed form gives 7.317906949. It
+# also leaves the P-IRLS iteration alone — Fisher and Newton scoring share a
+# stationary point, and coefficients/deviance already match mgcv.
+#
+# Only links with an analytic `_d2mu_deta2` may use this: the generic
+# fallback returns 0.0, which would yield a WRONG alpha rather than a safe
+# Fisher one, so probit/cloglog/cauchit stay on Fisher weights.
+_has_analytic_d2mu(::Union{GLM.LogLink, GLM.LogitLink, GLM.IdentityLink,
+                           GLM.InverseLink, GLM.SqrtLink}) = true
+_has_analytic_d2mu(::GLM.Link) = false
+
+# NOTE: there is deliberately NO canonical-link test here. With the correct
+# sign, `alpha ≡ 1` identically for a canonical pair, so the Newton formula
+# reduces to the Fisher one on its own — verified to machine precision for
+# Normal+identity (0.0), Poisson+log (3.3e-16), Bernoulli+logit (1.0e-15) and
+# Gamma+inverse (0.0), against 1.5 and 3.0 for the non-canonical Gamma+log and
+# InverseGaussian+log. Branching on canonicality would add nothing but the
+# risk of misclassifying a family/link pair.
+_use_newton_score_weights(::UnivariateDistribution, link::GLM.Link) =
+    _has_analytic_d2mu(link)
+
+"""
+    _newton_score_weights!(wn, w, y, mu, eta, family, link) -> Bool
+
+Fill `wn` with mgcv's full-Newton working weights `w .* alpha`. Returns
+`false` only if a weight is non-finite (an unusable system); callers then fall
+back to Fisher weights.
+
+**Negative weights are expected, not an error.** Observed information is not
+guaranteed positive — for InverseGaussian+log, `alpha = (2y − μ)/μ`, which is
+negative whenever `y < μ/2` — so `X'WX + S` can be indefinite. That is why the
+caller must take the log-determinant with an LU/`logabsdet`, never a Cholesky:
+`_protected_cholesky!` would silently ridge an indefinite matrix into a
+positive-definite one and return the determinant of a different matrix.
+"""
+function _newton_score_weights!(wn::Vector{Float64}, w::Vector{Float64},
+    y::Vector{Float64}, mu::Vector{Float64}, eta::Vector{Float64},
+    family::UnivariateDistribution, link::GLM.Link)
+
+    ok = true
+    @inbounds for i in eachindex(y)
+        g1 = GLM.mueta(link, eta[i])
+        g2 = _d2mu_deta2(link, mu[i], eta[i])
+        vm = max(_variance_scalar(family, mu[i]), eps())
+        dvm = _dvariance_scalar_mu(family, mu[i])
+        alpha = 1.0 + (y[i] - mu[i]) * (dvm / vm - g2 / max(g1 * g1, eps()))
+        wn[i] = w[i] * alpha
+        isfinite(wn[i]) || (ok = false)
+    end
+    return ok
+end
+
+"""
+    _newton_weights_differ(wn, w) -> Bool
+
+Whether the Newton weights are materially different from the Fisher ones.
+`false` for a canonical family/link pair, where `alpha ≡ 1` to rounding.
+"""
+function _newton_weights_differ(wn::Vector{Float64}, w::Vector{Float64})
+    scale = maximum(abs, w)
+    scale > 0 || return false
+    tol = 8 * eps() * scale
+    @inbounds for i in eachindex(w)
+        abs(wn[i] - w[i]) > tol && return true
+    end
+    return false
+end
+
+"""
+    _newton_weight_at_eta(family, link, prior_w, y, eta) -> Float64
+
+The full-Newton working weight `w(η) = prior_w · (dμ/dη)²/V(μ) · alpha` as a
+scalar function of the linear predictor, used to difference `dw/dη` for the
+score gradient without hand-deriving `dα/dη` (which needs V″ and a third link
+derivative).
+"""
+function _newton_weight_at_eta(family::UnivariateDistribution, link::GLM.Link,
+    prior_w::Float64, y::Float64, eta::Float64)
+
+    mu = GLM.linkinv(link, eta)
+    g1 = GLM.mueta(link, eta)
+    g2 = _d2mu_deta2(link, mu, eta)
+    vm = max(_variance_scalar(family, mu), eps())
+    dvm = _dvariance_scalar_mu(family, mu)
+    alpha = 1.0 + (y - mu) * (dvm / vm - g2 / max(g1 * g1, eps()))
+    return prior_w * g1 * g1 / vm * alpha
+end
+
+"""
+    _score_log_det(A, A_chol_fallback) -> Float64
+
+Log-determinant of a score matrix that may be indefinite because of Newton
+weights. Uses `logabsdet(lu(A))` rather than a Cholesky; falls back to the
+Fisher factorization if the LU is singular or the determinant is negative
+(mgcv handles the latter with its `ldetI2D` correction, zeroing directions
+where `1 − 2d² ≤ 0`, `src/gdi.c:1855-1865`, which is not reproduced here).
+"""
+function _score_log_det(A::Matrix{Float64}, A_chol_fallback)
+    return try
+        ld, sgn = logabsdet(lu(A))
+        (isfinite(ld) && sgn > 0) ? ld : logdet(A_chol_fallback)
+    catch
+        logdet(A_chol_fallback)
+    end
+end
+
+"""
+    _score_XtWX(X, XtWX, w, y, mu, eta, family, link) -> Matrix{Float64}
+
+`X'WX` as it enters the smoothness-selection score: Newton-weighted when mgcv
+would use Newton weights (non-canonical link with an analytic `_d2mu_deta2`),
+otherwise the Fisher `XtWX` passed in, returned unchanged. Falls back to the
+Fisher matrix whenever the Newton weights are not usable, so a fit can never
+be destabilized by this.
+"""
+function _score_XtWX(X::Matrix{Float64}, XtWX::Matrix{Float64},
+    w::Vector{Float64}, y::Vector{Float64}, mu::Vector{Float64},
+    eta::Vector{Float64}, family::UnivariateDistribution, link::GLM.Link)
+
+    _use_newton_score_weights(family, link) || return XtWX
+    wn = similar(w)
+    _newton_score_weights!(wn, w, y, mu, eta, family, link) || return XtWX
+    # For a canonical pair alpha ≡ 1, so the Newton weights ARE the Fisher
+    # weights. Return the original matrix identically in that case: rebuilding
+    # it would send canonical links down the LU path and perturb previously
+    # exact results at rounding level. This is the numerical equivalent of a
+    # canonical-link test, without the risk of misclassifying a pair.
+    _newton_weights_differ(wn, w) || return XtWX
+    return X' * Diagonal(wn) * X
+end
 
 """
     _gcv_gradient(X, y, w, beta, mu, eta, S_total, A_chol, penalty, log_sp,

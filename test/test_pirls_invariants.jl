@@ -61,9 +61,23 @@ using Statistics, LinearAlgebra
         yg = Float64[rand(rng3, Gamma(4.0, (1.0 + 2.0 * xi) / 4.0)) for xi in x]
         mg = gam(@formulak(y ~ s(x, k = 10, bs = :cr)), (y = yg, x = x);
             family = Gamma(), link = LogLink())
-        @test mg.deviance_val ≈ 87.828825208529 rtol = 1e-9
-        @test mg.edf_total ≈ 3.541308650387 rtol = 1e-9
-        @test mg.scale ≈ 0.271006842418 rtol = 1e-9
+        # Re-pinned once after two related REML-score corrections: profiling the
+        # scale for estimated-scale families, and using mgcv's full-Newton
+        # (observed-information) weights in `log|X'WX+S|` for NON-canonical pairs
+        # such as Gamma+log. Both change the criterion EFS optimises, so the
+        # selected sp — and hence these three quantities — move.
+        #
+        # Verified against mgcv 1.9-4 on this exact fit:
+        #            GAM.jl        mgcv        rel
+        #   dev     87.866290   87.877797   1.3e-4
+        #   edf      3.482381    3.464557   5.1e-3
+        #   scale    0.271199    0.271259   2.2e-4
+        #   sp    1892.53     1948.25       (flat REML ridge)
+        #
+        # Previous pins were dev 87.828825, edf 3.541309, scale 0.271007.
+        @test mg.deviance_val ≈ 87.866289782686 rtol = 1e-9
+        @test mg.edf_total ≈ 3.482380889071 rtol = 1e-9
+        @test mg.scale ≈ 0.271199414910 rtol = 1e-9
     end
 
     @testset "bam: chunked accumulation ≡ dense gam" begin

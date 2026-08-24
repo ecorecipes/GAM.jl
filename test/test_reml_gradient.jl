@@ -8,9 +8,11 @@
 # Two regimes are pinned deliberately:
 #   * scale known or supplied  → exact (validated to ~1e-7 here, ~1e-9 in
 #     the development harness with tighter P-IRLS tolerances)
-#   * scale estimated internally → approximate; the `dσ̂²/dρ` chain term is
-#     omitted. The bound below documents that gap rather than hiding it, and
-#     will tighten to the exact regime if a future change profiles the scale.
+#   * scale estimated internally → depends on the family. Gamma/InverseGaussian
+#     REML and all ML fits PROFILE the scale, so the envelope-theorem condition
+#     holds and the gradient is exact. Gaussian REML still plugs in
+#     pearson/(n − edf) (mgcv's own Gaussian rule), so the `dσ̂²/dρ` chain term
+#     is omitted there and a ~1e-3 gap remains; that bound is pinned below.
 
 @testset "REML gradient vs finite differences" begin
     _tight = gam_control(epsilon = 1e-13, maxit = 500)
@@ -111,16 +113,20 @@
             tol = 1e-6) < 1e-6
     end
 
-    @testset "scale estimated internally — documented approximation" begin
-        # The dσ̂²/dρ chain term is omitted (see the reml_score docstring).
-        # These bounds record the size of the gap; they are NOT a claim of
-        # correctness. If a future change profiles the scale analytically,
-        # these should collapse to the exact regime above and the tolerances
-        # should be tightened accordingly.
+    @testset "scale estimated internally — family-dependent" begin
+        # Whether this regime is exact now depends on the family, because the
+        # scale rule does (see the `reml_score` docstring).
+        # GAUSSIAN still plugs in pearson/(n − edf), so the gap remains.
         gauss = _check(Normal(), IdentityLink(); tol = 1e-1)
-        gamma = _check(Gamma(), LogLink(); tol = 1e-1)
-        @test gauss > 1e-5   # gap is real, not numerical noise
-        @test gamma > 1e-5
+        @test gauss > 1e-5   # gap is real, not numerical noise (measured 1.3e-3)
+
+        # GAMMA now PROFILES the scale, matching mgcv's `reml.scale`, so the
+        # envelope-theorem condition holds and the gradient is EXACT. This is
+        # the collapse the header comment anticipated: measured 6.2e-9 against
+        # ~1e-1 before profiling.
+        gamma = _check(Gamma(), LogLink(); tol = 1e-6)
+        @test gamma < 1e-6
+        @test gamma < gauss * 1e-3   # orders of magnitude better than Gaussian
 
         # Supplying the REML-profiling scale σ̂² = Dp/(n − Mp) restores the
         # envelope-theorem condition for Gaussian, and the error collapses.
@@ -142,10 +148,10 @@
         # REML path violates is satisfied and the ML gradient sits in the
         # exact regime even with the scale estimated internally. That is the
         # opposite of the REML case immediately above, so pin the ordering.
-        ml_gauss = _check(Normal(), IdentityLink(); method = :ML, tol = 1e-4)
-        ml_gamma = _check(Gamma(), LogLink(); method = :ML, tol = 1e-2)
-        @test ml_gauss < gauss
-        @test ml_gamma < gamma
+        ml_gauss = _check(Normal(), IdentityLink(); method = :ML, tol = 1e-6)
+        ml_gamma = _check(Gamma(), LogLink(); method = :ML, tol = 1e-6)
+        @test ml_gauss < gauss       # measured 2.3e-10
+        @test ml_gamma < 1e-6        # measured 7.9e-9
     end
 
     # ------------------------------------------------------------------
