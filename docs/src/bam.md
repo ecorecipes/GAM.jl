@@ -30,10 +30,17 @@ df_pois = DataFrame(x=x_pois, y=y_pois)
 
 ## When to Use BAM
 
-| Dataset size | Recommended |
-|-------------|-------------|
-| n < 10,000 | `gam()` |
-| n > 10,000 | `bam()` — faster, lower memory |
+`bam()` carries fixed setup overhead that only pays for itself once there are
+enough rows. Measured against `gam()` on the same model:
+
+| n | `bam` vs `gam` | Recommended |
+|---|----------------|-------------|
+| 1,000 | ~21x **slower** | `gam()` |
+| 10,000 | ~1.9x faster | either |
+| 100,000 | ~3.9x faster | `bam()` |
+
+The crossover is around **n ≈ 5,000–10,000**. Below it, prefer `gam()`;
+`bam()` is not simply a drop-in speedup.
 
 BAM produces results equivalent to `gam()` (fitted-value agreement is asserted
 in the test suite) with reduced peak memory on large datasets.

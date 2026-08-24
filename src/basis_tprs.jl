@@ -127,6 +127,19 @@ function _tps_null_space_basis(x::AbstractVector{<:Real}, m::Int)
     return T
 end
 
+"""Euclidean distance between rows `i` of `A` and `j` of `B`, without
+allocating the difference vector (`norm(view(A,i,:) .- view(B,j,:))` builds a
+temporary per call, which dominates multi-dimensional TPS construction)."""
+@inline function _row_distance(A::AbstractMatrix{Float64}, i::Int,
+    B::AbstractMatrix{Float64}, j::Int, d::Int)
+    ss = 0.0
+    @inbounds @simd for l in 1:d
+        δ = A[i, l] - B[j, l]
+        ss += δ * δ
+    end
+    return sqrt(ss)
+end
+
 """
     _tps_multi_penalty_matrix(X_data::Matrix{Float64}, m::Int) -> Matrix{Float64}
 
@@ -135,8 +148,8 @@ Compute the TPS penalty matrix for multi-dimensional data.
 function _tps_multi_penalty_matrix(X_data::Matrix{Float64}, m::Int)
     n, d = size(X_data)
     E = zeros(n, n)
-    for j in 1:n, i in j:n
-        r = norm(view(X_data, i, :) .- view(X_data, j, :))
+    @inbounds for j in 1:n, i in j:n
+        r = _row_distance(X_data, i, X_data, j, d)
         E[i, j] = _tps_eta(r, m, d)
         E[j, i] = E[i, j]
     end
@@ -216,7 +229,7 @@ function _tps_cross_matrix(X_new::Matrix{Float64}, centers::Matrix{Float64}, m::
         end
     else
         @inbounds for j in 1:nk, i in 1:n_new
-            E[i, j] = _tps_eta(norm(view(X_new, i, :) .- view(centers, j, :)), m, d)
+            E[i, j] = _tps_eta(_row_distance(X_new, i, centers, j, d), m, d)
         end
     end
     return E
@@ -225,8 +238,10 @@ end
 function _scale_columns!(X::Matrix{Float64}, scales::Vector{Float64})
     @inbounds for j in 1:size(X, 2)
         scale = scales[j]
-        if scale > 0
-            X[:, j] ./= scale
+        scale > 0 || continue
+        col = view(X, :, j)   # a view, so no per-column copy is allocated
+        @simd for i in eachindex(col)
+            col[i] /= scale
         end
     end
     return X
@@ -356,6 +371,11 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
     # For knot-based case: Nystrom extension X_eig = E_nk·U·Z (the Nystrom
     # factor diag(1/v) cancels against the absorbed diag(v))
 
+    # Both branches produce Matrix{Float64}, but the annotations keep the
+    # join concretely inferred: without them `X_full` widens and the scalar
+    # loops below box every element (~6 allocations per entry).
+    local X_eig::Matrix{Float64}
+    local T_data::Matrix{Float64}
     if !knots_are_data
         E_nk = _tps_cross_matrix(Xd, Matrix(XK), m_order)
         X_eig = E_nk * (U * Z)
@@ -367,8 +387,13 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
         T_data = T_null
     end
 
-    # Full basis: [constrained eigenbasis | polynomial null space]
-    X_full = hcat(X_eig, T_data)  # n × k
+    # Full basis: [constrained eigenbasis | polynomial null space].
+    # Built by copy rather than `hcat`: with SparseArrays loaded, `hcat`
+    # dispatches to its generic method and the result loses concrete
+    # inference here.
+    X_full = Matrix{Float64}(undef, size(X_eig, 1), k)
+    copyto!(view(X_full, :, 1:n_basis), X_eig)
+    copyto!(view(X_full, :, (n_basis + 1):k), T_data)
 
     # --- Step 5: Build penalty matrix ---
     # S = Z'·diag(v)·Z with null space zeroed
@@ -380,15 +405,23 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
     # --- Step 6: Column-wise RMS rescaling (R tprs.c lines 493-498) ---
     # Each column of X is rescaled to have RMS = 1.
     # S is rescaled accordingly: S[i,j] /= (w_i * w_j)
+    # Column views avoid the copy that `X_full[:, j] ./= s` allocates; the
+    # division (rather than multiplication by a reciprocal) keeps results
+    # bit-identical to the previous implementation.
     col_scales = zeros(k)
-    for j in 1:k
+    nrow = size(X_full, 1)
+    @inbounds for j in 1:k
+        col = view(X_full, :, j)
         ss = 0.0
-        for i in 1:size(X_full, 1)
-            ss += X_full[i, j]^2
+        @simd for i in eachindex(col)
+            ss += col[i]^2
         end
-        col_scales[j] = sqrt(ss / size(X_full, 1))
-        if col_scales[j] > 0
-            X_full[:, j] ./= col_scales[j]
+        cs = sqrt(ss / nrow)
+        col_scales[j] = cs
+        if cs > 0
+            @simd for i in eachindex(col)
+                col[i] /= cs
+            end
         end
     end
     for j in 1:k, i in 1:k
@@ -487,10 +520,15 @@ function _predict_matrix(::Union{ThinPlateSpline, ThinPlateShrink},
 
     X_new = hcat([Float64.(Tables.getcolumn(newdata, v)) for v in vars]...)
     E_new = _tps_cross_matrix(X_new, cache.centers, m_order)
-    X_eig = E_new * cache.UZ
-    T_new = d == 1 ? _tps_null_space_basis(view(X_new, :, 1), m_order) :
-                     _tps_multi_null_basis(X_new, m_order)
-    X_full = hcat(X_eig, T_new)
+    X_eig::Matrix{Float64} = E_new * cache.UZ
+    T_new::Matrix{Float64} = d == 1 ?
+        _tps_null_space_basis(view(X_new, :, 1), m_order) :
+        _tps_multi_null_basis(X_new, m_order)
+    # Concrete assembly rather than `hcat` — see the note in `_construct_tprs`
+    n_eig = size(X_eig, 2)
+    X_full = Matrix{Float64}(undef, size(X_eig, 1), n_eig + size(T_new, 2))
+    copyto!(view(X_full, :, 1:n_eig), X_eig)
+    copyto!(view(X_full, :, (n_eig + 1):size(X_full, 2)), T_new)
     _scale_columns!(X_full, cache.col_scales)
 
     if smooth.constraint !== nothing

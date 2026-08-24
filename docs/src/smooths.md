@@ -363,6 +363,30 @@ The construction is verified against mgcv: for `t2(x, z, k=4)` both produce 15
 columns, 3 penalties of rank 4 with identical disjoint supports, and a
 null-space dimension of 3.
 
+!!! warning "`k` means something different here than in mgcv"
+    For tensor smooths, mgcv's `k` is the dimension of **each marginal** basis
+    (giving `k^d` columns), whereas GAM.jl's `k` is the **total** target
+    dimension, split as `round(Int, k^(1/d))` per margin and floored at 3.
+    So `te(x, z, k=5)` is a 24-column smooth in mgcv but an 8-column smooth
+    here.
+
+    | `k` | mgcv columns | GAM.jl columns |
+    |-----|--------------|----------------|
+    | 4   | 15           | 8              |
+    | 5   | 24           | 8              |
+    | 16  | 255          | 15             |
+    | 25  | 624          | 24             |
+
+    To reproduce an mgcv model use `k_julia = k_mgcv^d`, or pass the marginal
+    dimensions directly:
+
+    ```julia
+    te(:x, :z, k = 25)       # ≡ mgcv te(x, z, k = 5)
+    te(:x, :z, k = [4, 7])   # marginal dimensions given explicitly
+    ```
+
+    Plain `s()` smooths are unaffected — `k` means the same thing in both.
+
 ### Linear-Constraint Bases (`bs=:sc`, `bs=:scad`)
 
 These bases impose general linear inequality or equality constraints on spline
@@ -452,7 +476,7 @@ nothing
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `bs` | Symbol | Basis type (see table above) |
-| `k` | Int | Basis dimension (number of basis functions) |
+| `k` | Int or Vector | Basis dimension. For `s()`, the number of basis functions. For `te`/`ti`/`t2`, the **total** dimension across margins (mgcv counts *per margin* — see the warning above); a vector gives the marginal dimensions directly |
 | `m` | Int/Tuple | Penalty order (basis-type specific) |
 | `fx` | Bool | If true, no penalty (fixed df) |
 | `by` | Symbol | Varying coefficient variable |

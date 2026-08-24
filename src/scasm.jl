@@ -252,72 +252,70 @@ function scasm_pirls(X::Matrix{Float64}, y::Vector{Float64},
     n_iter = 0
     mul!(penalty_buf, S_total, beta)
     pdev_old = _deviance(family, y, mu, weights) + dot(beta, penalty_buf)
+    isfinite(pdev_old) || (pdev_old = Inf)
     feasible_old = _is_feasible(beta, Ain, bin, Aeq, beq)
+    prev_valid = all(_valid_mu_scalar(family, GLM.linkinv(link, e)) for e in eta)
+
+    # Shared step-acceptance policy, with feasibility as the extra conjunct
+    step_spec = PirlsStepControl(;
+        accept = (obj_new, obj_old, thresh, valid_new, prev_ok) ->
+            _pirls_default_accept(obj_new, obj_old, thresh, valid_new, prev_ok) &&
+            _is_feasible(beta_new, Ain, bin, Aeq, beq),
+        max_halvings = 50)
 
     for iter in 1:control.maxit
         n_iter = iter
 
-        @inbounds for i in 1:n
-            dm = GLM.mueta(link, eta[i])
-            dmu_deta[i] = dm
-            vm = _variance_scalar(family, mu[i])
-            w[i] = clamp(weights[i] * dm * dm / max(vm, eps()), eps(), 1e10)
-            z[i] = eta[i] - offset[i] + (y[i] - mu[i]) / dm
-        end
+        _pirls_working!(w, z, y, mu, eta, offset, weights, family, link;
+            dmu_deta = dmu_deta)
 
         _build_penalized_system!(A, XtWz, X, w, z, S_total, p, n, Xw, wz_buf)
         beta_candidate = _solve_constrained_qp(A, XtWz, Ain, bin, Aeq, beq;
             warm_start = iter == 1 ? start : beta,
             eps_abs = max(control.epsilon, 1e-8),
             eps_rel = max(control.epsilon, 1e-8))
+        if !all(isfinite, beta_candidate)
+            # The constrained solve produced a non-finite iterate (typically a
+            # working system poisoned by an out-of-domain mean). Keep the last
+            # good iterate and stop rather than propagate NaNs into the fit.
+            @warn "Constrained P-IRLS: the quadratic-programming step " *
+                  "returned a non-finite coefficient vector; keeping the " *
+                  "last stable iterate." maxlog = 1
+            converged = false
+            break
+        end
         copyto!(beta_new, beta_candidate)
 
-        mul!(eta_new, X, beta_new)
-        eta_new .+= offset
-        @inbounds for i in 1:n
-            mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
+        # Step acceptance via the shared policy: the constrained variant adds
+        # feasibility as a conjunct, and inherits valid-μ enforcement (a
+        # proposal may not leave the family's mean domain while the previous
+        # iterate was inside it) from the common rule.
+        recompute! = function (b)
+            mul!(eta_new, X, b)
+            eta_new .+= offset
+            ok = true
+            @inbounds for i in 1:n
+                li = GLM.linkinv(link, eta_new[i])
+                ok &= _valid_mu_scalar(family, li)
+                mu_new[i] = _clamp_mu_scalar(family, li)
+            end
+            dev_new = _deviance(family, y, mu_new, weights)
+            mul!(penalty_buf, S_total, b)
+            return (dev_new + dot(b, penalty_buf), ok)
         end
 
+        pdev_new, valid_new, accepted_step, _ =
+            pirls_halve!(beta_new, beta, recompute!, step_spec,
+                pdev_old, prev_valid && feasible_old)
         dev_new = _deviance(family, y, mu_new, weights)
-        mul!(penalty_buf, S_total, beta_new)
-        penalty_new = dot(beta_new, penalty_buf)
-        pdev_new = dev_new + penalty_new
 
-        div_thresh = 10.0 * (0.1 + abs(pdev_old)) * sqrt(eps())
-        accepted_step = (pdev_new - pdev_old <= div_thresh) &&
-                        _is_feasible(beta_new, Ain, bin, Aeq, beq)
-        if feasible_old && pdev_new - pdev_old > div_thresh
-            beta_trial = copy(beta_new)
-            eta_trial = similar(eta_new)
-            mu_trial = similar(mu_new)
-            for _ in 1:50
-                accepted_step && break
-                beta_trial .= 0.5 .* beta .+ 0.5 .* beta_trial
-                mul!(eta_trial, X, beta_trial)
-                eta_trial .+= offset
-                @inbounds for i in 1:n
-                    mu_trial[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_trial[i]))
-                end
-                dev_trial = _deviance(family, y, mu_trial, weights)
-                mul!(penalty_buf, S_total, beta_trial)
-                pdev_trial = dev_trial + dot(beta_trial, penalty_buf)
-                if pdev_trial - pdev_old <= div_thresh && _is_feasible(beta_trial, Ain, bin, Aeq, beq)
-                    copyto!(beta_new, beta_trial)
-                    copyto!(eta_new, eta_trial)
-                    copyto!(mu_new, mu_trial)
-                    dev_new = dev_trial
-                    pdev_new = pdev_trial
-                    accepted_step = true
-                end
-            end
-
-            if !accepted_step
-                copyto!(beta_new, beta)
-                copyto!(eta_new, eta)
-                copyto!(mu_new, mu)
-                dev_new = _deviance(family, y, mu, weights)
-                pdev_new = pdev_old
-            end
+        if !accepted_step
+            copyto!(beta_new, beta)
+            copyto!(eta_new, eta)
+            copyto!(mu_new, mu)
+            dev_new = _deviance(family, y, mu, weights)
+            pdev_new = pdev_old
+            valid_new = prev_valid
         end
 
         scale_check = _needs_scale_estimate(family) ? dev_new / max(n - p, 1) : 1.0
@@ -327,6 +325,7 @@ function scasm_pirls(X::Matrix{Float64}, y::Vector{Float64},
         copyto!(eta, eta_new)
         copyto!(mu, mu_new)
         pdev_old = pdev_new
+        prev_valid = valid_new
         feasible_old = _is_feasible(beta, Ain, bin, Aeq, beq)
 
         if crit < control.epsilon
@@ -365,6 +364,18 @@ function scasm_pirls(X::Matrix{Float64}, y::Vector{Float64},
     end
     edf_vec, hat_diag = penalty_edf(X, w, S_total; XtWX = XtWX, A_chol = A_chol_final)
     R = Matrix(A_chol_final.U)
+
+    # Honest reporting of family-domain violations (mirrors `pirls`).
+    n_invalid = count(i -> !_valid_mu_scalar(family, GLM.linkinv(link, eta[i])), 1:n)
+    if n_invalid > 0
+        @warn "Constrained P-IRLS finished with $n_invalid observation(s) " *
+              "whose linear predictor maps outside the " *
+              "$(nameof(typeof(family))) mean domain under " *
+              "$(nameof(typeof(link))); fitted values are clamped to the " *
+              "boundary there and the scale estimate is not usable. " *
+              "Consider a different link (e.g. LogLink)." maxlog = 1
+        converged = false
+    end
 
     return PirlsResult(
         beta, mu, eta, w, dev_final, pearson,

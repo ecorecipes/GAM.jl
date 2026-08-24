@@ -357,6 +357,7 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
     outer_converged = false
     outer_iters = 0
 
+    score_prev = Inf
     for outer_iter in 1:control.outer_maxit
         S_total = total_penalty(penalty, log_sp, p)
 
@@ -401,10 +402,16 @@ function outer_iteration_general(X::Matrix{Float64}, y::Vector{Float64},
         log_sp .= log_sp_new
         prev_result = result
 
-        if max_change < control.epsilon * 10
+        # Score-based convergence (as in outer.jl/bam.jl): a flat criterion
+        # ridge otherwise keeps the sp walking after the fit has settled.
+        score_cur = result.deviance
+        if max_change < control.epsilon * 10 ||
+           (outer_iter > 1 && abs(score_cur - score_prev) <
+                              control.epsilon * (abs(score_prev) + 0.1))
             outer_converged = true
             break
         end
+        score_prev = score_cur
     end
 
     # Final solve

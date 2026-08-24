@@ -1067,6 +1067,11 @@ end
 
 # Targeted regressions (ported from the published main: TPRS null space,
 # multi-penalty REML gradient, RE prediction levels, t2/smooth2random)
+@eval include("test_pirls_invariants.jl")
+
+# Analytic REML/GCV gradient vs finite differences (validity domain pinned)
+@eval include("test_reml_gradient.jl")
+
 @eval include("test_regressions.jl")
 
 # Nested effects (s_nest / gam_nl, gamFactory-style)

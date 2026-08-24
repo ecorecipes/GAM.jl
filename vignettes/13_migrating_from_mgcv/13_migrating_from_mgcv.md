@@ -15,6 +15,10 @@ Simon Frost
     conditional](#4-scam-standard-errors-are-conditional)
   - [5. Smoothing parameters on flat likelihood
     ridges](#5-smoothing-parameters-on-flat-likelihood-ridges)
+  - [6. `k` counts differently in tensor
+    smooths](#6-k-counts-differently-in-tensor-smooths)
+  - [7. The default smoothing-parameter method
+    differs](#7-the-default-smoothing-parameter-method-differs)
   - [`te()` versus `t2()` in mixed-model
     form](#te-versus-t2-in-mixed-model-form)
 - [Gotchas](#gotchas)
@@ -154,8 +158,12 @@ under `1e-4`.
 
 ## Where the answers differ — and why
 
-Five documented divergences. None affects the mainstream fitting path,
-but all are worth knowing before you compare printouts side by side.
+Seven documented divergences. The last two — how `k` is counted and
+which smoothing-parameter method is the default — are differences in
+*convention* rather than in the mathematics, and they are the ones most
+likely to make a side-by-side comparison mislead you. None affects the
+mainstream fitting path, but all are worth knowing before you compare
+printouts side by side.
 
 ### 1. Smooth-term test statistics
 
@@ -206,6 +214,49 @@ ridge while producing effectively identical fits. **Compare fitted
 values, edf, and the criterion — not raw `sp`** unless the model is well
 identified.
 
+### 6. `k` counts differently in tensor smooths
+
+This one bites hardest, because both sides look identical and neither
+complains. For `te`, `ti` and `t2`, **mgcv’s `k` is the dimension of
+each marginal basis**, so the tensor has `k^d` columns. **GAM.jl’s `k`
+is the total** target dimension, split as `round(Int, k^(1/d))` per
+margin and floored at 3:
+
+| `k` in `te(x, z, k=…)` | mgcv columns | GAM.jl columns |
+|------------------------|--------------|----------------|
+| 4                      | 15           | 8              |
+| 5                      | 24           | 8              |
+| 9                      | 80           | 8              |
+| 16                     | 255          | 15             |
+| 25                     | 624          | 24             |
+
+`te(x, z, k=5)` is a 24-column smooth in R and an 8-column smooth in
+Julia — a threefold difference in flexibility, from the same source
+text. The floor at 3 per margin is why `k=4`, `5` and `9` all collapse
+to 8 columns.
+
+Two ways to translate:
+
+``` julia
+te(:x, :z, k = 25)        # k_julia = k_mgcv^d  →  5 per margin, 24 columns
+te(:x, :z, k = [4, 7])    # or give marginal dimensions directly
+```
+
+Plain `s()` smooths are unaffected — `k` means the same thing in both.
+
+### 7. The default smoothing-parameter method differs
+
+mgcv’s `gam()` defaults to `method = "GCV.Cp"`. GAM.jl’s `gam()`
+defaults to `method = :REML`. Comparing defaults compares two different
+criteria, and REML generally gives smoother fits.
+
+This is a difference in defaults, not in the mathematics. With the
+methods matched, the criteria agree to numerical precision: on a matched
+tensor model the REML score at the optimum is `95.289118` in GAM.jl
+versus `95.28912` in mgcv, and the two criterion surfaces correlate at
+`0.99994` across `log λ ∈ [-12, 12]`. Set `method="REML"` in R, or
+`method=:GCV` in Julia, before drawing conclusions from a comparison.
+
 ### `te()` versus `t2()` in mixed-model form
 
 Both constructions match mgcv. They differ in whether the smooth
@@ -236,6 +287,11 @@ for the parametric block, `anova_gam(m)` for the smooth table, and
 `overview(m)` for a tidy per-smooth view.
 
 **Basis symbols, not strings.** `bs=:cr`, not `bs="cr"`.
+
+**`k` and the default method are the two silent traps.** Both are
+covered above: `k` is per-margin in mgcv and total here for tensor
+smooths, and the default `method` is `"GCV.Cp"` in mgcv against `:REML`
+here. Neither raises an error; both change the model.
 
 **Three bases are approximations.** `:sos`, `:so`, and `:ds` are
 documented approximations of their mgcv namesakes and will not reproduce

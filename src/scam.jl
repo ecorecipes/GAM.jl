@@ -149,6 +149,15 @@ function scam_pirls(
     eta = X * beta_t .+ offset
     mu = [_clamp_mu_scalar(family, GLM.linkinv(link, e)) for e in eta]
     dev_old = _deviance(family, y, mu, weights)
+    isfinite(dev_old) || (dev_old = Inf)
+    prev_valid = all(_valid_mu_scalar(family, GLM.linkinv(link, e)) for e in eta)
+
+    # Shared step-acceptance policy. SCAM's divergence tolerance is relative
+    # (its Newton step in β̃-space is calibrated against the raw deviance),
+    # unlike gam.fit3's absolute penalized-deviance threshold.
+    step_spec = PirlsStepControl(;
+        threshold = _pirls_relative_threshold(control.epsilon),
+        max_halvings = 25)
 
     # Penalty square root for augmented system
     S_eig = eigen(Symmetric(S_total))
@@ -284,23 +293,37 @@ function scam_pirls(
         beta_t_new = copy(beta_new)
         _apply_transform!(beta_t_new, beta_new, iv, use_softplus)
 
-        # Compute new eta, mu, deviance
+        # Compute new eta, mu, deviance, tracking family-domain validity.
+        # Step halving uses the shared acceptance policy: SCAM keeps its raw
+        # deviance criterion (its transformed Newton step is calibrated
+        # against it), but now inherits valid-μ enforcement — a proposal may
+        # not leave the family's mean domain while the previous iterate was
+        # inside it (mgcv's validmu). Without this, Gamma/InverseGaussian
+        # fits under the canonical inverse link "converged" onto silently
+        # clamped means with a nonsense scale.
         eta_new = X * beta_t_new .+ offset
-        mu_new = [_clamp_mu_scalar(family, GLM.linkinv(link, e)) for e in eta_new]
-        dev_new = _deviance(family, y, mu_new, weights)
+        mu_new = similar(eta_new)
 
-        # Step halving if deviance increased
-        if !isfinite(dev_new) || dev_new > dev_old + control.epsilon * abs(dev_old)
-            for _ in 1:25
-                beta_new .= 0.5 .* beta .+ 0.5 .* beta_new
-                _apply_transform!(beta_t_new, beta_new, iv, use_softplus)
-                eta_new .= X * beta_t_new .+ offset
-                mu_new .= [_clamp_mu_scalar(family, GLM.linkinv(link, e)) for e in eta_new]
-                dev_new = _deviance(family, y, mu_new, weights)
-                if isfinite(dev_new) && dev_new <= dev_old + control.epsilon * abs(dev_old)
-                    break
-                end
+        recompute_scam! = function (b)
+            _apply_transform!(beta_t_new, b, iv, use_softplus)
+            eta_new .= X * beta_t_new .+ offset
+            ok = true
+            @inbounds for i in 1:n
+                li = GLM.linkinv(link, eta_new[i])
+                ok &= _valid_mu_scalar(family, li)
+                mu_new[i] = _clamp_mu_scalar(family, li)
             end
+            return (_deviance(family, y, mu_new, weights), ok)
+        end
+
+        dev_new, valid_new, step_ok, _ =
+            pirls_halve!(beta_new, beta, recompute_scam!, step_spec,
+                dev_old, prev_valid)
+
+        if !step_ok
+            # Keep the last in-domain iterate rather than accept divergence
+            copyto!(beta_new, beta)
+            dev_new, valid_new = recompute_scam!(beta_new)
         end
 
         # Convergence check
@@ -313,6 +336,7 @@ function scam_pirls(
         eta .= eta_new
         mu .= mu_new
         dev_old = dev_new
+        prev_valid = valid_new
 
         if dev_change < control.epsilon || (coef_change < control.epsilon * 10.0)
             converged = true
@@ -436,15 +460,27 @@ function scam_pirls(
 
     # Use Fisher weights for covariance matrix (Vp = (X'W1X + S)^{-1})
     A = X_eff' * Diagonal(w1_final) * X_eff + S_total
-    R_factor = try
-        cholesky(Symmetric(A)).U
-    catch
-        cholesky(Symmetric(A + 1e-6 * I(p))).U
-    end
+    # Escalating-ridge recovery, shared with the other fitters: a single
+    # fixed ridge aborts the fit where `gam` would recover.
+    R_factor = _protected_cholesky!(copy(A)).U
 
     # Pearson statistic
     pearson = sum(i -> weights[i] * (y[i] - mu[i])^2 / max(_variance_scalar(family, mu[i]), eps()),
         1:n)
+
+    # Honest reporting of family-domain violations (mirrors `pirls`): if the
+    # final iterate still maps outside the family's mean domain, the fitted
+    # means are boundary-clamped and the scale estimate is meaningless, so
+    # this is not a converged fit.
+    n_invalid = count(i -> !_valid_mu_scalar(family, GLM.linkinv(link, eta[i])), 1:n)
+    if n_invalid > 0
+        @warn "SCAM P-IRLS finished with $n_invalid observation(s) whose " *
+              "linear predictor maps outside the $(nameof(typeof(family))) " *
+              "mean domain under $(nameof(typeof(link))); fitted values are " *
+              "clamped to the boundary there and the scale estimate is not " *
+              "usable. Consider a different link (e.g. LogLink)." maxlog = 1
+        converged = false
+    end
 
     return (
         coefficients = beta,
@@ -617,6 +653,7 @@ function scam_outer_iteration(
     A_buf = zeros(p, p)
 
     n_outer = 0
+    score_prev = Inf
     for outer in 1:control.outer_maxit
         n_outer = outer
         S_total = total_penalty(penalty, log_sp, p)
@@ -642,11 +679,7 @@ function scam_outer_iteration(
         # (matches the penalized information used for Vp post-fit).
         X_eff_efs = X .* result.Cdiag'
         _build_XtWX_plus_S!(A_buf, X_eff_efs, w, S_total, p, n, Xw_buf)
-        A_chol = try
-            cholesky(Symmetric(copy(A_buf)))
-        catch
-            cholesky(Symmetric(A_buf + 1e-8 * maximum(abs.(diag(A_buf))) * I))
-        end
+        A_chol = _protected_cholesky!(copy(A_buf))
         Ainv = inv(A_chol)
 
         log_sp_new = copy(log_sp)
@@ -693,9 +726,17 @@ function scam_outer_iteration(
         log_sp .= log_sp_new
         prev_result = result
 
-        if max_change < 1e-5
+        # Score-based convergence, as in the standard and bam outer loops:
+        # the criterion can be numerically flat over a wide range of log-sp,
+        # in which case the sp-change test alone keeps walking the ridge
+        # (and can reach the ±15 clamp) long after the fit stopped changing.
+        score_cur = result.deviance / max(n - sum(result.edf_vec), 1.0)^2
+        if max_change < 1e-5 ||
+           (outer > 1 && abs(score_cur - score_prev) <
+                         1e-8 * (abs(score_prev) + 0.1))
             break
         end
+        score_prev = score_cur
     end
 
     # Final fit at converged sp
@@ -886,11 +927,7 @@ function _fit_scam(y, X, smooths, n_parametric, f, data, family, link, method, w
     S_total = total_penalty(penalty, log_sp, p)
     XtWX = X_eff' * Diagonal(result.working_weights) * X_eff
     A = XtWX + S_total
-    A_chol = try
-        cholesky(Symmetric(A))
-    catch
-        cholesky(Symmetric(A + 1e-6 * I))
-    end
+    A_chol = _protected_cholesky!(copy(A))
     Vp = inv(A_chol)
     F = Vp * XtWX
     # Frequentist covariance Ve = F·Vp (mgcv's Ve <- F %*% Vb), not F·Vp·F'

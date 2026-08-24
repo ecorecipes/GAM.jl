@@ -39,12 +39,21 @@ _variance_scalar(::Gamma, mu::Float64) = mu * mu
 _variance_scalar(::InverseGaussian, mu::Float64) = mu * mu * mu
 _variance_scalar(::UnivariateDistribution, mu::Float64) = 1.0
 
-# Scalar clamp functions
+# Scalar clamp functions. These map an unclamped mean into the family's
+# domain; they must return a *finite* value, since an inverse link at η = 0
+# yields μ = ±Inf and a clamp that passes Inf through is not a clamp — the
+# non-finite value then propagates into the working system as NaN.
+const _MU_UPPER = 1.0 / eps()
+
+_clamp_mu_positive(mu::Float64) =
+    isnan(mu) ? eps() : clamp(mu, eps(), _MU_UPPER)
+
 _clamp_mu_scalar(::Normal, mu::Float64) = mu
-_clamp_mu_scalar(::BinomialLike, mu::Float64) = clamp(mu, eps(), 1.0 - eps())
-_clamp_mu_scalar(::Poisson, mu::Float64) = max(mu, eps())
-_clamp_mu_scalar(::Gamma, mu::Float64) = max(mu, eps())
-_clamp_mu_scalar(::InverseGaussian, mu::Float64) = max(mu, eps())
+_clamp_mu_scalar(::BinomialLike, mu::Float64) =
+    isnan(mu) ? 0.5 : clamp(mu, eps(), 1.0 - eps())
+_clamp_mu_scalar(::Poisson, mu::Float64) = _clamp_mu_positive(mu)
+_clamp_mu_scalar(::Gamma, mu::Float64) = _clamp_mu_positive(mu)
+_clamp_mu_scalar(::InverseGaussian, mu::Float64) = _clamp_mu_positive(mu)
 _clamp_mu_scalar(::UnivariateDistribution, mu::Float64) = mu
 
 # Family-domain validity of an (unclamped) mean, mirroring mgcv's validmu():
@@ -57,6 +66,122 @@ _valid_mu_scalar(::Poisson, mu::Float64) = isfinite(mu) && mu > 0.0
 _valid_mu_scalar(::Gamma, mu::Float64) = isfinite(mu) && mu > 0.0
 _valid_mu_scalar(::InverseGaussian, mu::Float64) = isfinite(mu) && mu > 0.0
 _valid_mu_scalar(::UnivariateDistribution, mu::Float64) = isfinite(mu)
+
+"""
+    PirlsStepControl(; validity, threshold, accept, max_halvings)
+
+Step-acceptance policy shared by the P-IRLS variants (`pirls`, `pirls_bam`,
+`scasm_pirls`, `scam_pirls`).
+
+Each variant differs in how it *proposes* a coefficient vector (dense solve,
+chunked accumulation, constrained QP, transformed Newton step) but they all
+accept or reject that proposal the same way: reject if the objective rose by
+more than a tolerance, or if the proposal left the family's mean domain while
+the previous iterate was inside it, then halve toward the previous iterate.
+
+Keeping that rule in one place is what stops a fix landing in one loop and
+not the others — the failure mode that let shape-constrained fits accept
+out-of-domain means long after `pirls` had been taught not to.
+
+# Fields
+- `validity`: `(family, μ) -> Bool`, mgcv's `validmu` analogue
+- `threshold`: `(obj_old) -> Float64`, divergence tolerance
+- `accept`: `(obj_new, obj_old, thresh, valid_new, prev_valid) -> Bool`
+- `max_halvings`: halvings before declaring step failure
+"""
+struct PirlsStepControl{T, A}
+    threshold::T
+    accept::A
+    max_halvings::Int
+end
+
+"""Default acceptance: objective must not rise past `thresh`, and a valid
+previous iterate may not be traded for an invalid proposal (mgcv gam.fit3)."""
+_pirls_default_accept(obj_new, obj_old, thresh, valid_new, prev_valid) =
+    isfinite(obj_new) && (obj_new - obj_old <= thresh) &&
+    !(prev_valid && !valid_new)
+
+"""gam.fit3's divergence tolerance, `10(0.1 + |pdev|)√eps`."""
+_pirls_gamfit3_threshold(obj_old) = 10.0 * (0.1 + abs(obj_old)) * sqrt(eps())
+
+"""Relative tolerance used by the constrained/transformed variants."""
+_pirls_relative_threshold(eps_rel) = obj_old -> eps_rel * abs(obj_old)
+
+function PirlsStepControl(; threshold = _pirls_gamfit3_threshold,
+    accept = _pirls_default_accept, max_halvings::Int = 100)
+    return PirlsStepControl(threshold, accept, max_halvings)
+end
+
+"""
+    pirls_halve!(beta_new, beta_old, recompute!, spec, obj_old, prev_valid)
+        -> (obj, valid, accepted, halvings)
+
+Accept `beta_new`, or repeatedly interpolate it toward `beta_old`
+(`β ← (β + β_old)/2`, i.e. step factors 1, ½, ¼, …) until `spec.accept`
+is satisfied or `spec.max_halvings` is exhausted.
+
+`recompute!(beta) -> (objective, valid)` is supplied by the caller and is
+responsible for refreshing whatever state the objective depends on (η, μ,
+transformed coefficients, …) — that is the only part which genuinely differs
+between the P-IRLS variants.
+
+Guarantees the returned iterate is never out-of-domain when `prev_valid` is
+`true` and any halving succeeded.
+"""
+function pirls_halve!(beta_new::Vector{Float64}, beta_old::Vector{Float64},
+    recompute!, spec::PirlsStepControl, obj_old::Float64, prev_valid::Bool)
+
+    thresh = spec.threshold(obj_old)
+    obj, valid = recompute!(beta_new)
+    spec.accept(obj, obj_old, thresh, valid, prev_valid) &&
+        return (obj, valid, true, 0)
+
+    p = length(beta_new)
+    for h in 1:(spec.max_halvings)
+        @inbounds for j in 1:p
+            beta_new[j] = 0.5 * (beta_new[j] + beta_old[j])
+        end
+        obj, valid = recompute!(beta_new)
+        spec.accept(obj, obj_old, thresh, valid, prev_valid) &&
+            return (obj, valid, true, h)
+    end
+    return (obj, valid, false, spec.max_halvings)
+end
+
+"""
+    _pirls_working!(w, z, y, mu, eta, offset, weights, family, link;
+                    dmu_deta = nothing)
+
+Working weights and working response for one P-IRLS iteration, shared by the
+dense (`pirls`), chunked (`pirls_bam`) and constrained (`scasm_pirls`)
+variants.
+
+`dμ/dη` is floored at `eps()` in magnitude, mirroring R's `family\$mu.eta`:
+without it a saturated observation (|η| large, or η → 0 under an inverse
+link) drives `z = η + (y − μ)/(dμ/dη)` to `±Inf`/`NaN` and poisons the whole
+normal-equation system — which is how an out-of-domain iterate turns into an
+opaque LAPACK or QP failure rather than a step rejection.
+"""
+function _pirls_working!(w::Vector{Float64}, z::Vector{Float64},
+    y::Vector{Float64}, mu::Vector{Float64}, eta::Vector{Float64},
+    offset::Vector{Float64}, weights::Vector{Float64},
+    family::UnivariateDistribution, link::GLM.Link;
+    dmu_deta::Union{Vector{Float64}, Nothing} = nothing)
+
+    @inbounds for i in eachindex(y)
+        dm = GLM.mueta(link, eta[i])
+        if !isfinite(dm) || abs(dm) < eps()
+            dm = isfinite(dm) ? (dm < 0 ? -eps() : eps()) :
+                 (dm < 0 ? -1 / eps() : 1 / eps())
+        end
+        dmu_deta === nothing || (dmu_deta[i] = dm)
+        vm = _variance_scalar(family, mu[i])
+        w[i] = clamp(weights[i] * dm * dm / max(vm, eps()), eps(), 1e10)
+        zi = eta[i] - offset[i] + (y[i] - mu[i]) / dm
+        z[i] = isfinite(zi) ? zi : eta[i] - offset[i]
+    end
+    return nothing
+end
 
 """
     _protected_cholesky!(A) -> Cholesky
@@ -148,10 +273,20 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
 
     # Initial penalized deviance for step control — use null model (β=0)
     # to match R's gam.fit3 (lines 283-285): old.pdev computed from null.coef
+    # For links whose null predictor is outside the mean domain (Gamma or
+    # InverseGaussian with the canonical inverse link put η = 0 → μ = ∞) the
+    # null baseline is not finite. A non-finite baseline makes the divergence
+    # test vacuous, so fall back to the in-domain starting iterate.
     null_coef = zeros(p)
     null_eta = X * null_coef .+ offset
     null_mu = [_clamp_mu_scalar(family, GLM.linkinv(link, e)) for e in null_eta]
     pdev_old = _deviance(family, y, null_mu, weights)
+    if !isfinite(pdev_old)
+        # No usable baseline: admit the first proposal unconditionally (the
+        # divergence test only becomes meaningful once a finite penalized
+        # deviance exists) while still rejecting non-finite proposals.
+        pdev_old = Inf
+    end
 
     converged = false
     n_iter = 0
@@ -163,6 +298,9 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
     # enforcement below only halves toward iterates that are themselves valid.
     prev_valid = all(_valid_mu_scalar(family, GLM.linkinv(link, e)) for e in null_eta)
 
+    # gam.fit3 step-acceptance policy (shared with bam/scasm/scam variants)
+    step_spec = PirlsStepControl(; max_halvings = 100)
+
     for iter in 1:(control.maxit)
         n_iter = iter
 
@@ -170,16 +308,8 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         # dμ/dη is floored at eps() in magnitude (as in R's family$mu.eta),
         # so saturated observations (|η| huge, dμ/dη underflowing to 0)
         # cannot give z = ±Inf and poison X'Wz.
-        @inbounds for i in 1:n
-            dm = GLM.mueta(link, eta[i])
-            if abs(dm) < eps()
-                dm = dm < 0 ? -eps() : eps()
-            end
-            dmu_deta[i] = dm
-            vm = _variance_scalar(family, mu[i])
-            w[i] = clamp(weights[i] * dm * dm / max(vm, eps()), eps(), 1e10)
-            z[i] = eta[i] - offset[i] + (y[i] - mu[i]) / dm
-        end
+        _pirls_working!(w, z, y, mu, eta, offset, weights, family, link;
+            dmu_deta = dmu_deta)
 
         # Build A = X'WX + S_total using BLAS (in-place)
         _build_penalized_system!(A, XtWz, X, w, z, S_total, p, n, Xw, wz_buf)
@@ -206,43 +336,40 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         # Step halving if the penalized deviance increased (R's gam.fit3), or
         # if the proposal left the family's mean domain while the previous
         # iterate was valid (mgcv halves on !validmu(mu) the same way).
-        div_thresh = 10.0 * (0.1 + abs(pdev_old)) * sqrt(eps())
-        if pdev_new - pdev_old > div_thresh || (prev_valid && !valid_new)
-            step_ok = false
-            for ii in 1:100
-                @inbounds for j in 1:p
-                    beta_new[j] = (beta_new[j] + beta_old[j]) / 2.0
-                end
-                valid_new = true
-                @inbounds for i in 1:n
-                    eta_new[i] = (eta_new[i] + eta_old[i]) / 2.0
-                    li = GLM.linkinv(link, eta_new[i])
-                    valid_new &= _valid_mu_scalar(family, li)
-                    mu_new[i] = _clamp_mu_scalar(family, li)
-                end
-                dev_new = _deviance(family, y, mu_new, weights)
-                mul!(penalty_buf, S_total, beta_new)
-                penalty_new = dot(beta_new, penalty_buf)
-                pdev_new = dev_new + penalty_new
-                if pdev_new - pdev_old <= div_thresh && !(prev_valid && !valid_new)
-                    step_ok = true
-                    break
-                end
+        # The acceptance rule lives in `pirls_halve!`, shared with the bam,
+        # scasm and scam variants.
+        recompute! = function (b)
+            mul!(eta_new, X, b)
+            eta_new .+= offset
+            ok = true
+            @inbounds for i in 1:n
+                li = GLM.linkinv(link, eta_new[i])
+                ok &= _valid_mu_scalar(family, li)
+                mu_new[i] = _clamp_mu_scalar(family, li)
             end
-            if !step_ok
-                # mgcv raises "step failure" here; keep the previous
-                # (best) iterate and stop rather than accepting divergence
-                copyto!(beta, beta_old)
-                copyto!(eta, eta_old)
-                @inbounds for i in 1:n
-                    mu[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta[i]))
-                end
-                @warn "P-IRLS step failure: penalized deviance could not be " *
-                      "reduced after 100 step halvings; returning last " *
-                      "stable iterate" maxlog = 1
-                converged = false
-                break
+            dev_new = _deviance(family, y, mu_new, weights)
+            mul!(penalty_buf, S_total, b)
+            return (dev_new + dot(b, penalty_buf), ok)
+        end
+
+        pdev_new, valid_new, step_ok, _ =
+            pirls_halve!(beta_new, beta_old, recompute!, step_spec,
+                pdev_old, prev_valid)
+        dev_new = _deviance(family, y, mu_new, weights)
+
+        if !step_ok
+            # mgcv raises "step failure" here; keep the previous
+            # (best) iterate and stop rather than accepting divergence
+            copyto!(beta, beta_old)
+            copyto!(eta, eta_old)
+            @inbounds for i in 1:n
+                mu[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta[i]))
             end
+            @warn "P-IRLS step failure: penalized deviance could not be " *
+                  "reduced after $(step_spec.max_halvings) step halvings; " *
+                  "returning last stable iterate" maxlog = 1
+            converged = false
+            break
         end
 
         # Convergence check on penalized deviance (R's gam.fit3 line 447)
@@ -539,16 +666,19 @@ function _clamp_mu(::BinomialLike, mu)
     return clamp.(mu, eps(), 1 - eps())
 end
 
+# Vector clamps used by `predict(:response)`; these must agree with the
+# scalar `_clamp_mu_scalar` used during fitting, or predictions and fitted
+# values disagree exactly where the link leaves the mean domain.
 function _clamp_mu(::Poisson, mu)
-    return max.(mu, eps())
+    return _clamp_mu_positive.(mu)
 end
 
 function _clamp_mu(::Gamma, mu)
-    return max.(mu, eps())
+    return _clamp_mu_positive.(mu)
 end
 
 function _clamp_mu(::InverseGaussian, mu)
-    return max.(mu, eps())
+    return _clamp_mu_positive.(mu)
 end
 
 function _clamp_mu(::UnivariateDistribution, mu)

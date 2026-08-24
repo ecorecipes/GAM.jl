@@ -2,6 +2,14 @@
 GAM.jl vs R Benchmark Suite  (2026-08-23, Julia 1.12.5, R 4.6.1, macOS ARM64)
 ================================================================================
 
+PROVISIONAL — this snapshot predates several correctness fixes (the SCAM
+optimizer rebuild, the QGAM ELF fit, the Gauss-Newton nested fitter, the t2
+reconstruction) and is pending regeneration on an idle machine.  Two rows are
+known to have moved materially: SCAM and QGAM are now slower, having bought
+correctness.  The old SCAM was fast because it settled on a degenerate
+near-linear fit (EDF 0.999); the old QGAM was fast because it never actually
+solved the quantile problem.
+
 ── GAM Fitting ─────────────────────────────────────────────────
   Gaussian CR n=500 k=15                        Julia:  0.0009s  R:  0.0100s  Speedup:  10.56x
   Gaussian CR n=5000 k=20                       Julia:  0.0038s  R:  0.0760s  Speedup:  20.01x

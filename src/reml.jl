@@ -6,12 +6,41 @@
 
 """
     reml_score(X, y, S_penalty, log_sp, family, link, weights, pirls_result;
-               method=:REML, gamma=1.0, compute_gradient=true)
+               method=:REML, gamma=1.0, scale=-1.0, compute_gradient=true)
 
 Compute the REML (or ML/GCV) score for given log smoothing parameters.
 Returns `(score, grad)` where `grad` is the gradient w.r.t. `log_sp`.
 Pass `compute_gradient=false` to skip the (relatively expensive) analytical
 gradient when only the score is needed; `grad` is then a zero vector.
+
+# Gradient accuracy
+
+The analytic gradient is the total derivative of the *profiled* score — the
+score at the penalized MLE β̂(ρ) — obtained by the implicit function theorem
+(Wood 2011, §3.1), including the implicit weight-change terms `dW/dρ` for
+non-Gaussian families. Validated against central differences in
+`test/test_reml_gradient.jl`:
+
+| Regime | Max relative error |
+|:-------|:-------------------|
+| Known-scale families (Poisson, Binomial), incl. weights/offsets/tensor | `~1e-9` |
+| Estimated-scale families with `scale` supplied explicitly | `~1e-8` |
+| **Estimated-scale families with `scale` estimated (default)** | **up to `1e-1`** |
+
+The last row is a genuine limitation, not noise. When `scale < 0` the scale is
+re-estimated from `pirls_result` as `pearson/(n − edf)` at every `ρ`, so the
+profiled score acquires a `dσ̂²/dρ` dependence that the gradient does not
+include. Treating σ² as constant is valid only when σ̂²(ρ) satisfies the
+score's own stationarity condition `∂score/∂σ² = 0` (envelope theorem), which
+the Pearson/Fletcher estimator does not. Supplying the REML-profiling scale
+`σ̂² = Dp/(n − Mp)` restores agreement for Gaussian (relative error `4e-10`);
+for Gamma a residual `~5e-3` remains because its saturated likelihood carries
+digamma terms, so `Dp/(n − Mp)` is not the profiling value there either.
+
+**Consequence for callers.** Use the gradient freely for known-scale families
+or when passing `scale` explicitly. A future exact Newton-REML optimizer must
+either profile the scale analytically (as mgcv does) or add the `dσ̂²/dρ` chain
+term; no current fitting path consumes this gradient.
 """
 function reml_score(X::Matrix{Float64}, y::Vector{Float64},
     penalty::PenaltySetup,
@@ -265,6 +294,14 @@ both the explicit penalty derivative (λ_j S_j) and the implicit weight
 change through β. The full derivative is:
   trA1[j] = tr(A⁻¹ · (λ_j S_j + X' diag(dw/d(log sp_j)) X))
 where dw/d(log sp_j) comes from the chain rule through η and β.
+
+`scale` is treated as **constant** here. That is exact when the scale is
+known (Poisson, Binomial) or supplied by the caller, and both the explicit
+and implicit terms above then reproduce central differences of the profiled
+score to ~1e-9. It is *not* exact when the caller lets `reml_score` estimate
+the scale, because σ̂²(ρ) then varies with ρ and its chain term is omitted —
+see the `reml_score` docstring for the measured error and the two ways to
+fix it. `test/test_reml_gradient.jl` pins both regimes.
 """
 function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
     S_total::Matrix{Float64}, A_chol,
