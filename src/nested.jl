@@ -40,13 +40,9 @@ Abstract supertype for nested-effect inner transformations (`trans_linear`,
 abstract type NestedTransform end
 
 """
-    trans_linear(; penalty = :diff2)
+    TransLinear
 
-Single-index / distributed-lag inner transformation for [`s_nest`](@ref):
-`s̃ᵢ = Σⱼ aⱼ xᵢⱼ` over the variables given to `s_nest`. `penalty` is the
-quadratic penalty on the index coefficients `a`: `:diff2` (second-order
-difference across the variables, natural when they are consecutive lags) or
-`:ridge`.
+Type produced by [`trans_linear`](@ref). Carries the index penalty choice.
 """
 struct TransLinear <: NestedTransform
     penalty::Symbol
@@ -56,7 +52,28 @@ struct TransLinear <: NestedTransform
         new(penalty)
     end
 end
+"""
+    trans_linear(; penalty = :diff2)
+
+Single-index / distributed-lag inner transformation for [`s_nest`](@ref):
+`s̃ᵢ = Σⱼ aⱼ xᵢⱼ` over the variables given to `s_nest`. `penalty` is the
+quadratic penalty on the index coefficients `a`: `:diff2` (second-order
+difference across the variables, natural when they are consecutive lags) or
+`:ridge`.
+
+# Example
+```julia
+gam_nl(@formula(y ~ s_nest(l1, l2, l3, trans = trans_linear())), df)
+```
+"""
 trans_linear(; penalty::Symbol = :diff2) = TransLinear(penalty)
+
+"""
+    TransExpSmooth
+
+Type produced by [`trans_nexpsm`](@ref).
+"""
+struct TransExpSmooth <: NestedTransform end
 
 """
     trans_nexpsm()
@@ -66,12 +83,29 @@ The first variable given to `s_nest` is the series to smooth (rows must be
 in time order); any further variables drive the smoothing weight:
 `s̃ᵢ = ωᵢ s̃ᵢ₋₁ + (1−ωᵢ) xᵢ` with `ωᵢ = logistic(a₁ + a₂ z₁ᵢ + …)` and
 `s̃₁ = x₁`. The weight coefficients `a` carry a ridge penalty.
+
+# Example
+```julia
+gam_nl(@formula(y ~ s_nest(x, z, trans = trans_nexpsm())), df)
+```
 """
-struct TransExpSmooth <: NestedTransform end
 trans_nexpsm() = TransExpSmooth()
 
 """
-    trans_mgks()
+    TransMGKS
+
+Type produced by [`trans_mgks`](@ref). Carries the neighborhood size `nn`.
+"""
+struct TransMGKS <: NestedTransform
+    nn::Int    # neighborhood size (0 = use all training points)
+    function TransMGKS(nn::Int)
+        nn >= 0 || throw(ArgumentError("trans_mgks nn must be >= 0, got $nn"))
+        new(nn)
+    end
+end
+
+"""
+    trans_mgks(; nn = 50)
 
 Multivariate Gaussian-kernel smoothing inner transformation for
 [`s_nest`](@ref). The first variable given to `s_nest` is the covariate `z`
@@ -90,15 +124,11 @@ smooths over *all* stored training points — so `predict` on the training
 table includes each point's own `z` value and generally differs from
 `fitted`. This matches the estimation/prediction distinction in the paper.
 
-    trans_mgks(; nn = 50)
+# Example
+```julia
+gam_nl(@formula(y ~ s_nest(z, lon, lat, trans = trans_mgks(nn = 50))), df)
+```
 """
-struct TransMGKS <: NestedTransform
-    nn::Int    # neighborhood size (0 = use all training points)
-    function TransMGKS(nn::Int)
-        nn >= 0 || throw(ArgumentError("trans_mgks nn must be >= 0, got $nn"))
-        new(nn)
-    end
-end
 trans_mgks(; nn::Int = 50) = TransMGKS(nn)
 
 # Number of inner parameters for a transform given the s_nest data columns
@@ -563,6 +593,14 @@ convention.
   the final gradient-stopped polish); for nonlinear links the absorption
   is exact only in the linear predictor, so response-scale fits can differ
   by the smoothing-path tolerance (~1e-3 relative for Poisson/log)
+- `na_action`: how to treat rows carrying `missing`, `NaN` or `Inf` in the
+  response, in a model variable, or in `weights`/`offset`. `:fail` (default)
+  errors; `:omit` drops them, as `mgcv` does by default. Dropping is silent,
+  so a fit can use fewer rows than the table supplied — recover the surviving
+  row numbers with [`na_omit_rows`](@ref) to line results back up with the
+  original data. For `trans_mgks` note that row removal also changes the
+  fixed training neighborhoods, so an `:omit` fit is *not* the same model as
+  one fitted to the full table
 - `control`: a [`NestedControl`](@ref) from [`nested_control`](@ref) — iteration
   limits, tolerance, and `trace`. (The loose `outer_maxit`/`newton_maxit`/`tol`
   keywords are deprecated aliases.)
@@ -580,8 +618,9 @@ inner_coef(m)     # estimated index direction
 function gam_nl(gf::GamFormula, data;
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
-    weights::Union{AbstractVector{<:Real}, Nothing} = nothing,
-    offset::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    weights::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
+    na_action::Symbol = :fail,
     control::NestedControl = nested_control(),
     outer_maxit::Union{Int, Nothing} = nothing,
     newton_maxit::Union{Int, Nothing} = nothing,
@@ -604,18 +643,20 @@ function gam_nl(gf::GamFormula, data;
     link_eff isa Union{IdentityLink, LogLink, LogitLink} ||
         throw(ArgumentError("gam_nl supports IdentityLink, LogLink, and LogitLink"))
 
+    # na_action first: it length-checks and validates weights/offset, and
+    # everything below must see only the surviving rows.
+    data, _, weights, offset = _na_prepare(data, gf.response,
+        _model_covariates(gf), na_action; weights = weights, offset = offset)
+    _validate_response_in_data(gf.response, data)
+    na_action === :fail && _validate_model_columns(data, _model_covariates(gf))
+
     tbl = Tables.columntable(data)
     y = Float64.(Tables.getcolumn(tbl, gf.response))
     n = length(y)
     _validate_response(y, family)
 
     off = offset === nothing ? zeros(n) : Float64.(offset)
-    length(off) == n || throw(ArgumentError(
-        "offset length $(length(off)) does not match number of observations $n"))
     wt = weights === nothing ? ones(n) : Float64.(weights)
-    length(wt) == n || throw(ArgumentError(
-        "weights length $(length(wt)) does not match number of observations $n"))
-    all(>=(0.0), wt) || throw(ArgumentError("weights must be non-negative"))
     n_eff_obs = count(>(0.0), wt)
 
     nested_specs = [sp for sp in gf.smooth_specs if sp.basis isa NestedBasis]

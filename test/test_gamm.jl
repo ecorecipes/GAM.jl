@@ -673,3 +673,51 @@ end
     @test_throws ArgumentError gamm(GAM.@formula(y ~ s(x, k = 10) + (1 | g)), df2;
         offset = [1.0])
 end
+
+@testset "GAMM — invalid grouping expressions" begin
+    rng = MersenneTwister(99)
+    n = 120
+    x = rand(rng, n)
+    g = string.(mod.(1:n, 8))
+    df = DataFrame(x = x, g = g, y = sin.(2π .* x) .+ 0.3 .* randn(rng, n))
+
+    # A literal where a grouping variable belongs used to reach the generated
+    # `RandomEffectSpec(3, ...)` call and die as
+    # `MethodError: Cannot convert an object of type Int64 to Symbol`, with no
+    # mention of the formula. It now names the offending expression.
+    err = try
+        @eval GAM.@formula(y ~ s(x) + (1 | 3))
+        nothing
+    catch e
+        e isa LoadError ? e.error : e
+    end
+    @test err isa ArgumentError
+    @test occursin("grouping factor", sprint(showerror, err))
+    @test occursin("1 | 3", sprint(showerror, err))
+
+    # A call expression is rejected too — derived grouping columns must be
+    # added to the data first.
+    err2 = try
+        @eval GAM.@formula(y ~ s(x) + (1 | string(g)))
+        nothing
+    catch e
+        e isa LoadError ? e.error : e
+    end
+    @test err2 isa ArgumentError
+    @test occursin("grouping factor", sprint(showerror, err2))
+
+    # Nested groupings validate both sides of the `/`.
+    err3 = try
+        @eval GAM.@formula(y ~ s(x) + (1 | g / 2))
+        nothing
+    catch e
+        e isa LoadError ? e.error : e
+    end
+    @test err3 isa ArgumentError
+
+    # The valid forms still work.
+    @test GAM.@formula(y ~ s(x) + (1 | g)) isa GAM.GammFormula
+    df.g2 = string.(mod.(1:n, 3))
+    df.g_g2 = string.(df.g, "_", df.g2)
+    @test GAM.@formula(y ~ s(x) + (1 | g / g2)) isa GAM.GammFormula
+end

@@ -158,6 +158,8 @@
     end
 
     @testset "te() with positional k" begin
+        # Point of this testset is positional-k ≡ keyword-k, so both must use the
+        # SAME value. Under mgcv's per-marginal semantics that is 8×8 = 64.
         m = gam(@formula(y ~ te(x, x2, 8)), df)
         m_g = gam(@formulak(y ~ te(x, x2, k = 8)), df)
         @test isapprox(coef(m), coef(m_g), atol = 1e-10)

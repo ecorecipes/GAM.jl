@@ -422,8 +422,9 @@ function _validate_response_column(col::AbstractVector, response::Symbol)
         if n_missing > 0
             throw(ArgumentError(
                 "Response variable :$response contains $n_missing missing " *
-                "$(n_missing == 1 ? "value" : "values"). Remove or impute them " *
-                "before fitting (GAM.jl has no na.action equivalent)."))
+                "$(n_missing == 1 ? "value" : "values"). Pass `na_action = :omit` " *
+                "to drop the affected rows (mgcv's `na.omit` default), or remove " *
+                "or impute them before fitting."))
         end
     elseif !(T <: Real)
         throw(ArgumentError(
@@ -450,6 +451,11 @@ function _validate_weights(weights, n::Int)
             "weights length $(length(weights)) ≠ number of observations $n"))
     end
     for (i, w) in enumerate(weights)
+        if ismissing(w)
+            throw(ArgumentError(
+                "weights must not be missing, but weights[$i] is missing. " *
+                "Use zero to exclude an observation, or na_action = :omit."))
+        end
         if !isfinite(w)
             throw(ArgumentError(
                 "weights must be finite, but weights[$i] = $w"))
@@ -461,4 +467,316 @@ function _validate_weights(weights, n::Int)
         end
     end
     return nothing
+end
+
+"""
+    _validate_offset(offset, n::Int)
+
+Validate a supplied offset: correct length and finite (an `Inf`/`NaN` offset
+otherwise poisons the linear predictor and surfaces as a singular-system or
+`NaN`-deviance failure far from its cause).
+"""
+function _validate_offset(offset, n::Int)
+    offset === nothing && return nothing
+    if length(offset) != n
+        throw(ArgumentError(
+            "offset length $(length(offset)) ≠ number of observations $n"))
+    end
+    for (i, o) in enumerate(offset)
+        if ismissing(o)
+            throw(ArgumentError(
+                "offset must not be missing, but offset[$i] is missing. " *
+                "Remove those rows, or use na_action = :omit."))
+        end
+        if !isfinite(o)
+            throw(ArgumentError(
+                "offset must be finite, but offset[$i] = $o"))
+        end
+    end
+    return nothing
+end
+
+# ============================================================================
+# Missing-data handling (na.action)
+# ============================================================================
+
+"""
+    _check_na_action(na_action::Symbol) -> Symbol
+
+Validate an `na_action` keyword. Supported values mirror the R actions GAM.jl
+implements: `:fail` (R's `na.fail` — the GAM.jl default) and `:omit` (R's
+`na.omit`, which is *mgcv's* default).
+"""
+function _check_na_action(na_action::Symbol)
+    na_action in (:fail, :omit) || throw(ArgumentError(
+        "na_action must be :fail or :omit, got :$na_action. " *
+        ":fail (the default) errors on missing/non-finite data; " *
+        ":omit drops those rows, as mgcv does by default."))
+    return na_action
+end
+
+"""
+    _mark_incomplete!(bad::BitVector, col) -> BitVector
+
+Flag rows of `col` that cannot enter a fit. `missing` always counts; for
+numeric columns `NaN` and `±Inf` count too. Non-numeric columns (strings,
+categoricals used as `by=` or grouping factors) are only checked for
+`missing` — a string is never "non-finite".
+"""
+function _mark_incomplete!(bad::BitVector, col)
+    @inbounds for i in eachindex(bad, col)
+        v = col[i]
+        if ismissing(v)
+            bad[i] = true
+        elseif v isa Real && !isfinite(v)
+            bad[i] = true
+        end
+    end
+    return bad
+end
+
+"""
+    _incomplete_rows(t, cols; weights = nothing, offset = nothing) -> BitVector
+
+Rows of the column table `t` that contain `missing`, `NaN` or `Inf` in any of
+`cols` (columns not present in `t` are skipped — a missing column is reported
+by the variable-existence validators, which give a better message), or in the
+supplied `weights`/`offset`.
+"""
+function _incomplete_rows(t, cols; weights = nothing, offset = nothing)
+    n = _nrow(t)
+    bad = falses(n)
+    present = Tables.columnnames(t)
+    for c in cols
+        c in present || continue
+        _mark_incomplete!(bad, Tables.getcolumn(t, c))
+    end
+    # A length mismatch is a separate error raised by the caller's own
+    # length check; skip rather than throw a confusing indexing error here.
+    if weights !== nothing && length(weights) == n
+        _mark_incomplete!(bad, weights)
+    end
+    if offset !== nothing && length(offset) == n
+        _mark_incomplete!(bad, offset)
+    end
+    return bad
+end
+
+"""
+    _apply_na_action(data, response, covariates, na_action;
+                     weights = nothing, offset = nothing)
+        -> (filtered_table, kept_index)
+
+Apply an `na.action` policy to `data` before a fit.
+
+`response` is the response variable (or `nothing`), `covariates` an iterable of
+the other variables the model needs. Rows carrying `missing`, `NaN` or `Inf` in
+any of those columns — or in `weights`/`offset`, when supplied — are the
+incomplete ones.
+
+- `:fail` returns `data` untouched (as a column table) with `kept_index =
+  1:nrow`. The downstream validators then raise their own, more specific
+  errors, so this is exactly the pre-existing behaviour.
+- `:omit` drops the incomplete rows, mirroring R's `na.omit` — which is what
+  `mgcv::gam` does by default.
+
+`kept_index` is a `Vector{Int}` of the surviving rows *in the original data's
+numbering*, so `original[kept_index, :]` lines up row-for-row with the fitted
+values, residuals and stored model data. It is returned rather than stored on
+the model; [`na_omit_rows`](@ref) recomputes it for a fitted model's inputs.
+
+`weights` and `offset` are **not** subset here — the caller holds them and
+should apply `kept_index` itself.
+"""
+function _apply_na_action(data, response, covariates, na_action::Symbol;
+    weights = nothing, offset = nothing)
+
+    _check_na_action(na_action)
+    t = Tables.columntable(data)
+    n = _nrow(t)
+
+    # :fail is the historical path — leave the data alone and let the
+    # per-variable validators produce their specific messages.
+    na_action === :fail && return (t, collect(1:n))
+
+    cols = Symbol[]
+    response === nothing || push!(cols, response)
+    for c in covariates
+        c === nothing || push!(cols, c)
+    end
+    unique!(cols)
+
+    bad = _incomplete_rows(t, cols; weights = weights, offset = offset)
+    any(bad) || return (t, collect(1:n))
+
+    kept = findall(!, bad)
+    isempty(kept) && throw(ArgumentError(
+        "na_action = :omit removed every row: all $n observations contain " *
+        "missing or non-finite values in " * join(string.(':', cols), ", ") *
+        " (or in the supplied weights/offset)."))
+
+    filtered = NamedTuple{Tables.columnnames(t)}(
+        map(c -> Tables.getcolumn(t, c)[kept], Tables.columnnames(t)))
+    return (filtered, kept)
+end
+
+"""
+    _validate_model_columns(data, cols)
+
+Under `na_action = :fail`, check that every model column is complete.
+
+`gam` and `gamm` reach `_validate_formula_smooths`, which reports a `missing`
+or `NaN` covariate by name. `bam` and `gam_nl` do not, so the same input used
+to surface as a bare `MethodError: no method matching Float64(::Missing)` from
+inside the design-matrix build (`gam_nl`) or as a silently poisoned basis
+(`bam`). Give them the same class of message.
+"""
+function _validate_model_columns(data, cols)
+    t = Tables.columntable(data)
+    present = Tables.columnnames(t)
+    for c in cols
+        c in present || continue
+        col = Tables.getcolumn(t, c)
+        n_missing = count(ismissing, col)
+        if n_missing > 0
+            throw(ArgumentError(
+                "Variable :$c contains $n_missing missing " *
+                "$(n_missing == 1 ? "value" : "values"). Remove or impute " *
+                "them before fitting, or pass na_action = :omit to drop " *
+                "those rows (as mgcv does by default)."))
+        end
+        eltype(col) <: Real || continue
+        n_nan = count(isnan, col)
+        n_inf = count(isinf, col)
+        if n_nan > 0 || n_inf > 0
+            parts = String[]
+            n_nan > 0 && push!(parts, "$n_nan NaN")
+            n_inf > 0 && push!(parts, "$n_inf Inf")
+            throw(ArgumentError(
+                "Variable :$c contains non-finite values " *
+                "($(join(parts, " and "))). Remove or impute them before " *
+                "fitting, or pass na_action = :omit to drop those rows " *
+                "(as mgcv does by default)."))
+        end
+    end
+    return nothing
+end
+
+"""
+    _na_prepare(data, response, covariates, na_action;
+                weights = nothing, offset = nothing)
+        -> (data_used, kept_index, weights_used, offset_used)
+
+One-call front-end preamble: check column lengths, apply the `na_action`
+policy, subset `weights`/`offset` to the surviving rows, then validate them.
+
+Split this way because the order matters. Lengths are checked against the
+*original* row count (that is what the user supplied), but `weights` and
+`offset` are only validated for finiteness *after* row removal — under
+`na_action = :omit` a `missing` weight is a reason to drop a row, not an
+error.
+"""
+function _na_prepare(data, response, covariates, na_action::Symbol;
+    weights = nothing, offset = nothing)
+
+    _validate_data_lengths(data)
+    t = Tables.columntable(data)
+    n0 = _nrow(t)
+
+    weights === nothing || length(weights) == n0 || throw(ArgumentError(
+        "weights length $(length(weights)) ≠ number of observations $n0"))
+    offset === nothing || length(offset) == n0 || throw(ArgumentError(
+        "offset length $(length(offset)) ≠ number of observations $n0"))
+
+    data_used, kept = _apply_na_action(t, response, covariates, na_action;
+        weights = weights, offset = offset)
+
+    w   = weights === nothing ? nothing : weights[kept]
+    off = offset === nothing ? nothing : offset[kept]
+    _validate_weights(w, length(kept))
+    _validate_offset(off, length(kept))
+
+    # Narrow back to a concrete element type. `weights = [1.0, missing, ...]`
+    # is a legitimate input under :omit, but every fitter downstream wants a
+    # plain Float64 vector — and validation above has just established that
+    # what survives contains no `missing`.
+    w   = w   === nothing ? nothing : convert(Vector{Float64}, w)
+    off = off === nothing ? nothing : convert(Vector{Float64}, off)
+
+    return (data_used, kept, w, off)
+end
+
+"""
+    na_omit_rows(data, response, covariates; weights = nothing, offset = nothing)
+        -> Vector{Int}
+
+Indices of the rows of `data` that a `na_action = :omit` fit keeps — those with
+no `missing`, `NaN` or `Inf` in the response, in any listed covariate, or in the
+supplied `weights`/`offset`.
+
+Fitting with `na_action = :omit` silently drops the complement (as `mgcv` does),
+so a fitted model has fewer rows than the table it was given. Use this to line
+results back up with the original data:
+
+```julia
+m    = gam(f, df; na_action = :omit)
+keep = na_omit_rows(df, :y, [:x1, :x2])
+df.fit = missing
+df.fit[keep] = fitted(m)
+```
+
+The computation is deterministic and depends only on the columns listed, so the
+result matches what the fit used as long as the same variables are named.
+"""
+function na_omit_rows(data, response::Union{Symbol, Nothing}, covariates;
+    weights = nothing, offset = nothing)
+    t = Tables.columntable(data)
+    cols = Symbol[]
+    response === nothing || push!(cols, response)
+    for c in covariates
+        c === nothing || push!(cols, c)
+    end
+    unique!(cols)
+    bad = _incomplete_rows(t, cols; weights = weights, offset = offset)
+    return findall(!, bad)
+end
+
+# ---------------------------------------------------------------------------
+# Which variables a model actually needs
+# ---------------------------------------------------------------------------
+
+"""
+    _model_covariates(formula) -> Vector{Symbol}
+
+Every non-response variable a formula refers to: parametric terms, smooth
+term variables, `by=` variables, and (for a GAMM formula) random-effect
+grouping and slope variables. Used to decide which columns `na_action` should
+consider — a row with a `missing` in an unused column is not incomplete.
+"""
+function _model_covariates(gf::GamFormula)
+    cols = Symbol[]
+    append!(cols, gf.parametric)
+    for spec in gf.smooth_specs
+        append!(cols, spec.term_vars)
+        spec.by === nothing || push!(cols, spec.by)
+    end
+    return unique!(cols)
+end
+
+function _model_covariates(gf::GammFormula)
+    cols = _model_covariates(gf.gam_formula)
+    for re in gf.random_effects
+        push!(cols, re.grouping)
+        append!(cols, re.terms)
+    end
+    return unique!(cols)
+end
+
+function _model_covariates(f::FormulaTerm)
+    # termvars covers Term/InteractionTerm/FunctionTerm arguments, which is
+    # exactly the `s(x, by=g)`/`te(x, z)` variable set once the response is
+    # dropped.
+    resp = f.lhs isa Term ? f.lhs.sym : nothing
+    cols = Symbol[v for v in StatsModels.termvars(f) if v !== resp]
+    return unique!(cols)
 end
