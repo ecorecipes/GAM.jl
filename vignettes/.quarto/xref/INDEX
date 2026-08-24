@@ -114,5 +114,14 @@
   },
   "12_nested_effects/R/12_nested_effects.qmd": {
     "12_nested_effects.md": "5332598a"
+  },
+  "13_migrating_from_mgcv/13_migrating_from_mgcv.qmd": {
+    "13_migrating_from_mgcv.md": "b77952a5"
+  },
+  "14_model_selection/14_model_selection.qmd": {
+    "14_model_selection.md": "e5679b83"
+  },
+  "13_migrating_from_mgcv/R/13_migrating_from_mgcv.qmd": {
+    "13_migrating_from_mgcv.md": "4bdd148d"
   }
 }

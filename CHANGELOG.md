@@ -9,6 +9,23 @@ gratia, egpd, gamFactory), and a new nested-effects feature. Commits
 
 ### Breaking / behavior changes
 
+- **`t2()` now uses mgcv's Wood, Scheipl & Faraway (2013) construction.**
+  Each marginal is split into orthogonal null/range parts and every non-null
+  block carries an identity penalty on its own columns, so the penalties are
+  diagonal with disjoint support (previously they overlapped and were not the
+  WSF construction). The number of penalties changes for d ≥ 3 (7 rather than
+  4 for a 3-d smooth), and `t2` fits shift slightly. Verified against mgcv
+  1.9.4: identical column count, penalty count, block ranks, disjoint supports
+  and null-space dimension in 2-d and 3-d; spanned column space to 4.2e-15;
+  fitted values correlate 1.000000 (max-abs 0.002).
+- **`smooth2random` follows the mgcv convention.** A `t2` smooth now
+  decomposes into one *independent* random-effect block per penalty (its
+  `pen_ind`/`rind` match mgcv's exactly), so a `t2` term in the Turing
+  extension gets one variance component per block instead of a single shared
+  one. `te`/`ti` keep a single structured block — the `pdTens` analogue —
+  since `mgcv:::smooth2random` refuses te decomposition outright ("te smooths
+  not useable with gamm4: use t2 instead").
+
 - **SCAM standard errors** are now delta-method transformed (`Vp`/`Ve` match
   the stored exponentiated coefficients, as in R's scam `Vp.t`); all SCAM
   SEs, CIs, and `predict(se=true)` values change by design.

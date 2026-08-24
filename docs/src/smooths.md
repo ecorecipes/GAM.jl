@@ -3,9 +3,9 @@
 GAM.jl provides 30 registered smooth basis types, covering all commonly used
 options from R's mgcv, plus shape-constrained bases from scam and several
 additional types including loess, fractional polynomials, spherical splines,
-SPDE Matérn, and constrained factor smooths. A few bases (`:sos`, `:so`,
-`:ds`, and the `t2()` construction) are documented **approximations** of
-their mgcv namesakes — see the per-basis notes below. For smooths of
+SPDE Matérn, and constrained factor smooths. Three bases (`:sos`, `:so`,
+`:ds`) are documented **approximations** of their mgcv namesakes — see the
+per-basis notes below. For smooths of
 *estimated* covariate transformations (single-index effects and friends),
 see [Nested Effects](@ref nested-effects).
 
@@ -37,7 +37,7 @@ s(:lon, :lat, bs=:sos, k=50);   # spherical spline
 s(:x, :y, bs=:spde);            # SPDE Matérn
 te(:x, :y, k=5);                # tensor product
 ti(:x, :y, k=5);                # tensor product interaction
-t2(:x, :y, k=5);                # alternative tensor product
+t2(:x, :y, k=5);                # ANOVA-style tensor product
 nothing
 ```
 
@@ -337,7 +337,7 @@ Tensor product smooths for interactions between variables on different scales.
 
 - `te(:x, :y)` — full tensor product (main effects + interaction)
 - `ti(:x, :y)` — interaction only (for ANOVA decomposition)
-- `t2(:x, :y)` — alternative tensor product with independent marginal penalties
+- `t2(:x, :y)` — ANOVA-style tensor product with independent penalty blocks
 
 **When to use:** When interacting variables are on different scales (e.g., space
 and time), isotropic smooths (`s(:x, :y)`) are inappropriate because they
@@ -346,13 +346,22 @@ assume the same smoothness in all directions. Tensor products handle this.
 ```@example smooths
 te(:x, :y, k=8);                               # full tensor product
 @formula(y ~ s(x1) + s(x2) + ti(x1, x2));     # ANOVA-style decomposition
-t2(:x, :y, k=8);                              # alternative tensor product
+t2(:x, :y, k=8);                              # ANOVA-style tensor product
 nothing
 ```
 
-`t2()` produces more penalties than `te()` (one per marginal direction plus a
-full interaction penalty), but each penalty is simpler. This can give finer
-control over smoothing in each marginal direction.
+`t2()` follows mgcv's Wood, Scheipl & Faraway (2013) construction: each
+marginal is split into orthogonal null and range parts, and the tensor columns
+partition into blocks that each carry their own identity penalty on their own
+columns. The penalties are therefore **diagonal with non-overlapping support**,
+which is what lets a `t2()` smooth be written as independent random-effect
+blocks (one variance component per penalty) — the property `te()` lacks, since
+its overlapping penalties require mgcv's `pdTens` class. Use `t2()` when you
+need that mixed-model decomposition (as gamm4 does); use `te()` otherwise.
+
+The construction is verified against mgcv: for `t2(x, z, k=4)` both produce 15
+columns, 3 penalties of rank 4 with identical disjoint supports, and a
+null-space dimension of 3.
 
 ### Linear-Constraint Bases (`bs=:sc`, `bs=:scad`)
 

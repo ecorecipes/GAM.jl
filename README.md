@@ -8,7 +8,7 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 
 ## Features
 
-- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 30 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (a few are documented approximations of their mgcv namesakes — see the table below)
+- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 30 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (three are documented approximations of their mgcv namesakes — see the table below)
 - **Automatic smoothness estimation** — REML/ML via Extended Fellner-Schall (EFS, default) or Newton optimization; GCV/UBRE via direct criterion optimization
 - **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta
 - **Multi-parameter models (GAMLSS)** — location-scale-shape regression with RS and CG solvers, local ML/GAIC/GCV smoothing parameter selection
@@ -93,7 +93,7 @@ use `GAM.@formula(...)` or `using GAM: @formula`.
 | `s(x, bs=:sz)` | Constrained factor smooth | Sum-to-zero factor smooth |
 | `te(x, y)` | Tensor product | Full interaction (main effects + interaction) |
 | `ti(x, y)` | Tensor interaction | Interaction only (marginals excluded) |
-| `t2(x, y)` | Alternative tensor product | ANOVA-style tensor with single penalty per margin |
+| `t2(x, y)` | Tensor product, ANOVA-style | Wood–Scheipl–Faraway construction: diagonal penalties with disjoint support, so the smooth decomposes into independent random-effect blocks |
 
 Smooths also accept `by=` for varying-coefficient and factor-smooth models:
 
@@ -338,6 +338,8 @@ gamlss, evgam, gamFactory) on the same checked-in data:
 10. [Mixed models (GAMM)](vignettes/10_gamm/10_gamm.qmd)
 11. [Bayesian GAMs](vignettes/11_bayesian_gam/11_bayesian_gam.qmd)
 12. [Nested effects](vignettes/12_nested_effects/12_nested_effects.qmd)
+13. [Migrating from mgcv](vignettes/13_migrating_from_mgcv/13_migrating_from_mgcv.qmd)
+14. [Model selection and diagnostics](vignettes/14_model_selection/14_model_selection.qmd)
 
 Rendered GFM versions (`.md`) are checked in alongside the sources; see
 [vignettes/README.md](vignettes/README.md) for rendering and data-generation
@@ -385,8 +387,7 @@ identity/log/logit links. The optional MixedModels.jl GAMM backend is disabled
 
 Some basis types are documented approximations rather than exact ports of their
 mgcv namesakes: `:sos` (planar kernel on great-circle distances), `:so` (grid-PDE
-soap film), `:ds` (alias of `:tp`), and `:t2` (an alternative tensor
-construction, not Wood–Scheipl–Faraway). Fits with these bases will differ from
+soap film), and `:ds` (alias of `:tp`). Fits with these bases will differ from
 mgcv's.
 
 `offset` and `by` variables work for ordinary, extended-family, and shape-constrained (SCAM) fits; factor-`by` is not supported for the linear-constraint (SCASM) solver, and `select=true` applies to ordinary and extended-family GAMs (not the constrained solvers).
@@ -416,7 +417,7 @@ The key difference from mgcv: GAM.jl's model-fitting code is written in Julia ra
 
 ## Testing
 
-GAM.jl has roughly 2,300 test assertion macros across 53 test files, including:
+GAM.jl has roughly 2,440 test assertion macros across 55 test files, including:
 
 - Unit tests for all basis types, families, and link functions
 - End-to-end tests for GAM, BAM, SCAM, QGAM, GAMLSS, GAMM, evgam, GINLA

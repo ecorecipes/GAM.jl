@@ -190,10 +190,12 @@ m_anova = gam(
 nothing
 ```
 
-### `t2()` — Alternative Tensor Product
+### `t2()` — ANOVA-Style Tensor Product
 
-Like `te()` but with independent marginal penalties, giving finer control per
-marginal direction. Equivalent to R's `t2(x1, x2)`:
+Like `te()`, but built so that its penalties are diagonal with non-overlapping
+support (mgcv's Wood–Scheipl–Faraway construction). That makes the smooth
+decomposable into independent random-effect blocks, which `te()` is not.
+Equivalent to R's `t2(x1, x2)`:
 
 ```@example tutorial
 m_t2 = gam(@formula(y ~ t2(x1, x2, k=8)), df_te);

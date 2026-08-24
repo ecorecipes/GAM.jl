@@ -22,6 +22,8 @@ compared side by side.
 | [10_gamm](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/10_gamm) | Mixed-model GAMs with random effects |
 | [11_bayesian_gam](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/11_bayesian_gam) | Bayesian GAMs via Turing.jl |
 | [12_nested_effects](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/12_nested_effects) | Nested effects (gamFactory-style), with a direct R comparison |
+| [13_migrating_from_mgcv](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/13_migrating_from_mgcv) | Translation table from mgcv, measured parity, and every documented divergence |
+| [14_model_selection](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/14_model_selection) | End-to-end selection and diagnostics workflow: `select=true`, `k_check`, concurvity, influence |
 
 Datasets whose data-generating process is stated in a vignette are produced
 by `vignettes/generate_data.jl` with fixed seeds, so data and narrative
