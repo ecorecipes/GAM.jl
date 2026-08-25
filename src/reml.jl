@@ -346,6 +346,98 @@ function _total_range_basis(Ss::AbstractVector{<:AbstractMatrix{Float64}})
 end
 
 """
+    _stable_penalty_prologue(Ss) -> NamedTuple or nothing
+
+The λ-independent half of [`_stable_penalty_factor`](@ref): the total range
+basis `Z`, the components projected into it, and their square roots.
+
+None of this depends on the smoothing parameters. `_total_range_basis` is
+Frobenius-normalised by construction, the projections `Z'SⱼZ` involve no λ, and
+the roots are eigen-decompositions of those projections. The λ-dependent work —
+the dominant/sub-dominant split and the deflation loop — is comparatively free:
+measured on `te(10,10)` at n=10⁴, this prologue is **98.4%** of
+`_stable_penalty_factor`'s time and the loop is 0.2%.
+
+That split is what makes caching worthwhile. Within one fit the factorisation is
+recomputed once per score evaluation and once per gradient evaluation, at a
+*different* `lsp` every time (14 calls, 14 distinct `lsp`, on the model above),
+so a cache keyed on `lsp` would never hit — but the prologue is identical across
+all of them.
+"""
+function _stable_penalty_prologue(Ss::AbstractVector{<:AbstractMatrix{Float64}})
+    M = length(Ss)
+    Z = _total_range_basis(Ss)
+    d = size(Z, 2)
+    d == 0 && return nothing
+
+    Si = [Matrix{Float64}(transpose(Z) * S * Z) for S in Ss]
+
+    # Component square roots, carried through the transform alongside `St`
+    # (gdi.c:733-746). The derivatives MUST be built from these rather than from
+    # the raw `Sⱼ`: `St` deliberately drops each dominant term's tail below
+    # `r.tol`, and `St⁻¹` is conditioned like the λ ratio itself, so pairing an
+    # untransformed `Sⱼ` with `St⁻¹` amplifies that discrepancy without bound
+    # (measured: Σⱼ λⱼ·tr(S⁺Sⱼ) reached 4.1e9 instead of the rank, 21, at ratio
+    # 1e24). Zeroing the dominant tails here keeps score and gradient consistent.
+    R = Vector{Matrix{Float64}}(undef, M)
+    for j in 1:M
+        e = eigen(Symmetric(Si[j]))
+        mx = maximum(e.values)
+        keep = mx > 0 ? (e.values .> mx * _ROOT_TOL) : falses(length(e.values))
+        R[j] = any(keep) ?
+               e.vectors[:, keep] * Diagonal(sqrt.(e.values[keep])) :
+               zeros(Float64, d, 0)
+    end
+    return (Z = Z, Si = Si, R = R)
+end
+
+# Identity-keyed cache for `_stable_penalty_prologue`, holding a small number of
+# entries. The key is the `PenaltyBlock`'s own `S` vector, which is built once in
+# `setup_penalties` and never mutated afterwards, so identity is a sound key.
+#
+# The key is held STRONGLY and the table is bounded: an `objectid` can be reused
+# after collection, so a weak scheme would risk returning another model's
+# prologue for a recycled address. A few entries of penalty matrices is a
+# bounded, small cost for that guarantee.
+const _PROLOGUE_CACHE_MAX = 4
+const _PROLOGUE_CACHE = Vector{Pair{Any, Any}}()
+
+# Test/benchmark hook. Turning this off forces every call to recompute the
+# prologue, which is what makes an interleaved cached-vs-uncached control
+# possible inside a single process — the only reliable way to time this on a
+# loaded machine, and the sharpest available bit-identity check.
+const _PROLOGUE_CACHE_ENABLED = Ref(true)
+
+function _cached_prologue(Ss::AbstractVector{<:AbstractMatrix{Float64}}, key)
+    (key === nothing || !_PROLOGUE_CACHE_ENABLED[]) &&
+        return _stable_penalty_prologue(Ss)
+    @inbounds for i in eachindex(_PROLOGUE_CACHE)
+        if _PROLOGUE_CACHE[i].first === key
+            hit = _PROLOGUE_CACHE[i].second
+            # Move to front so the working set survives eviction.
+            if i != 1
+                deleteat!(_PROLOGUE_CACHE, i)
+                pushfirst!(_PROLOGUE_CACHE, key => hit)
+            end
+            return hit
+        end
+    end
+    pro = _stable_penalty_prologue(Ss)
+    pro === nothing && return nothing
+    pushfirst!(_PROLOGUE_CACHE, key => pro)
+    length(_PROLOGUE_CACHE) > _PROLOGUE_CACHE_MAX && pop!(_PROLOGUE_CACHE)
+    return pro
+end
+
+"""
+    _stable_penalty_reset_cache!()
+
+Drop the prologue cache. Only needed if a `PenaltyBlock`'s `S` were ever mutated
+in place, which `setup_penalties` does not do; provided for tests.
+"""
+_stable_penalty_reset_cache!() = (empty!(_PROLOGUE_CACHE); nothing)
+
+"""
     _stable_penalty_factor(Ss, lsp) -> NamedTuple or nothing
 
 Port of mgcv's `get_stableS` (`src/gdi.c:550-792`), reached from `gam.reparam`
@@ -369,33 +461,21 @@ recursing on the smaller block.
 Returns `nothing` when the penalty has no range at all (every component zero).
 """
 function _stable_penalty_factor(Ss::AbstractVector{<:AbstractMatrix{Float64}},
-                                lsp::AbstractVector{Float64})
+                                lsp::AbstractVector{Float64};
+                                key = nothing)
     M = length(Ss)
-    Z = _total_range_basis(Ss)
+    pro = _cached_prologue(Ss, key)
+    pro === nothing && return nothing
+    Z = pro.Z
     d = size(Z, 2)
-    d == 0 && return nothing
 
     sp = exp.(lsp)
-    Si = [Matrix{Float64}(transpose(Z) * S * Z) for S in Ss]
+    # The loop rebinds entries of `Si` and mutates `R`'s matrices in place, so
+    # both need private copies; `Z` is only ever read.
+    Si = copy(pro.Si)
+    R = [copy(m) for m in pro.R]
     St = zeros(Float64, d, d)
     Qf = Matrix{Float64}(I, d, d)
-
-    # Component square roots, carried through the transform alongside `St`
-    # (gdi.c:733-746). The derivatives MUST be built from these rather than from
-    # the raw `Sⱼ`: `St` deliberately drops each dominant term's tail below
-    # `r.tol`, and `St⁻¹` is conditioned like the λ ratio itself, so pairing an
-    # untransformed `Sⱼ` with `St⁻¹` amplifies that discrepancy without bound
-    # (measured: Σⱼ λⱼ·tr(S⁺Sⱼ) reached 4.1e9 instead of the rank, 21, at ratio
-    # 1e24). Zeroing the dominant tails here keeps score and gradient consistent.
-    R = Vector{Matrix{Float64}}(undef, M)
-    for j in 1:M
-        e = eigen(Symmetric(Si[j]))
-        mx = maximum(e.values)
-        keep = mx > 0 ? (e.values .> mx * _ROOT_TOL) : falses(length(e.values))
-        R[j] = any(keep) ?
-               e.vectors[:, keep] * Diagonal(sqrt.(e.values[keep])) :
-               zeros(Float64, d, 0)
-    end
 
     K = 0
     Q = d
@@ -579,7 +659,7 @@ function _stable_block_logdet_derivs(block, log_sp_block)
     nS == 1 && return [Float64(block.rank)]
     Ss = [Matrix{Float64}(Si) for Si in block.S]
     lsp = Float64[Float64(log_sp_block[j]) for j in 1:nS]
-    st = _stable_penalty_factor(Ss, lsp)
+    st = _stable_penalty_factor(Ss, lsp; key = block.S)
     st === nothing && return zeros(Float64, nS)
     return _stable_penalty_derivs(st, lsp)
 end
@@ -605,7 +685,7 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
             # transform instead — see `_stable_penalty_factor`.
             lsp_block = Float64[Float64(log_sp[sp_idx + j - 1]) for j in 1:nS]
             Ss = [Matrix{Float64}(Si) for Si in block.S]
-            st = _stable_penalty_factor(Ss, lsp_block)
+            st = _stable_penalty_factor(Ss, lsp_block; key = block.S)
             if st !== nothing
                 ldet += _stable_penalty_logdet(st)
                 sp_idx += nS

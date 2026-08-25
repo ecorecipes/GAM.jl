@@ -167,4 +167,91 @@
         @test GAM._total_range_basis(Ss) == zeros(4, 0)
         @test GAM._stable_penalty_factor(Ss, [0.0, 0.0]) === nothing
     end
+
+    # The λ-independent half of the factorisation (range basis, projections,
+    # component roots) is ~98% of its cost and is cached per penalty block.
+    # Every call within a fit uses a DIFFERENT λ — 14 calls at 14 distinct λ on
+    # a te(10,10) fit — so the cache must key on the penalties alone. These
+    # tests pin that the cached and uncached paths agree bit-for-bit, which is
+    # what protects the mgcv parity the transform exists to deliver.
+    @testset "prologue cache is bit-identical to recomputation" begin
+        bits(x) = reinterpret(UInt64, Float64(x))
+        rng = StableRNG(20_250_824)
+        n = 400
+        xv = rand(rng, n); zv = rand(rng, n)
+        gv = string.(rand(rng, 1:4, n))
+        data = (x = xv, z = zv, g = gv)
+
+        cases = Any[
+            ("te", GAM.te(:x, :z; k = 6)),
+            ("t2", GAM.t2(:x, :z; k = 5)),
+            ("ad", GAM.s(:x; bs = :ad, k = 20)),
+            ("fs", GAM.s(:x, :g; bs = :fs, k = 6)),
+        ]
+
+        for (name, spec) in cases
+            sm = GAM.smooth_construct(spec, data)
+            Ss = [Matrix{Float64}(S) for S in sm.S]
+            nS = length(Ss)
+            nS > 1 || continue
+            for ratio in (1.0, 1e8, 1e16, 1e24)
+                lsp = [(j - 1) * log(ratio) / (nS - 1) for j in 1:nS]
+
+                GAM._PROLOGUE_CACHE_ENABLED[] = false
+                GAM._stable_penalty_reset_cache!()
+                plain = GAM._stable_penalty_factor(Ss, lsp; key = Ss)
+
+                GAM._PROLOGUE_CACHE_ENABLED[] = true
+                GAM._stable_penalty_reset_cache!()
+                miss = GAM._stable_penalty_factor(Ss, lsp; key = Ss)   # populates
+                hit  = GAM._stable_penalty_factor(Ss, lsp; key = Ss)   # reuses
+
+                for got in (miss, hit)
+                    @test bits(GAM._stable_penalty_logdet(got)) ==
+                          bits(GAM._stable_penalty_logdet(plain))
+                    @test [bits(v) for v in GAM._stable_penalty_derivs(got, lsp)] ==
+                          [bits(v) for v in GAM._stable_penalty_derivs(plain, lsp)]
+                    @test [bits(v) for v in vec(got.St)] == [bits(v) for v in vec(plain.St)]
+                    for j in 1:nS
+                        @test [bits(v) for v in vec(got.R[j])] ==
+                              [bits(v) for v in vec(plain.R[j])]
+                    end
+                end
+
+                # A cache hit must not alias the stored prologue: the transform
+                # rebinds `Si` and mutates `R` in place, so a shared buffer
+                # would corrupt the next call rather than fail loudly here.
+                @test miss.R[1] !== hit.R[1]
+            end
+        end
+        # Restore explicitly: an assertion failing mid-loop would otherwise
+        # leave the cache disabled for every later test in the session.
+        GAM._PROLOGUE_CACHE_ENABLED[] = true
+        GAM._stable_penalty_reset_cache!()
+    end
+
+    @testset "cache is bounded and skipped for single-penalty blocks" begin
+        rng = StableRNG(24_082_025)
+        n = 300
+        data = (x = rand(rng, n), z = rand(rng, n))
+
+        GAM._stable_penalty_reset_cache!()
+        # Single-penalty blocks return `[block.rank]` without any linear
+        # algebra, so they must never populate the cache.
+        sm1 = GAM.smooth_construct(GAM.s(:x; bs = :cr, k = 10), data)
+        block1 = (S = sm1.S, rank = sm1.rank, start = 1, stop = size(sm1.X, 2))
+        @test GAM._stable_block_logdet_derivs(block1, [0.0]) == [Float64(sm1.rank)]
+        @test isempty(GAM._PROLOGUE_CACHE)
+
+        # More distinct blocks than the cache holds must not grow it.
+        for k in 5:10
+            sm = GAM.smooth_construct(GAM.te(:x, :z; k = k), data)
+            Ss = [Matrix{Float64}(S) for S in sm.S]
+            GAM._stable_penalty_factor(Ss, zeros(length(Ss)); key = Ss)
+        end
+        @test length(GAM._PROLOGUE_CACHE) <= GAM._PROLOGUE_CACHE_MAX
+
+        GAM._stable_penalty_reset_cache!()
+        @test isempty(GAM._PROLOGUE_CACHE)
+    end
 end
