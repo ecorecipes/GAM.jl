@@ -141,21 +141,56 @@ nothing
 
 ### Gaussian Process Smooth (`bs=:gp`)
 
-A smooth based on a Gaussian process covariance kernel.
+A Kammann & Wand (2003) Matérn spline — a direct port of mgcv's `bs="gp"`,
+matching it in correlation function, range parameter, knot selection and null
+space.
 
-- Supports multiple kernel types via `xt` (e.g., Matérn, squared exponential)
-- Automatically estimates the length-scale parameter
+`m` selects the correlation family, defaulting to **3** as in mgcv:
 
-**When to use:** Spatial data, or when a GP interpretation is desired (e.g.,
-for uncertainty quantification with a specific correlation structure).
+| `m` | correlation (`e = distance / rho`) | |
+|-----|-----------------------------------|--|
+| 1 | `(1 - 1.5e + 0.5e³)·1(e ≤ 1)` | spherical |
+| 2 | `exp(-e^κ)` | power exponential |
+| 3 | `(1 + e)·exp(-e)` | Matérn κ = 1.5 (default) |
+| 4 | `exp(-e) + e·exp(-e)(1 + e/3)` | Matérn κ = 2.5 |
+| 5 | `exp(-e) + e·exp(-e)(1 + 0.4e + e²/15)` | Matérn κ = 3.5 |
 
-**Default k**: 10.
+A **negative** `m` selects mgcv's *stationary* variant. Note that type 3 is
+not the textbook Matérn 3/2: mgcv omits the `√3` the standard
+parameterization carries, and this is a port of mgcv's convention.
+
+The range `rho` is **not estimated** — it is fixed at the largest pairwise
+distance between knots, the Kammann & Wand choice, exactly as mgcv does.
+Knots are the unique covariate values, capped at `max_knots` (2000).
+
+The null space is unpenalized `[1, x]` (or `[1]` when stationary), so a `gp`
+smooth shrinks toward a **straight line**, not toward zero.
+
+**When to use:** Spatial data, or when a GP interpretation is desired (e.g.
+uncertainty quantification with a specific correlation structure).
+
+**Default k**: 10. (mgcv's own default for `bs="gp"` is `ncol + 1 + 10` = 12
+in one dimension; GAM.jl applies its generic default of 10 instead, so set `k`
+explicitly when porting a model that relied on mgcv's default.)
+
+`xt` options: `:rho` (range), `:kappa` (κ for `m = 2`), `:max_knots`. Legacy
+named correlations remain available through `:corfun` (`:matern32`,
+`:matern52`, `:exponential`, `:gaussian`/`:sqexp`, `:power_exp`,
+`:mgcv_m32`); these are not mgcv-compatible and are kept for backward
+compatibility only.
 
 ```@example smooths
-s(:x, bs=:gp);            # default kernel
-s(:x, :y, bs=:gp, k=50);  # 2D GP smooth
+s(:x, bs=:gp);                                  # mgcv default (Matérn κ = 1.5)
+s(:x, bs=:gp, m=5);                             # Matérn κ = 3.5
+s(:x, bs=:gp, m=-3);                            # stationary variant
+s(:x, bs=:gp, k=20, xt=Dict(:rho => 0.5));      # fixed range
 nothing
 ```
+
+!!! note "Currently one-dimensional"
+    `bs=:gp` supports a single covariate. mgcv also supports multi-dimensional
+    GP smooths; use `bs=:tp`, `bs=:spde` or `bs=:sos` for multivariate
+    spatial smoothing in the meantime.
 
 ### Loess Smooth (`bs=:lo`)
 

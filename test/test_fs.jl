@@ -253,4 +253,98 @@
         @test m.converged
         @test m.deviance_val < sum((y .- mean(y)) .^ 2)
     end
+
+    @testset "mgcv scale.penalty normalization" begin
+        # mgcv's `smoothCon` (R/smooth.r:3879-3886) divides EVERY penalty by
+        # `maS = ||S||_1 / ||X||_inf^2`, so afterwards every penalty satisfies
+        # ||S_i||_1 == ||X||_inf^2 exactly. `fs` used to skip this, because it
+        # is the one basis that builds no constraint and so never reaches
+        # `absorb_constraints!`, where the rescale otherwise happens. The
+        # omission is invisible in a free fit but puts our `sp` on a different
+        # scale from mgcv's, so smoothing parameters could not transfer.
+        Random.seed!(21)
+        n = 240
+        groups = repeat(["a", "b", "c"], inner = 80)
+        x = rand(n)
+        data = (x = x, g = groups)
+
+        for k in (5, 6, 8)
+            sm = smooth_construct(s(:x, :g, bs = :fs, k = k), data)
+            maXX = opnorm(sm.X, Inf)^2
+            @test length(sm.S) >= 2                       # range + >=1 null penalty
+            for S in sm.S
+                @test opnorm(S, 1) ≈ maXX rtol = 1e-12
+            end
+        end
+
+        # The rescale must not disturb the penalty STRUCTURE: the range block
+        # stays a per-level multiple of the identity, and each null penalty
+        # still marks exactly one direction per level.
+        sm = smooth_construct(s(:x, :g, bs = :fs, k = 6), data)
+        nlev = 3
+        for S in sm.S[2:end]
+            d = diag(S)
+            @test count(>(0), d) == nlev                  # one direction per level
+            @test all(≈(maximum(d)), filter(>(0), d))     # equally weighted
+            @test norm(S - Diagonal(d)) ≈ 0 atol = 1e-12  # still diagonal
+        end
+    end
+
+    # ─── Marginal basis from xt[:bs] ──────────────────────────────────────
+    #
+    # mgcv's fs takes its marginal basis from `xt=list(bs=...)`, defaulting to
+    # "tp" (R/smooth.r:2052-2053). GAM.jl previously hardcoded TPRS, so the
+    # option was silently ignored. The visible symptom was the penalty count
+    # for a cyclic marginal: mgcv derives `null.d <- ncol(X) - rank`
+    # (R/smooth.r:2069), and `cc` sets `rank <- ncol(X)-1` with
+    # `null.space.dim <- 1` (R/smooth.r:1636-1637), so a cc marginal gives
+    # 1 + 1 = 2 penalties where tp/cr/ps give 1 + 2 = 3.
+    @testset "marginal basis honours xt[:bs]" begin
+        rng_fs = MersenneTwister(11)
+        n = 300
+        xs = rand(rng_fs, n)
+        gs = string.(repeat(1:4, inner = div(n, 4)))
+        data_fs = (x = xs, g = gs)
+
+        # Cyclic marginal: 2 penalties, and k-1 columns per level (the cyclic
+        # basis drops the last knot), verified against mgcv 1.9-4.
+        for (k, cols_per_level) in ((6, 5), (8, 7))
+            sm_cc = smooth_construct(
+                s(:x, :g, bs = :fs, k = k, xt = Dict{Symbol, Any}(:bs => :cc)), data_fs)
+            @test length(sm_cc.S) == 2
+            @test size(sm_cc.X, 2) == 4 * cols_per_level
+        end
+
+        # Non-cyclic marginals keep a 2-dimensional null space → 3 penalties.
+        for bs in (:tp, :cr, :ps)
+            sm_b = smooth_construct(
+                s(:x, :g, bs = :fs, k = 6, xt = Dict{Symbol, Any}(:bs => bs)), data_fs)
+            @test length(sm_b.S) == 3
+        end
+
+        # Default is tp, matching mgcv, and must equal an explicit :tp request.
+        sm_default = smooth_construct(s(:x, :g, bs = :fs, k = 6), data_fs)
+        sm_tp = smooth_construct(
+            s(:x, :g, bs = :fs, k = 6, xt = Dict{Symbol, Any}(:bs => :tp)), data_fs)
+        @test size(sm_default.X) == size(sm_tp.X)
+        @test sm_default.X ≈ sm_tp.X
+        @test length(sm_default.S) == length(sm_tp.S)
+
+        # Prediction must use the same marginal basis as construction, or the
+        # fitted and predicted bases silently disagree.
+        Xp = predict_matrix(
+            smooth_construct(
+                s(:x, :g, bs = :fs, k = 6, xt = Dict{Symbol, Any}(:bs => :cc)), data_fs),
+            data_fs)
+        sm_cc6 = smooth_construct(
+            s(:x, :g, bs = :fs, k = 6, xt = Dict{Symbol, Any}(:bs => :cc)), data_fs)
+        @test Xp ≈ sm_cc6.X atol = 1e-10
+
+        # A marginal whose raw builder would absorb constraints must be
+        # rejected, not silently downgraded to a centred (wrong) basis.
+        @test_throws ArgumentError smooth_construct(
+            s(:x, :g, bs = :fs, k = 6, xt = Dict{Symbol, Any}(:bs => :re)), data_fs)
+        @test_throws ArgumentError smooth_construct(
+            s(:x, :g, bs = :fs, k = 6, xt = Dict{Symbol, Any}(:bs => "cc")), data_fs)
+    end
 end

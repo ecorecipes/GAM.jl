@@ -180,7 +180,7 @@ comparison there.
 | P-splines (`:ps`) | ✅ | ✅ |
 | Cyclic P-splines (`:cps`) | ✅ | ✅ |
 | B-splines (`:bs`) | ✅ | ✅ |
-| Gaussian process (`:gp`) | ✅ | ✅ |
+| Gaussian process (`:gp`) | ✅ | ✅ 1-D only; `m` selects mgcv's correlation type |
 | Duchon splines (`:ds`) | ✅ | ⚠️ alias for `:tp` — warns; not Duchon's fractional-order basis |
 | Markov random field (`:mrf`) | ✅ | ✅ |
 | Soap film (`:so`) | ✅ | ✅ |

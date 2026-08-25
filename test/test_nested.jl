@@ -350,4 +350,30 @@ using StableRNGs
         @test m_fix.sp[n_std + 1] ≈ log(1000.0) atol = 1e-12
         @test m_fix.sp[n_std + 1] != m_free.sp[n_std + 1]
     end
+
+    @testset "s_nest sp= validation" begin
+        # A nested effect has exactly ONE outer penalty, so a vector `sp` is a
+        # user error rather than an unsupported feature. It used to surface as
+        # a bare `MethodError: no method matching Float64(::Vector{Float64})`
+        # from an inline `Float64(sp)`; it now routes through the shared
+        # `_normalize_sp` validator like every other smooth constructor.
+        err = try
+            s_nest(:x; trans = trans_linear(), k = 8, sp = [1.0, 2.0])
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("single outer penalty", sprint(showerror, err))
+        @test occursin("scalar", sprint(showerror, err))
+
+        # Shared validation applies too: non-positive and non-finite rejected.
+        @test_throws ArgumentError s_nest(:x; trans = trans_linear(), k = 8, sp = -1.0)
+        @test_throws ArgumentError s_nest(:x; trans = trans_linear(), k = 8, sp = 0.0)
+        @test_throws ArgumentError s_nest(:x; trans = trans_linear(), k = 8, sp = Inf)
+
+        # Scalar and `nothing` still behave exactly as before.
+        @test s_nest(:x; trans = trans_linear(), k = 8, sp = 2.0).sp === 2.0
+        @test s_nest(:x; trans = trans_linear(), k = 8).sp === nothing
+    end
 end
