@@ -31,17 +31,46 @@
     end
 
     @testset "gp basis construction does not box the inner loop" begin
+        # Tests the boxing class DIRECTLY: the correlation evaluation must
+        # cost O(1) allocations however many elements it fills. Before `scale`
+        # was annotated this was ~40,000 at n=1000 — one per element of the
+        # n x k loop — so flatness in the element count is the sharp test.
+        knots_small = collect(range(-0.5, 0.5; length = 100))
+        knots_large = collect(range(-0.5, 0.5; length = 1000))
+        GAM._gp_E(knots_small, knots_small, 1.0, 3, 1.0, :mgcv, Float64[])
+        GAM._gp_E(knots_large, knots_large, 1.0, 3, 1.0, :mgcv, Float64[])
+        aE_small = @allocations GAM._gp_E(
+            knots_small, knots_small, 1.0, 3, 1.0, :mgcv, Float64[])
+        aE_large = @allocations GAM._gp_E(
+            knots_large, knots_large, 1.0, 3, 1.0, :mgcv, Float64[])
+        @test aE_small < 20
+        @test aE_large < 20                # 100x the elements, same cost
+        @test aE_large <= aE_small + 5
+
+        # [E(x,knt)*UZ | T(x)] is built in chunks, so it is O(1) too.
+        UZ = Matrix{Float64}(I, length(knots_large), 18)
+        cache = GAM.GPPredictCache(0.0, knots_large, UZ, 3, 1.0, 1.0,
+                                   false, :mgcv, Float64[])
+        xr = collect(range(-0.5, 0.5; length = length(knots_large)))
+        GAM._gp_model_matrix(xr, cache)                # compile
+        @test (@allocations GAM._gp_model_matrix(xr, cache)) < 40
+
+        # Whole-construction bound, measured at n=400: the largest size still
+        # taking `_tprs_top_eigen`'s DENSE branch (crossover max(400, 4k)).
+        # Above it, gp legitimately spends ~1900 allocations in the shared
+        # Lanczos eigensolver, because mgcv's construction eigen-reduces the
+        # FULL knot correlation matrix (knots = the unique covariate values,
+        # capped at max.knots) where the pre-port basis used a ~k x k Nystrom
+        # approximation and so stayed on the dense branch. Asserting a total
+        # above the crossover pins the eigensolver's iteration count rather
+        # than gp's type stability, which is what this testset is for.
         rng = StableRNG(4242)
-        x = sort(rand(rng, 1000))
+        x = sort(rand(rng, 400))
         tbl = (x = x,)
         spec = s(:x; bs = :gp, k = 20)
 
         smooth_construct(spec, tbl)                    # compile
-        a = @allocations smooth_construct(spec, tbl)
-
-        # Before annotating `scale`, this was ~40,000 allocations at n=1000
-        # (one per element of the n x k correlation loop).
-        @test a < 500
+        @test (@allocations smooth_construct(spec, tbl)) < 500
     end
 
     @testset "P-spline construction allocation is bounded" begin

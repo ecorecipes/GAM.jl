@@ -134,11 +134,13 @@
             m = gam(gpf(; xt = xt), df)
             @test predict(m, df; type = :response) ≈ fitted(m) atol = 1e-8
         end
-        # mgcv's default correlation really is the √3-free one, so the two
-        # parameterizations must give genuinely different fits.
+        # GAM.jl's default is now mgcv's √3-free type 3, so it must agree with
+        # `:mgcv_m32` exactly and differ from the √3-carrying `:matern32`.
         m_std = gam(gpf(), df)
         m_mgcv = gam(gpf(; xt = Dict{Symbol, Any}(:corfun => :mgcv_m32)), df)
-        @test !isapprox(sum(GAM.edf(m_std)), sum(GAM.edf(m_mgcv)); rtol = 1e-4)
+        m_m32 = gam(gpf(; xt = Dict{Symbol, Any}(:corfun => :matern32)), df)
+        @test sum(GAM.edf(m_std)) ≈ sum(GAM.edf(m_mgcv))
+        @test !isapprox(sum(GAM.edf(m_std)), sum(GAM.edf(m_m32)); rtol = 1e-4)
     end
 
     @testset "bs=:ds warns that it is not a Duchon spline" begin

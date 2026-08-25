@@ -347,11 +347,32 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
     L = length(levels)
     n = length(factor_col)
 
-    # Build marginal spec for the continuous variables using TPRS (R's default)
+    # Marginal basis: mgcv's `fs` takes it from `xt=list(bs=...)` and defaults
+    # to "tp" (R/smooth.r:2052-2053, which calls the base constructor via
+    # `class(object) <- object$base.bs`). Honour the same option — it was
+    # previously hardcoded to TPRS, so `xt=Dict(:bs => :cc)` was silently
+    # ignored and the user got a thin-plate marginal instead.
+    marginal_bs = get(spec.xt, :bs, :tp)
+    marginal_bs isa Symbol || throw(ArgumentError(
+        "fs smooth: xt[:bs] must be a Symbol naming the marginal basis, " *
+        "got $(typeof(marginal_bs))"))
+    marginal_basis = resolve_basis_type(marginal_bs)
+
+    # `fs` needs the UNCONSTRAINED marginal (see below), which is what the
+    # specialised `_build_raw_marginal` methods produce. Bases without one
+    # fall through to a method that absorbs constraints, silently dropping a
+    # column and giving a centred basis mgcv would never build here — so
+    # reject those rather than return a wrong answer.
+    marginal_basis isa Union{ThinPlateSpline, ThinPlateShrink, CubicSpline,
+                             CubicShrink, CyclicCubic, PSpline} ||
+        throw(ArgumentError(
+            "fs smooth: marginal basis :$marginal_bs is not supported. " *
+            "Use one of :tp, :ts, :cr, :cs, :cc, :ps."))
+
     marginal_spec = SmoothSpec(
-        cont_vars, ThinPlateSpline(), spec.k,
+        cont_vars, marginal_basis, spec.k,
         nothing, spec.id, spec.sp, spec.fx, spec.m,
-        "s($(join(cont_vars, ",")),bs=tp)",
+        "s($(join(cont_vars, ",")),bs=$marginal_bs)",
     )
 
     # Construct the marginal smooth WITHOUT constraint absorption, as mgcv's
@@ -359,8 +380,14 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
     # random-intercept components) in the span. Identifiability with the
     # model intercept comes from FULL penalization below, which is also what
     # makes the gam.side exemption for fs safe.
-    marginal_sm = _construct_tprs(marginal_spec, data, user_knots;
-        absorb_cons = false)
+    # `_build_raw_marginal` is the shared unconstrained-marginal builder that
+    # tensor smooths already use; its per-basis methods construct X and S
+    # directly, without constraint absorption. Its `template` is a
+    # ConstructedSmooth carrying knots and rank, and with `constraint ===
+    # nothing` it also predicts unconstrained at new data, which is what the
+    # prediction path below relies on.
+    marginal_raw = _build_raw_marginal(marginal_basis, marginal_spec, data, user_knots)
+    marginal_sm = marginal_raw.template
     X_base = marginal_sm.X        # n × k (uncentered)
     k_eff = size(X_base, 2)
 
@@ -417,6 +444,34 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
             S_i[idx, idx] = 1.0
         end
         push!(penalties, S_i)
+    end
+
+    # mgcv-style per-penalty rescaling. `smoothCon` (R/smooth.r:3879-3886)
+    # applies this to EVERY penalty of EVERY smooth:
+    #
+    #   maXX <- norm(sm$X, type = "I")^2
+    #   maS  <- norm(sm$S[[i]]) / maXX          # norm() default is the 1-norm
+    #   sm$S[[i]] <- sm$S[[i]] / maS
+    #
+    # `fs` reached this point without it, because it is the one basis that
+    # builds no constraint (mgcv sets `C <- matrix(0, 0, ncol(X))`) and so
+    # never calls `absorb_constraints!`, where GAM.jl otherwise applies the
+    # rescale. The omission is invisible in a free fit — the optimizer simply
+    # selects differently scaled `sp` — but it puts our `sp` vector on a
+    # different scale from mgcv's, so smoothing parameters cannot transfer
+    # between the packages. Verified against mgcv 1.9-4: before this, our
+    # per-penalty 1-norms were exactly `sm$S.scale` times mgcv's
+    # ([17.8994, 0.00967411, 0.00967411] for a 4-level k=6 fs), i.e. our raw
+    # penalties equal mgcv's pre-rescale penalties and only this step was
+    # missing.
+    maXX = opnorm(X, Inf)^2
+    if maXX > 0
+        for i in eachindex(penalties)
+            nS = opnorm(penalties[i], 1)
+            if nS > 0
+                penalties[i] = penalties[i] * (maXX / nS)
+            end
+        end
     end
 
     # Fully penalized: no unpenalized directions remain (mgcv sets
