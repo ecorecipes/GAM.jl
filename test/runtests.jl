@@ -1052,6 +1052,11 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     if _rcall_available
         @eval include("test_vector_sp_rcall.jl")
     end
+
+    # bam(discrete=true) vs mgcv::bam(discrete=TRUE) — needs only mgcv
+    if _rcall_available
+        @eval include("test_discrete_rcall.jl")
+    end
 end
 
 # EGPD unit tests (no R needed) — must run regardless of GAM_SKIP_RCALL
@@ -1225,6 +1230,9 @@ _spde_csv_ok && @eval include("test_spde_rcall.jl")
 
 # BamDesign abstraction: DenseDesign parity and type stability (no R needed)
 @eval include("test_bam_design.jl")
+
+# bam(discrete=true): binning, kernels, dense parity (no R needed)
+@eval include("test_discrete.jl")
 
 # method=:ML criterion parity with mgcv (range-space determinant, Dp/n scale)
 @eval include("test_ml_criterion.jl")
