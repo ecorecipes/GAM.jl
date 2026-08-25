@@ -282,6 +282,68 @@ end
 _any_scaled(blocks::Vector{DiscreteBlock}) = any(b -> b.scale !== nothing, blocks)
 
 """
+    ByBlock
+
+One factor-`by` smooth, `s(x, by = f)` with `f` a factor of `L` levels, held
+as ONE shared `m x kb` basis plus two per-row index vectors — the grid cell
+`k[i]` and the level `lev[i]` — instead of the dense `n x (kb*L)` replication
+`_apply_by_variable!` builds.
+
+Row `i` is zero except in the `kb` columns of its own level:
+
+    dense[i, (lev[i]-1)*kb .+ (1:kb)] == Xd[k[i], :]
+
+The whole point is what that implies for `X'WX`. No row contributes to two
+levels, so the level blocks are **orthogonal**: every off-diagonal
+`(l, l')` sub-block is identically zero. Representing this as `L` separate
+`DiscreteBlock`s would be correct and need no new kernel, but the generic
+discrete x discrete loop would then compute `L(L-1)/2` cross-blocks that are
+all zero — 28 wasted O(n) passes at `L = 8`, **1225 at `L = 50`**. A prior
+attempt measured exactly that and declined to ship it. `ByBlock` instead runs
+`L` `syrk!` calls on the diagonal and skips the off-diagonals entirely.
+
+Cross-terms against other blocks keep the same one-pass shape: `T[l]` is the
+`m x p_other` table for level `l`, all `L` filled in a single sweep over the
+sample, so the cost is `O(n * p_other)` regardless of `L`.
+
+`lev[i] == 0` marks a row whose `by` level was unseen at fit time; it
+contributes nothing, matching `predict_matrix`'s warn-and-zero rule.
+"""
+struct ByBlock
+    Xd::Matrix{Float64}
+    k::Vector{Int32}
+    lev::Vector{Int32}
+    cols::UnitRange{Int}
+    m::Int
+    kb::Int
+    L::Int
+    exact::Bool
+    label::String
+    # Scratch, sized once at construction so the hot loops never allocate.
+    # `wb`/`wzb` are L x m: the binning pass fills every level in one sweep.
+    wb::Matrix{Float64}
+    wzb::Matrix{Float64}
+    sw::Vector{Float64}
+    Xw::Matrix{Float64}
+    fbuf::Matrix{Float64}
+end
+
+function ByBlock(Xd::Matrix{Float64}, k::Vector{Int32}, lev::Vector{Int32},
+    cols::UnitRange{Int}, L::Int, exact::Bool, label::String)
+    m, kb = size(Xd)
+    length(k) == length(lev) || throw(DimensionMismatch(
+        "k has $(length(k)) entries, lev has $(length(lev))"))
+    length(cols) == kb * L || throw(DimensionMismatch(
+        "cols spans $(length(cols)) columns, expected kb*L = $(kb * L)"))
+    return ByBlock(Xd, k, lev, cols, m, kb, L, exact, label,
+        zeros(L, m), zeros(L, m), zeros(m), zeros(m, kb), zeros(L, m))
+end
+
+"""Columns of `blk` belonging to level `l`."""
+@inline _by_cols(blk::ByBlock, l::Int) =
+    blk.cols[((l - 1) * blk.kb + 1):(l * blk.kb)]
+
+"""
     TensorBlock
 
 One `te` smooth held as per-marginal bases plus index vectors.
@@ -352,22 +414,31 @@ struct DiscreteDesign <: BamDesign
     # `te` smooths, held as per-marginal bases plus one index vector each. The
     # row tensor is never formed; see the TensorBlock section below.
     tblocks::Vector{TensorBlock}
+    # factor-`by` smooths, one shared basis plus a grid index and a level
+    # index. Level sub-blocks are orthogonal, so the kernel runs `L` diagonal
+    # `syrk!`s and skips every off-diagonal; see the ByBlock section above.
+    byblocks::Vector{ByBlock}
 end
 
 function DiscreteDesign(blocks::Vector{DiscreteBlock}, Xdense::Matrix{Float64},
     dense_cols::Vector{Int}, n::Int, p::Int, icpt::Int,
-    tblocks::Vector{TensorBlock} = TensorBlock[])
+    tblocks::Vector{TensorBlock} = TensorBlock[],
+    byblocks::Vector{ByBlock} = ByBlock[])
     pd = length(dense_cols)
     # The intercept-only shortcut is only valid when every non-dense column is
     # a 1-D block, whose cross-terms fall out of the binning pass.
     # The shortcut reads `sum(blk.wb)` as Σw and `Xd' * wb` as the cross-term.
     # Both identities assume UNSCALED binning: a scaled block bins Σ w·s², so
     # neither holds. Scaled blocks therefore take the general path.
+    # A ByBlock also breaks the shortcut: its rows bin per level, so
+    # `sum(wb)` over one level is not Σw and the intercept cross-term needs
+    # the per-level tables rather than a single `Xd' * wb`.
     icpt_only = pd == 1 && icpt != 0 && dense_cols[1] == icpt &&
-        isempty(tblocks) && !_any_scaled(blocks)
+        isempty(tblocks) && isempty(byblocks) && !_any_scaled(blocks)
     Tcross = [zeros(blk.m, pd) for blk in blocks]
     return DiscreteDesign(blocks, Xdense, dense_cols, n, p, Ref(icpt),
-        zeros(pd), zeros(pd, pd), zeros(pd), icpt_only, Tcross, tblocks)
+        zeros(pd), zeros(pd, pd), zeros(pd), icpt_only, Tcross, tblocks,
+        byblocks)
 end
 
 ncols(D::DiscreteDesign) = D.p
@@ -588,6 +659,103 @@ function _re_block(spec::SmoothSpec, t, n::Int, cols::UnitRange{Int})
 end
 
 """
+    _by_block(sm, X, t, m_grid, n, cols) -> ByBlock | nothing
+
+Build a [`ByBlock`](@ref) for a factor-`by` smooth, or `nothing` if it does
+not qualify.
+
+Only a FACTOR `by` qualifies. A numeric `by` is a per-row multiplier on a
+single block, which `DiscreteBlock`'s `scale` field already expresses; it is
+not routed here and keeps its existing dense fallback, because conflating the
+two is what produced a 31%-of-range wrong fit on `bs=:re` earlier in this
+work.
+
+The shared basis comes from the dense block without re-evaluating anything
+when binning is lossless: every row in a grid cell has the same covariate
+value, and row `i` carries the base basis in its own level's columns, so one
+representative row per cell reproduces `Xd` BIT-for-bit. When the covariate
+had to be rounded onto a grid, the base spec is rebuilt (`by=` stripped) and
+evaluated at the grid values, as mgcv does.
+"""
+function _by_block(sm, X::Matrix{Float64}, t, m_grid::Int, n::Int,
+    cols::UnitRange{Int})
+    spec = sm.spec
+    length(spec.term_vars) == 1 || return nothing
+    spec.by === nothing && return nothing
+    v = spec.term_vars[1]
+    v in Tables.columnnames(t) || return nothing
+    spec.by in Tables.columnnames(t) || return nothing
+
+    by_col = Tables.getcolumn(t, spec.by)
+    # Numeric `by` is not a factor replication; leave it to the dense path.
+    eltype(by_col) <: Real && return nothing
+
+    col = Tables.getcolumn(t, v)
+    eltype(col) <: Real || return nothing
+
+    levels = get(spec.xt, :_by_levels, nothing)
+    levels === nothing && return nothing
+    L = length(levels)
+    L >= 1 || return nothing
+    pb = length(cols)
+    (pb % L == 0) || return nothing
+    kb = pb ÷ L
+    kb >= 1 || return nothing
+
+    pos = Dict(lev => Int32(l) for (l, lev) in enumerate(levels))
+    lev = Int32[get(pos, x, Int32(0)) for x in by_col]
+
+    xu, k, exact = _bin_covariate(col, m_grid)
+    mm = length(xu)
+    # Discretising buys nothing once the grid is as large as the sample.
+    mm < n || return nothing
+
+    Xd = if exact
+        # One representative row per grid cell, read out of that row's OWN
+        # level columns — the base basis is identical across levels, so this
+        # is exact rather than merely close.
+        rep = zeros(Int, mm)
+        nfilled = 0
+        @inbounds for i in 1:n
+            lev[i] == 0 && continue
+            j = k[i]
+            if rep[j] == 0
+                rep[j] = i
+                nfilled += 1
+                nfilled == mm && break
+            end
+        end
+        any(==(0), rep) && return nothing
+        B = Matrix{Float64}(undef, mm, kb)
+        @inbounds for j in 1:mm
+            i = rep[j]
+            off = (lev[i] - 1) * kb
+            for c in 1:kb
+                B[j, c] = X[i, cols[off + c]]
+            end
+        end
+        B
+    else
+        base_sm = try
+            first(by_marginal_representation(spec, t))
+        catch
+            nothing
+        end
+        base_sm === nothing && return nothing
+        nt = NamedTuple{(v,)}((xu,))
+        Xp = try
+            predict_matrix(base_sm, nt)
+        catch
+            nothing
+        end
+        (Xp === nothing || size(Xp) != (mm, kb)) ? nothing : Matrix{Float64}(Xp)
+    end
+
+    Xd === nothing && return nothing
+    return ByBlock(Xd, k, lev, cols, L, exact, spec.label)
+end
+
+"""
     _tensor_block(sm, t, m_grid, n, cols) -> TensorBlock | nothing
 
 Build a [`TensorBlock`](@ref) for a `te` smooth, or `nothing` if it does not
@@ -700,6 +868,7 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
     t = Tables.columntable(data)
     blocks = DiscreteBlock[]
     tblocks = TensorBlock[]
+    byblocks = ByBlock[]
     taken = falses(p)
 
     for sm in smooths
@@ -740,7 +909,21 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
             continue
         end
         length(spec.term_vars) == 1 || continue
-        spec.by === nothing || continue
+        # A factor `by` replicates the basis per level, and the level blocks
+        # are orthogonal — `ByBlock` exploits that. A NUMERIC `by` is a
+        # different thing (a per-row multiplier) and is not covered here, so
+        # it must keep falling back: dropping that distinction is what
+        # silently produced a wrong fit on `bs=:re` earlier in this work.
+        if spec.by !== nothing
+            cols = sm.first_para:sm.last_para
+            bb = (first(cols) >= 1 && last(cols) <= p) ?
+                _by_block(sm, X, t, m_grid, n, cols) : nothing
+            if bb !== nothing
+                push!(byblocks, bb)
+                taken[cols] .= true
+            end
+            continue
+        end
         v = spec.term_vars[1]
         Tables.columnnames(t) isa Tuple && !(v in Tables.columnnames(t)) && continue
         col = Tables.getcolumn(t, v)
@@ -788,7 +971,8 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
         taken[cols] .= true
     end
 
-    (isempty(blocks) && isempty(tblocks)) && return DenseDesign(X)
+    (isempty(blocks) && isempty(tblocks) && isempty(byblocks)) &&
+        return DenseDesign(X)
 
     dense_cols = findall(!, taken)
     Xdense = X[:, dense_cols]
@@ -799,7 +983,8 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
             break
         end
     end
-    return DiscreteDesign(blocks, Xdense, dense_cols, n, p, icpt, tblocks)
+    return DiscreteDesign(blocks, Xdense, dense_cols, n, p, icpt, tblocks,
+        byblocks)
 end
 
 function mul_eta!(eta::Vector{Float64}, D::DiscreteDesign,
@@ -832,6 +1017,20 @@ function mul_eta!(eta::Vector{Float64}, D::DiscreteDesign,
         # contract through the marginals -- X_cons*b = X_raw*(Z*b).
         mul!(tb.braw, tb.Z, view(beta, tb.cols))
         _tensor_eta!(eta, tb, tb.braw)
+    end
+    for bb in D.byblocks
+        # One `m`-vector per level, then a single gather over the sample:
+        # `L` small matvecs plus O(n), never an n x (kb*L) product.
+        fb = bb.fbuf
+        @inbounds for l in 1:bb.L
+            mul!(view(fb, l, :), bb.Xd, view(beta, _by_cols(bb, l)))
+        end
+        k, lv = bb.k, bb.lev
+        @inbounds for i in 1:D.n
+            l = lv[i]
+            l == 0 && continue          # unseen level contributes nothing
+            eta[i] += fb[l, k[i]]
+        end
     end
     return eta
 end
@@ -883,6 +1082,31 @@ function _bin_weights!(D::DiscreteDesign, w::Vector{Float64},
             sw[j] = sqrt(max(wb[j], 0.0))
         end
     end
+    # Factor-`by`: one sweep fills every level's row of the L x m tables, so
+    # the binning cost is O(n) regardless of L.
+    for bb in D.byblocks
+        wb = bb.wb
+        fill!(wb, 0.0)
+        k, lv = bb.k, bb.lev
+        if z === nothing
+            @inbounds for i in 1:D.n
+                l = lv[i]
+                l == 0 && continue
+                wb[l, k[i]] += w[i]
+            end
+        else
+            wzb = bb.wzb
+            fill!(wzb, 0.0)
+            @inbounds for i in 1:D.n
+                l = lv[i]
+                l == 0 && continue
+                j = k[i]
+                wi = w[i]
+                wb[l, j] += wi
+                wzb[l, j] += wi * z[i]
+            end
+        end
+    end
     return nothing
 end
 
@@ -912,6 +1136,34 @@ function _accumulate_discrete!(XtWX::Matrix{Float64},
         end
         if XtWz !== nothing
             mul!(view(XtWz, blk.cols), transpose(Xd), blk.wzb)
+        end
+    end
+
+    # --- factor-by diagonal blocks, and their part of XᵀWz -----------------
+    # Level sub-blocks are ORTHOGONAL (no row is in two levels), so only the
+    # L diagonal blocks are formed. The off-diagonals are identically zero and
+    # are never computed -- that is the whole reason this is not L separate
+    # DiscreteBlocks, which would cost L(L-1)/2 zero cross-blocks.
+    for bb in D.byblocks
+        Xd = bb.Xd
+        Xw = bb.Xw
+        sw = bb.sw
+        for l in 1:bb.L
+            @inbounds for j in 1:bb.m
+                sw[j] = sqrt(max(bb.wb[l, j], 0.0))
+            end
+            @inbounds for c in 1:bb.kb, r in 1:bb.m
+                Xw[r, c] = Xd[r, c] * sw[r]
+            end
+            cl = _by_cols(bb, l)
+            BLAS.syrk!('U', 'T', 1.0, Xw, 0.0, view(XtWX, cl, cl))
+            Cb = view(XtWX, cl, cl)
+            @inbounds for j in 1:bb.kb, i in (j + 1):bb.kb
+                Cb[i, j] = Cb[j, i]
+            end
+            if XtWz !== nothing
+                mul!(view(XtWz, cl), transpose(Xd), view(bb.wzb, l, :))
+            end
         end
     end
 
@@ -946,6 +1198,69 @@ function _accumulate_discrete!(XtWX::Matrix{Float64},
         @inbounds for j in 1:pbc, i in 1:pa
             XtWX[ba.cols[i], bb.cols[j]] = Blk[i, j]
             XtWX[bb.cols[j], ba.cols[i]] = Blk[i, j]
+        end
+    end
+
+    # --- factor-by cross blocks -------------------------------------------
+    # Each cross-term keeps the one-pass shape: `L` tables of size
+    # `m x p_other` are all filled in a single sweep over the sample, so the
+    # cost is O(n * p_other) whatever `L` is.
+    for (ai, bb) in enumerate(D.byblocks)
+        Xa, ka, lva, kba = bb.Xd, bb.k, bb.lev, bb.kb
+
+        # by x 1-D discrete
+        for ob in D.blocks
+            q = size(ob.Xd, 2)
+            Ts = [zeros(bb.m, q) for _ in 1:bb.L]
+            ko, Xo = ob.k, ob.Xd
+            @inbounds for i in 1:n
+                l = lva[i]
+                l == 0 && continue
+                wi = w[i] * _blk_scale(ob, i)
+                Tl = Ts[l]
+                j = ka[i]
+                r = ko[i]
+                for c in 1:q
+                    Tl[j, c] += wi * Xo[r, c]
+                end
+            end
+            for l in 1:bb.L
+                Blk = transpose(Xa) * Ts[l]
+                cl = _by_cols(bb, l)
+                @inbounds for cj in 1:q, ci in 1:kba
+                    XtWX[cl[ci], ob.cols[cj]] = Blk[ci, cj]
+                    XtWX[ob.cols[cj], cl[ci]] = Blk[ci, cj]
+                end
+            end
+        end
+
+        # by x by. Distinct factor-`by` smooths generally overlap on every
+        # level pair, so this needs L_a x L_b tables rather than L.
+        for bj in (ai + 1):length(D.byblocks)
+            ob = D.byblocks[bj]
+            Xo, ko, lvo, kbo = ob.Xd, ob.k, ob.lev, ob.kb
+            Ts = [zeros(bb.m, kbo) for _ in 1:(bb.L * ob.L)]
+            @inbounds for i in 1:n
+                la = lva[i]
+                lb = lvo[i]
+                (la == 0 || lb == 0) && continue
+                Tl = Ts[(la - 1) * ob.L + lb]
+                wi = w[i]
+                j = ka[i]
+                r = ko[i]
+                for c in 1:kbo
+                    Tl[j, c] += wi * Xo[r, c]
+                end
+            end
+            for la in 1:bb.L, lb in 1:ob.L
+                Blk = transpose(Xa) * Ts[(la - 1) * ob.L + lb]
+                cl = _by_cols(bb, la)
+                cr = _by_cols(ob, lb)
+                @inbounds for cj in 1:kbo, ci in 1:kba
+                    XtWX[cl[ci], cr[cj]] = Blk[ci, cj]
+                    XtWX[cr[cj], cl[ci]] = Blk[ci, cj]
+                end
+            end
         end
     end
 
@@ -996,6 +1311,29 @@ function _accumulate_discrete!(XtWX::Matrix{Float64},
                 XtWX[D.dense_cols[cj], blk.cols[ci]] = Blk[ci, cj]
             end
         end
+
+        # factor-by x dense remainder, same one-pass shape.
+        for bb in D.byblocks
+            Ts = [zeros(bb.m, pd) for _ in 1:bb.L]
+            @inbounds for i in 1:n
+                l = bb.lev[i]
+                l == 0 && continue
+                Tl = Ts[l]
+                j = bb.k[i]
+                wi = w[i]
+                for c in 1:pd
+                    Tl[j, c] += wi * Xden[i, c]
+                end
+            end
+            for l in 1:bb.L
+                Blk = transpose(bb.Xd) * Ts[l]
+                cl = _by_cols(bb, l)
+                @inbounds for cj in 1:pd, ci in 1:bb.kb
+                    XtWX[cl[ci], D.dense_cols[cj]] = Blk[ci, cj]
+                    XtWX[D.dense_cols[cj], cl[ci]] = Blk[ci, cj]
+                end
+            end
+        end
     end
 
     # --- tensor blocks -----------------------------------------------------
@@ -1035,6 +1373,17 @@ function _accumulate_discrete!(XtWX::Matrix{Float64},
             _tensor_cross_block!(Craw, tb, ob, w)
             Cc = transpose(tb.Z) * Craw
             @inbounds for (jj, cj) in enumerate(ob.cols), (ii, ci) in enumerate(tb.cols)
+                XtWX[ci, cj] = Cc[ii, jj]
+                XtWX[cj, ci] = Cc[ii, jj]
+            end
+        end
+
+        # tensor x factor-by
+        for bb in D.byblocks
+            Craw = zeros(tb.praw, bb.kb * bb.L)
+            _tensor_cross_byblock!(Craw, tb, bb, w)
+            Cc = transpose(tb.Z) * Craw
+            @inbounds for (jj, cj) in enumerate(bb.cols), (ii, ci) in enumerate(tb.cols)
                 XtWX[ci, cj] = Cc[ii, jj]
                 XtWX[cj, ci] = Cc[ii, jj]
             end
@@ -1097,6 +1446,27 @@ function _gather_rows!(H::AbstractMatrix{Float64}, D::DiscreteDesign,
             si = s === nothing ? 1.0 : s[row]
             for (c, j) in enumerate(cols)
                 H[i, j] = si * Xd[r, c]
+            end
+        end
+    end
+    for bb in D.byblocks
+        Xd = bb.Xd
+        k, lv, kb = bb.k, bb.lev, bb.kb
+        cols = bb.cols
+        # Every column of the block is written: a row is nonzero only in its
+        # own level's `kb` columns, and zero everywhere else. Missing the zero
+        # fill would leave whatever the caller's buffer held.
+        @inbounds for i in 1:nr
+            row = start + i - 1
+            for j in cols
+                H[i, j] = 0.0
+            end
+            l = lv[row]
+            l == 0 && continue
+            r = k[row]
+            off = (l - 1) * kb
+            for c in 1:kb
+                H[i, cols[off + c]] = Xd[r, c]
             end
         end
     end
@@ -1320,6 +1690,38 @@ function _tensor_cross_block!(out::Matrix{Float64}, blk::TensorBlock,
             r = ko[i]
             for c in 1:q
                 T[l, c] += s * Xo[r, c]
+            end
+        end
+        mul!(view(out, ((cidx - 1) * pd + 1):(cidx * pd), :), transpose(Xdd), T)
+    end
+    return out
+end
+
+# X_rawᵀ W X_by for a tensor block against a factor-`by` block. Same shape as
+# `_tensor_cross_block!`, except the other side's row `i` lands in its own
+# level's `kb` columns rather than in a single column range.
+function _tensor_cross_byblock!(out::Matrix{Float64}, blk::TensorBlock,
+    other::ByBlock, w::Vector{Float64})
+    pd = blk.pdims[end]
+    Xdd = blk.Xds[end]
+    kd = blk.ks[end]
+    Xo, ko, lvo, kbo = other.Xd, other.k, other.lev, other.kb
+    md = size(Xdd, 1)
+    T = zeros(md, kbo * other.L)
+    dcol = blk.dcol_a
+    n = length(w)
+    @inbounds for cidx in 1:blk.pb
+        _tensor_dcol!(dcol, blk, cidx)
+        fill!(T, 0.0)
+        for i in 1:n
+            l = lvo[i]
+            l == 0 && continue
+            row = kd[i]
+            s = w[i] * dcol[i]
+            r = ko[i]
+            off = (l - 1) * kbo
+            for c in 1:kbo
+                T[row, off + c] += s * Xo[r, c]
             end
         end
         mul!(view(out, ((cidx - 1) * pd + 1):(cidx * pd), :), transpose(Xdd), T)

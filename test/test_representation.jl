@@ -110,6 +110,51 @@
         # Mixed: a 1-D smooth beside a random effect gives two blocks.
         Dm, = _design([GAM.s(:x1; k = 10, bs = :cr), GAM.s(:g; bs = :re)])
         @test length(Dm.blocks) == 2
+
+        # A FACTOR `by=` becomes one ByBlock holding a single shared basis
+        # plus a grid index and a level index — not L replicated blocks, and
+        # not a dense fallback. `Xd` is `m x kb`, so it must be narrower than
+        # the block's `kb*L` columns; that is what distinguishes the compact
+        # form from a replicated one.
+        Dby, Xby = _design([GAM.s(:x1; k = 8, bs = :cr, by = :f)])
+        @test Dby isa GAM.DiscreteDesign
+        @test length(Dby.byblocks) == 1
+        @test isempty(Dby.blocks)
+        bby = Dby.byblocks[1]
+        @test bby.L == length(unique(_rep_df.f))
+        @test size(bby.Xd, 2) == bby.kb
+        @test length(bby.cols) == bby.kb * bby.L
+        @test size(bby.Xd, 1) == bby.m
+        @test bby.m < size(Xby, 1)          # actually reduced
+
+        # Reconstruction: row i is zero except in its own level's kb columns.
+        # Structure alone would pass for a block encoding the wrong matrix.
+        let n = size(Xby, 1), recon = zeros(n, length(bby.cols))
+            for i in 1:n
+                l = bby.lev[i]
+                l == 0 && continue
+                off = (l - 1) * bby.kb
+                for c in 1:bby.kb
+                    recon[i, off + c] = bby.Xd[bby.k[i], c]
+                end
+            end
+            @test maximum(abs.(recon .- Xby[:, bby.cols])) < 1e-12
+        end
+
+        # Mixed with a plain smooth: both engage.
+        Dbp, = _design([GAM.s(:x1; k = 8, bs = :cr, by = :f),
+                        GAM.s(:x2; k = 8, bs = :cr)])
+        @test length(Dbp.byblocks) == 1
+        @test length(Dbp.blocks) == 1
+
+        # Mixed with a tensor: both engage. The tensor uses variables the
+        # by-smooth does not, because sharing a variable makes `setup_gam`
+        # apply side constraints and fall back wholesale — a real property of
+        # the dense path, not a limitation of this representation.
+        Dbt, = _design([GAM.s(:x1; k = 8, bs = :cr, by = :f),
+                        GAM.te(:x2, :sl; k = 4, bs = [:cr, :cr])])
+        @test length(Dbt.byblocks) == 1
+        @test length(Dbt.tblocks) == 1
     end
 
     # ------------------------------------------------------------------
@@ -129,17 +174,15 @@
         Dt2, = _design([GAM.t2(:x1, :x2; k = 5, bs = [:cr, :cr])])
         @test Dt2 isa GAM.DenseDesign
 
-        # A `by=` smooth is skipped; a plain sibling is still taken. Reaching
-        # O(m*k) for factor-`by` needs a block-offset kernel, not the scale
-        # field — see the note in bam_design.jl.
+        # A NUMERIC `by=` is still skipped — it is a per-row multiplier, not a
+        # level replication, so the block-offset kernel does not cover it. The
+        # plain sibling is still taken.
         Db, = _design([GAM.s(:x1; k = 10, bs = :cr),
                        GAM.s(:x2; k = 8, bs = :cr, by = :sl)])
         @test Db isa GAM.DiscreteDesign
         @test length(Db.blocks) == 1
+        @test isempty(Db.byblocks)
         @test Db.blocks[1].label == "s(x1,bs=cr)"
-
-        Dbf, = _design([GAM.s(:x1; k = 8, bs = :cr, by = :f)])
-        @test Dbf isa GAM.DenseDesign
 
         # `ti` itself stays dense; its 1-D marginals are still discretised, so
         # this is a partial fallback and the block count distinguishes it.
