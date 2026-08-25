@@ -451,6 +451,12 @@ column-RMS `col_scales` from the same scoped value.
 function _reduced_smooth(spec::SmoothSpec, t, m_grid::Int, n::Int)
     length(spec.term_vars) == 1 || return nothing
     spec.by === nothing || return nothing
+    # A random effect's `k` is its level count, so rebuilding it on a reduced
+    # grid yields a different (and possibly negative) k -- it used to throw
+    # `ArgumentError: k must be >= 1, got -1`. The compact form for `bs=:re`
+    # exists (`re_marginal_representation`, basis_re.jl) but is not wired into
+    # the design yet, so fall back to dense rather than error.
+    spec.basis isa RandomEffect && return nothing
     v = spec.term_vars[1]
     v in Tables.columnnames(t) || return nothing
     col = Tables.getcolumn(t, v)
@@ -609,6 +615,9 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
         end
         length(spec.term_vars) == 1 || continue
         spec.by === nothing || continue
+        # See `_reduced_smooth`: `bs=:re` keeps its dense block until the
+        # compact level-index form is wired in.
+        spec.basis isa RandomEffect && continue
         v = spec.term_vars[1]
         Tables.columnnames(t) isa Tuple && !(v in Tables.columnnames(t)) && continue
         col = Tables.getcolumn(t, v)
@@ -919,7 +928,8 @@ Used only by the leverage sweep, which is `O(n p²)` for any representation.
 Working a chunk at a time keeps the `n x p` matrix from ever existing.
 """
 function _gather_rows!(H::AbstractMatrix{Float64}, D::DiscreteDesign,
-    start::Int, stop::Int)
+    start::Int, stop::Int,
+    Rbuf::Matrix{Float64} = _tensor_row_scratch(D, stop - start + 1))
     nr = stop - start + 1
     if !isempty(D.dense_cols)
         @inbounds for (c, j) in enumerate(D.dense_cols), i in 1:nr
@@ -938,9 +948,16 @@ function _gather_rows!(H::AbstractMatrix{Float64}, D::DiscreteDesign,
         end
     end
     for tb in D.tblocks
-        _tensor_rows!(H, tb, start, stop)
+        _tensor_rows!(H, tb, start, stop, Rbuf)
     end
     return H
+end
+
+# Scratch for the unconstrained row tensor, sized for the widest tensor block
+# so one buffer serves them all. Zero-sized when there are no tensor blocks.
+function _tensor_row_scratch(D::DiscreteDesign, nr::Int)
+    isempty(D.tblocks) && return Matrix{Float64}(undef, 0, 0)
+    return Matrix{Float64}(undef, nr, maximum(tb.praw for tb in D.tblocks))
 end
 
 function design_finalize(D::DiscreteDesign, w::Vector{Float64},
@@ -956,13 +973,14 @@ function design_finalize(D::DiscreteDesign, w::Vector{Float64},
     hat_diag = zeros(n)
     cs = clamp(chunk_size, 1, max(n, 1))
     H = Matrix{Float64}(undef, cs, p)
+    Rbuf = _tensor_row_scratch(D, cs)
 
     for start in 1:cs:n
         stop = min(start + cs - 1, n)
         nr = stop - start + 1
         Hv = view(H, 1:nr, :)
         fill!(Hv, 0.0)
-        _gather_rows!(Hv, D, start, stop)
+        _gather_rows!(Hv, D, start, stop, Rbuf)
         rdiv!(Hv, U)
         @inbounds for i in 1:nr
             s = 0.0
@@ -1187,11 +1205,27 @@ function _tensor_cross_tensor!(out::Matrix{Float64}, a::TensorBlock,
 end
 
 # Materialise rows start:stop of the CONSTRAINED block, for the leverage sweep.
+#
+# `Rbuf` is caller-owned scratch holding the UNCONSTRAINED row tensor for this
+# chunk; `design_finalize` allocates it once for the whole sweep. It used to be
+# a fresh `zeros(nr, praw)` per chunk, which at n = 2e5 was 196 chunks x 1.8 MB
+# = 349 MiB of garbage for one call.
+#
+# The constraint is then applied by `mul!`, i.e. one BLAS gemm. It used to be a
+# hand-rolled scalar triple loop over (cj, i, c), which is the same arithmetic
+# but ~1.0e10 unvectorised flops at that n and dominated the entire fit: the
+# discrete leverage sweep measured 14.13 s against the dense path's 0.17 s,
+# while the accumulation kernels this milestone was benchmarked on were already
+# 2.9x FASTER than dense. Summation order differs from the old loop, so
+# `hat_diag` (and the `leverage`/`cooksdistance` built from it) can move in the
+# last bits; it is diagnostics-only and feeds no fitted quantity -- `edf_vec`
+# comes from `diag(F)`, not from here.
 function _tensor_rows!(H::AbstractMatrix{Float64}, blk::TensorBlock,
-    start::Int, stop::Int)
+    start::Int, stop::Int, Rbuf::Matrix{Float64})
     nr = stop - start + 1
     d = ndim(blk)
-    R = zeros(nr, blk.praw)
+    R = view(Rbuf, 1:nr, 1:blk.praw)
+    fill!(R, 0.0)
     @inbounds for i in 1:nr
         row = start + i - 1
         R[i, 1] = 1.0
@@ -1209,14 +1243,6 @@ function _tensor_rows!(H::AbstractMatrix{Float64}, blk::TensorBlock,
             width *= pj
         end
     end
-    @inbounds for (cj, j) in enumerate(blk.cols)
-        for i in 1:nr
-            s = 0.0
-            for c in 1:blk.praw
-                s += R[i, c] * blk.Z[c, cj]
-            end
-            H[i, j] = s
-        end
-    end
+    mul!(view(H, 1:nr, blk.cols), R, blk.Z)
     return H
 end
