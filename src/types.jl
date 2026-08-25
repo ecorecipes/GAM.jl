@@ -433,14 +433,21 @@ for a single smooth term.
 
 # Fields
 - `S`: list of penalty matrices for this block
-- `rS`: square root penalty matrices (rS[i] * rS[i]' = λ[i] * S[i])
-- `rank`: penalty rank
+- `rank`: rank of this block's TOTAL penalty `Σⱼ λⱼSⱼ`, not the sum of the
+  individual penalties' ranks. `Mp = p - Σ_blocks rank` is then the penalty
+  null-space dimension, matching mgcv's `G\$Mp <- ncol(Ssp\$Z)` (`R/mgcv.r:1924`),
+  where `Ssp\$Z` is the null space of the Frobenius-normalised total penalty
+  (`totalPenaltySpace`, `R/gam.fit3.r:2673-2683`). mgcv separately keeps a
+  per-penalty rank VECTOR (`object\$rank`), but that is a different quantity —
+  for an adaptive k=40 smooth it is `[8,15,23,30,30,23,15,8]`, summing to 152
+  in a 39-column basis — and it feeds `mini.roots` (`R/mgcv.r:1917`), not `Mp`.
+  GAM.jl's equivalent per-penalty ranks are derived where they are needed, by
+  `_stable_penalty_factor` in `reml.jl`, and match mgcv's vector exactly.
 - `start`: first parameter index in the full coefficient vector
 - `stop`: last parameter index
 """
 struct PenaltyBlock
     S::Vector{Matrix{Float64}}
-    rS::Vector{Matrix{Float64}}
     rank::Int
     start::Int
     stop::Int

@@ -77,21 +77,13 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
             end
         end
 
-        # Square root penalties
-        rS = Matrix{Float64}[]
-        for Si in S_list
-            # Compute matrix square root via eigen decomposition
-            eig = eigen(Symmetric(Si))
-            pos = eig.values .> eps() * maximum(abs.(eig.values))
-            if any(pos)
-                rSi = eig.vectors[:, pos] * Diagonal(sqrt.(eig.values[pos]))
-                push!(rS, rSi)
-            else
-                push!(rS, zeros(k, 0))
-            end
-        end
-
-        block = PenaltyBlock(S_list, rS, block_rank, p_start, p_start + k - 1)
+        # No component square roots are built here. They used to be, at a
+        # tolerance of `eps()*λmax`, but nothing ever read them: the criterion
+        # path derives its own in `_stable_penalty_factor` (reml.jl) at mgcv's
+        # `eps^0.8`, which reproduces mgcv's per-penalty rank vector exactly
+        # (adaptive k=40 m=8: [8,15,23,30,30,23,15,8], matching `object$rank`).
+        # The dead eigen-per-penalty cost 1.6 ms per call on that smooth.
+        block = PenaltyBlock(S_list, block_rank, p_start, p_start + k - 1)
         push!(blocks, block)
 
         # Initial smoothing parameters (log scale) — one per penalty matrix.
