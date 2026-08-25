@@ -140,12 +140,18 @@
         _, X1, _, sm1, _ = GAM.setup_gam(gf1, df)
         @test GAM.bam_design(X1, sm1, df, false) isa GAM.DenseDesign
 
-        # A tensor is not discretised in M1 — and with nothing else to
-        # discretise, the design falls back to dense entirely.
+        # A `te` IS discretised now (M2): it is held as per-marginal bases plus
+        # one index vector each, with the sum-to-zero constraint applied after
+        # accumulation. This assertion previously pinned the opposite, when
+        # tensors were out of scope. See test_discrete_tensor.jl for the
+        # structural precondition and the kernel parity checks.
         gft = GAM.GamFormula(:y, Symbol[], true,
             [GAM.te(:x1, :x2; k = 4, bs = [:cr, :cr])])
         _, Xt, _, smt, _ = GAM.setup_gam(gft, df)
-        @test GAM.bam_design(Xt, smt, df, true) isa GAM.DenseDesign
+        Dt = GAM.bam_design(Xt, smt, df, true)
+        @test Dt isa GAM.DiscreteDesign
+        @test length(Dt.tblocks) == 1
+        @test isempty(Dt.blocks)
 
         # A `by=` smooth is skipped, but a plain 1-D sibling is still taken.
         gfb = GAM.GamFormula(:y, Symbol[], true,

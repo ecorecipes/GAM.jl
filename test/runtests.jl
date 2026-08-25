@@ -1234,6 +1234,15 @@ _spde_csv_ok && @eval include("test_spde_rcall.jl")
 # bam(discrete=true): binning, kernels, dense parity (no R needed)
 @eval include("test_discrete.jl")
 
+# by=/random-effect compact representations (no R needed)
+@eval include("test_by_re_representation.jl")
+
+# PenaltyBlock per-sub-penalty offsets (no R needed)
+@eval include("test_penalty_offsets.jl")
+
+# Discretised tensor smooths (no R needed)
+@eval include("test_discrete_tensor.jl")
+
 # method=:ML criterion parity with mgcv (range-space determinant, Dp/n scale)
 @eval include("test_ml_criterion.jl")
 

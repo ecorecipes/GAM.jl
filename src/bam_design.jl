@@ -229,6 +229,45 @@ function DiscreteBlock(Xd::Matrix{Float64}, k::Vector{Int32},
 end
 
 """
+    TensorBlock
+
+One `te` smooth held as per-marginal bases plus index vectors.
+
+`Z` is the sum-to-zero constraint basis, applied after accumulation. `pb` is
+the number of columns of the row tensor of all marginals *except* the last,
+which is the unit the kernels iterate over (mgcv's `dX`, `discrete.c:301`).
+"""
+struct TensorBlock
+    Xds::Vector{Matrix{Float64}}
+    ks::Vector{Vector{Int32}}
+    Z::Matrix{Float64}
+    cols::UnitRange{Int}
+    pdims::Vector{Int}
+    pb::Int
+    praw::Int
+    exact::Bool
+    label::String
+    dcol_a::Vector{Float64}
+    dcol_b::Vector{Float64}
+    tvec::Vector{Float64}
+    Wraw::Matrix{Float64}
+    braw::Vector{Float64}
+end
+
+function TensorBlock(Xds::Vector{Matrix{Float64}}, ks::Vector{Vector{Int32}},
+    Z::Matrix{Float64}, cols::UnitRange{Int}, exact::Bool, label::String)
+    pdims = [size(Xd, 2) for Xd in Xds]
+    praw = prod(pdims)
+    pb = praw ÷ pdims[end]
+    n = length(ks[1])
+    md = size(Xds[end], 1)
+    return TensorBlock(Xds, ks, Z, cols, pdims, pb, praw, exact, label,
+        zeros(n), zeros(n), zeros(md), zeros(praw, praw), zeros(praw))
+end
+
+ndim(blk::TensorBlock) = length(blk.Xds)
+
+"""
     DiscreteDesign
 
 Model matrix stored as discretised 1-D smooth blocks plus a dense remainder.
@@ -257,15 +296,21 @@ struct DiscreteDesign <: BamDesign
     # its one-O(n)-pass target.
     icpt_only::Bool
     Tcross::Vector{Matrix{Float64}}
+    # `te` smooths, held as per-marginal bases plus one index vector each. The
+    # row tensor is never formed; see the TensorBlock section below.
+    tblocks::Vector{TensorBlock}
 end
 
 function DiscreteDesign(blocks::Vector{DiscreteBlock}, Xdense::Matrix{Float64},
-    dense_cols::Vector{Int}, n::Int, p::Int, icpt::Int)
+    dense_cols::Vector{Int}, n::Int, p::Int, icpt::Int,
+    tblocks::Vector{TensorBlock} = TensorBlock[])
     pd = length(dense_cols)
-    icpt_only = pd == 1 && icpt != 0 && dense_cols[1] == icpt
+    # The intercept-only shortcut is only valid when every non-dense column is
+    # a 1-D block, whose cross-terms fall out of the binning pass.
+    icpt_only = pd == 1 && icpt != 0 && dense_cols[1] == icpt && isempty(tblocks)
     Tcross = [zeros(blk.m, pd) for blk in blocks]
     return DiscreteDesign(blocks, Xdense, dense_cols, n, p, Ref(icpt),
-        zeros(pd), zeros(pd, pd), zeros(pd), icpt_only, Tcross)
+        zeros(pd), zeros(pd, pd), zeros(pd), icpt_only, Tcross, tblocks)
 end
 
 ncols(D::DiscreteDesign) = D.p
@@ -439,6 +484,91 @@ function _reduced_smooth(spec::SmoothSpec, t, m_grid::Int, n::Int)
     return (sm, k, counts)
 end
 
+
+"""
+    _tensor_block(sm, t, m_grid, n, cols) -> TensorBlock | nothing
+
+Build a [`TensorBlock`](@ref) for a `te` smooth, or `nothing` if it does not
+qualify.
+
+Only `te` qualifies: `ti` absorbs a constraint into each marginal and `t2`
+folds a per-marginal reparameterization, so neither has the single post-hoc
+`Z` this representation relies on. Both are detected structurally (a non-empty
+`marginal_Zs`, or a missing overall `constraint`) rather than by basis type, so
+a future construction that changes shape cannot silently slip through.
+"""
+function _tensor_block(sm, t, m_grid::Int, n::Int, cols::UnitRange{Int})
+    cache = sm.predict_cache
+    cache isa TensorPredictCache || return nothing
+    isempty(cache.marginal_Zs) || return nothing       # ti
+    sm.constraint === nothing && return nothing        # no post-hoc Z
+    raws = cache.raw_marginals
+    length(raws) >= 2 || return nothing
+
+    Xds = Matrix{Float64}[]
+    ks = Vector{Int32}[]
+    all_exact = true
+    for rm in raws
+        mspec = rm.spec
+        length(mspec.term_vars) == 1 || return nothing
+        v = mspec.term_vars[1]
+        v in Tables.columnnames(t) || return nothing
+        col = Tables.getcolumn(t, v)
+        eltype(col) <: Real || return nothing
+        # `shuffle = false`: several marginal bases take the unique values as
+        # their knots, and knot ORDER changes the parameterization -- the same
+        # trap that cost the 1-D reduced path a relative 1.97 in the basis.
+        xu, k, exact = _bin_covariate(col, m_grid; shuffle = false)
+        m = length(xu)
+        m < n || return nothing
+        Xd = if exact
+            # Lossless: one representative row per bin reproduces the marginal
+            # bit-for-bit, not merely to basis-evaluation precision.
+            rep = zeros(Int, m)
+            nf = 0
+            @inbounds for i in 1:n
+                j = k[i]
+                if rep[j] == 0
+                    rep[j] = i
+                    nf += 1
+                    nf == m && break
+                end
+            end
+            rm.X[rep, :]
+        else
+            all_exact = false
+            nt = NamedTuple{(v,)}((xu,))
+            r2 = try
+                _build_raw_marginal(mspec, nt, _reduced_knots(mspec, col))
+            catch
+                nothing
+            end
+            (r2 === nothing || size(r2.X) != (m, size(rm.X, 2))) ? nothing :
+                Matrix{Float64}(r2.X)
+        end
+        Xd === nothing && return nothing
+        push!(Xds, Xd)
+        push!(ks, k)
+    end
+
+    praw = prod(size(Xd, 2) for Xd in Xds)
+    Z = _constraint_basis(sm.constraint, praw)
+    size(Z, 1) == praw && size(Z, 2) == length(cols) || return nothing
+
+    blk = TensorBlock(Xds, ks, Z, cols, all_exact, sm.spec.label)
+    # The accumulator walks pb(pb+1)/2 sub-blocks, each an O(n) pass, so cost
+    # grows as pb^2. mgcv pays ~100 s for a single XᵀWX on te(6,6,6,6) at
+    # n = 1e6, where pb = 216. Warn rather than refuse: it is still correct,
+    # and the dense path may be worse on memory.
+    if blk.pb > 50
+        @warn "Discretised tensor $(blk.label) has pb = $(blk.pb) (>50): " *
+              "XᵀWX walks $(blk.pb * (blk.pb + 1) ÷ 2) sub-blocks and cost " *
+              "grows as pb^2. Consider fewer or smaller marginals, or " *
+              "discrete = false for this term." maxlog = 1
+    end
+    return blk
+end
+
 """
     bam_design(X, smooths, data, discrete) -> BamDesign
 
@@ -461,10 +591,22 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
     n, p = size(X)
     t = Tables.columntable(data)
     blocks = DiscreteBlock[]
+    tblocks = TensorBlock[]
     taken = falses(p)
 
     for sm in smooths
         spec = sm.spec
+        if length(spec.term_vars) > 1
+            cols = sm.first_para:sm.last_para
+            if first(cols) >= 1 && last(cols) <= p
+                tb = _tensor_block(sm, t, m_grid, n, cols)
+                if tb !== nothing
+                    push!(tblocks, tb)
+                    taken[cols] .= true
+                end
+            end
+            continue
+        end
         length(spec.term_vars) == 1 || continue
         spec.by === nothing || continue
         v = spec.term_vars[1]
@@ -514,7 +656,7 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
         taken[cols] .= true
     end
 
-    isempty(blocks) && return DenseDesign(X)
+    (isempty(blocks) && isempty(tblocks)) && return DenseDesign(X)
 
     dense_cols = findall(!, taken)
     Xdense = X[:, dense_cols]
@@ -525,7 +667,7 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
             break
         end
     end
-    return DiscreteDesign(blocks, Xdense, dense_cols, n, p, icpt)
+    return DiscreteDesign(blocks, Xdense, dense_cols, n, p, icpt, tblocks)
 end
 
 function mul_eta!(eta::Vector{Float64}, D::DiscreteDesign,
@@ -545,6 +687,12 @@ function mul_eta!(eta::Vector{Float64}, D::DiscreteDesign,
         @inbounds for i in 1:D.n
             eta[i] += work[k[i]]
         end
+    end
+    for tb in D.tblocks
+        # Lift the constrained coefficients back to the raw tensor basis, then
+        # contract through the marginals -- X_cons*b = X_raw*(Z*b).
+        mul!(tb.braw, tb.Z, view(beta, tb.cols))
+        _tensor_eta!(eta, tb, tb.braw)
     end
     return eta
 end
@@ -691,6 +839,61 @@ function _accumulate_discrete!(XtWX::Matrix{Float64},
         end
     end
 
+    # --- tensor blocks -----------------------------------------------------
+    # Accumulate each block UNCONSTRAINED (p_raw x p_raw) and apply Z after, as
+    # mgcv does at `discrete.c:2229-2266`. No Z ever enters the hot loop.
+    for (ti, tb) in enumerate(D.tblocks)
+        Wr = _tensor_diag!(tb.Wraw, tb, w)
+        Bc = transpose(tb.Z) * Wr * tb.Z
+        @inbounds for (jj, cj) in enumerate(tb.cols), (ii, ci) in enumerate(tb.cols)
+            XtWX[ci, cj] = Bc[ii, jj]
+        end
+        if XtWz !== nothing
+            vraw = zeros(tb.praw)
+            wz = similar(w)
+            @inbounds for i in 1:n
+                wz[i] = w[i] * z[i]
+            end
+            _tensor_Xty!(vraw, tb, wz)
+            mul!(view(XtWz, tb.cols), transpose(tb.Z), vraw)
+        end
+
+        # tensor x dense remainder
+        if pd > 0
+            Craw = zeros(tb.praw, pd)
+            _tensor_cross!(Craw, tb, D.Xdense, w)
+            Cc = transpose(tb.Z) * Craw
+            @inbounds for cj in 1:pd, (ii, ci) in enumerate(tb.cols)
+                XtWX[ci, D.dense_cols[cj]] = Cc[ii, cj]
+                XtWX[D.dense_cols[cj], ci] = Cc[ii, cj]
+            end
+        end
+
+        # tensor x 1-D blocks
+        for ob in D.blocks
+            q = size(ob.Xd, 2)
+            Craw = zeros(tb.praw, q)
+            _tensor_cross_block!(Craw, tb, ob, w)
+            Cc = transpose(tb.Z) * Craw
+            @inbounds for (jj, cj) in enumerate(ob.cols), (ii, ci) in enumerate(tb.cols)
+                XtWX[ci, cj] = Cc[ii, jj]
+                XtWX[cj, ci] = Cc[ii, jj]
+            end
+        end
+
+        # tensor x tensor
+        for tj in (ti + 1):length(D.tblocks)
+            ob = D.tblocks[tj]
+            Craw = zeros(tb.praw, ob.praw)
+            _tensor_cross_tensor!(Craw, tb, ob, w)
+            Cc = transpose(tb.Z) * Craw * ob.Z
+            @inbounds for (jj, cj) in enumerate(ob.cols), (ii, ci) in enumerate(tb.cols)
+                XtWX[ci, cj] = Cc[ii, jj]
+                XtWX[cj, ci] = Cc[ii, jj]
+            end
+        end
+    end
+
     return nothing
 end
 
@@ -734,6 +937,9 @@ function _gather_rows!(H::AbstractMatrix{Float64}, D::DiscreteDesign,
             end
         end
     end
+    for tb in D.tblocks
+        _tensor_rows!(H, tb, start, stop)
+    end
     return H
 end
 
@@ -768,4 +974,249 @@ function design_finalize(D::DiscreteDesign, w::Vector{Float64},
     end
 
     return edf_vec, hat_diag, Matrix(U)
+end
+
+# ─── Tensor blocks (M2) ──────────────────────────────────────────────────
+#
+# A `te` smooth is stored as its per-marginal bases at the unique values of
+# each covariate, plus one index vector per marginal. The row tensor is never
+# formed: row `i` of the unconstrained block is
+# `kron(Xd_1[k_1[i],:], ..., Xd_d[k_d[i],:])`, and every kernel works from the
+# marginals directly.
+#
+# This is sound because `te` in GAM.jl applies a SINGLE overall sum-to-zero
+# constraint to the raw row tensor (`basis_tensor.jl:446`) rather than
+# reparameterising each marginal. Verified: `X_cons == X_raw * Z` exactly (max
+# |Δ| = 0.0) for 2-D and 3-D `te`, with `marginal_Zs` empty. So the constraint
+# can be applied AFTER accumulation, as mgcv does at `discrete.c:2229-2266`:
+# accumulate the unconstrained `p_raw × p_raw` block, then form `Zᵀ · W · Z`.
+#
+# Note this is why the plan's falsification check does not fire. The identity
+# `(A·Ra) ⊙ (B·Rb) == (A ⊙ B)·(Ra ⊗ Rb)` is an unconditional algebraic fact
+# (verified to 1.8e-15), but `te` needs no per-marginal reparameterisation at
+# all -- mgcv's `np=TRUE` is deliberately not applied here
+# (`basis_tensor.jl:295-299`). It is `t2` that folds per-marginal reparams via
+# that identity, and `t2` is not discretised.
+
+
+"""
+    _tensor_dcol!(out, blk, cidx)
+
+mgcv's `tensorXj` (`discrete.c:301-327`): one column of the row tensor of all
+marginals but the last, in `O(n·d)` and without forming `dX`.
+
+`_row_kronecker` varies the LAST marginal fastest, so `cidx` decodes with
+marginal `d-1` fastest among the remaining ones.
+"""
+function _tensor_dcol!(out::Vector{Float64}, blk::TensorBlock, cidx::Int)
+    d = ndim(blk)
+    rem = cidx - 1
+    fill!(out, 1.0)
+    @inbounds for j in (d - 1):-1:1
+        pj = blk.pdims[j]
+        aj = (rem % pj) + 1
+        rem = rem ÷ pj
+        Xd = blk.Xds[j]
+        k = blk.ks[j]
+        col = view(Xd, :, aj)
+        for i in eachindex(out)
+            out[i] *= col[k[i]]
+        end
+    end
+    return out
+end
+
+# η += X_raw * b_raw, mgcv's `tensorXb` (`discrete.c:396-444`).
+# C = Xd_d * reshape(b_raw, p_d, pb) is (m_d × pb); then one O(n) pass per
+# column of dX. O(n·pb·d + m_d·p_d·pb) against the dense O(n·p_raw).
+function _tensor_eta!(eta::Vector{Float64}, blk::TensorBlock,
+    braw::Vector{Float64})
+    pd = blk.pdims[end]
+    C = blk.Xds[end] * reshape(braw, pd, blk.pb)
+    kd = blk.ks[end]
+    dcol = blk.dcol_a
+    @inbounds for cidx in 1:blk.pb
+        _tensor_dcol!(dcol, blk, cidx)
+        Ccol = view(C, :, cidx)
+        for i in eachindex(eta)
+            eta[i] += dcol[i] * Ccol[kd[i]]
+        end
+    end
+    return eta
+end
+
+# out_raw = X_rawᵀ v, mgcv's `tensorXty` (`discrete.c:346-373`).
+function _tensor_Xty!(out::Vector{Float64}, blk::TensorBlock,
+    v::Vector{Float64})
+    pd = blk.pdims[end]
+    Xdd = blk.Xds[end]
+    kd = blk.ks[end]
+    dcol = blk.dcol_a
+    tv = blk.tvec
+    @inbounds for cidx in 1:blk.pb
+        _tensor_dcol!(dcol, blk, cidx)
+        fill!(tv, 0.0)
+        for i in eachindex(v)
+            tv[kd[i]] += v[i] * dcol[i]
+        end
+        mul!(view(out, ((cidx - 1) * pd + 1):(cidx * pd)), transpose(Xdd), tv)
+    end
+    return out
+end
+
+# Unconstrained X_rawᵀ W X_raw, via mgcv's diagonal shortcut
+# (`discrete.c:1742-1792`): for each (cidx, cidx') pair accumulate
+# wb[l] = Σ_{i: k_d[i]=l} w_i·dX[i,cidx]·dX[i,cidx'] in one O(n) pass, then the
+# sub-block is Xd_dᵀ diag(wb) Xd_d.
+function _tensor_diag!(W::Matrix{Float64}, blk::TensorBlock, w::Vector{Float64})
+    fill!(W, 0.0)
+    pd = blk.pdims[end]
+    Xdd = blk.Xds[end]
+    kd = blk.ks[end]
+    da, db = blk.dcol_a, blk.dcol_b
+    tv = blk.tvec
+    n = length(w)
+    @inbounds for ca in 1:blk.pb
+        _tensor_dcol!(da, blk, ca)
+        for cb in ca:blk.pb
+            if cb == ca
+                copyto!(db, da)
+            else
+                _tensor_dcol!(db, blk, cb)
+            end
+            fill!(tv, 0.0)
+            for i in 1:n
+                tv[kd[i]] += w[i] * da[i] * db[i]
+            end
+            sub = transpose(Xdd) * (tv .* Xdd)
+            ra = ((ca - 1) * pd + 1):(ca * pd)
+            rb = ((cb - 1) * pd + 1):(cb * pd)
+            for (jj, cj) in enumerate(rb), (ii, ci) in enumerate(ra)
+                W[ci, cj] = sub[ii, jj]
+                ca == cb || (W[cj, ci] = sub[ii, jj])
+            end
+        end
+    end
+    return W
+end
+
+# Unconstrained X_rawᵀ W M for an arbitrary n-row `M` (the dense remainder, or
+# another block's rows). O(pb·n·q).
+function _tensor_cross!(out::Matrix{Float64}, blk::TensorBlock,
+    M::AbstractMatrix{Float64}, w::Vector{Float64})
+    pd = blk.pdims[end]
+    q = size(M, 2)
+    Xdd = blk.Xds[end]
+    kd = blk.ks[end]
+    dcol = blk.dcol_a
+    md = size(Xdd, 1)
+    T = zeros(md, q)
+    n = length(w)
+    @inbounds for cidx in 1:blk.pb
+        _tensor_dcol!(dcol, blk, cidx)
+        fill!(T, 0.0)
+        for i in 1:n
+            l = kd[i]
+            s = w[i] * dcol[i]
+            for c in 1:q
+                T[l, c] += s * M[i, c]
+            end
+        end
+        mul!(view(out, ((cidx - 1) * pd + 1):(cidx * pd), :), transpose(Xdd), T)
+    end
+    return out
+end
+
+
+# X_a_rawᵀ W X_b for a 1-D discrete block `b`, gathering `b`'s rows on the fly.
+function _tensor_cross_block!(out::Matrix{Float64}, blk::TensorBlock,
+    other::DiscreteBlock, w::Vector{Float64})
+    pd = blk.pdims[end]
+    Xdd = blk.Xds[end]
+    kd = blk.ks[end]
+    Xo, ko = other.Xd, other.k
+    q = size(Xo, 2)
+    md = size(Xdd, 1)
+    T = zeros(md, q)
+    dcol = blk.dcol_a
+    n = length(w)
+    @inbounds for cidx in 1:blk.pb
+        _tensor_dcol!(dcol, blk, cidx)
+        fill!(T, 0.0)
+        for i in 1:n
+            l = kd[i]
+            s = w[i] * dcol[i]
+            r = ko[i]
+            for c in 1:q
+                T[l, c] += s * Xo[r, c]
+            end
+        end
+        mul!(view(out, ((cidx - 1) * pd + 1):(cidx * pd), :), transpose(Xdd), T)
+    end
+    return out
+end
+
+# X_a_rawᵀ W X_b_raw for two tensor blocks, via mgcv's cross-weight table
+# (`discrete.c:1801`) on the last marginals of each.
+function _tensor_cross_tensor!(out::Matrix{Float64}, a::TensorBlock,
+    b::TensorBlock, w::Vector{Float64})
+    pda, pdb = a.pdims[end], b.pdims[end]
+    Xa, Xb = a.Xds[end], b.Xds[end]
+    ka, kb = a.ks[end], b.ks[end]
+    ma, mb = size(Xa, 1), size(Xb, 1)
+    Wt = zeros(ma, mb)
+    da, db = a.dcol_a, b.dcol_a
+    n = length(w)
+    @inbounds for ca in 1:a.pb
+        _tensor_dcol!(da, a, ca)
+        for cb in 1:b.pb
+            _tensor_dcol!(db, b, cb)
+            fill!(Wt, 0.0)
+            for i in 1:n
+                Wt[ka[i], kb[i]] += w[i] * da[i] * db[i]
+            end
+            sub = transpose(Xa) * (Wt * Xb)
+            ra = ((ca - 1) * pda + 1):(ca * pda)
+            rb = ((cb - 1) * pdb + 1):(cb * pdb)
+            for (jj, cj) in enumerate(rb), (ii, ci) in enumerate(ra)
+                out[ci, cj] = sub[ii, jj]
+            end
+        end
+    end
+    return out
+end
+
+# Materialise rows start:stop of the CONSTRAINED block, for the leverage sweep.
+function _tensor_rows!(H::AbstractMatrix{Float64}, blk::TensorBlock,
+    start::Int, stop::Int)
+    nr = stop - start + 1
+    d = ndim(blk)
+    R = zeros(nr, blk.praw)
+    @inbounds for i in 1:nr
+        row = start + i - 1
+        R[i, 1] = 1.0
+        width = 1
+        for j in 1:d
+            Xd = blk.Xds[j]
+            r = blk.ks[j][row]
+            pj = blk.pdims[j]
+            for c in width:-1:1
+                v = R[i, c]
+                for a in pj:-1:1
+                    R[i, (c - 1) * pj + a] = v * Xd[r, a]
+                end
+            end
+            width *= pj
+        end
+    end
+    @inbounds for (cj, j) in enumerate(blk.cols)
+        for i in 1:nr
+            s = 0.0
+            for c in 1:blk.praw
+                s += R[i, c] * blk.Z[c, cj]
+            end
+            H[i, j] = s
+        end
+    end
+    return H
 end
