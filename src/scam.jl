@@ -338,7 +338,26 @@ function scam_pirls(
         dev_old = dev_new
         prev_valid = valid_new
 
-        if dev_change < control.epsilon || (coef_change < control.epsilon * 10.0)
+        # `pirls` guards this criterion with `n_halvings <= 1` (see
+        # src/pirls.jl). That guard is deliberately NOT used here, and the
+        # reason is measured rather than assumed: halving is pervasive and
+        # legitimate in SCAM, because the exponentiated-coefficient transform
+        # makes the raw Newton step routinely overshoot. Instrumenting the SCAM
+        # suite found 417 of 598 convergence declarations came after 2 or more
+        # halvings (61 at 16, 25 at 18), alongside 2968 halved iterations that
+        # did not converge. Requiring a near-full step there does not sharpen
+        # convergence, it prevents it: on a 38-fit control sweep it flipped 6
+        # fits to `converged = false` and drove one to `edf = NaN`.
+        #
+        # What IS wrong is treating an outright step FAILURE as convergence.
+        # When `pirls_halve!` exhausts all 25 halvings it returns
+        # `step_ok = false`, and the branch above then resets
+        # `beta_new = beta` and falls through WITHOUT breaking -- so
+        # `dev_change` is exactly 0 and the old code reported success for a
+        # step that had failed completely. Requiring `step_ok` closes that hole
+        # while leaving legitimately damped steps alone.
+        if (dev_change < control.epsilon || (coef_change < control.epsilon * 10.0)) &&
+           step_ok
             converged = true
             break
         end

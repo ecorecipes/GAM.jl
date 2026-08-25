@@ -113,7 +113,7 @@ function PirlsStepControl(; threshold = _pirls_gamfit3_threshold,
 end
 
 """
-    pirls_finalize(X, w, XtWX, A_chol; chunk_size=10_000)
+    pirls_finalize(X, w, XtWX, A_chol; chunk_size=10_000, compute_hat_diag=true)
         -> (edf_vec, hat_diag, R)
 
 Final effective degrees of freedom, hat diagonal and R factor, shared by the
@@ -137,13 +137,21 @@ full n×p product, while allocating only one `chunk_size`×p buffer instead of
 two full n×p temporaries.
 """
 function pirls_finalize(X::AbstractMatrix{Float64}, w::Vector{Float64},
-    XtWX::Matrix{Float64}, A_chol::Cholesky; chunk_size::Int = 1024)
+    XtWX::Matrix{Float64}, A_chol::Cholesky; chunk_size::Int = 1024,
+    compute_hat_diag::Bool = true)
 
     n, p = size(X)
     F = A_chol \ XtWX
     edf_vec = diag(F)
 
     U = A_chol.U
+    # The leverage sweep is O(n·p²) — the whole cost of this function — while
+    # `edf_vec` above is O(p³). Callers that only need the EDF (the inner
+    # P-IRLS solves of an outer smoothing-parameter loop, which never read
+    # `hat_diag`) can skip it; `hat_diag` then comes back empty, as it already
+    # does on `bam`'s fast Gaussian path.
+    compute_hat_diag || return edf_vec, Float64[], Matrix(U)
+
     hat_diag = zeros(n)
     cs = clamp(chunk_size, 1, max(n, 1))
     H = Matrix{Float64}(undef, cs, p)
@@ -406,7 +414,7 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
             return (dev_new + dot(b, penalty_buf), ok)
         end
 
-        pdev_new, valid_new, step_ok, _ =
+        pdev_new, valid_new, step_ok, n_halvings =
             pirls_halve!(beta_new, beta_old, recompute!, step_spec,
                 pdev_old, prev_valid)
         dev_new = _deviance(family, y, mu_new, weights)
@@ -438,7 +446,25 @@ function pirls(X::Matrix{Float64}, y::Vector{Float64},
         pdev_old = pdev_new
         prev_valid = valid_new
 
-        if crit < control.epsilon
+        # A step rescued by heavy halving says the SEARCH DIRECTION was poor,
+        # not that we are at an optimum — so the deviance criterion above is
+        # not evidence of convergence there. Requiring a near-full step closes
+        # a false-convergence hole: for InverseGaussian + LogLink at high
+        # dispersion the Fisher direction is bad enough that halving crushed
+        # the step to 2^-23 of its length, |Δpdev| fell to 3.8e-5 against a
+        # 6.4e-5 acceptance threshold, and `crit` hit 8.8e-8 < epsilon on
+        # ITERATION 1 — declaring convergence with the penalized score still
+        # at 195.5 and the deviance at 427.73 against mgcv's 299.64.
+        #
+        # mgcv needs no such guard because for non-canonical links it steps
+        # with full Newton weights (`w = wf*alpha`, `z = eta + (y-mu)/(g'*alpha)`,
+        # R/gam.fit3.r:504-513), which rarely halves — it reaches this fit in
+        # 2 iterations. We use Fisher weights, which share the same fixed
+        # point (`w*(z-eta)` is identical either way, so only the Hessian
+        # differs) but approach it more slowly. Ten iterations get there.
+        #
+        # Healthy fits accept at zero halvings, so this is inert for them.
+        if crit < control.epsilon && n_halvings <= 1
             converged = true
             break
         end
