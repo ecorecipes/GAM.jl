@@ -156,10 +156,49 @@ function _constraint_basis(C::Union{Matrix{Float64}, Nothing}, p::Int)
 end
 
 """
-    absorb_constraints!(X, S; constraint=:sum_to_zero)
+    _ROW_WEIGHTS
+
+Row multiplicities for the smooth currently being constructed, or `nothing`.
+
+`bam(...; discrete=true)` builds a smooth at the *unique* covariate values
+rather than at all `n` rows, which makes the basis matrix `m × k` instead of
+`n × k`. Every quantity `absorb_constraints!` computes is invariant to row
+multiplicity except the sum-to-zero constraint `C = colSums(X)`, so supplying
+the per-bin counts here reproduces the full-data constraint exactly (see the
+`row_weights` keyword below).
+
+This is a scoped value rather than an argument because the per-basis
+`_smooth_construct` methods sit between the caller that knows the counts and
+`absorb_constraints!`, and threading a keyword through all of them would touch
+every `basis_*.jl` file for a parameter only one caller ever sets. Prefer the
+explicit `row_weights` keyword where the call site can pass it directly.
+"""
+const _ROW_WEIGHTS = ScopedValue{Union{Nothing, Vector{Float64}}}(nothing)
+
+"""
+    with_row_weights(f, w::Union{Nothing, Vector{Float64}})
+
+Run `f()` with `w` as the ambient row multiplicities for constraint
+absorption. `w === nothing` restores full-data behaviour.
+"""
+with_row_weights(f, w::Union{Nothing, Vector{Float64}}) =
+    with(f, _ROW_WEIGHTS => w)
+
+"""
+    absorb_constraints!(X, S; constraint=:sum_to_zero, row_weights=nothing)
 
 Apply identifiability constraint to smooth basis matrix and penalty.
 Default is sum-to-zero: the smooth sums to zero over the observed data.
+
+`row_weights`, when given, is a per-row multiplicity vector: `X` is then the
+basis at `length(row_weights)` distinct covariate values and `row_weights[b]`
+counts how many observations fall in bin `b`. The constraint becomes
+`C = Σ_b count_b · X[b, :]`, which reproduces the full-data column sums — the
+only multiplicity-dependent quantity in this function. The penalty rescaling
+above uses `opnorm(X, Inf)`, a maximum over rows, and is therefore already
+invariant. Defaults to the ambient [`_ROW_WEIGHTS`](@ref) scoped value, which
+is `nothing` outside a `with_row_weights` block, so ordinary construction is
+unaffected.
 
 Returns `(X_new, S_new, C, nothing)` where:
 - `X_new`: constrained model matrix (n × (k-1))
@@ -170,8 +209,14 @@ Returns `(X_new, S_new, C, nothing)` where:
 """
 function absorb_constraints!(X::Matrix{Float64}, S::Vector{Matrix{Float64}};
     constraint::Symbol = :sum_to_zero,
-    scale_penalty::Bool = true)
+    scale_penalty::Bool = true,
+    row_weights::Union{Nothing, Vector{Float64}} = _ROW_WEIGHTS[])
     n, k = size(X)
+    if row_weights !== nothing && length(row_weights) != n
+        throw(DimensionMismatch(
+            "row_weights has $(length(row_weights)) entries but the basis has " *
+            "$n rows"))
+    end
 
     # mgcv-style penalty rescaling (smoothCon, lines 3879-3886 of smooth.r).
     # Applied BEFORE constraint absorption, using the pre-absorption X and S.
@@ -188,8 +233,11 @@ function absorb_constraints!(X::Matrix{Float64}, S::Vector{Matrix{Float64}};
     end
 
     if constraint == :sum_to_zero
-        # R's smoothCon uses C = colSums(X) (not divided by n)
-        C = sum(X; dims = 1)  # 1 × k
+        # R's smoothCon uses C = colSums(X) (not divided by n).
+        # Under row multiplicities, Σ_b count_b · X[b, :] is that same sum
+        # over the expanded data (verified to 5.6e-16 relative).
+        C = row_weights === nothing ? sum(X; dims = 1) :
+            reshape(row_weights' * X, 1, :)  # 1 × k
     else
         throw(ArgumentError("Unknown constraint type: $constraint"))
     end

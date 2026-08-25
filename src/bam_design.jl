@@ -368,6 +368,78 @@ function _lcg_permutation(n::Int, seed::UInt64)
 end
 
 """
+    _reduced_knots(spec, col) -> Union{Vector{Float64}, Nothing}
+
+Knots for reduced construction, taken from the FULL covariate `col` rather
+than from the grid — otherwise the basis itself changes and every parity
+result against the dense path is void.
+
+`nothing` is returned where automatic placement is already exact on the grid,
+and passing knots back would be wrong:
+
+  - `ThinPlateSpline` selects the unique covariate values (capped at
+    `max_knots`), and on the reduced grid those *are* the unique values, so
+    the automatic branch reproduces the full knot vector elementwise.
+  - `PSpline`/`CyclicPSpline`/`BSplineBasis` store a *padded* B-spline knot
+    vector which re-pads if supplied back (16 → 22 knots, 19 → 17 columns).
+    They place knots from the covariate range alone, which the grid spans.
+"""
+_reduced_knots(spec::SmoothSpec{ThinPlateSpline}, col) = nothing
+_reduced_knots(spec::SmoothSpec{PSpline}, col) = nothing
+_reduced_knots(spec::SmoothSpec{CyclicPSpline}, col) = nothing
+_reduced_knots(spec::SmoothSpec{BSplineBasis}, col) = nothing
+_reduced_knots(spec::SmoothSpec, col) = place_knots(col, spec.k)
+
+"""
+    _reduced_smooth(spec, t, m_grid, n) -> (sm, k, counts) | nothing
+
+Construct `spec` at the `m` unique covariate values instead of all `n` rows,
+so the `n × p_b` block is never formed. Returns `nothing` when the smooth does
+not qualify, leaving the caller to construct it densely.
+
+The count vector is supplied as `row_weights`, which is what makes this
+faithful rather than approximate: the sum-to-zero constraint `C = colSums(X)`
+is multiplicity-dependent, so `Σ_b count_b · Xd[b,:]` reproduces the full-data
+column sums. TPRS additionally weights its mean-centring `shift` and its
+column-RMS `col_scales` from the same scoped value.
+"""
+function _reduced_smooth(spec::SmoothSpec, t, m_grid::Int, n::Int)
+    length(spec.term_vars) == 1 || return nothing
+    spec.by === nothing || return nothing
+    v = spec.term_vars[1]
+    v in Tables.columnnames(t) || return nothing
+    col = Tables.getcolumn(t, v)
+    eltype(col) <: Real || return nothing
+
+    # `shuffle = false` is required here, unlike in `bam_design`. The shuffle
+    # is inert when the basis is reconstructed as `Xd[k, :]`, but TPRS takes
+    # the unique covariate values AS its knots, and knot *order* changes the
+    # parameterization: with the shuffle on, the knot sets match the dense path
+    # exactly (setdiff 0/0) while the basis differs by a relative 1.97.
+    xu, k, _ = _bin_covariate(col, m_grid; shuffle = false)
+    m = length(xu)
+    # Reducing buys nothing once the grid is as large as the sample.
+    m < n || return nothing
+
+    counts = zeros(Float64, m)
+    @inbounds for i in 1:n
+        counts[k[i]] += 1.0
+    end
+
+    knots = _reduced_knots(spec, col)
+    nt = NamedTuple{(v,)}((xu,))
+    sm = try
+        with_row_weights(counts) do
+            smooth_construct(spec, nt, knots)
+        end
+    catch
+        return nothing
+    end
+    size(sm.X, 1) == m || return nothing
+    return (sm, k, counts)
+end
+
+"""
     bam_design(X, smooths, data, discrete) -> BamDesign
 
 Build the design for a `bam` fit, discretising where `discrete` allows.

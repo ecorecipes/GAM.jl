@@ -208,4 +208,86 @@
         @test d.unique_values[:x] == xu
         @test d.indices[:x] == Int.(k)
     end
+
+    # ------------------------------------------------------------------
+    # Reduced construction: build the smooth at the m unique covariate
+    # values instead of all n rows. This is a MEMORY path — it exists to
+    # avoid the construction transient, which for thin-plate at
+    # max_knots = 2000 is an n x 2000 dense matrix and dominates peak RSS
+    # (measured 4113 MB peak against 167 MB retained at n = 1e5).
+    # ------------------------------------------------------------------
+    @testset "reduced construction reproduces the dense basis" begin
+        # Replicate an exact grid so binning is lossless: any discrepancy is
+        # then the construction, not the approximation.
+        m, rep = 200, 25
+        grid = collect(range(0.0, 1.0; length = m))
+        x = repeat(grid, inner = rep)
+        rng_r = StableRNG(5)
+        df = DataFrame(x = x, y = sin.(2π .* x) .+ 0.3 .* randn(rng_r, m * rep))
+
+        for bs in (:tp, :cr, :ps, :bs, :cc)
+            gf = GAM.GamFormula(:y, Symbol[], true,
+                GAM.SmoothSpec[GAM.s(:x; k = 12, bs = bs)])
+            _, Xd, _, smd, _ = GAM.setup_gam(gf, df)
+            _, Xr, _, smr, _ = GAM.setup_gam_discrete(gf, df, 1000)
+
+            # Knots must come from the FULL covariate. Compared numerically
+            # rather than with `==`: the mean-centring shift is subtracted
+            # and re-added, so a minority of entries differ by one ulp
+            # (measured max|Δ| 5.6e-17, 110/120 bitwise equal).
+            @test length(smd[1].knots) == length(smr[1].knots)
+            @test maximum(abs, smd[1].knots .- smr[1].knots) < 1e-14
+
+            @test size(Xr) == size(Xd)
+            @test maximum(abs, Xd .- Xr) / maximum(abs, Xd) < 1e-11
+            @test maximum(abs, smd[1].S[1] .- smr[1].S[1]) /
+                  maximum(abs, smd[1].S[1]) < 1e-11
+            # sm.X is expanded back to n rows: ConstructedSmooth.X and
+            # GamModel.X are concretely-typed dense n-row matrices.
+            @test size(smr[1].X, 1) == m * rep
+        end
+    end
+
+    @testset "reduced construction must not shuffle the grid" begin
+        # `_bin_covariate` permutes the unique values by default, as mgcv
+        # does. That is inert when the basis is rebuilt as `Xd[k, :]`, but
+        # TPRS takes the unique values AS its knots, and knot ORDER changes
+        # the parameterization: with the shuffle on, the knot SETS still
+        # match the dense path exactly while the basis differs by a relative
+        # 1.97. This pins the un-shuffled call in `_reduced_smooth`.
+        x = repeat(collect(range(0.0, 1.0; length = 120)), inner = 10)
+        t = (x = x,)
+        spec = GAM.s(:x; k = 10, bs = :tp)
+        r = GAM._reduced_smooth(spec, t, 1000, length(x))
+        @test r !== nothing
+        sm_red, _, counts = r
+        @test issorted(sm_red.knots)
+        @test sum(counts) == length(x)
+
+        sm_full = GAM.smooth_construct(spec, t)
+        @test length(sm_full.knots) == length(sm_red.knots)
+        @test maximum(abs, sm_full.knots .- sm_red.knots) < 1e-14
+    end
+
+    @testset "side constraints fall back to dense construction" begin
+        # Smooths sharing a covariate trigger `side_constrain!`, which needs
+        # the n-row blocks, so reduced construction must not be attempted.
+        shared = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x; k = 8), GAM.s(:x, :z; k = 16)])
+        @test GAM._smooths_share_variables(shared.smooth_specs)
+
+        ns = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x; k = 8), GAM.s(:z; k = 8)])
+        @test !GAM._smooths_share_variables(ns.smooth_specs)
+
+        rng_s = StableRNG(21)
+        n = 3000
+        df = DataFrame(x = rand(rng_s, n), z = rand(rng_s, n))
+        df.y = sin.(2π .* df.x) .+ df.z .^ 2 .+ 0.3 .* randn(rng_s, n)
+        # Falls back for construction, still fits, and matches the dense
+        # construction path exactly (the design layer may still discretise).
+        _, Xf, _, _, _ = GAM.setup_gam_discrete(shared, df, 1000)
+        _, Xd, _, _, _ = GAM.setup_gam(shared, df)
+        @test Xf == Xd
+    end
 end

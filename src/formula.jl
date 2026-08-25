@@ -661,6 +661,98 @@ function setup_gam(gf::GamFormula, data;
     return y, X_full, X_para, smooths, n_parametric
 end
 
+"""
+    _smooths_share_variables(specs) -> Bool
+
+True when two smooths share a covariate, which is exactly when
+`side_constrain!` (mgcv's `gam.side`) removes columns. That operates on the
+`n`-row blocks, so reduced construction cannot support it and the caller must
+fall back to dense.
+"""
+function _smooths_share_variables(specs)
+    seen = Set{Symbol}()
+    for spec in specs, v in spec.term_vars
+        v in seen && return true
+        push!(seen, v)
+    end
+    return false
+end
+
+"""
+    setup_gam_discrete(gf, data, m_grid; family) -> (y, X, X_para, smooths, n_parametric)
+
+Same contract as [`setup_gam`](@ref), but 1-D smooths are constructed at the
+`m` unique covariate values and then scattered to `n` rows, rather than
+evaluated at all `n` rows directly.
+
+This exists for memory, not speed. Measured at n = 10⁵ with 4 × `s(k=20)`, a
+thin-plate fit peaks at 4113 MB while retaining only 167 MB — roughly 3950 MB
+is a construction transient, because TPRS with `max_knots = 2000` forms an
+`n × 2000` dense matrix. Building at the grid makes that `m × 2000`.
+
+The returned objects are indistinguishable from `setup_gam`'s: `sm.X` and the
+model matrix both have `n` rows, since `ConstructedSmooth.X` and `GamModel.X`
+are concretely-typed dense matrices. Only the transient is avoided.
+
+Falls back to `setup_gam` wholesale when smooths share a covariate, since side
+constraints need the `n`-row blocks.
+"""
+function setup_gam_discrete(gf::GamFormula, data, m_grid::Int;
+    family::UnivariateDistribution = Normal())
+
+    _smooths_share_variables(gf.smooth_specs) &&
+        return setup_gam(gf, data; family = family)
+
+    t = Tables.columntable(data)
+    y = Float64.(Tables.getcolumn(t, gf.response))
+    n = length(y)
+    X_para, _ = _build_parametric_matrix(gf, t)
+    n_parametric = size(X_para, 2)
+
+    smooths = ConstructedSmooth[]
+    idx = Vector{Union{Nothing, Vector{Int32}}}()
+    for spec in gf.smooth_specs
+        r = _reduced_smooth(spec, t, m_grid, n)
+        if r === nothing
+            push!(smooths, smooth_construct(spec, t))
+            push!(idx, nothing)
+        else
+            sm, k, _ = r
+            push!(smooths, sm)
+            push!(idx, k)
+        end
+    end
+
+    # Fill the model matrix column-block by column-block instead of `hcat`,
+    # which would hold a second full copy while concatenating.
+    p = n_parametric + sum(size(sm.X, 2) for sm in smooths; init = 0)
+    X_full = Matrix{Float64}(undef, n, p)
+    @inbounds X_full[:, 1:n_parametric] .= X_para
+    c = n_parametric
+    for (sm, k) in zip(smooths, idx)
+        pb = size(sm.X, 2)
+        cols = (c + 1):(c + pb)
+        if k === nothing
+            @inbounds X_full[:, cols] .= sm.X
+        else
+            Xd = sm.X
+            @inbounds for j in 1:pb
+                col = view(X_full, :, c + j)
+                for i in 1:n
+                    col[i] = Xd[k[i], j]
+                end
+            end
+            # `ConstructedSmooth.X` is `Matrix{Float64}` and downstream code
+            # (side constraints, gratia, concurvity) assumes `n` rows.
+            sm.X = X_full[:, cols]
+        end
+        c += pb
+    end
+
+    _assign_smooth_indices!(smooths, n_parametric)
+    return y, X_full, X_para, smooths, n_parametric
+end
+
 # Legacy: setup_gam from FormulaTerm (for @formula without smooth terms)
 function setup_gam(f::FormulaTerm, data;
     family::UnivariateDistribution = Normal(),
