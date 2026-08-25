@@ -56,10 +56,12 @@ basis, prefer `gam()`.
 
 ::: {.callout-note}
 mgcv's `bam(..., discrete = TRUE)` additionally bins each covariate and works
-on unique values only, which changes the *asymptotic* cost. GAM.jl's `bam()`
-does **not** implement discretization — `bam_control(discrete = ...)` is
-deprecated and warns. So the comparison below is against mgcv's
-`discrete = FALSE` behaviour.
+on unique values only, which changes the *asymptotic* cost. GAM.jl now
+implements this too, as `bam(...; discrete = true)` — see
+[Discretization](#discretization) below. Note it is a keyword on `bam` itself;
+`bam_control(discrete = ...)` remains deprecated and warns. **The `gam`/`bam`
+comparison in this section uses the default `discrete = false`** on both
+sides, so it isolates chunked accumulation from discretization.
 :::
 
 ### The data
@@ -264,6 +266,68 @@ for cs in (1_000, 10_000, 20_000)
         "  EDF = ", round(m.edf_total; digits = 4))
 end
 ```
+
+### Discretization {#discretization}
+
+`bam(...; discrete = true)` mirrors `mgcv::bam(discrete = TRUE)`: each
+supported smooth is stored as its basis at the **unique** covariate values
+plus an integer index, rather than an `n x p` block. 1-D smooths, `te` tensors
+and `bs=:re` random effects are discretized; `by=` terms and `ti`/`t2` stay
+dense and fall back silently.
+
+It is an *approximation*, and the only source of error is covariate rounding —
+values are kept exactly when there are at most `discrete` of them (default
+1000), otherwise they are rounded onto an equally spaced grid. So the question
+to ask is not whether the fit changes, but by how much:
+
+```{julia}
+m_dense = bam(fm, df)
+m_disc  = bam(fm, df; discrete = true)
+
+rng_fit = maximum(fitted(m_dense)) - minimum(fitted(m_dense))
+println("EDF          dense ", round(m_dense.edf_total; digits = 4),
+        "   discrete ", round(m_disc.edf_total; digits = 4))
+println("rel EDF diff       ", round(abs(m_disc.edf_total - m_dense.edf_total) /
+                                     m_dense.edf_total; sigdigits = 3))
+println("max |fit| diff / fitted range  ",
+        round(maximum(abs.(fitted(m_disc) .- fitted(m_dense))) / rng_fit; sigdigits = 3))
+```
+
+Fitted values and EDF track the dense fit closely here. Smoothing parameters
+are the quantity most sensitive to binning, so they are worth inspecting
+separately — on this data they happen to agree too, but that is a property of
+this fit rather than a guarantee, and elsewhere they have been observed to
+move by more than a factor of ten while fitted values still agreed to ~1e-3.
+Check a port on fitted values and EDF, not on `sp` elementwise:
+
+```{julia}
+println("log sp dense    ", round.(m_dense.sp; digits = 3))
+println("log sp discrete ", round.(m_disc.sp; digits = 3))
+println("max |Δ log sp|  ", round(maximum(abs.(m_disc.sp .- m_dense.sp)); digits = 3))
+```
+
+Whether it is *faster* is data- and family-dependent, and the gain is
+Amdahl-bounded rather than proportional to the kernel speedup. A Gaussian fit
+accumulates `X'WX` **once**, so binning is close to pure overhead and the
+end-to-end effect is small in either direction — measured elsewhere at 0.95x
+(i.e. slightly slower) on a 4-smooth `k=20` Normal fit at n = 2*10^5. The win
+scales with the number of inner solves, so it grows with non-Gaussian families
+and with `k`: the same shape under `Poisson()` measures 1.71x, and 6.09x at
+`k=100`.
+
+```{julia}
+t_dense = minimum(@elapsed(bam(fm, df)) for _ in 1:3)
+t_disc  = minimum(@elapsed(bam(fm, df; discrete = true)) for _ in 1:3)
+println("Gaussian, n = ", nrow(df), ":  dense ", round(t_dense; digits = 3),
+        " s   discrete ", round(t_disc; digits = 3),
+        " s   speedup ", round(t_dense / t_disc; digits = 2), "x")
+```
+
+Peak memory is also largely unchanged today. The compact representations are
+dramatic in isolation, but `setup_gam` still materializes the dense block
+before the discrete design replaces it, so `discrete = true` is currently a
+throughput option for non-Gaussian fits rather than a way to fit models that
+would not otherwise fit in memory.
 
 ## Part 2 — Areal data: Markov random fields
 
@@ -521,10 +585,14 @@ data before treating them as anything more than a starting point.
 
 ## Notes and known differences from mgcv
 
-- **`discrete = TRUE` is not implemented.** GAM.jl's `bam()` chunks the
-  accumulation but never bins covariates, so it does not reproduce mgcv's
-  `discrete = TRUE` timings. `bam_control(discrete = …)` is deprecated and
-  warns.
+- **`discrete = true` is implemented, with a narrower scope than mgcv's.**
+  1-D smooths, `te` tensors and `bs=:re` random effects are discretized;
+  `by=` terms and `ti`/`t2` stay dense and fall back silently. It is a
+  keyword on `bam` itself — `bam_control(discrete = …)` remains deprecated
+  and warns. As in mgcv the fit becomes approximate through covariate
+  rounding, and unlike mgcv the peak-memory benefit is not yet realised: the
+  dense block is still built before the discrete design replaces it. See
+  [Discretization](#discretization).
 - **`sos` now takes degrees**, matching mgcv, with
   `xt = Dict(:units => :radians)` to opt out. Latitude comes first in both
   packages. This was a breaking change; earlier releases required radians.

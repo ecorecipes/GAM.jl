@@ -425,7 +425,7 @@ GAM.jl is not a line-for-line port of mgcv. Notable mgcv features that are **not
 
 - Specialized families such as ordered-categorical (`ocat`), zero-inflated Poisson (`ziP`), Cox proportional hazards (`cox.ph`), and multinomial (`multinom`) — though location-scale models are covered by the GAMLSS and evgam interfaces
 - Linear functional terms / the summation convention (matrix arguments to `s()`)
-- AR1 residual correlation in `bam`; `bam`'s covariate discretization (`discrete=TRUE`) — `bam` uses chunked accumulation of the normal equations only
+- AR1 residual correlation in `bam`
 - Smooth-term test statistics use a simplification of mgcv's `testStat`, so the printed F/χ² can differ from `summary.gam`'s for heavily penalized smooths. This is a difference in the statistic, not in calibrated inference: on identical null replicates the empirical test size matches mgcv's within Monte Carlo error at α = 0.01, 0.05 and 0.10
 - Neighbourhood cross-validation (`NCV`, mgcv ≥ 1.9) as a smoothness-selection criterion
 - Further families: `mvn` (multivariate normal) and the gamlss `SHASH` / `twlss` distributions

@@ -56,7 +56,7 @@ fitter now share one implementation (`_bin_covariate`) and agree by
 construction.
 
 Values come back sorted; the fitter applies mgcv's permutation internally,
-which is numerically inert there — see [`_bin_covariate`](@ref).
+which is numerically inert there — see `_bin_covariate`.
 """
 function discretize_covariates(data, vars::Vector{Symbol}; max_unique::Int = 1000)
     n = length(Tables.getcolumn(data, first(vars)))
@@ -814,8 +814,25 @@ for badly scaled bases prefer `gam()`.
   resolution (default 1000). Covariates with at most that many distinct
   values are represented exactly; otherwise they are rounded onto an equally
   spaced grid, which makes the fit an approximation — smoothing parameters
-  can move noticeably even where fitted values agree closely. Tensor, `by=`,
-  random-effect and factor smooths are unaffected and stay dense
+  can move noticeably even where fitted values agree closely.
+
+  Discretized: 1-D smooths, `te` tensor smooths, and `bs=:re` random effects
+  (both factor and random-slope). Still dense: `by=` terms (factor and
+  numeric), and `ti`/`t2`, which carry per-marginal reparameterizations the
+  discrete path does not implement. Unsupported terms fall back silently;
+  the fit is unaffected, only its representation.
+
+  Note the gain is Amdahl-bounded end to end. The `X'WX` kernel is ~60x
+  faster at `k=20` and ~450x at `k=100` (n = 10^6), but a Gaussian fit
+  accumulates once, so binning is pure overhead there — measured 0.95x on a
+  4-smooth `k=20` Normal fit at n = 2*10^5, against 1.71x for the same shape
+  with `Poisson()` and 6.09x at `k=100`. Peak memory is largely unchanged
+  today: the dense block is still built before the discrete design replaces
+  it
+- `retain_X`: keep the `n x p` model matrix on the returned model (default
+  `true`). With `false` it is dropped after fitting — 587.5 MiB to 7.6 MiB at
+  n = 10^6 — and [`model_matrix`](@ref) reassembles it bitwise on demand from
+  the per-smooth blocks, which already hold the same columns
 - `control`: GAM fitting control parameters
 - `bam_ctrl`: BAM-specific control parameters (chunk size)
 
