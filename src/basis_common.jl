@@ -58,7 +58,7 @@ function _apply_by_variable!(sm::ConstructedSmooth, t)
         throw(ArgumentError(
             "factor by= is not supported for linear-constraint (scasm) smooths"))
     end
-    levels = sort!(unique(collect(by_col)))
+    levels = sort!(_unique_levels(by_col))
     L = length(levels)
     n, k = size(sm.X)
     Xb = zeros(n, k * L)
@@ -112,6 +112,39 @@ end
 # instead needs a per-sub-penalty offset that `PenaltyBlock` does not carry;
 # see the note in `total_penalty`.
 # ============================================================================
+
+"""
+    _unique_levels(col) -> Vector
+
+Distinct values of `col`, preserving `unique(collect(col))`'s element type.
+
+`collect` on a column that is already a `Vector` copies all `n` entries purely
+to feed `unique`, which allocates its own result anyway. Dispatching on
+`Vector` skips that copy while leaving every other column type — categorical
+arrays in particular — on the original path, because the element type of the
+level vector is load-bearing: it is stored in `xt[:_by_levels]` and matched
+against new data at predict time, so widening or narrowing it would break
+prediction rather than merely cost memory.
+"""
+_unique_levels(col::Vector) = unique(col)
+_unique_levels(col) = unique(collect(col))
+
+"""
+    _count_distinct_upto(col, cap) -> Int
+
+Number of distinct values in `col`, abandoning the count once it exceeds
+`cap`. Callers that only need to know whether the count is small — a
+grouping-variable heuristic, say — otherwise pay an `O(n)`-sized set to learn
+that the answer is "many".
+"""
+function _count_distinct_upto(col, cap::Int)
+    seen = Set{eltype(col)}()
+    @inbounds for v in col
+        push!(seen, v)
+        length(seen) > cap && return length(seen)
+    end
+    return length(seen)
+end
 
 """
     MarginalBlockIndex
@@ -226,7 +259,7 @@ function by_marginal_representation(spec::SmoothSpec{B}, data,
         throw(ArgumentError(
             "factor by= is not supported for linear-constraint (scasm) smooths"))
     end
-    levels = sort!(unique(collect(by_col)))
+    levels = sort!(_unique_levels(by_col))
     pos = Dict(lev => Int32(l) for (l, lev) in enumerate(levels))
     idx = Int32[get(pos, v, Int32(0)) for v in by_col]
     sm.spec.xt[:_by_levels] = levels
@@ -259,7 +292,7 @@ function predict_matrix(smooth::ConstructedSmooth{B}, newdata) where {B}
                 Xb[mask, ((l - 1) * k + 1):(l * k)] .= Xp[mask, :]
             end
             if !all(seen)
-                unseen = unique(collect(by_col)[.!seen])
+                unseen = unique(view(by_col, .!seen))
                 @warn "by= factor levels not seen during fitting get zero " *
                       "contribution from $(smooth.spec.label): $(unseen)"
             end

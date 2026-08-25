@@ -230,6 +230,45 @@ function _raw_predict_marginal(raw::RawMarginalBasis, newdata)
 end
 
 """
+    _slim_marginal(rm::RawMarginalBasis) -> RawMarginalBasis
+
+Drop the training-row basis from a marginal that is about to be stored in a
+prediction cache.
+
+`rm.X` is `n x k_marginal` and is needed only while the tensor is being built
+(`_row_kronecker`, the penalty `kron`s, and the constraint merges). Prediction
+never reads it: `_raw_predict_marginal` goes through `predict_matrix(rm.template,
+newdata)`, and no `_predict_matrix` method touches `.X` — the marginal
+*specification* (knots, `spec`, constraints, reparameterisations) is what
+rebuilds the basis at new data.
+
+Note `rm.X === rm.template.X` — they are the same array, not two copies — so
+both references must be cleared for the memory to actually be freed. Measured
+retained saving at n = 2*10^5: ti(12,12) 36.6 MiB, t2(10,10) 30.5 MiB.
+
+**Applied to `ti` and `t2` only, NOT `te`.** Prediction never reads `rm.X`, but
+`bam_design`'s discrete tensor path does: it slices representative training
+rows (`rm.X[rep, :]`) to build the reduced marginal basis exactly, the same
+trick the 1-D reduced path uses. Its guards admit only `te` — `t2` fails the
+`cache isa TensorPredictCache` test and `ti` fails `isempty(marginal_Zs)` —
+so those two can be slimmed while `te` must keep its rows. Dropping `te`'s
+cost 45.8 MiB of retention but silently demoted every discrete `te` fit to a
+dense design; `test_discrete_tensor.jl` caught it.
+
+Safe for the two it is applied to because every construction-time use of
+`rm.X` precedes cache creation, and each cache site is immediately followed
+by `return sm`.
+"""
+function _slim_marginal(rm::RawMarginalBasis)
+    empty = Matrix{Float64}(undef, 0, 0)
+    rm.template.X = empty
+    return RawMarginalBasis(empty, rm.S, rm.null_dim, rm.knots, rm.spec,
+        rm.Ain, rm.bin, rm.Aeq, rm.beq, rm.template)
+end
+
+_slim_marginals(rms) = RawMarginalBasis[_slim_marginal(rm) for rm in rms]
+
+"""
     _penalty_nullity(S::Vector{Matrix{Float64}}, k::Int) -> Int
 
 Numerically compute the dimension of the joint null space of a set of
@@ -409,7 +448,7 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
             nothing, nothing, nothing,
             Int[],
             Ain, bin, Aeq, beq,
-            predict_cache = TensorPredictCache(raw_marginals, marginal_Zs),
+            predict_cache = TensorPredictCache(_slim_marginals(raw_marginals), marginal_Zs),
         )
         return sm
     end
@@ -456,6 +495,12 @@ function _construct_tensor(spec::SmoothSpec, data, user_knots;
         nothing, nothing, nothing,
         Int[],
         Ain_cons, bin, Aeq_cons, beq,
+        # NOT slimmed: this is the te() branch, and `bam_design`'s discrete
+        # tensor path takes representative TRAINING rows out of each marginal
+        # (`rm.X[rep, :]`, src/bam_design.jl) to build the reduced basis
+        # exactly, the same trick the 1-D reduced path uses. `ti` and `t2` are
+        # excluded there -- by the `marginal_Zs` and cache-type guards -- so
+        # their marginals are slimmed above.
         predict_cache = TensorPredictCache(raw_marginals, Matrix{Float64}[]),
     )
     return sm
@@ -812,7 +857,7 @@ function _construct_t2(spec::SmoothSpec, data, user_knots)
         nothing, nothing, nothing,
         Int[],
         Ain_cons, bin, Aeq_cons, beq,
-        predict_cache = T2PredictCache(raw_marginals, M),
+        predict_cache = T2PredictCache(_slim_marginals(raw_marginals), M),
     )
     return sm
 end

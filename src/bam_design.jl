@@ -248,6 +248,14 @@ struct DiscreteBlock
     m::Int
     exact::Bool
     label::String
+    # Optional per-row multiplier: row `i` of the block is
+    # `scale[i] * Xd[k[i], :]` rather than `Xd[k[i], :]`. `nothing` is the
+    # unscaled case and costs nothing — the kernels branch once per block, not
+    # per row. It is what lets a random effect with a slope, and a numeric
+    # `by=`, use this representation: both are a fixed cell basis with a
+    # continuously varying per-row factor, which no `Xd`/`k` pair alone can
+    # express.
+    scale::Union{Nothing, Vector{Float64}}
     # Scratch, sized once at construction so the hot loops never allocate.
     wb::Vector{Float64}
     wzb::Vector{Float64}
@@ -257,11 +265,21 @@ struct DiscreteBlock
 end
 
 function DiscreteBlock(Xd::Matrix{Float64}, k::Vector{Int32},
-    cols::UnitRange{Int}, exact::Bool, label::String)
+    cols::UnitRange{Int}, exact::Bool, label::String;
+    scale::Union{Nothing, Vector{Float64}} = nothing)
     m, pb = size(Xd)
-    return DiscreteBlock(Xd, k, cols, m, exact, label,
+    scale === nothing || length(scale) == length(k) || throw(DimensionMismatch(
+        "scale has $(length(scale)) entries, k has $(length(k))"))
+    return DiscreteBlock(Xd, k, cols, m, exact, label, scale,
         zeros(m), zeros(m), zeros(m), zeros(m, pb), zeros(m))
 end
+
+"""Per-row multiplier for `blk`, `1.0` when the block is unscaled."""
+@inline _blk_scale(blk::DiscreteBlock, i::Int) =
+    blk.scale === nothing ? 1.0 : @inbounds(blk.scale[i])
+
+"""True when any block carries a per-row scale."""
+_any_scaled(blocks::Vector{DiscreteBlock}) = any(b -> b.scale !== nothing, blocks)
 
 """
     TensorBlock
@@ -342,7 +360,11 @@ function DiscreteDesign(blocks::Vector{DiscreteBlock}, Xdense::Matrix{Float64},
     pd = length(dense_cols)
     # The intercept-only shortcut is only valid when every non-dense column is
     # a 1-D block, whose cross-terms fall out of the binning pass.
-    icpt_only = pd == 1 && icpt != 0 && dense_cols[1] == icpt && isempty(tblocks)
+    # The shortcut reads `sum(blk.wb)` as Σw and `Xd' * wb` as the cross-term.
+    # Both identities assume UNSCALED binning: a scaled block bins Σ w·s², so
+    # neither holds. Scaled blocks therefore take the general path.
+    icpt_only = pd == 1 && icpt != 0 && dense_cols[1] == icpt &&
+        isempty(tblocks) && !_any_scaled(blocks)
     Tcross = [zeros(blk.m, pd) for blk in blocks]
     return DiscreteDesign(blocks, Xdense, dense_cols, n, p, Ref(icpt),
         zeros(pd), zeros(pd, pd), zeros(pd), icpt_only, Tcross, tblocks)
@@ -527,6 +549,45 @@ end
 
 
 """
+    _re_block(spec, t, n, cols) -> DiscreteBlock | nothing
+
+Represent a `bs=:re` smooth compactly. Returns `nothing` when it does not
+qualify, leaving the caller to keep the dense block.
+
+The dense random-effect block is an `n x k` indicator scaled by the random
+slope: row `i` is zero except at column `index[i]`, where it is `slope[i]`
+(see `_re_level_index`). That is `scale[i] * Xd[k[i], :]` with `Xd = I_k`, so
+it is a [`DiscreteBlock`](@ref) verbatim, and reproduces the dense block
+BIT-for-bit rather than to basis-evaluation precision — the identity rows are
+the dense rows.
+
+Storage is `k^2` for the identity plus `O(n)` for the index, against `O(n*k)`
+dense. The `k < n` guard keeps that a win: at `n = 5e5` with 200 levels it is
+~2.3 MB against ~800 MB.
+"""
+function _re_block(spec::SmoothSpec, t, n::Int, cols::UnitRange{Int})
+    all(v -> v in Tables.columnnames(t), spec.term_vars) || return nothing
+    index, slope, k, _, _, _ = try
+        _re_level_index(spec, t)
+    catch
+        return nothing
+    end
+    # The column range must be exactly the level count, or this is not the
+    # plain random-effect block we think it is.
+    length(cols) == k || return nothing
+    length(index) == n || return nothing
+    # An unseen level would give index 0, which the dense constructor cannot
+    # produce on its own data; bail rather than guess.
+    all(>(Int32(0)), index) || return nothing
+    # `I_k` costs k^2; reducing is only a win while k stays well under n.
+    k < n || return nothing
+
+    Xd = Matrix{Float64}(I, k, k)
+    scale = all(isone, slope) ? nothing : copy(slope)
+    return DiscreteBlock(Xd, index, cols, true, spec.label; scale = scale)
+end
+
+"""
     _tensor_block(sm, t, m_grid, n, cols) -> TensorBlock | nothing
 
 Build a [`TensorBlock`](@ref) for a `te` smooth, or `nothing` if it does not
@@ -556,6 +617,12 @@ function _tensor_block(sm, t, m_grid::Int, n::Int, cols::UnitRange{Int})
         v in Tables.columnnames(t) || return nothing
         col = Tables.getcolumn(t, v)
         eltype(col) <: Real || return nothing
+        # The exact branch below reads `rm.X[rep, :]`, so the raw marginal must
+        # still carry one row per observation. A `TensorPredictCache` that has
+        # dropped its n-row marginals (a memory optimisation) leaves an empty
+        # `X` here; fall back to the dense design rather than throwing, so the
+        # two representations compose instead of colliding.
+        size(rm.X, 1) == n || return nothing
         # `shuffle = false`: several marginal bases take the unique values as
         # their knots, and knot ORDER changes the parameterization -- the same
         # trap that cost the 1-D reduced path a relative 1.97 in the basis.
@@ -637,6 +704,22 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
 
     for sm in smooths
         spec = sm.spec
+        # `bs=:re` first: its dense block is an `n x k` scaled indicator, so it
+        # is a DiscreteBlock with `Xd = I_k` and `k` the level index -- exactly
+        # the "row i is Xd[k[i], :]" contract, hence bit-exact. A random slope
+        # becomes the per-row `scale`. This must precede the tensor branch,
+        # because a multi-variable RE (an interaction) has more than one term
+        # variable and would otherwise be swallowed there.
+        if spec.basis isa RandomEffect
+            cols = sm.first_para:sm.last_para
+            rb = (first(cols) >= 1 && last(cols) <= p) ?
+                _re_block(spec, t, n, cols) : nothing
+            if rb !== nothing
+                push!(blocks, rb)
+                taken[cols] .= true
+            end
+            continue
+        end
         if length(spec.term_vars) > 1
             cols = sm.first_para:sm.last_para
             if first(cols) >= 1 && last(cols) <= p
@@ -650,9 +733,6 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
         end
         length(spec.term_vars) == 1 || continue
         spec.by === nothing || continue
-        # See `_reduced_smooth`: `bs=:re` keeps its dense block until the
-        # compact level-index form is wired in.
-        spec.basis isa RandomEffect && continue
         v = spec.term_vars[1]
         Tables.columnnames(t) isa Tuple && !(v in Tables.columnnames(t)) && continue
         col = Tables.getcolumn(t, v)
@@ -728,8 +808,15 @@ function mul_eta!(eta::Vector{Float64}, D::DiscreteDesign,
         work = blk.work
         mul!(work, blk.Xd, view(beta, blk.cols))
         k = blk.k
-        @inbounds for i in 1:D.n
-            eta[i] += work[k[i]]
+        s = blk.scale
+        if s === nothing
+            @inbounds for i in 1:D.n
+                eta[i] += work[k[i]]
+            end
+        else
+            @inbounds for i in 1:D.n
+                eta[i] += s[i] * work[k[i]]
+            end
         end
     end
     for tb in D.tblocks
@@ -749,18 +836,38 @@ function _bin_weights!(D::DiscreteDesign, w::Vector{Float64},
         wb = blk.wb
         fill!(wb, 0.0)
         k = blk.k
+        s = blk.scale
+        # Row `i` contributes `s_i * Xd[k_i, :]`, so the cell weight for X'WX
+        # is `w_i * s_i^2` and the cell right-hand side is `w_i * s_i * z_i`.
         if z === nothing
-            @inbounds for i in 1:D.n
-                wb[k[i]] += w[i]
+            if s === nothing
+                @inbounds for i in 1:D.n
+                    wb[k[i]] += w[i]
+                end
+            else
+                @inbounds for i in 1:D.n
+                    si = s[i]
+                    wb[k[i]] += w[i] * si * si
+                end
             end
         else
             wzb = blk.wzb
             fill!(wzb, 0.0)
-            @inbounds for i in 1:D.n
-                j = k[i]
-                wi = w[i]
-                wb[j] += wi
-                wzb[j] += wi * z[i]
+            if s === nothing
+                @inbounds for i in 1:D.n
+                    j = k[i]
+                    wi = w[i]
+                    wb[j] += wi
+                    wzb[j] += wi * z[i]
+                end
+            else
+                @inbounds for i in 1:D.n
+                    j = k[i]
+                    wi = w[i]
+                    si = s[i]
+                    wb[j] += wi * si * si
+                    wzb[j] += wi * si * z[i]
+                end
             end
         end
         sw = blk.sw
@@ -811,7 +918,7 @@ function _accumulate_discrete!(XtWX::Matrix{Float64},
         Mab = if n > ba.m * bb.m
             Wt = zeros(ba.m, bb.m)
             @inbounds for i in 1:n
-                Wt[ka[i], kb[i]] += w[i]
+                Wt[ka[i], kb[i]] += w[i] * _blk_scale(ba, i) * _blk_scale(bb, i)
             end
             Wt * bb.Xd
         else
@@ -820,7 +927,7 @@ function _accumulate_discrete!(XtWX::Matrix{Float64},
             @inbounds for i in 1:n
                 ja = ka[i]
                 jb = kb[i]
-                wi = w[i]
+                wi = w[i] * _blk_scale(ba, i) * _blk_scale(bb, i)
                 for c in 1:pbc
                     T[ja, c] += wi * Xb[jb, c]
                 end
@@ -870,7 +977,7 @@ function _accumulate_discrete!(XtWX::Matrix{Float64},
             fill!(T, 0.0)
             @inbounds for i in 1:n
                 j = k[i]
-                wi = w[i]
+                wi = w[i] * _blk_scale(blk, i)
                 for c in 1:pd
                     T[j, c] += wi * Xden[i, c]
                 end
@@ -975,10 +1082,13 @@ function _gather_rows!(H::AbstractMatrix{Float64}, D::DiscreteDesign,
         Xd = blk.Xd
         k = blk.k
         cols = blk.cols
+        s = blk.scale
         @inbounds for i in 1:nr
-            r = k[start + i - 1]
+            row = start + i - 1
+            r = k[row]
+            si = s === nothing ? 1.0 : s[row]
             for (c, j) in enumerate(cols)
-                H[i, j] = Xd[r, c]
+                H[i, j] = si * Xd[r, c]
             end
         end
     end

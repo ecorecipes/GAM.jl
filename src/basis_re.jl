@@ -47,8 +47,9 @@ end
 function _re_warn_if_group_codes(spec, var, col)
     T = nonmissingtype(eltype(col))
     T <: Integer || (T <: Real && all(x -> x == round(x), col)) || return nothing
-    nu = length(unique(col))
     n = length(col)
+    # Only the "few distinct values" branch matters; stop counting past it.
+    nu = _count_distinct_upto(col, max(2, n ÷ 2))
     (nu >= 2 && nu < n && nu <= max(2, n ÷ 2)) || return nothing
     @warn "Random-effect smooth $(spec.label): variable :$var is numeric with " *
           "$nu distinct values, so it enters as a linear (random-slope) term " *
@@ -82,7 +83,7 @@ function _re_level_index(spec::SmoothSpec, data)
     end
 
     # Level sets for the categorical variables, sorted as R sorts factor levels
-    levels_list = [sort!(unique(collect(cols[i]))) for i in cat_idx]
+    levels_list = [sort!(_unique_levels(cols[i])) for i in cat_idx]
     nlev = [length(l) for l in levels_list]
     k = isempty(nlev) ? 1 : prod(nlev)
 
