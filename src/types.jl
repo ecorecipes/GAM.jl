@@ -299,6 +299,12 @@ mutable struct ConstructedSmooth{B<:AbstractBasisType}
     Aeq::Union{Matrix{Float64}, Nothing}
     beq::Union{Vector{Float64}, Nothing}
     predict_cache::Union{AbstractSmoothPredictCache, Nothing}
+    # Row map for a REDUCED basis. Empty (the default) means `X` already has
+    # one row per observation. Non-empty means `X` is the `m x k` basis at the
+    # unique covariate values and row `i` of the full block is `X[rowmap[i], :]`
+    # -- the storage `bam(...; discrete=true)` builds before it is re-expanded.
+    # Use `smooth_matrix(sm)` rather than `sm.X` wherever `n` rows are needed.
+    rowmap::Vector{Int32}
 end
 
 function ConstructedSmooth(
@@ -322,7 +328,7 @@ function ConstructedSmooth(
     return ConstructedSmooth{B}(
         spec, X, S, knots, null_dim, rank, constraint, qrc,
         first_para, last_para, Sigma, cmX, p_ident, del_index,
-        nothing, nothing, nothing, nothing, predict_cache,
+        nothing, nothing, nothing, nothing, predict_cache, Int32[],
     )
 end
 
@@ -350,7 +356,7 @@ function ConstructedSmooth(
     return ConstructedSmooth{B}(
         spec, X, S, knots, null_dim, rank, constraint, qrc,
         first_para, last_para, Sigma, cmX, p_ident, del_index,
-        Ain, bin, Aeq, beq, predict_cache,
+        Ain, bin, Aeq, beq, predict_cache, Int32[],
     )
 end
 
@@ -701,9 +707,53 @@ function model_matrix(m::GamModel)
         copyto!(view(X, :, 1:npar), m.X_par)
     end
     for sm in m.smooths
-        copyto!(view(X, :, sm.first_para:sm.last_para), sm.X)
+        _scatter_block!(view(X, :, sm.first_para:sm.last_para), sm)
     end
     return X
+end
+
+"""
+    smooth_matrix(sm::ConstructedSmooth) -> Matrix{Float64}
+
+The smooth's model-matrix block with one row per observation.
+
+Returns `sm.X` directly when it is already stored that way (the default). When
+the smooth holds a REDUCED basis -- `bam(...; discrete=true)` builds each
+1-D smooth at the `m` unique covariate values -- this scatters it back out,
+allocating an `n x k` matrix. Prefer working with `sm.X` and `sm.rowmap`
+directly in per-row loops; this exists for callers that genuinely need the
+expanded block.
+"""
+function smooth_matrix(sm::ConstructedSmooth)
+    isempty(sm.rowmap) && return sm.X
+    out = Matrix{Float64}(undef, length(sm.rowmap), size(sm.X, 2))
+    _scatter_block!(out, sm)
+    return out
+end
+
+"""
+    is_reduced(sm::ConstructedSmooth) -> Bool
+
+Whether `sm.X` is a reduced basis needing `sm.rowmap` to expand.
+"""
+is_reduced(sm::ConstructedSmooth) = !isempty(sm.rowmap)
+
+# Scatter `sm`'s block into `dest`, which must be `n x k`. Column-major so the
+# destination is written contiguously; `Xd` rows are gathered by the index.
+function _scatter_block!(dest::AbstractMatrix{Float64}, sm::ConstructedSmooth)
+    if isempty(sm.rowmap)
+        copyto!(dest, sm.X)
+        return dest
+    end
+    Xd = sm.X
+    kmap = sm.rowmap
+    @inbounds for j in axes(Xd, 2)
+        col = view(dest, :, j)
+        for i in eachindex(kmap)
+            col[i] = Xd[kmap[i], j]
+        end
+    end
+    return dest
 end
 
 """

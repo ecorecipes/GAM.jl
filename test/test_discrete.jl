@@ -248,9 +248,18 @@
             @test maximum(abs, Xd .- Xr) / maximum(abs, Xd) < 1e-11
             @test maximum(abs, smd[1].S[1] .- smr[1].S[1]) /
                   maximum(abs, smd[1].S[1]) < 1e-11
-            # sm.X is expanded back to n rows: ConstructedSmooth.X and
-            # GamModel.X are concretely-typed dense n-row matrices.
-            @test size(smr[1].X, 1) == m * rep
+            # sm.X stays REDUCED — one row per unique covariate value — with
+            # `rowmap` carrying the expansion. Re-expanding here used to cost a
+            # second full copy of every block (116.0 MiB against 117.5 for
+            # `GamModel.X` itself, at n=2e5 with 4 x s(cr,k=20)).
+            @test size(smr[1].X, 1) == m
+            @test GAM.is_reduced(smr[1])
+            @test length(smr[1].rowmap) == m * rep
+            # …and `smooth_matrix` scatters it back to exactly the block that
+            # `setup_gam_discrete` wrote into the model matrix (bitwise: same
+            # source, same gather, so any drift would be a scatter bug).
+            @test GAM.smooth_matrix(smr[1]) ==
+                  Xr[:, smr[1].first_para:smr[1].last_para]
         end
     end
 
