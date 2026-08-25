@@ -59,10 +59,18 @@ function _re_warn_if_group_codes(spec, var, col)
     return nothing
 end
 
-function _smooth_construct(::RandomEffect, spec::SmoothSpec, data, user_knots)
-    length(spec.term_vars) >= 1 ||
-        throw(ArgumentError("Random effect requires at least one variable"))
+"""
+    _re_level_index(spec, data) -> (index, slope, k, levels_list, cat_idx, num_idx)
 
+Per-row column index and random-slope multiplier for a `bs=:re` smooth.
+
+This is the level map the dense constructor immediately spends into an `n x k`
+indicator and then discards: row `i` of that indicator is zero except at column
+`index[i]`, where it is `slope[i]`. Both `_smooth_construct` and
+[`re_marginal_representation`](@ref) go through here, so the dense and compact
+forms cannot drift apart.
+"""
+function _re_level_index(spec::SmoothSpec, data)
     cols = [Tables.getcolumn(data, v) for v in spec.term_vars]
     n = length(cols[1])
 
@@ -93,13 +101,46 @@ function _smooth_construct(::RandomEffect, spec::SmoothSpec, data, user_knots)
         slope .*= Float64.(cols[i])
     end
 
-    X = zeros(n, k)
+    index = Vector{Int32}(undef, n)
     for row in 1:n
         idx = 1
         for (d, ci) in enumerate(cat_idx)
             idx += (maps[d][cols[ci][row]] - 1) * strides[d]
         end
-        X[row, idx] = slope[row]
+        index[row] = idx
+    end
+
+    return index, slope, k, levels_list, cat_idx, num_idx
+end
+
+"""
+    re_marginal_representation(spec, data) -> (rep, levels_list)
+
+Level index and random slope for a `bs=:re` smooth WITHOUT materialising the
+`n x k` indicator that `_smooth_construct(::RandomEffect, ...)` builds.
+
+`reconstruct_dense(rep, nothing)` reproduces that indicator exactly — the
+"basis" is the implicit single all-ones column, so `kbase == 1` and
+`nblocks == k`. Storage is `O(n)` against the dense form's `O(n*k)`: at
+`n = 5e5` with 200 levels, ~6 MB against ~800 MB.
+"""
+function re_marginal_representation(spec::SmoothSpec, data)
+    length(spec.term_vars) >= 1 ||
+        throw(ArgumentError("Random effect requires at least one variable"))
+    index, slope, k, levels_list, _, _ = _re_level_index(spec, data)
+    return MarginalBlockIndex(index, slope, 1, k), levels_list
+end
+
+function _smooth_construct(::RandomEffect, spec::SmoothSpec, data, user_knots)
+    length(spec.term_vars) >= 1 ||
+        throw(ArgumentError("Random effect requires at least one variable"))
+
+    index, slope, k, levels_list, cat_idx, num_idx = _re_level_index(spec, data)
+    n = length(index)
+
+    X = zeros(n, k)
+    for row in 1:n
+        X[row, index[row]] = slope[row]
     end
 
     # Identity penalty — penalizes all coefficients equally
