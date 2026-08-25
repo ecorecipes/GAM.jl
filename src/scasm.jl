@@ -328,7 +328,20 @@ function scasm_pirls(X::Matrix{Float64}, y::Vector{Float64},
         prev_valid = valid_new
         feasible_old = _is_feasible(beta, Ain, bin, Aeq, beq)
 
-        if crit < control.epsilon
+        # `pirls` guards this criterion with `n_halvings <= 1` (see
+        # src/pirls.jl). As in SCAM, that guard is deliberately NOT used here:
+        # halving is legitimate damping for a constrained fitter, and requiring
+        # a near-full step suppresses convergence rather than sharpening it. On
+        # a 96-fit sweep over `sc`/`scad`, both monotonicity directions, four
+        # seeds, two sample sizes and three `k`, it dropped convergence from
+        # 80/96 to 70/96.
+        #
+        # The real defect is narrower: the `!accepted_step` branch above resets
+        # `beta_new = beta` and falls through WITHOUT breaking, so `crit` is
+        # exactly 0 and the old code reported `converged = true` for a step
+        # that had failed after every halving. Requiring `accepted_step` closes
+        # that hole and leaves damped-but-successful steps untouched.
+        if crit < control.epsilon && accepted_step
             converged = true
             break
         end
