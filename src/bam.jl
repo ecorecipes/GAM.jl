@@ -820,7 +820,17 @@ function bam(gf::GamFormula, data;
     _validate_response_in_data(gf.response, data)
     na_action === :fail && _validate_model_columns(data, _model_covariates(gf))
 
-    y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
+    # Under `discrete`, build each 1-D smooth at the unique covariate values
+    # and scatter to `n` rows, rather than evaluating the basis at all `n`.
+    # The result is indistinguishable downstream; what it avoids is the
+    # construction transient, which for thin-plate at `max_knots = 2000` is an
+    # `n × 2000` dense matrix and dominates peak RSS.
+    y, X, X_para, smooths, n_parametric = if discrete === false
+        setup_gam(gf, data; family = family)
+    else
+        setup_gam_discrete(gf, data, discrete === true ? 1000 : Int(discrete);
+            family = family)
+    end
     f = term(gf.response) ~ term(1)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
         method, weights, offset, select, control, bam_ctrl, discrete)

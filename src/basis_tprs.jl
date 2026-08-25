@@ -638,7 +638,23 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
     # follows do NOT: without centring, translating a covariate changes the
     # basis parameterization and hence the reported `sp`. mgcv subtracts the
     # column mean before building E and T, and stores the shift for prediction.
-    shift = vec(mean(Xd; dims = 1))
+    # Row multiplicities, when this smooth is being built at the *unique*
+    # covariate values rather than at all n rows (`bam(...; discrete=true)`).
+    # TPRS has four quantities that depend on how often each row occurs; three
+    # are handled here (`shift`, the column-RMS rescaling, and the sum-to-zero
+    # `C` in step 7) and the fourth — knot selection — needs no adjustment,
+    # because it already operates on the *unique* values either way.
+    # `opnorm(X, Inf)` is a maximum over rows and is therefore invariant.
+    _rw = _ROW_WEIGHTS[]
+    if _rw !== nothing && length(_rw) != size(Xd, 1)
+        throw(DimensionMismatch(
+            "row_weights has $(length(_rw)) entries but the TPRS basis is " *
+            "being built at $(size(Xd, 1)) covariate values"))
+    end
+    _wsum = _rw === nothing ? Float64(size(Xd, 1)) : sum(_rw)
+
+    shift = _rw === nothing ? vec(mean(Xd; dims = 1)) :
+            vec((_rw' * Xd) ./ _wsum)
     Xd = Xd .- shift'
 
     # mgcv-style guard: the basis needs at least k distinct covariate
@@ -786,10 +802,19 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
     @inbounds for j in 1:k
         col = view(X_full, :, j)
         ss = 0.0
-        @simd for i in eachindex(col)
-            ss += col[i]^2
+        if _rw === nothing
+            @simd for i in eachindex(col)
+                ss += col[i]^2
+            end
+        else
+            # Weighted mean square: Σ_b count_b · X[b,j]² equals the sum of
+            # squares over the expanded data, so `ss / _wsum` is the same
+            # mean square the full-data path computes.
+            @simd for i in eachindex(col)
+                ss += _rw[i] * col[i]^2
+            end
         end
-        cs = sqrt(ss / nrow)
+        cs = sqrt(ss / _wsum)
         col_scales[j] = cs
         if cs > 0
             @simd for i in eachindex(col)
@@ -855,8 +880,12 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
         end
     end
 
-    # Sum-to-zero constraint (C = column sums of X, matching R's smoothCon)
-    C = sum(X_full; dims = 1)  # 1 × k
+    # Sum-to-zero constraint (C = column sums of X, matching R's smoothCon).
+    # Under row multiplicities, Σ_b count_b · X[b, :] is that same sum over
+    # the expanded data. `maXX` above uses `opnorm(X, Inf)`, a maximum over
+    # rows, and needs no adjustment.
+    C = _rw === nothing ? sum(X_full; dims = 1) :
+        reshape(_rw' * X_full, 1, :)  # 1 × k
     C_mat = Matrix(C)
 
     # --- Step 8: Absorb sum-to-zero constraint (R's absorb.cons in smooth.r) ---

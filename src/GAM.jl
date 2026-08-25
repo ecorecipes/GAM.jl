@@ -29,6 +29,7 @@ m = gam(@formula(y ~ s(x)), df)
 """
 module GAM
 
+using Base.ScopedValues: ScopedValue, with
 using Distributions
 using GLM
 using LinearAlgebra

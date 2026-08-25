@@ -256,3 +256,50 @@ using StatsAPI: coef, fitted, predict
         @test vec(GAM.smooth_construct(s(:x, bs = :re), tbl).X) ≈ xv
     end
 end
+
+@testset "Count-weighted sum-to-zero constraint" begin
+    # `bam(...; discrete=true)` wants to build a smooth at the m distinct
+    # covariate values rather than at all n rows. Everything
+    # `absorb_constraints!` computes is invariant to row multiplicity EXCEPT
+    # C = colSums(X); supplying the per-bin counts reproduces the full-data
+    # constraint, so the reduced basis is the full one row-selected.
+    rng = StableRNG(7)
+    m = 200
+    counts = rand(rng, 2:9, m)
+    xu = collect(range(0.0, 1.0; length = m))
+    xfull = vcat([fill(xu[b], counts[b]) for b in 1:m]...)
+    rows = vcat([fill(b, counts[b]) for b in 1:m]...)
+    w = Float64.(counts)
+
+    # `cr`/`cc` round-trip their stored knots; `ps`/`bs` store a PADDED
+    # B-spline knot vector that re-pads if supplied back (16 -> 22 knots), but
+    # they place knots from the covariate range alone, which the grid spans.
+    for (bs, supply_knots) in ((:cr, true), (:cc, true), (:ps, false), (:bs, false))
+        spec = s(:x; bs = bs, k = 12)
+        full = GAM.smooth_construct(spec, (x = xfull,))
+        kn = supply_knots && !isempty(full.knots) ? full.knots : nothing
+        red = GAM.with_row_weights(w) do
+            GAM.smooth_construct(spec, (x = xu,), kn)
+        end
+        @test size(red.X, 2) == size(full.X, 2)
+        @test maximum(abs.(full.X .- red.X[rows, :])) < 1e-11
+        @test maximum(abs.(full.S[1] .- red.S[1])) < 1e-9
+    end
+
+    # The weighting is load-bearing: without it the constraint is wrong.
+    spec = s(:x; bs = :cr, k = 12)
+    full = GAM.smooth_construct(spec, (x = xfull,))
+    unweighted = GAM.smooth_construct(spec, (x = xu,), full.knots)
+    @test maximum(abs.(full.X .- unweighted.X[rows, :])) > 1e-3
+
+    # Outside a `with_row_weights` block the dense path is untouched.
+    again = GAM.smooth_construct(spec, (x = xfull,))
+    @test all(reinterpret(UInt64, vec(full.X)) .===
+              reinterpret(UInt64, vec(again.X)))
+
+    # A mismatched weight vector is rejected rather than silently misapplied.
+    X = randn(StableRNG(3), 10, 4)
+    S = [Matrix{Float64}(I, 4, 4)]
+    @test_throws DimensionMismatch GAM.absorb_constraints!(
+        copy(X), deepcopy(S); row_weights = ones(9))
+end

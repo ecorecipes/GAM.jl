@@ -238,4 +238,54 @@
         @test maS(mkdata(200; shift = -37.5)) ≈ base rtol = 1e-10
         @test base > 0
     end
+
+    @testset "reduced construction at unique values reproduces the full basis" begin
+        # `bam(...; discrete=true)` needs to build a smooth at the m unique
+        # covariate values rather than all n rows. TPRS has three quantities
+        # that depend on how often each row occurs — the mean-centring shift,
+        # the column-RMS rescaling, and the sum-to-zero constraint — and all
+        # three read the `_ROW_WEIGHTS` scoped value. Knot selection needs no
+        # adjustment: it already operates on the unique values either way.
+        xu = collect(range(0.0, 1.0; length = 60))
+        counts = [1 + (i % 7) for i in 1:60]
+        xfull = vcat([fill(xu[b], counts[b]) for b in 1:60]...)
+        rows = vcat([fill(b, counts[b]) for b in 1:60]...)
+        w = Float64.(counts)
+
+        for bs in (:tp, :ts)
+            spec = GAM.s(:x; bs = bs, k = 10)
+            full = GAM.smooth_construct(spec, (x = xfull,))
+            red = GAM.with_row_weights(w) do
+                GAM.smooth_construct(spec, (x = xu,))
+            end
+            unweighted = GAM.smooth_construct(spec, (x = xu,))
+
+            # Knots are elementwise identical, not merely close.
+            @test full.knots == red.knots
+            @test full.predict_cache.shift == red.predict_cache.shift
+
+            # The reduced basis, row-selected back to the full data, is the
+            # full basis. The residual ~1e-12 is the Nystrom-vs-data-as-knots
+            # branch difference, not the weighting.
+            @test maximum(abs.(full.X .- red.X[rows, :])) < 1e-10
+            @test maximum(abs.(full.S[1] .- red.S[1])) < 1e-8
+
+            # Control: without the weights this is wrong by ~1e-2, so the
+            # assertions above cannot pass by accident.
+            @test maximum(abs.(full.X .- unweighted.X[rows, :])) > 1e-4
+        end
+    end
+
+    @testset "row weights are inert outside a with_row_weights block" begin
+        # The dense path must not pay for the discrete path. Every weighted
+        # branch is keyed on `_ROW_WEIGHTS[] === nothing`, which holds here.
+        @test GAM._ROW_WEIGHTS[] === nothing
+        x = collect(range(0.0, 1.0; length = 50))
+        a = GAM.smooth_construct(GAM.s(:x; bs = :tp, k = 8), (x = x,))
+        b = GAM.with_row_weights(nothing) do
+            GAM.smooth_construct(GAM.s(:x; bs = :tp, k = 8), (x = x,))
+        end
+        @test a.X == b.X
+        @test a.S[1] == b.S[1]
+    end
 end
