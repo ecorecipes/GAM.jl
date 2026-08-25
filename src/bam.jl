@@ -248,6 +248,12 @@ Functionally identical to `pirls()` but memory-efficient for large n.
 """
 function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     S_total::Matrix{Float64},
+    family::UnivariateDistribution, link::GLM.Link; kwargs...)
+    return pirls_bam(bam_design(X), y, S_total, family, link; kwargs...)
+end
+
+function pirls_bam(D::BamDesign, y::Vector{Float64},
+    S_total::Matrix{Float64},
     family::UnivariateDistribution, link::GLM.Link;
     weights::Vector{Float64} = ones(length(y)),
     offset::Vector{Float64} = zeros(length(y)),
@@ -257,7 +263,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     compute_hat_diag::Bool = true,
     XtWX_out::Union{Matrix{Float64}, Nothing} = nothing)
 
-    n, p = size(X)
+    n, p = nrows(D), ncols(D)
 
     # Pre-allocate working buffers
     beta = zeros(p)
@@ -275,7 +281,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     # Initialize
     if start !== nothing
         copyto!(beta, start)
-        mul!(eta, X, beta)
+        mul_eta!(eta, D, beta)
         eta .+= offset
     else
         # Family-appropriate initial μ (mgcv mustart)
@@ -283,11 +289,13 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
             eta[i] = GLM.linkfun(link, _bam_mustart(family, y[i], weights[i]))
         end
         # Start from the constant fit on the link scale; locate the intercept
-        # column rather than assuming it is column 1
-        icpt = findfirst(j -> all(==(1.0), view(X, :, j)), 1:p)
-        if icpt !== nothing
+        # column rather than assuming it is column 1. `intercept_col` returns 0
+        # when there is none, and memoises the O(n·p) scan the dense design
+        # needs, so the outer loop's inner solves do not repeat it.
+        icpt = intercept_col(D)
+        if icpt != 0
             beta[icpt] = mean(eta)
-            mul!(eta, X, beta)
+            mul_eta!(eta, D, beta)
             eta .+= offset
         end
         # (no intercept column: keep the mustart η as the starting point)
@@ -315,7 +323,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         _pirls_working!(w, z, y, mu, eta, offset, weights, family, link)
 
         # Chunk-wise accumulation of X'WX and X'Wz
-        _accumulate_XtWX_XtWz_chunked!(XtWX, XtWz, X, w, z, chunk_size)
+        accumulate_XtWX_XtWz!(XtWX, XtWz, D, w, z; chunk_size = chunk_size)
 
         # Add penalty: A = XtWX + S_total
         @inbounds for j in 1:p, k in 1:p
@@ -343,7 +351,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         # hand-rolled loop could.
         pdev_old_iter = dev_old + dot(beta, S_total, beta)
         recompute! = function (b)
-            mul!(eta_new, X, b)
+            mul_eta!(eta_new, D, b)
             eta_new .+= offset
             ok = true
             @inbounds for i in 1:n
@@ -420,7 +428,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     end
 
     # EDF and hat matrix via chunked accumulation
-    _accumulate_XtWX_chunked!(XtWX, X, w, chunk_size)
+    accumulate_XtWX!(XtWX, D, w; chunk_size = chunk_size)
     @inbounds for j in 1:p, k in 1:p
         A[j, k] = XtWX[j, k] + S_total[j, k]
     end
@@ -432,7 +440,7 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
 
     # Shared finalization: EDF, the weighted leverage h_i = w_i·x_i'A⁻¹x_i,
     # and R. Chunked internally, so memory stays bounded as it was here.
-    edf_vec, hat_diag, R = pirls_finalize(X, w, XtWX, A_chol;
+    edf_vec, hat_diag, R = design_finalize(D, w, XtWX, A_chol;
         chunk_size = chunk_size, compute_hat_diag = compute_hat_diag)
 
     return PirlsResult(
@@ -452,6 +460,13 @@ end
 Outer iteration for bam() — same EFS updates but using chunked P-IRLS.
 """
 function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
+    smooths::Vector{<:ConstructedSmooth}, penalty::PenaltySetup,
+    family::UnivariateDistribution, link::GLM.Link; kwargs...)
+    return outer_iteration_bam(bam_design(X), y, smooths, penalty,
+        family, link; kwargs...)
+end
+
+function outer_iteration_bam(D::BamDesign, y::Vector{Float64},
     smooths::Vector{<:ConstructedSmooth},
     penalty::PenaltySetup,
     family::UnivariateDistribution, link::GLM.Link;
@@ -461,12 +476,12 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
     control::GamControl = gam_control(),
     chunk_size::Int = 10000)
 
-    n, p = size(X)
+    n, p = nrows(D), ncols(D)
     n_sp = length(penalty.sp)
 
     if n_sp == 0
         S_total = zeros(p, p)
-        result = pirls_bam(X, y, S_total, family, link;
+        result = pirls_bam(D, y, S_total, family, link;
             weights = weights, offset = offset, control = control,
             chunk_size = chunk_size)
         return penalty.sp, result
@@ -484,8 +499,8 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
     # For Gaussian identity the offset is absorbed by fitting to y - offset
     y_adj = is_gaussian ? y .- offset : y
     if is_gaussian
-        _accumulate_XtWX_XtWz_chunked!(XtWX_cached, Xty_cached,
-            X, weights, y_adj, chunk_size)
+        accumulate_XtWX_XtWz!(XtWX_cached, Xty_cached,
+            D, weights, y_adj; chunk_size = chunk_size)
         # y'Wy for O(p²) deviance formula
         @inbounds for i in 1:n
             yWy_cached += weights[i] * y_adj[i]^2
@@ -523,7 +538,7 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
             #  * its final XᵀWX — accumulated from the same working weights the
             #    EFS update needs, so it is handed back rather than swept again.
             XtWX_inner = zeros(p, p)
-            result = pirls_bam(X, y, S_total, family, link;
+            result = pirls_bam(D, y, S_total, family, link;
                 weights = weights, offset = offset, start = start_coef,
                 control = control, chunk_size = chunk_size,
                 compute_hat_diag = false, XtWX_out = XtWX_inner)
@@ -647,17 +662,18 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
         A = XtWX_cached + S_total
         A_chol = _protected_cholesky!(A)
         beta = A_chol \ Xty_cached
-        eta = X * beta
+        eta = Vector{Float64}(undef, n)
+        mul_eta!(eta, D, beta)
         eta .+= offset
         mu = copy(eta)
         dev = _deviance(family, y, mu, weights)
         # Gaussian/identity: the working weights are the prior weights
-        edf_vec, hat_diag, R = pirls_finalize(X, weights, XtWX_cached, A_chol;
+        edf_vec, hat_diag, R = design_finalize(D, weights, XtWX_cached, A_chol;
             chunk_size = chunk_size)
         final_result = PirlsResult(beta, mu, eta, weights, dev, dev,
             true, 1, R, hat_diag, edf_vec)
     else
-        final_result = pirls_bam(X, y, S_total, family, link;
+        final_result = pirls_bam(D, y, S_total, family, link;
             weights = weights, offset = offset,
             start = prev_result === nothing ? nothing : prev_result.coefficients,
             control = control, chunk_size = chunk_size)
@@ -817,7 +833,12 @@ end
 
 function _fit_bam(y, X, smooths, n_parametric, f, data,
     family, link, method, weights, offset, select, control, bam_ctrl)
-    n, p = size(X)
+    # Construct the design once for the whole fit: `DenseDesign` memoises the
+    # O(n·p) intercept scan, so the outer loop's inner P-IRLS solves inherit it
+    # rather than repeating it. A discrete design will be built here instead,
+    # from `smooths` and `data`, without `X` ever being materialised.
+    D = bam_design(X)
+    n, p = nrows(D), ncols(D)
 
     wts = weights === nothing ? ones(n) : Float64.(weights)
     length(wts) == n || throw(DimensionMismatch(
@@ -830,7 +851,7 @@ function _fit_bam(y, X, smooths, n_parametric, f, data,
     penalty = setup_penalties(smooths, n_parametric; select = select)
 
     # Use BAM outer iteration with chunked accumulation
-    log_sp, result = outer_iteration_bam(X, y, smooths, penalty, family, link;
+    log_sp, result = outer_iteration_bam(D, y, smooths, penalty, family, link;
         method = method, weights = wts, offset = off, control = control,
         chunk_size = bam_ctrl.chunk_size)
 
