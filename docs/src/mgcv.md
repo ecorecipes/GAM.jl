@@ -196,8 +196,8 @@ comparison there.
 | Soap film (`:so`) | ✅ | ⚠️ approximation |
 | `t2()` tensor construction (Wood–Scheipl–Faraway) | ✅ | ✅ (verified against mgcv: matching columns, penalty count, ranks, supports) |
 | Linear functional terms (matrix args) | ✅ | ❌ |
-| `bam(discrete=TRUE)` covariate discretization | ✅ | ❌ (chunked accumulation instead) |
-| Smoothing-parameter-uncertainty `Vc` / `unconditional=TRUE` | ✅ | ❌ |
+| `bam(discrete=TRUE)` covariate discretization | ✅ | ✅ `bam(...; discrete=true)` — 1-D, `te` and `bs=:re` terms; `by=`, `ti`, `t2` stay dense. Approximate by covariate rounding, as in mgcv |
+| Smoothing-parameter-uncertainty `Vc` / `unconditional=TRUE` | ✅ | ✅ `vcov_corrected`, `edf2`, and `unconditional=true` in `predict`/`smooth_estimates`/`derivatives`/`posterior_samples` |
 
 ### Extended Models
 
@@ -218,7 +218,7 @@ comparison there.
 | Feature | R (gratia / mgcv) | GAM.jl |
 |---------|-------------------|--------|
 | Residual checks (`gam.check`) | ✅ | ✅ `gam_check()` |
-| Basis dimension check (`k.check`) | ✅ | ✅ `k_check()` |
+| Basis dimension check (`k.check`) | ✅ | ✅ `k_check()` — **reproducible by default**; mgcv's draws from R's global RNG (`sample()`, `R/plots.r:220`) so repeated calls differ unless you `set.seed()` first. Pass `seed = nothing` for mgcv's behaviour |
 | Concurvity | ✅ | ✅ `concurvity()` |
 | Smooth estimates | ✅ gratia | ✅ `smooth_estimates()` |
 | Derivatives of smooths | ✅ gratia | ✅ `derivatives()` |

@@ -26,6 +26,9 @@ overview
 OverviewTable
 model_edf
 sp_criterion
+model_matrix
+has_model_matrix
+GAM.drop_model_matrix!
 ```
 
 ### Smoothing-Parameter Uncertainty

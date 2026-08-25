@@ -49,8 +49,8 @@ in the test suite) with reduced peak memory on large datasets.
 
 BAM builds the dense n × p design matrix once, then accumulates `X'WX` and
 `X'Wz` in row chunks (BLAS `syrk` per chunk), never forming the full weighted
-design. Unlike mgcv's `bam(discrete=TRUE)`, covariates are **not**
-discretized — that machinery is a possible future addition. Note also that
+design. Covariate discretization is available separately via
+`discrete=true` (see below). Note also that
 solving the normal equations squares the condition number relative to mgcv's
 QR updating; poorly scaled bases are less stable here than in `gam()`-grade
 QR approaches, though near-singular models are protected by ridge recovery.
@@ -68,14 +68,78 @@ bam(formula, data;
     family = Gaussian(),
     link = IdentityLink(),
     method = :REML,        # :REML or :ML (:GCV/:UBRE are not supported by bam)
+    discrete = false,      # or `true`, or an Int grid resolution (default 1000)
+    retain_X = true,       # `false` drops the n x p model matrix after fitting
     bam_ctrl = bam_control(),
 )
 ```
 
+## Covariate Discretization (`discrete=true`)
+
+`bam(...; discrete=true)` mirrors `mgcv::bam(..., discrete=TRUE)`: each
+supported smooth is stored as its basis evaluated at the *unique* covariate
+values, plus an integer index vector, instead of an `n × p` block.
+
+| term | under `discrete=true` |
+|---|---|
+| 1-D smooths (`s(x)`) | discretized |
+| `te(x, z)` tensor smooths | discretized |
+| `s(g, bs=:re)` (factor or random slope) | discretized |
+| `by=` terms, factor or numeric | dense |
+| `ti`, `t2` | dense |
+
+Unsupported terms fall back silently — the fit is unchanged, only its
+representation.
+
+**It is an approximation, by design.** Covariates with at most `discrete`
+distinct values (default 1000; pass an integer to change it) are represented
+exactly. Beyond that they are rounded onto an equally spaced grid, and the
+rounding — not the arithmetic, which is exact to 1e-15 — makes the fit
+approximate. Fitted values agree with the dense fit to about 1e-3 of their
+range and total EDF to about 1e-4 relative, but **individual smoothing
+parameters can move substantially** (Δlog λ up to 2.37 observed). Compare
+fitted values and EDF against a dense fit, not `sp` elementwise.
+
+Reassuringly, GAM.jl's discrete fit agrees with *mgcv's* discrete fit to
+4.25e-4 of the fitted range — closer than either package agrees with its own
+dense fit (1.39e-3 and 2.32e-3 respectively).
+
+**When it pays.** The `X'WX` kernel is ~60× faster at `k=20` and ~450× at
+`k=100` (n = 10⁶), but end-to-end gains are Amdahl-bounded:
+
+| model, n = 2·10⁵ | speedup vs dense |
+|---|---|
+| Normal, 4 × `s(k=20)` | **0.95× — slightly slower** |
+| Poisson, 4 × `s(k=20)` | 1.71× |
+| Poisson, 2 × `s(k=100)` | 6.09× |
+| `te(15,15)`, n = 10⁶ | within noise of dense |
+
+A Gaussian fit accumulates `X'WX` once, so binning is pure overhead; the win
+scales with the number of inner solves, i.e. with non-Gaussian families.
+
+**Peak memory is largely unchanged today.** The compact representations are
+dramatic in isolation — a tensor block is 8.13 MB against a 1716.61 MB dense
+block, and a 200-level random effect 766.75 → 6.03 MiB — but `setup_gam`
+still materializes the dense block before the discrete design replaces it,
+and `ConstructedSmooth.X` is re-expanded to `n` rows for downstream
+consumers. Do not enable `discrete=true` expecting a large peak-RSS
+reduction today.
+
+## Dropping the Model Matrix (`retain_X=false`)
+
+`GamModel.X` duplicates data already held per smooth: every smooth block of
+`X` is bitwise identical to the corresponding `ConstructedSmooth.X`. Passing
+`retain_X = false` keeps only the parametric columns (587.5 MiB → 7.6 MiB at
+n = 10⁶); [`model_matrix`](@ref) reassembles the full matrix bitwise on
+demand, with no basis re-evaluation.
+
 ## BamControl Options
 
-`bam_control` takes a single option, the accumulation chunk size. (The former
-`discrete`, `max_unique`, and `nthreads` keywords are deprecated no-ops.)
+`bam_control` takes a single option, the accumulation chunk size.
+Discretization is a keyword on `bam` itself (`bam(...; discrete=true)`), not
+on `bam_control`; the former `discrete`, `max_unique` and `nthreads`
+arguments to `bam_control` are deprecated and warn. Threading the
+accumulation is still not implemented.
 
 ```@example bam
 ctrl = bam_control(chunk_size = 4000)

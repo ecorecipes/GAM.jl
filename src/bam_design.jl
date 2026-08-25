@@ -711,6 +711,14 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
         # because a multi-variable RE (an interaction) has more than one term
         # variable and would otherwise be swallowed there.
         if spec.basis isa RandomEffect
+            # A `by=` variable multiplies every row, and the compact block does
+            # not encode it -- `_re_block` builds a pure {0,1} indicator, so
+            # discretising here silently DROPS the multiplier and returns a
+            # wrong fit rather than falling back. Measured on a genuine random
+            # slope: relΔcoef 0.49, max|Δfitted| 2.34 on a fitted range of 7.56
+            # (31% of range). This branch precedes the `by` guard below, so it
+            # must repeat it.
+            spec.by === nothing || continue
             cols = sm.first_para:sm.last_para
             rb = (first(cols) >= 1 && last(cols) <= p) ?
                 _re_block(spec, t, n, cols) : nothing

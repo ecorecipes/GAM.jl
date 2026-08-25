@@ -9,6 +9,19 @@ on training data but not off it, and two undocumented conventions that make
 correct side-by-side code compare different models.
 
 ### Breaking / behavior changes
+- **`k_check` is now reproducible by default.** Its p-value comes from a
+  randomization test, and the shuffles previously drew from the global RNG, so
+  ten calls on one fitted model returned sixteen distinct p-values spanning
+  0.41–0.70. `seed` now defaults to `11`. Note mgcv is *not* reproducible
+  here: `k.check` calls bare `sample()` on R's global RNG (`R/plots.r:220`),
+  so repeated mgcv calls differ unless the user sets `set.seed()` first. Pass
+  `seed = nothing` for that behaviour, or any integer for a different fixed
+  stream.
+- **`discretize_covariates` now bins by mgcv's rule** — exact unique values
+  where there are few enough, otherwise an equally spaced grid over the
+  observed range — replacing quantile midpoints. The exported utility and what
+  `bam(...; discrete=true)` actually fits against now share one implementation
+  and agree by construction.
 - **`bs=:sos` now reads latitude and longitude in DEGREES, matching mgcv.**
   Previously GAM.jl required radians while `mgcv::s(..., bs="sos")` takes
   degrees, so porting a model between the two silently rescaled the
@@ -150,6 +163,43 @@ correct side-by-side code compare different models.
 
 ### Added
 
+- **`bam(...; discrete=true)` — covariate discretization, as in
+  `mgcv::bam(discrete=TRUE)`.** Each supported smooth is stored as its basis
+  at the *unique* covariate values plus an integer index vector, instead of an
+  `n × p` block. Discretized: 1-D smooths, `te` tensor smooths, and `bs=:re`
+  random effects (factor and random slope). Still dense: `by=` terms and
+  `ti`/`t2`, which carry per-marginal reparameterizations the discrete path
+  does not implement; unsupported terms fall back silently, changing the
+  representation and not the fit.
+
+  **It is an approximation, by construction.** Covariates with at most
+  `discrete` distinct values (default 1000; pass an integer to change it) are
+  represented exactly; beyond that they are rounded onto an equally spaced
+  grid. The rounding is the only source of error — the accumulation arithmetic
+  is exact to 1e-15. Fitted values agree with the dense fit to ~1e-3 of their
+  range and total EDF to ~1e-4 relative, but **individual smoothing parameters
+  can move substantially** (Δlog λ up to 2.37 observed), so compare fitted
+  values and EDF rather than `sp` elementwise. GAM.jl's discrete fit agrees
+  with *mgcv's* discrete fit to 4.25e-4 of the fitted range — closer than
+  either package agrees with its own dense fit (1.39e-3 and 2.32e-3).
+
+  The `X'WX` kernel is ~60× faster at `k=20` and ~450× at `k=100` (n = 10⁶),
+  but end-to-end gains are Amdahl-bounded and can be negative: a Normal fit
+  with 4 × `s(k=20)` at n = 2·10⁵ measures **0.95×, slightly slower**, because
+  Gaussian accumulates `X'WX` once so binning is pure overhead. The same shape
+  with `Poisson()` is 1.71×, and 6.09× at `k=100`. Peak memory is largely
+  unchanged today: the compact representations are dramatic in isolation (a
+  tensor block is 8.13 MB against a 1716.61 MB dense block; a 200-level random
+  effect 766.75 → 6.03 MiB) but `setup_gam` still materializes the dense block
+  first, and `ConstructedSmooth.X` is re-expanded to `n` rows for downstream
+  consumers.
+
+- **`bam(...; retain_X = false)` drops the model matrix after fitting**, from
+  587.5 MiB to 7.6 MiB at n = 10⁶. `GamModel.X` duplicates data already held
+  per smooth — every smooth block is bitwise identical to the corresponding
+  `ConstructedSmooth.X` — so `model_matrix(m)` reassembles it bitwise on
+  demand, with no basis re-evaluation. Default remains `true`.
+
 - **Per-marginal `k` for tensor smooths**: `te(:x, :z, k = [4, 7])` sets the
   marginal basis dimensions directly, alongside the existing scalar form
   (which specifies the *total* dimension).
@@ -210,9 +260,10 @@ correct side-by-side code compare different models.
   comparison. It then fits a Markov random field on a 6×6 rook lattice and
   compares `bs=:sos` against `bs=:tp` on spherical data, including a seam test
   across the antimeridian. Each part has an mgcv companion in `R/` fitting the
-  same CSVs. The one documented divergence stated in the vignette is that
-  `bam(discrete=TRUE)` is not implemented; `sos` and `mrf` both match mgcv's
-  EDF, AIC, scale and fit to the printed digits.
+  same CSVs. `sos` and `mrf` both match mgcv's EDF, AIC, scale and fit to the
+  printed digits. (The vignette originally recorded `bam(discrete=TRUE)` as
+  unimplemented; it has since been added — see **Added** — and the vignette
+  has been corrected and re-rendered.)
 
 - **Documented a reproducibility caveat in `vignettes/README.md`**: a fixed
   seed pins the RNG stream, not the values, so a generator that interleaves
