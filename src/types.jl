@@ -445,12 +445,71 @@ for a single smooth term.
   `_stable_penalty_factor` in `reml.jl`, and match mgcv's vector exactly.
 - `start`: first parameter index in the full coefficient vector
 - `stop`: last parameter index
+- `offsets`: per-sub-penalty 0-based offset within the block. `S[i]` occupies
+  rows/columns `start + offsets[i] .+ (0:size(S[i],1)-1)`. All-zero (with each
+  `S[i]` the full block width) is the ordinary case and the default.
+
+  A non-zero offset lets a structured penalty be stored without materialising
+  it. A factor-`by` smooth's penalty is `I_L ⊗ S_k`, so it can be held as `L`
+  copies of the narrow `S_k` at offsets `0, k, 2k, …` instead of `L` dense
+  `kL × kL` matrices — `O(L·k²)` rather than `O(L³k²)`, which is 0.9 MiB at
+  `L=8, k=15` but 225 MiB at `L=50, k=15`.
+
+  The inner constructor validates that every `S[i]` is square and fits inside
+  the block at its offset. That check is what makes the `@inbounds`
+  accumulation in `total_penalty` safe: the loop runs over `size(S[i],1)`, so
+  a narrow sub-penalty is now a construction-time error rather than an
+  out-of-bounds read. Before this field existed the loop ran over the full
+  block width and a narrow `S[i]` silently produced a finite, wrong penalty.
 """
 struct PenaltyBlock
     S::Vector{Matrix{Float64}}
     rank::Int
     start::Int
     stop::Int
+    offsets::Vector{Int}
+
+    function PenaltyBlock(S::Vector{Matrix{Float64}}, rank::Int, start::Int,
+        stop::Int, offsets::Vector{Int})
+        width = stop - start + 1
+        length(offsets) == length(S) || throw(DimensionMismatch(
+            "PenaltyBlock has $(length(S)) penalties but $(length(offsets)) " *
+            "offsets; supply one offset per penalty"))
+        for (i, Si) in enumerate(S)
+            size(Si, 1) == size(Si, 2) || throw(DimensionMismatch(
+                "penalty $i is $(size(Si,1))x$(size(Si,2)); penalties must be square"))
+            off = offsets[i]
+            off >= 0 || throw(ArgumentError(
+                "penalty $i has negative offset $off"))
+            off + size(Si, 1) <= width || throw(DimensionMismatch(
+                "penalty $i is $(size(Si,1))x$(size(Si,1)) at offset $off, " *
+                "which does not fit in a block of width $width " *
+                "(parameters $start:$stop). A sub-penalty narrower than its " *
+                "block needs an offset saying where it sits."))
+        end
+        return new(S, rank, start, stop, offsets)
+    end
+end
+
+# Ordinary case: every sub-penalty spans the whole block.
+#
+# This form requires full width rather than defaulting to offset 0, and the
+# distinction is the point. A narrow sub-penalty at offset 0 *fits*, so it
+# would be accepted and would then penalize only the first `size(Si,1)`
+# coefficients of the block — well defined, but almost never what a caller who
+# never thought about placement intended. Supplying offsets explicitly is the
+# way to say a narrow penalty is deliberate.
+function PenaltyBlock(S::Vector{Matrix{Float64}}, rank::Int, start::Int, stop::Int)
+    width = stop - start + 1
+    for (i, Si) in enumerate(S)
+        size(Si, 1) == width || throw(DimensionMismatch(
+            "penalty $i is $(size(Si,1))x$(size(Si,2)) but its block is " *
+            "$(width) wide (parameters $start:$stop). Sub-penalties must span " *
+            "the block unless you pass explicit offsets saying where each one " *
+            "sits — e.g. PenaltyBlock(S, rank, start, stop, [0, k, 2k, ...]) " *
+            "to store a factor-by penalty as L copies of a narrow S_k."))
+    end
+    return PenaltyBlock(S, rank, start, stop, zeros(Int, length(S)))
 end
 
 """
