@@ -8,9 +8,12 @@
 # 1. X'WX accumulated in chunks (never forms the full n×p weighted product)
 # 2. Same EFS outer iteration for smoothing parameter estimation (REML/ML)
 #
-# Unlike mgcv's bam(discrete=TRUE), covariates are NOT discretized: the full
-# dense design matrix is built once. The standalone discretization utilities
-# below (`discretize_covariates` etc.) are provided but not used by `bam()`.
+# `bam(...; discrete=true)` mirrors mgcv's `bam(discrete=TRUE)` for 1-D
+# smooths: the basis is evaluated once per distinct covariate value and
+# combined through an index vector, so `X'WX` costs O(n) rather than O(n*p^2)
+# in the row dimension. Tensor, `by=`, random-effect and factor smooths stay
+# dense (M2/M3). The dense design matrix is still materialised first, so this
+# is currently a speed win and not yet a memory one — see `bam_design.jl`.
 # Note also that solving the normal equations by Cholesky squares the
 # condition number relative to mgcv's QR updating; poorly scaled bases are
 # less stable here than in mgcv.
@@ -40,10 +43,20 @@ end
 """
     discretize_covariates(data, vars; max_unique=1000) -> DiscretizedData
 
-Discretize continuous covariates by binning into `max_unique` quantile-based bins.
-Returns a `DiscretizedData` struct with unique values and index mappings.
+Discretize continuous covariates onto `max_unique` bins, returning a
+`DiscretizedData` struct with unique values and index mappings.
 
-Standalone utility: `bam()` does not currently use discretization.
+BREAKING (0.3): this now uses mgcv's binning rule rather than quantile bins.
+A variable with at most `max_unique` distinct values keeps them exactly;
+otherwise values are rounded onto an equally spaced `max_unique`-point grid
+spanning the observed range, as `compress.df` does (`R/bam.r:153-159`). The
+previous quantile-midpoint scheme placed bins where the data was dense, which
+is not what `bam(...; discrete=true)` fits against, so the utility and the
+fitter now share one implementation (`_bin_covariate`) and agree by
+construction.
+
+Values come back sorted; the fitter applies mgcv's permutation internally,
+which is numerically inert there — see [`_bin_covariate`](@ref).
 """
 function discretize_covariates(data, vars::Vector{Symbol}; max_unique::Int = 1000)
     n = length(Tables.getcolumn(data, first(vars)))
@@ -51,39 +64,10 @@ function discretize_covariates(data, vars::Vector{Symbol}; max_unique::Int = 100
     idx_map = Dict{Symbol, Vector{Int}}()
 
     for v in vars
-        x = Float64.(Tables.getcolumn(data, v))
-        ux = sort(unique(x))
-
-        if length(ux) <= max_unique
-            # Already few enough unique values
-            unique_vals[v] = ux
-            # Map each observation to index in ux
-            val_to_idx = Dict(val => i for (i, val) in enumerate(ux))
-            idx_map[v] = [val_to_idx[xi] for xi in x]
-        else
-            # Quantile-based binning
-            probs = range(0, 1; length = max_unique + 1)
-            breaks = quantile(x, probs)
-            # Make breaks unique
-            breaks = sort(unique(breaks))
-            midpoints = [(breaks[i] + breaks[i + 1]) / 2 for i in 1:(length(breaks) - 1)]
-            # First and last midpoints are the boundary values
-            if !isempty(midpoints)
-                midpoints[1] = breaks[1]
-                midpoints[end] = breaks[end]
-            end
-            unique_vals[v] = midpoints
-
-            # Assign each observation to nearest midpoint via searchsorted on breaks
-            indices = zeros(Int, length(x))
-            @inbounds for i in eachindex(x)
-                # Find which bin x[i] falls in
-                j = searchsortedlast(breaks, x[i])
-                j = clamp(j, 1, length(midpoints))
-                indices[i] = j
-            end
-            idx_map[v] = indices
-        end
+        xu, k, _ = _bin_covariate(Tables.getcolumn(data, v), max_unique;
+            shuffle = false)
+        unique_vals[v] = xu
+        idx_map[v] = Int.(k)
     end
 
     return DiscretizedData(unique_vals, idx_map, n)
@@ -111,8 +95,9 @@ end
 Construct a [`BamControl`](@ref) with the given parameters.
 
 The former `discrete`, `max_unique`, and `nthreads` keywords are deprecated
-and have no effect: `bam()` does not discretize covariates or thread the
-accumulation. Passing them warns.
+and have no effect here. Discretization is now a keyword on [`bam`](@ref)
+itself (`bam(...; discrete=true)`), matching mgcv; threading the accumulation
+is still not implemented. Passing them warns.
 """
 function bam_control(;
     chunk_size::Int = 10000,
@@ -756,6 +741,14 @@ for badly scaled bases prefer `gam()`.
   original data
 - `select`: if `true`, add a null-space penalty to every smooth
   (Marra & Wood 2011 term selection), as in `gam(...; select=true)`
+- `discrete`: if `true`, store each 1-D smooth as its basis at the unique
+  covariate values plus an index vector, as `mgcv::bam(..., discrete=TRUE)`
+  does, instead of an `n x p` block. Pass an integer to set the grid
+  resolution (default 1000). Covariates with at most that many distinct
+  values are represented exactly; otherwise they are rounded onto an equally
+  spaced grid, which makes the fit an approximation — smoothing parameters
+  can move noticeably even where fitted values agree closely. Tensor, `by=`,
+  random-effect and factor smooths are unaffected and stay dense
 - `control`: GAM fitting control parameters
 - `bam_ctrl`: BAM-specific control parameters (chunk size)
 
@@ -784,6 +777,7 @@ function bam(f::FormulaTerm, data;
     offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
     na_action::Symbol = :fail,
     select::Bool = false,
+    discrete::Union{Bool, Integer} = false,
     control::GamControl = gam_control(),
     bam_ctrl::BamControl = bam_control())
 
@@ -800,7 +794,7 @@ function bam(f::FormulaTerm, data;
 
     y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
-        method, weights, offset, select, control, bam_ctrl)
+        method, weights, offset, select, control, bam_ctrl, discrete)
 end
 
 function bam(gf::GamFormula, data;
@@ -811,6 +805,7 @@ function bam(gf::GamFormula, data;
     offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
     na_action::Symbol = :fail,
     select::Bool = false,
+    discrete::Union{Bool, Integer} = false,
     control::GamControl = gam_control(),
     bam_ctrl::BamControl = bam_control())
 
@@ -828,16 +823,17 @@ function bam(gf::GamFormula, data;
     y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
     f = term(gf.response) ~ term(1)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
-        method, weights, offset, select, control, bam_ctrl)
+        method, weights, offset, select, control, bam_ctrl, discrete)
 end
 
 function _fit_bam(y, X, smooths, n_parametric, f, data,
-    family, link, method, weights, offset, select, control, bam_ctrl)
+    family, link, method, weights, offset, select, control, bam_ctrl,
+    discrete = false)
     # Construct the design once for the whole fit: `DenseDesign` memoises the
     # O(n·p) intercept scan, so the outer loop's inner P-IRLS solves inherit it
-    # rather than repeating it. A discrete design will be built here instead,
-    # from `smooths` and `data`, without `X` ever being materialised.
-    D = bam_design(X)
+    # rather than repeating it. Under `discrete`, 1-D smooths are replaced by
+    # their basis at the unique covariate values plus an index vector.
+    D = bam_design(X, smooths, data, discrete)
     n, p = nrows(D), ncols(D)
 
     wts = weights === nothing ? ones(n) : Float64.(weights)
