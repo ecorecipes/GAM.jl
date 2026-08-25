@@ -742,9 +742,18 @@ function setup_gam_discrete(gf::GamFormula, data, m_grid::Int;
                     col[i] = Xd[k[i], j]
                 end
             end
-            # `ConstructedSmooth.X` is `Matrix{Float64}` and downstream code
-            # (side constraints, gratia, concurvity) assumes `n` rows.
-            sm.X = X_full[:, cols]
+            # Keep the REDUCED basis and record the row map, rather than
+            # re-expanding to `n` rows. `X_full` above already holds the
+            # expanded block, and `sm.X` was a second full copy of it -- at
+            # n=2e5 with 4 x s(cr,k=20) that was 116.0 MiB of pure duplication
+            # against 117.5 MiB for `X_full` itself. `smooth_matrix(sm)`
+            # scatters on demand for callers that need `n` rows.
+            #
+            # Safe here specifically because `setup_gam_discrete` early-returns
+            # to the dense path when smooths share variables, so
+            # `side_constrain!` -- the one consumer that MUTATES `sm.X` by
+            # dropping columns -- provably never runs on this path.
+            sm.rowmap = k
         end
         c += pb
     end

@@ -299,7 +299,14 @@ function partial_residuals(m::GamModel; select = nothing)
         beta_s = m.coefficients[sm_idx]
         # `sm.X` is bitwise `m.X[:, sm_idx]`, and this sits in a per-smooth
         # loop — reassembling the full matrix here would do it once per smooth.
-        f_hat = sm.X * beta_s
+        # Under `discrete=true` it is the reduced `m x k` basis, so multiply on
+        # the reduced rows and gather: an `m`-length product plus a gather is
+        # cheaper than scattering to `n` rows and multiplying there.
+        f_hat = if is_reduced(sm)
+            (sm.X * beta_s)[sm.rowmap]
+        else
+            sm.X * beta_s
+        end
         partial_r = f_hat .+ resid
 
         var = spec.term_vars[1]
