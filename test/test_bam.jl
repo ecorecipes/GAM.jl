@@ -237,4 +237,52 @@
         @test all(<(14.9), m_te.sp)          # no flat-ridge walk to the clamp
         @test cor(fitted(m_te), fitted(m_gte)) > 0.9999
     end
+
+    @testset "pirls_bam scratch reuse" begin
+        # `outer_iteration_bam` hands one `BamPirlsScratch` to every inner
+        # solve, so `PirlsResult`'s `mu`/`eta`/`w` (stored by reference) alias
+        # the next iteration's buffers. That is only safe because each field is
+        # fully overwritten before it is read. These assert the property
+        # directly rather than inferring it from a converged fit.
+        rng = StableRNG(5)
+        n = 800
+        x = rand(rng, n)
+        mu_true = exp.(0.5 .+ 1.5 .* sin.(2π .* x))
+        y = Float64[rand(rng, Gamma(0.3, m / 0.3)) for m in mu_true]
+        sm = GAM.smooth_construct(GAM.s(:x; bs = :cr, k = 12), (x = x,))
+        X = hcat(ones(n), sm.X)
+        p = size(X, 2)
+        S_total = zeros(p, p)
+        S_total[2:end, 2:end] .= sm.S[1]
+        D = GAM.bam_design(X)
+
+        # A deliberately terrible start drives step halving hard — bam's
+        # halving branch is otherwise near-unreachable (60/60 ordinary fits
+        # accept at zero halvings), so a happy-path fit would not exercise it.
+        bad = fill(6.0, p)
+        sc = GAM.BamPirlsScratch(n)
+        GAM.pirls_bam(D, y, S_total, Gamma(), LogLink(); start = copy(bad), scratch = sc)
+        reused = GAM.pirls_bam(D, y, S_total, Gamma(), LogLink();
+            start = copy(bad), scratch = sc)          # second call, dirty scratch
+        fresh = GAM.pirls_bam(D, y, S_total, Gamma(), LogLink(); start = copy(bad))
+
+        # Exact equality, not ≈: reusing a buffer is not an approximation.
+        @test reused.coefficients == fresh.coefficients
+        @test reused.deviance == fresh.deviance
+        @test reused.working_weights == fresh.working_weights
+
+        # A wrongly sized scratch must be caught, not silently misread.
+        @test_throws AssertionError GAM.pirls_bam(D, y, S_total, Gamma(), LogLink();
+            scratch = GAM.BamPirlsScratch(n - 1))
+
+        # The six n-vectors must come from the scratch, so a supplied one
+        # leaves the fitter's own n-length allocations at zero. Guarding on
+        # allocations rather than time: they reproduce under load.
+        sc2 = GAM.BamPirlsScratch(n)
+        GAM.pirls_bam(D, y, S_total, Gamma(), LogLink(); scratch = sc2)   # warm
+        a_scratch = @allocated GAM.pirls_bam(D, y, S_total, Gamma(), LogLink();
+            scratch = sc2)
+        a_fresh = @allocated GAM.pirls_bam(D, y, S_total, Gamma(), LogLink())
+        @test a_scratch < a_fresh - 5 * n * sizeof(Float64)
+    end
 end

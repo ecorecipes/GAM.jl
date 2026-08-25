@@ -122,14 +122,25 @@ Uses BLAS syrk for each chunk.
 function _accumulate_XtWX_XtWz_chunked!(
     XtWX::Matrix{Float64}, XtWz::Vector{Float64},
     X::Matrix{Float64}, w::Vector{Float64}, z::Vector{Float64},
-    chunk_size::Int)
+    chunk_size::Int;
+    Xw_scratch::Union{Matrix{Float64}, Nothing} = nothing,
+    wz_scratch::Union{Vector{Float64}, Nothing} = nothing)
 
     n, p = size(X)
     fill!(XtWX, 0.0)
     fill!(XtWz, 0.0)
 
-    Xw_chunk = zeros(min(chunk_size, n), p)
-    wz_chunk = zeros(min(chunk_size, n))
+    # The chunk buffers are the single largest allocation in a non-Gaussian
+    # `bam` fit — 217.4 MiB of a 659.4 MiB Poisson 4x s(cr,k=20) fit at n=1e5,
+    # because they are rebuilt on every call and the accumulator is called once
+    # per P-IRLS iteration. Accepting caller-owned scratch lets the fitter
+    # allocate them once; the `nothing` default keeps every existing caller,
+    # including the direct calls in test_bam.jl, allocating exactly as before.
+    nc_max = min(chunk_size, n)
+    Xw_chunk = Xw_scratch === nothing ? zeros(nc_max, p) : Xw_scratch
+    wz_chunk = wz_scratch === nothing ? zeros(nc_max) : wz_scratch
+    @assert size(Xw_chunk, 1) >= nc_max && size(Xw_chunk, 2) == p
+    @assert length(wz_chunk) >= nc_max
 
     for start in 1:chunk_size:n
         stop = min(start + chunk_size - 1, n)
@@ -171,12 +182,16 @@ Accumulate X'WX only (no rhs) in chunks.
 function _accumulate_XtWX_chunked!(
     XtWX::Matrix{Float64},
     X::Matrix{Float64}, w::Vector{Float64},
-    chunk_size::Int)
+    chunk_size::Int;
+    Xw_scratch::Union{Matrix{Float64}, Nothing} = nothing)
 
     n, p = size(X)
     fill!(XtWX, 0.0)
 
-    Xw_chunk = zeros(min(chunk_size, n), p)
+    # See `_accumulate_XtWX_XtWz_chunked!`: 99.9 MiB of the same fit.
+    nc_max = min(chunk_size, n)
+    Xw_chunk = Xw_scratch === nothing ? zeros(nc_max, p) : Xw_scratch
+    @assert size(Xw_chunk, 1) >= nc_max && size(Xw_chunk, 2) == p
 
     for start in 1:chunk_size:n
         stop = min(start + chunk_size - 1, n)
@@ -227,6 +242,37 @@ function _bam_mustart(family::UnivariateDistribution, yi::Real, wi::Real)
 end
 
 """
+    BamPirlsScratch(n)
+
+The six n-length working vectors `pirls_bam` needs, allocated once so the outer
+EFS loop does not rebuild them on every inner solve.
+
+`pirls_bam` is called once per outer iteration on the non-Gaussian path
+(`outer_iteration_bam`), so these six `zeros(n)` were 78.1 MiB of a 659.4 MiB
+Poisson `4 x s(cr,k=20)` fit at n=1e5 — 13.02 MiB each over 17 calls. The
+Gaussian path never enters `pirls_bam` inside the loop, so it neither paid this
+nor benefits.
+
+Reuse is safe without re-zeroing because every field is fully overwritten
+before it is read: `eta` by `mul_eta!` (which overwrites for `DenseDesign` and
+`fill!`s first for `DiscreteDesign`) or by the mustart loop over `1:n`;
+`eta_new` by `mul_eta!` inside `recompute!`; `mu`/`mu_new` by their `1:n`
+link-inverse loops; and `w`/`z` by `_pirls_working!`, which writes every index
+of `eachindex(y)`. Keep that invariant if you add a field.
+"""
+struct BamPirlsScratch
+    eta::Vector{Float64}
+    eta_new::Vector{Float64}
+    mu::Vector{Float64}
+    mu_new::Vector{Float64}
+    w::Vector{Float64}
+    z::Vector{Float64}
+end
+
+BamPirlsScratch(n::Int) = BamPirlsScratch(zeros(n), zeros(n), zeros(n),
+    zeros(n), zeros(n), zeros(n))
+
+"""
     pirls_bam(X, y, S_total, family, link; weights, offset, start, control, chunk_size)
 
 Penalized IRLS using chunk-wise X'WX accumulation for large datasets.
@@ -247,19 +293,24 @@ function pirls_bam(D::BamDesign, y::Vector{Float64},
     control::GamControl = gam_control(),
     chunk_size::Int = 10000,
     compute_hat_diag::Bool = true,
-    XtWX_out::Union{Matrix{Float64}, Nothing} = nothing)
+    XtWX_out::Union{Matrix{Float64}, Nothing} = nothing,
+    scratch::Union{BamPirlsScratch, Nothing} = nothing)
 
     n, p = nrows(D), ncols(D)
 
-    # Pre-allocate working buffers
+    # Pre-allocate working buffers. The six n-length vectors come from
+    # caller-owned scratch when supplied (see `BamPirlsScratch`); the p-length
+    # and p x p ones are ~12 KB and 0.8 MB respectively and are left alone.
+    sc = scratch === nothing ? BamPirlsScratch(n) : scratch
+    @assert length(sc.eta) == n "BamPirlsScratch sized for $(length(sc.eta)) rows, need $n"
     beta = zeros(p)
     beta_new = zeros(p)
-    eta = zeros(n)
-    eta_new = zeros(n)
-    mu = zeros(n)
-    mu_new = zeros(n)
-    w = zeros(n)
-    z = zeros(n)
+    eta = sc.eta
+    eta_new = sc.eta_new
+    mu = sc.mu
+    mu_new = sc.mu_new
+    w = sc.w
+    z = sc.z
     XtWz = zeros(p)
     A = zeros(p, p)
     XtWX = zeros(p, p)
@@ -479,6 +530,21 @@ function outer_iteration_bam(D::BamDesign, y::Vector{Float64},
     # For Gaussian identity link, W is constant (= prior weights), so X'WX is
     # constant across iterations. Precompute it once to avoid O(n·p²) per outer step.
     is_gaussian = family isa Normal && link isa IdentityLink
+
+    # Owned once and reused by every inner solve. `pirls_bam` is called once per
+    # outer iteration on the non-Gaussian path, so allocating these inside it
+    # cost 78.1 MiB of a 659.4 MiB Poisson fit at n=1e5, plus 0.8 MB per
+    # iteration for `XtWX_inner`. The Gaussian branch never enters `pirls_bam`
+    # inside the loop, so it allocates neither.
+    #
+    # Sharing scratch makes each inner `result` alias the next iteration's
+    # buffers, because `PirlsResult` stores `mu`, `eta` and `w` by reference.
+    # That is safe here and only here: `prev_result` is read solely for
+    # `.coefficients` (a freshly allocated `beta`), each `result`'s `mu`/`w` are
+    # consumed within the same iteration, and the final solve below is a
+    # separate un-scratched call, so the returned result never aliases this.
+    pirls_scratch = is_gaussian ? nothing : BamPirlsScratch(n)
+    XtWX_inner = is_gaussian ? zeros(0, 0) : zeros(p, p)
     XtWX_cached = zeros(p, p)
     Xty_cached = zeros(p)
     yWy_cached = 0.0
@@ -523,11 +589,11 @@ function outer_iteration_bam(D::BamDesign, y::Vector{Float64},
             #    7-of-8 to 33-of-34 of those passes were discarded outright.
             #  * its final XᵀWX — accumulated from the same working weights the
             #    EFS update needs, so it is handed back rather than swept again.
-            XtWX_inner = zeros(p, p)
             result = pirls_bam(D, y, S_total, family, link;
                 weights = weights, offset = offset, start = start_coef,
                 control = control, chunk_size = chunk_size,
-                compute_hat_diag = false, XtWX_out = XtWX_inner)
+                compute_hat_diag = false, XtWX_out = XtWX_inner,
+                scratch = pirls_scratch)
             edf_total = sum(result.edf_vec)
         end
 
@@ -771,6 +837,7 @@ m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 ```
 """
 function bam(f::FormulaTerm, data;
+    retain_X::Bool = true,
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
@@ -795,10 +862,11 @@ function bam(f::FormulaTerm, data;
 
     y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
-        method, weights, offset, select, control, bam_ctrl, discrete)
+        method, weights, offset, select, control, bam_ctrl, discrete, retain_X)
 end
 
 function bam(gf::GamFormula, data;
+    retain_X::Bool = true,
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
@@ -834,12 +902,12 @@ function bam(gf::GamFormula, data;
     end
     f = term(gf.response) ~ term(1)
     return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
-        method, weights, offset, select, control, bam_ctrl, discrete)
+        method, weights, offset, select, control, bam_ctrl, discrete, retain_X)
 end
 
 function _fit_bam(y, X, smooths, n_parametric, f, data,
     family, link, method, weights, offset, select, control, bam_ctrl,
-    discrete = false)
+    discrete = false, retain_X::Bool = true)
     # Construct the design once for the whole fit: `DenseDesign` memoises the
     # O(n·p) intercept scan, so the outer loop's inner P-IRLS solves inherit it
     # rather than repeating it. Under `discrete`, 1-D smooths are replaced by
@@ -902,7 +970,7 @@ function _fit_bam(y, X, smooths, n_parametric, f, data,
         reml_val -= 0.5 * Mp * log(2π * phi)
     end
 
-    return GamModel(
+    m = GamModel(
         f,
         y, X,
         result.coefficients,
@@ -931,4 +999,10 @@ function _fit_bam(y, X, smooths, n_parametric, f, data,
         control,
         Tables.columntable(data),
     )
+    # `m.X` duplicates the retained per-smooth blocks bitwise, so dropping it
+    # costs nothing but the parametric columns, which `drop_model_matrix!`
+    # keeps. Default is to retain: `X` is a public field, and
+    # `model_matrix(m)` reassembles FROM `ConstructedSmooth.X`.
+    retain_X || drop_model_matrix!(m)
+    return m
 end

@@ -632,6 +632,16 @@ mutable struct GamModel{D, L<:GLM.Link}
     # fields above. `edf1` is *not* deferred: it is a pure function of F, which
     # the fit has already formed.
     vc_thunk::Any
+    # Parametric columns of the model matrix, retained ONLY once `X` has been
+    # dropped by `drop_model_matrix!`. `X` is pure duplication of data already
+    # held elsewhere — every smooth block of `X` is bitwise identical to the
+    # corresponding `ConstructedSmooth.X` — so the only part not recoverable
+    # from `smooths` is the parametric block, which is `n × n_parametric`
+    # (usually one intercept column) against `X`'s `n × p`. Empty while `X` is
+    # retained, following the same empty-as-unavailable convention as `edf1`,
+    # `edf2` and `Vc` above; that keeps the field concretely typed rather than
+    # a `Union`, which matters because `GamModel` is on every hot path.
+    X_par::Matrix{Float64}
 end
 
 # Constructor for the fitters that do not supply the smoothing-parameter
@@ -652,7 +662,83 @@ function GamModel(formula, y, X, coefficients, fitted_values, linear_predictor,
         edf_total, scale, deviance_val, null_deviance, reml, criterion, method,
         Vp, Ve, hat_matrix_diag, R, converged, iterations, n_smooth,
         n_parametric, control, data,
-        Float64[], Float64[], Matrix{Float64}(undef, 0, 0), nothing)
+        Float64[], Float64[], Matrix{Float64}(undef, 0, 0), nothing,
+        Matrix{Float64}(undef, 0, 0))
+end
+
+"""
+    model_matrix(m::GamModel) -> Matrix{Float64}
+
+The `n × p` model matrix. Returns `m.X` when it is retained (the default), and
+otherwise reassembles it exactly from the parametric block and the smooth
+bases — see [`drop_model_matrix!`](@ref).
+
+Reassembly is **bitwise** identical to the retained matrix, not merely close.
+It concatenates stored blocks rather than re-evaluating any basis: every
+smooth block of `X` was verified bitwise equal to the corresponding
+`ConstructedSmooth.X` across plain, tensor, random-effect, side-constrained
+and parametric models. Re-evaluating instead (via `_gam_prediction_matrix`)
+would drift by ~2.7e-13 on thin-plate smooths, which is why that route is not
+used.
+
+Prefer this over direct `m.X` access: a model whose matrix has been dropped
+has an empty `X`, and reading the field would silently yield a `0×0` matrix.
+"""
+function model_matrix(m::GamModel)
+    size(m.X, 1) > 0 && return m.X
+    n = length(m.y)
+    npar = m.n_parametric
+    p = npar
+    for sm in m.smooths
+        p = max(p, sm.last_para)
+    end
+    X = Matrix{Float64}(undef, n, p)
+    if npar > 0
+        size(m.X_par, 2) == npar || throw(ArgumentError(
+            "model_matrix: the model matrix was dropped but its parametric " *
+            "block is missing ($(size(m.X_par, 2)) columns, expected $npar). " *
+            "This model was not produced by `drop_model_matrix!`."))
+        copyto!(view(X, :, 1:npar), m.X_par)
+    end
+    for sm in m.smooths
+        copyto!(view(X, :, sm.first_para:sm.last_para), sm.X)
+    end
+    return X
+end
+
+"""
+    has_model_matrix(m::GamModel) -> Bool
+
+Whether `m` retains its model matrix directly. `false` means
+[`model_matrix`](@ref) will reassemble it on each call.
+"""
+has_model_matrix(m::GamModel) = size(m.X, 1) > 0
+
+"""
+    drop_model_matrix!(m::GamModel) -> GamModel
+
+Drop the retained `n × p` model matrix, keeping only its parametric columns,
+so that [`model_matrix`](@ref) reassembles it on demand from the smooth bases.
+
+This is what mgcv does — `bam` sets `G\$smooth <- G\$X <- NULL` and
+`model.matrix.gam` recomputes — and it is worth `n × (p − n_parametric)`
+doubles: 587 MB on a measured `n = 10⁶` fit.
+
+!!! warning "Internal until consumers migrate"
+    Several call sites still read `m.X` directly (`concurvity` and the
+    `k_check` helper in `diagnostics.jl`, three sites in `gratia.jl`,
+    `ginla.jl`, and the plotting extension). Those must move to
+    `model_matrix(m)` before dropping is safe to expose as a user-facing
+    option; until then a dropped model will silently give them a `0×0`
+    matrix.
+"""
+function drop_model_matrix!(m::GamModel)
+    size(m.X, 1) > 0 || return m
+    npar = m.n_parametric
+    m.X_par = npar > 0 ? m.X[:, 1:npar] :
+              Matrix{Float64}(undef, size(m.X, 1), 0)
+    m.X = Matrix{Float64}(undef, 0, 0)
+    return m
 end
 
 """

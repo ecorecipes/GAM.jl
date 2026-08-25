@@ -548,6 +548,7 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
         control,
         Tables.columntable(data),
         edf1_vec, Float64[], Matrix{Float64}(undef, 0, 0), vc_thunk,
+        Matrix{Float64}(undef, 0, 0),
     )
 end
 
@@ -764,5 +765,7 @@ function _fit_gam_extended(y, X, smooths, n_parametric, f, data,
         # edf1 (Ref.df) is a pure function of F, so extended families get it
         # too; Vc/edf2 need the REML Hessian machinery and stay empty here.
         edf1_from_F(F), Float64[], Matrix{Float64}(undef, 0, 0), nothing,
+        # X_par: empty while `X` is retained (see the field's docstring).
+        Matrix{Float64}(undef, 0, 0),
     )
 end

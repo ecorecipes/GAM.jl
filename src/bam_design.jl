@@ -61,9 +61,39 @@ struct DenseDesign <: BamDesign
     # A concrete `Int` rather than `Union{Int,Nothing}` to keep `intercept_col`
     # inferrable.
     icpt::Base.RefValue{Int}
+    # Chunk scratch, allocated on first use and reused for the life of the
+    # design. The accumulators previously allocated a fresh `chunk_size x p`
+    # buffer per call, and on the non-Gaussian path they are called once per
+    # outer EFS iteration: measured at 320 MiB for a Poisson 4 x s(cr,k=20)
+    # fit at n=1e5, which is 4.1x the six hoisted n-vectors in `pirls_bam`.
+    # The design outlives the whole fit, so one buffer suffices.
+    Xw::Base.RefValue{Matrix{Float64}}
+    wz::Base.RefValue{Vector{Float64}}
 end
 
-DenseDesign(X::Matrix{Float64}) = DenseDesign(X, Ref(-2))
+DenseDesign(X::Matrix{Float64}) =
+    DenseDesign(X, Ref(-2), Ref(Matrix{Float64}(undef, 0, 0)), Ref(Float64[]))
+
+"""
+    _chunk_scratch!(D::DenseDesign, rows, p) -> (Xw, wz)
+
+Return chunk scratch of at least `rows x p`, growing the cached buffers only
+when a larger chunk is requested. Views are taken by the caller, so a buffer
+sized for an earlier, larger chunk is reused rather than reallocated.
+"""
+function _chunk_scratch!(D::DenseDesign, rows::Int, p::Int)
+    Xw = D.Xw[]
+    if size(Xw, 1) < rows || size(Xw, 2) != p
+        Xw = Matrix{Float64}(undef, rows, p)
+        D.Xw[] = Xw
+    end
+    wz = D.wz[]
+    if length(wz) < rows
+        wz = Vector{Float64}(undef, rows)
+        D.wz[] = wz
+    end
+    return Xw, wz
+end
 
 """
     bam_design(X::Matrix{Float64}) -> DenseDesign
@@ -135,7 +165,10 @@ function accumulate_XtWX_XtWz! end
 function accumulate_XtWX_XtWz!(XtWX::Matrix{Float64}, XtWz::Vector{Float64},
     D::DenseDesign, w::Vector{Float64}, z::Vector{Float64};
     chunk_size::Int = 10000)
-    _accumulate_XtWX_XtWz_chunked!(XtWX, XtWz, D.X, w, z, chunk_size)
+    nc = min(chunk_size, size(D.X, 1))
+    Xw, wz = _chunk_scratch!(D, nc, size(D.X, 2))
+    _accumulate_XtWX_XtWz_chunked!(XtWX, XtWz, D.X, w, z, chunk_size;
+        Xw_scratch = Xw, wz_scratch = wz)
     return XtWX, XtWz
 end
 
@@ -148,7 +181,9 @@ function accumulate_XtWX! end
 
 function accumulate_XtWX!(XtWX::Matrix{Float64}, D::DenseDesign,
     w::Vector{Float64}; chunk_size::Int = 10000)
-    _accumulate_XtWX_chunked!(XtWX, D.X, w, chunk_size)
+    nc = min(chunk_size, size(D.X, 1))
+    Xw, _ = _chunk_scratch!(D, nc, size(D.X, 2))
+    _accumulate_XtWX_chunked!(XtWX, D.X, w, chunk_size; Xw_scratch = Xw)
     return XtWX
 end
 
