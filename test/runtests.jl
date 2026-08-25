@@ -1223,6 +1223,9 @@ _spde_csv_ok && @eval include("test_spde_rcall.jl")
 # InverseGaussian / non-canonical-link P-IRLS convergence (no R needed)
 @eval include("test_invgauss.jl")
 
+# BamDesign abstraction: DenseDesign parity and type stability (no R needed)
+@eval include("test_bam_design.jl")
+
 # method=:ML criterion parity with mgcv (range-space determinant, Dp/n scale)
 @eval include("test_ml_criterion.jl")
 
