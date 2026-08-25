@@ -90,6 +90,149 @@ function _apply_by_variable!(sm::ConstructedSmooth, t)
     return sm
 end
 
+# ============================================================================
+# Marginal (non-replicating) representations for `by=` and random effects
+#
+# mgcv's discrete path stores a factor `by` as a leading ONE-COLUMN MARGINAL
+# plus a per-row index (`R/bam.r:2470-2483`) instead of replicating the basis
+# once per level. GAM.jl's dense path replicates into an `n x (k*L)` matrix
+# (`_apply_by_variable!` above), and `bs=:re` materialises an `n x k`
+# indicator, discarding the per-row level index it computes on the way. Both
+# are `O(n*k*L)` where mgcv is `O(n)` index plus `O(m*k)` basis.
+#
+# The helpers below expose the compact form WITHOUT altering either dense
+# path: `smooth_construct` and `_apply_by_variable!` are untouched, so every
+# existing fit stays bit-identical and a caller that wants the compact form
+# asks for it explicitly.
+#
+# Penalty note: the replicated penalty is `I_L ⊗ S_k`. `_apply_by_variable!`
+# stores that as `L` matrices of the FULL `kL x kL` block width, each with a
+# single diagonal sub-block filled — `O(L^3 k^2)` storage, which is 0.9 MB at
+# L=8, k=15 but 225 MB at L=50, k=15. Storing `L` copies of the `k x k` `S_k`
+# instead needs a per-sub-penalty offset that `PenaltyBlock` does not carry;
+# see the note in `total_penalty`.
+# ============================================================================
+
+"""
+    MarginalBlockIndex
+
+Compact stand-in for a block-replicated design matrix. Row `i` of the dense
+matrix it represents is zero except in block `index[i]`, where it is
+`scale[i] * base[i, :]`:
+
+    dense[i, (index[i]-1)*kbase .+ (1:kbase)] .= scale[i] .* base[i, :]
+
+`index[i] == 0` marks a row in no block (an unseen factor level) and yields a
+zero row, matching [`predict_matrix`](@ref)'s warn-and-zero rule for unseen
+`by=` levels.
+
+# Fields
+- `index`: per-row block index, `0` or `1:nblocks`
+- `scale`: per-row multiplier — the by-variable for a numeric `by`, the random
+  slope for `bs=:re`, `1.0` for a factor `by`
+- `kbase`: width of the unreplicated basis (`1` when the basis is implicit,
+  as for `bs=:re`, whose "basis" is a single all-ones column)
+- `nblocks`: number of blocks (factor levels)
+
+Dense width is `kbase * nblocks`; the representation costs `O(n)` plus
+whatever the caller holds for the base basis.
+"""
+struct MarginalBlockIndex
+    index::Vector{Int32}
+    scale::Vector{Float64}
+    kbase::Int
+    nblocks::Int
+end
+
+"""Dense column count of the matrix a [`MarginalBlockIndex`](@ref) represents."""
+dense_width(rep::MarginalBlockIndex) = rep.kbase * rep.nblocks
+
+"""
+    reconstruct_dense!(dest, rep, base, rows) -> dest
+
+Materialise dense rows `rows` of the matrix `rep` represents into `dest`, which
+must be `length(rows) x dense_width(rep)`. `base` is the unreplicated basis, or
+`nothing` when it is the implicit single all-ones column (`bs=:re`).
+"""
+function reconstruct_dense!(dest::AbstractMatrix{Float64}, rep::MarginalBlockIndex,
+    base::Union{Nothing, AbstractMatrix{Float64}}, rows::AbstractVector{<:Integer})
+    size(dest, 2) == dense_width(rep) || throw(DimensionMismatch(
+        "dest has $(size(dest, 2)) columns, representation is $(dense_width(rep)) wide"))
+    size(dest, 1) == length(rows) || throw(DimensionMismatch(
+        "dest has $(size(dest, 1)) rows, asked for $(length(rows))"))
+    base === nothing || size(base, 2) == rep.kbase || throw(DimensionMismatch(
+        "base has $(size(base, 2)) columns, kbase is $(rep.kbase)"))
+    fill!(dest, 0.0)
+    kb = rep.kbase
+    @inbounds for (d, i) in enumerate(rows)
+        l = rep.index[i]
+        l == 0 && continue
+        off = (Int(l) - 1) * kb
+        s = rep.scale[i]
+        if base === nothing
+            dest[d, off + 1] = s
+        else
+            for j in 1:kb
+                dest[d, off + j] = s * base[i, j]
+            end
+        end
+    end
+    return dest
+end
+
+"""
+    reconstruct_dense(rep, base) -> Matrix{Float64}
+
+Whole-matrix form of [`reconstruct_dense!`](@ref).
+"""
+reconstruct_dense(rep::MarginalBlockIndex,
+    base::Union{Nothing, AbstractMatrix{Float64}}) =
+    reconstruct_dense!(
+        Matrix{Float64}(undef, length(rep.index), dense_width(rep)),
+        rep, base, 1:length(rep.index))
+
+"""
+    by_marginal_representation(spec, data, knots=nothing) -> (base_sm, rep)
+
+Build the smooth `spec` WITHOUT replicating it per `by=` level: returns the
+unreplicated [`ConstructedSmooth`](@ref) and a [`MarginalBlockIndex`](@ref)
+describing the replication.
+
+`reconstruct_dense(rep, base_sm.X)` reproduces the `X` that
+`smooth_construct(spec, data)` builds. Penalties on `base_sm` are the
+unreplicated `k x k` ones; the replicated penalty is `I_L ⊗ S_k`.
+
+The level ordering matches [`_apply_by_variable!`](@ref) exactly
+(`sort!(unique(...))`), which is what makes the reconstruction faithful.
+"""
+function by_marginal_representation(spec::SmoothSpec{B}, data,
+    knots = nothing) where {B}
+    spec.by === nothing &&
+        throw(ArgumentError("by_marginal_representation: `spec` has no by= variable"))
+    t = Tables.columntable(data)
+    # `xt` is copied, not shared: the base construction may write cache entries
+    # into it and must not disturb the caller's spec.
+    base_spec = SmoothSpec{B}(spec.term_vars, spec.basis, spec.k, nothing,
+        spec.id, spec.sp, spec.fx, spec.m, spec.label, copy(spec.xt))
+    sm = smooth_construct(base_spec, data, knots)
+    by_col = Tables.getcolumn(t, spec.by)
+    n = size(sm.X, 1)
+    if eltype(by_col) <: Real
+        # Numeric by: one block, the by-variable is the per-row scale.
+        return sm, MarginalBlockIndex(ones(Int32, n), Float64.(by_col),
+            size(sm.X, 2), 1)
+    end
+    if sm.Ain !== nothing || sm.Aeq !== nothing
+        throw(ArgumentError(
+            "factor by= is not supported for linear-constraint (scasm) smooths"))
+    end
+    levels = sort!(unique(collect(by_col)))
+    pos = Dict(lev => Int32(l) for (l, lev) in enumerate(levels))
+    idx = Int32[get(pos, v, Int32(0)) for v in by_col]
+    sm.spec.xt[:_by_levels] = levels
+    return sm, MarginalBlockIndex(idx, ones(n), size(sm.X, 2), length(levels))
+end
+
 """
     predict_matrix(smooth::ConstructedSmooth, newdata) -> Matrix{Float64}
 
