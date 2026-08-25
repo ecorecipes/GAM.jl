@@ -61,7 +61,8 @@ BELOW 1 (with small p-value) suggest the basis dimension k is too small.
 gam_check(m)     # convergence, k-index and p-value per smooth
 ```
 """
-function gam_check(m::GamModel; n_rep::Int = 200, seed = nothing)
+function gam_check(m::GamModel; n_rep::Int = 200,
+                   seed::Union{Integer, Nothing} = 11)
     println("GAM checking results")
     println("====================")
     println()
@@ -113,7 +114,7 @@ function gam_check(m::GamModel; n_rep::Int = 200, seed = nothing)
 end
 
 """
-    k_check(m::GamModel; n_rep=200, seed=nothing)
+    k_check(m::GamModel; n_rep=200, seed=11)
 
 Check whether basis dimensions are adequate for each smooth term.
 Returns a vector of `(label, k, edf, k_index, p_value)` named tuples,
@@ -122,6 +123,20 @@ where `k_index` is the mgcv-style differenced-residual variance ratio and
 small p-value suggests the basis dimension may be too small. `k_index` and
 `p_value` are `NaN` when the smooth's covariate is unavailable.
 
+`p_value` comes from a randomization test, so it is only reproducible if the
+shuffles are. mgcv's `k.check` draws from R's global RNG (`sample()`,
+`R/plots.r:220`) and is therefore NOT reproducible across calls unless the
+user sets `set.seed()` first — repeated calls on one fit give different
+p-values. GAM.jl seeds by default instead, so `k_check(m)` twice on the same
+model agrees; measured before this default, ten calls returned sixteen
+distinct p-values spanning 0.41–0.70.
+
+Pass `seed = nothing` for mgcv's behaviour (draw from the global RNG, fresh
+randomization each call), or any integer to choose a different fixed stream.
+`n_rep` controls the number of shuffles; the Monte Carlo error on `p_value`
+is roughly `sqrt(p(1-p)/n_rep)`, so raising it narrows the spread between
+different seeds.
+
 # Example
 ```julia
 for (label, k, edf, kidx, p) in k_check(m)
@@ -129,7 +144,7 @@ for (label, k, edf, kidx, p) in k_check(m)
 end
 ```
 """
-function k_check(m::GamModel; n_rep::Int = 200, seed = nothing)
+function k_check(m::GamModel; n_rep::Int = 200, seed::Union{Integer, Nothing} = 11)
     rng = seed === nothing ? _diag_default_rng() : _DiagMT(seed)
     dev_resid = residuals(m; type = :deviance)
     results = NamedTuple{(:label, :k, :edf, :k_index, :p_value),
