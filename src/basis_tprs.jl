@@ -59,9 +59,19 @@ function _lanczos_eigen(E::Symmetric{Float64}, k::Int;
     maxit = maxiter > 0 ? min(maxiter, n) : min(n, max(4k + 20, 60))
     Q = Matrix{Float64}(undef, n, maxit)
     Q[:, 1] .= q
-    α = Float64[]
-    β = Float64[]
+    # α/β are preallocated with explicit lengths rather than grown by `push!`,
+    # and `αc`/`βc` receive the copies `eigen` needs (LAPACK's `stegr!`
+    # overwrites its tridiagonal input, so the live arrays cannot be passed).
+    α = Vector{Float64}(undef, maxit)
+    β = Vector{Float64}(undef, maxit)
+    αc = Vector{Float64}(undef, maxit)
+    βc = Vector{Float64}(undef, maxit)
+    na = 0
+    nb = 0
     w = Vector{Float64}(undef, n)
+    proj = Vector{Float64}(undef, maxit)   # Qj' * w
+    tmp = Vector{Float64}(undef, n)        # Qj * proj
+    perm = Vector{Int}(undef, maxit)
     j_final = maxit
     for j in 1:maxit
         qj = view(Q, :, j)
@@ -72,27 +82,45 @@ function _lanczos_eigen(E::Symmetric{Float64}, k::Int;
             end
         end
         a = dot(qj, w)
-        push!(α, a)
+        na += 1
+        α[na] = a
         @inbounds @simd for i in 1:n
             w[i] -= a * qj[i]
         end
         # Full reorthogonalization, applied twice (classical Gram-Schmidt
         # loses orthogonality in one pass; twice is the standard remedy).
+        # Split into two `mul!`s against preallocated buffers: the same pair of
+        # BLAS gemv calls `Qj * (Qj' * w)` makes, without the two temporaries.
         Qj = view(Q, :, 1:j)
+        pv = view(proj, 1:j)
         for _ in 1:2
-            w .-= Qj * (Qj' * w)
+            mul!(pv, Qj', w)
+            mul!(tmp, Qj, pv)
+            w .-= tmp
         end
 
         # Ritz values of the j-step tridiagonal, and their residual bounds.
         if j >= k
-            Tj = SymTridiagonal(copy(α), copy(β))
+            copyto!(αc, 1, α, 1, na)
+            copyto!(βc, 1, β, 1, nb)
+            Tj = SymTridiagonal(view(αc, 1:na), view(βc, 1:nb))
             F = eigen(Tj)
-            ord = sortperm(abs.(F.values); rev = true)
-            sel = ord[1:min(k, length(ord))]
+            pj = view(perm, 1:length(F.values))
+            sortperm!(pj, F.values; by = abs, rev = true)
+            sel = view(pj, 1:min(k, length(pj)))
             bnorm = norm(w)
             scale = maximum(abs, F.values)
-            conv = scale == 0 || all(sel) do i
-                abs(bnorm * F.vectors[j, i]) <= tol * scale
+            # An explicit loop, not `all(sel) do i ... end`: the closure
+            # captures `j`/`bnorm`/`scale`/`tol`/`F`, which box and dominated
+            # this function's allocations (621 of 1425 at n=1000, k=10).
+            conv = true
+            if scale != 0
+                @inbounds for t in eachindex(sel)
+                    if abs(bnorm * F.vectors[j, sel[t]]) > tol * scale
+                        conv = false
+                        break
+                    end
+                end
             end
             if conv || j == maxit
                 j_final = j
@@ -105,15 +133,19 @@ function _lanczos_eigen(E::Symmetric{Float64}, k::Int;
         if b <= tol * max(1.0, abs(a))
             # Invariant subspace found: no further directions available.
             j_final = j
-            Tj = SymTridiagonal(copy(α), copy(β))
+            copyto!(αc, 1, α, 1, na)
+            copyto!(βc, 1, β, 1, nb)
+            Tj = SymTridiagonal(view(αc, 1:na), view(βc, 1:nb))
             F = eigen(Tj)
-            ord = sortperm(abs.(F.values); rev = true)
-            sel = ord[1:min(k, length(ord))]
+            pj = view(perm, 1:length(F.values))
+            sortperm!(pj, F.values; by = abs, rev = true)
+            sel = view(pj, 1:min(k, length(pj)))
             V = view(Q, :, 1:j) * F.vectors[:, sel]
             return (F.values[sel], Matrix(V))
         end
         if j < maxit
-            push!(β, b)
+            nb += 1
+            β[nb] = b
             @inbounds @simd for i in 1:n
                 Q[i, j + 1] = w[i] / b
             end
