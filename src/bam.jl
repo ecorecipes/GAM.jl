@@ -89,25 +89,6 @@ function discretize_covariates(data, vars::Vector{Symbol}; max_unique::Int = 100
     return DiscretizedData(unique_vals, idx_map, n)
 end
 
-"""
-    discretized_smooth_construct(spec, disc_data, full_data)
-
-Construct a smooth basis using discretized unique values, returning both
-the compact basis (evaluated at unique values) and index mapping.
-
-Standalone utility: `bam()` does not currently use discretization.
-"""
-function discretized_smooth_construct(spec::SmoothSpec, disc::DiscretizedData, full_data)
-    # Build a "unique data" table for basis construction
-    var = spec.term_vars[1]  # primary variable for single smooths
-    uvals = disc.unique_values[var]
-    unique_data = NamedTuple{(var,)}((uvals,))
-
-    # Construct basis on unique values
-    sm = smooth_construct(spec, unique_data)
-    return sm, disc.indices[var]
-end
-
 # ============================================================================
 # Chunk-wise accumulation
 # ============================================================================
@@ -272,7 +253,9 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     offset::Vector{Float64} = zeros(length(y)),
     start::Union{Vector{Float64}, Nothing} = nothing,
     control::GamControl = gam_control(),
-    chunk_size::Int = 10000)
+    chunk_size::Int = 10000,
+    compute_hat_diag::Bool = true,
+    XtWX_out::Union{Matrix{Float64}, Nothing} = nothing)
 
     n, p = size(X)
 
@@ -344,13 +327,14 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         A_chol = _protected_cholesky!(A)
         ldiv!(beta_new, A_chol, XtWz)
 
-        # Update eta, mu
-        mul!(eta_new, X, beta_new)
-        eta_new .+= offset
-        @inbounds for i in 1:n
-            mu_new[i] = _clamp_mu_scalar(family, GLM.linkinv(link, eta_new[i]))
-        end
-        dev_new = _deviance(family, y, mu_new, weights)
+        # η, μ and the deviance for the full step are NOT computed here:
+        # `pirls_halve!` evaluates `recompute!(beta_new)` unconditionally before
+        # it halves anything (src/pirls.jl), so doing it here too cost an extra
+        # O(n·p) `mul!` plus a link and deviance pass on every iteration, for
+        # values that were overwritten microseconds later. `dev_new` is only
+        # seeded here so the binding lives in this scope rather than being
+        # captured as a local of the closure below.
+        dev_new = dev_old
 
         # Step halving on the penalized deviance, using the acceptance policy
         # shared with pirls/scasm/scam. bam's own tolerance (relative, with 25
@@ -371,10 +355,13 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
             return (dev_new + dot(b, S_total, b), ok)
         end
 
-        _, valid_new, step_ok, _ =
+        # `pirls_halve!` returns immediately after the `recompute!` call that
+        # accepted (or the last one it tried, on failure), so `dev_new` and
+        # `mu_new` already describe that iterate — recomputing the deviance
+        # here reproduced a value the closure had just stored.
+        _, valid_new, step_ok, n_halvings =
             pirls_halve!(beta_new, beta, recompute!, step_spec,
                 pdev_old_iter, prev_valid)
-        dev_new = _deviance(family, y, mu_new, weights)
 
         if !step_ok
             # Same policy as pirls/gam: mgcv raises "step failure" here.
@@ -399,7 +386,20 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
         copyto!(mu, mu_new)
         dev_old = dev_new
 
-        if crit < control.epsilon
+        # Mirrors the guard in `pirls` (see src/pirls.jl): a step rescued by
+        # heavy halving says the search DIRECTION was poor, not that we are at
+        # an optimum, so the deviance criterion is not evidence of convergence
+        # there. Note `pirls_halve!` returns `max_halvings` when the step fails
+        # outright, so this also stops a failed step being read as convergence.
+        #
+        # Measured as defence in depth here rather than an observed fix: across
+        # 60 configurations spanning InverseGaussian+log/identity, Gamma+log,
+        # and Bernoulli+cloglog/probit at high dispersion and sp from 0.01 to
+        # 500, bam accepted at ZERO halvings every time, so the branch this
+        # guards was never reached. bam's chunked accumulation reaches mgcv's
+        # answer on the fit that broke `pirls` (deviance 299.63954 vs mgcv's
+        # 299.6395385772956) without halving at all.
+        if crit < control.epsilon && n_halvings <= 1
             converged = true
             break
         end
@@ -424,12 +424,16 @@ function pirls_bam(X::Matrix{Float64}, y::Vector{Float64},
     @inbounds for j in 1:p, k in 1:p
         A[j, k] = XtWX[j, k] + S_total[j, k]
     end
+    # Hand this XᵀWX back before the Cholesky consumes `A`: it is formed from
+    # the same `w` returned in the result, so an outer smoothing-parameter loop
+    # can reuse it for its EFS traces instead of repeating the O(n·p²) sweep.
+    XtWX_out === nothing || copyto!(XtWX_out, XtWX)
     A_chol = _protected_cholesky!(A)
 
     # Shared finalization: EDF, the weighted leverage h_i = w_i·x_i'A⁻¹x_i,
     # and R. Chunked internally, so memory stays bounded as it was here.
     edf_vec, hat_diag, R = pirls_finalize(X, w, XtWX, A_chol;
-        chunk_size = chunk_size)
+        chunk_size = chunk_size, compute_hat_diag = compute_hat_diag)
 
     return PirlsResult(
         beta, mu, eta, w, dev_old, pearson,
@@ -512,9 +516,17 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
                 true, 1, R, Float64[], edf_vec)
         else
             start_coef = prev_result === nothing ? nothing : prev_result.coefficients
+            # Two things this inner solve does NOT need to redo:
+            #  * `hat_diag` — an O(n·p²) leverage sweep that nothing below
+            #    reads off an inner result (only the final fit reports it), so
+            #    7-of-8 to 33-of-34 of those passes were discarded outright.
+            #  * its final XᵀWX — accumulated from the same working weights the
+            #    EFS update needs, so it is handed back rather than swept again.
+            XtWX_inner = zeros(p, p)
             result = pirls_bam(X, y, S_total, family, link;
                 weights = weights, offset = offset, start = start_coef,
-                control = control, chunk_size = chunk_size)
+                control = control, chunk_size = chunk_size,
+                compute_hat_diag = false, XtWX_out = XtWX_inner)
             edf_total = sum(result.edf_vec)
         end
 
@@ -538,8 +550,9 @@ function outer_iteration_bam(X::Matrix{Float64}, y::Vector{Float64},
             A_fact = A_chol
             XtWX_cur = XtWX_cached
         else
-            XtWX_cur = zeros(p, p)
-            _accumulate_XtWX_chunked!(XtWX_cur, X, w, chunk_size)
+            # `XtWX_inner` came back from the inner P-IRLS solve above,
+            # accumulated from exactly this `w` (`result.working_weights`).
+            XtWX_cur = XtWX_inner
             A_efs = XtWX_cur + S_total
             A_fact = _protected_cholesky!(A_efs)
         end
@@ -678,36 +691,6 @@ function expand_discretized_X(X_unique::Matrix{Float64}, indices::Vector{Int}, n
         end
     end
     return X_full
-end
-
-"""
-    _discretized_XtWX_XtWz!(XtWX, XtWz, X_unique, indices, w, z, S, p, n)
-
-Compute X'WX and X'Wz efficiently using discretized representation.
-Instead of expanding X to full n×p, accumulates using index lookups.
-"""
-function _discretized_XtWX_XtWz!(
-    XtWX::Matrix{Float64}, XtWz::Vector{Float64},
-    X_unique::Matrix{Float64}, indices::Vector{Int},
-    w::Vector{Float64}, z::Vector{Float64},
-    S::Matrix{Float64}, p_smooth::Int, offset_col::Int, p_total::Int, n::Int)
-
-    # Accumulate contributions from discretized smooth columns
-    @inbounds for i in 1:n
-        idx = indices[i]
-        wi = w[i]
-        wz = wi * z[i]
-        for j in 1:p_smooth
-            col_j = offset_col + j
-            xij = X_unique[idx, j]
-            xij_wi = xij * wi
-            XtWz[col_j] += xij * wz
-            for k in j:p_smooth
-                col_k = offset_col + k
-                XtWX[col_j, col_k] += xij_wi * X_unique[idx, k]
-            end
-        end
-    end
 end
 
 # ============================================================================
