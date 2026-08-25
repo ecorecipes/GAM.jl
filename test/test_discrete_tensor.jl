@@ -156,4 +156,47 @@
             GAM.bam_design(X, sms, df, true)
         end
     end
+
+    @testset "leverage sweep does not allocate per chunk" begin
+        # The sweep used to build a fresh `nr x praw` row tensor for EVERY
+        # chunk and apply the constraint with a scalar triple loop. At
+        # n = 2e5 that was 349 MiB of garbage and 14.13 s, against the dense
+        # path's 4.1 MiB and 0.17 s -- while the accumulation kernels this
+        # milestone was benchmarked on were already faster than dense. The
+        # scratch is now caller-owned and the constraint is one gemm.
+        #
+        # Allocation is the guard rather than time, because it reproduces
+        # under load. The bound is deliberately far below the old behaviour
+        # and far above the fixed cost, so it catches a reintroduced
+        # per-chunk allocation without being brittle.
+        df = _mk(20_000)
+        gf = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.te(:x1, :x2; k = [6, 5], bs = [:cr, :cr])])
+        _, X, _, sms, _ = GAM.setup_gam(gf, df)
+        Dq = GAM.bam_design(X, sms, df, true)
+        @test !isempty(Dq.tblocks)
+
+        n, p = GAM.nrows(Dq), GAM.ncols(Dq)
+        w = ones(n)
+        XtWX = zeros(p, p)
+        GAM.accumulate_XtWX!(XtWX, Dq, w)
+        A = cholesky(Symmetric(XtWX + 1e-8I))
+
+        GAM.design_finalize(Dq, w, XtWX, A; compute_hat_diag = true)   # warm
+        alloc = @allocated GAM.design_finalize(Dq, w, XtWX, A;
+            compute_hat_diag = true)
+        # One 1024-row scratch plus the chunk buffer is ~2 MiB; the old
+        # per-chunk path allocated ~35 MiB at this n.
+        @test alloc < 12 * 2^20
+
+        # And a caller-supplied scratch removes the last per-call allocation
+        # from the row gather itself.
+        Rbuf = GAM._tensor_row_scratch(Dq, 64)
+        H = zeros(64, p)
+        GAM._gather_rows!(H, Dq, 101, 164, Rbuf)                        # warm
+        @test (@allocated GAM._gather_rows!(H, Dq, 101, 164, Rbuf)) == 0
+
+        # The rows themselves are unchanged by the gemm rewrite.
+        @test maximum(abs.(H .- X[101:164, :])) < 1e-12
+    end
 end

@@ -107,7 +107,8 @@ function bam_control(;
 )
     if discrete !== nothing || max_unique !== nothing || nthreads !== nothing
         @warn "bam_control: `discrete`, `max_unique`, and `nthreads` are deprecated " *
-              "and ignored — bam() does not discretize covariates or thread the accumulation"
+              "here and ignored. Discretization moved to `bam(...; discrete=true)`, " *
+              "matching mgcv; threading the accumulation is still not implemented."
     end
     return BamControl(chunk_size)
 end

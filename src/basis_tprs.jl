@@ -576,6 +576,55 @@ function _tps_cross_matrix(X_new::Matrix{Float64}, centers::Matrix{Float64}, m::
     return E
 end
 
+"""
+    _tps_nystrom!(dest, X_new, centers, m, UZ; chunk_rows) -> dest
+
+Row-blocked form of `_tps_cross_matrix(X_new, centers, m) * UZ`.
+
+The full cross matrix is `n × nk` with `nk = min(n_unique, max_knots)`, i.e.
+up to `n × 2000`, while the product it feeds is only `n × (k-M)`. Materialising
+it was the single largest transient allocation in the package: 1525.9 MiB at
+n = 1e5 and 4577.6 MiB at n = 3e5 for one `tp` margin, and every `tp` margin of
+a `te` is live at once.
+
+Blocking is exact, not approximate: row `i` of the product depends only on row
+`i` of the cross matrix, and OpenBLAS's accumulation order along the contracted
+`nk` dimension does not depend on the row count. Verified bit-identical
+(`reinterpret(UInt64, .)`) across n = 2e4..3e5, nk = 137..2000 and chunk sizes
+4096/16384/65536.
+"""
+function _tps_nystrom!(dest::Matrix{Float64}, X_new::Matrix{Float64},
+                       centers::Matrix{Float64}, m::Int, UZ::Matrix{Float64};
+                       chunk_rows::Int = _tps_nystrom_chunk(size(centers, 1)))
+    n_new, d = size(X_new)
+    nk = size(centers, 1)
+    rows = max(1, min(chunk_rows, n_new))
+    buf = Matrix{Float64}(undef, rows, nk)
+    @inbounds for lo in 1:rows:n_new
+        hi = min(lo + rows - 1, n_new)
+        len = hi - lo + 1
+        if d == 1
+            for j in 1:nk, i in 1:len
+                buf[i, j] = _tps_eta(abs(X_new[lo + i - 1, 1] - centers[j, 1]), m, 1)
+            end
+        else
+            for j in 1:nk, i in 1:len
+                buf[i, j] = _tps_eta(_row_distance(X_new, lo + i - 1, centers, j, d), m, d)
+            end
+        end
+        mul!(view(dest, lo:hi, :), view(buf, 1:len, :), UZ)
+    end
+    return dest
+end
+
+# Bound the scratch buffer at ~32 MiB rather than the row count, so the
+# transient is independent of n. The floor keeps small-nk cases from degrading
+# into many tiny gemm calls.
+function _tps_nystrom_chunk(nk::Int)
+    nk <= 0 && return 4096
+    return clamp(div(32 * 1024 * 1024, nk * 8), 256, 65536)
+end
+
 function _scale_columns!(X::Matrix{Float64}, scales::Vector{Float64})
     @inbounds for j in 1:size(X, 2)
         scale = scales[j]
@@ -766,8 +815,11 @@ function _construct_tprs(spec::SmoothSpec, data, knots; shrink::Bool = false,
     local X_eig::Matrix{Float64}
     local T_data::Matrix{Float64}
     if !knots_are_data
-        E_nk = _tps_cross_matrix(Xd, Matrix(XK), m_order)
-        X_eig = E_nk * (U * Z)
+        # Row-blocked: the n × nk cross matrix is never materialised. See
+        # `_tps_nystrom!` — bit-identical to `_tps_cross_matrix(...) * (U*Z)`.
+        UZ = U * Z
+        X_eig = _tps_nystrom!(Matrix{Float64}(undef, size(Xd, 1), size(UZ, 2)),
+                              Xd, Matrix(XK), m_order, UZ)
         T_data = d == 1 ? _tps_null_space_basis(vec(Xd), m_order) :
                           _tps_multi_null_basis(Xd, m_order)
     else
