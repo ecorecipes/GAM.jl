@@ -1047,6 +1047,11 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     if _rcall_available
         @eval include("test_scat_rcall.jl")
     end
+
+    # Vector `sp` transfer to/from mgcv — needs only mgcv
+    if _rcall_available
+        @eval include("test_vector_sp_rcall.jl")
+    end
 end
 
 # EGPD unit tests (no R needed) — must run regardless of GAM_SKIP_RCALL
@@ -1202,6 +1207,18 @@ _spde_csv_ok && @eval include("test_spde_rcall.jl")
 
 # Binomial GCV/UBRE parity with mgcv 1.9-4 (pinned values, no R needed)
 @eval include("test_gcv_binomial.jl")
+
+# Vector `sp` for multi-penalty smooths (no R needed)
+@eval include("test_vector_sp.jl")
+
+# bs=:gp parity with mgcv's Kammann & Wand Matérn spline (no R needed)
+@eval include("test_gp_parity.jl")
+
+# Per-family REML scale profiling vs mgcv (no R needed)
+@eval include("test_reml_families.jl")
+
+# Stable multi-penalty log|S|+ via mgcv's gam.reparam transform (no R needed)
+@eval include("test_penalty_det.jl")
 
 # method=:ML criterion parity with mgcv (range-space determinant, Dp/n scale)
 @eval include("test_ml_criterion.jl")
