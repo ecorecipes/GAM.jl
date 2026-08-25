@@ -259,6 +259,8 @@ export
     rootogram,
     RootogramData,
     model_edf,
+    model_matrix,
+    has_model_matrix,
     sp_criterion,
     overview,
     OverviewTable,

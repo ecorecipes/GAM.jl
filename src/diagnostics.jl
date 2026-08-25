@@ -180,8 +180,11 @@ function concurvity(m::GamModel; full::Bool = true)
                zeros(0, 0)
     end
 
-    # Work in QR space like mgcv — more stable and correct for "worst" measure
-    R_full = Matrix(qr(m.X).R)
+    # Work in QR space like mgcv — more stable and correct for "worst" measure.
+    # `model_matrix` rather than `m.X`: this genuinely needs the whole matrix
+    # (the QR mixes every column block), and reads as `0×0` on a model whose
+    # matrix has been dropped.
+    R_full = Matrix(qr(model_matrix(m)).R)
     p = size(R_full, 2)
 
     # Smooth column ranges
@@ -398,8 +401,11 @@ function _wood_test_statistic(m::GamModel, i::Int)
     V_i = Symmetric(Matrix(m.Vp[idx, idx]))
     edf_i = m.edf[i]
 
-    # Function-space projection via QR of the model-matrix columns
-    R = Matrix(qr(m.X[:, idx]).R)
+    # Function-space projection via QR of the model-matrix columns. `sm.X` IS
+    # that column block — verified bitwise equal to `m.X[:, idx]` across plain,
+    # tensor, random-effect, side-constrained and parametric models — so read
+    # it directly rather than materialising the full matrix to slice it.
+    R = Matrix(qr(sm.X).R)
     Vf = Symmetric(R * V_i * R')
     bf = R * β_i
 

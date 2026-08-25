@@ -1243,6 +1243,9 @@ _spde_csv_ok && @eval include("test_spde_rcall.jl")
 # Discretised tensor smooths (no R needed)
 @eval include("test_discrete_tensor.jl")
 
+# GamModel.X droppability and model_matrix reassembly (no R needed)
+@eval include("test_model_x.jl")
+
 # method=:ML criterion parity with mgcv (range-space determinant, Dp/n scale)
 @eval include("test_ml_criterion.jl")
 

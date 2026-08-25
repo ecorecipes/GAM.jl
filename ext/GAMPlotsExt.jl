@@ -25,7 +25,9 @@ using LinearAlgebra: diag
         sm_idx = sm.first_para:sm.last_para
         beta_s = m.coefficients[sm_idx]
 
-        X_col = m.X[:, sm_idx]
+        # `sm.X` is bitwise `m.X[:, sm_idx]`; reading it avoids reassembling
+        # the full model matrix once per plotted panel.
+        X_col = sm.X
         x_orig = _extract_x(m, sm)
         x_lo, x_hi = extrema(x_orig)
         x_grid = range(x_lo, x_hi; length=gp.n_grid) |> collect

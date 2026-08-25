@@ -213,7 +213,9 @@ function smooth_estimates(m::GamModel;
         Vp_s = Vcov[sm_idx, sm_idx]
         if overall_uncertainty && _gam_has_intercept(m)
             # Include intercept uncertainty
-            p = size(m.X, 2)
+            # Column count only — take it from the coefficient vector rather
+            # than reassembling an n × p matrix to read one integer.
+            p = length(m.coefficients)
             X_full = zeros(size(X_pred, 1), p)
             X_full[:, sm_idx] .= X_pred
             X_full[:, 1] .= 1.0  # intercept
@@ -295,7 +297,9 @@ function partial_residuals(m::GamModel; select = nothing)
 
         sm_idx = sm.first_para:sm.last_para
         beta_s = m.coefficients[sm_idx]
-        f_hat = m.X[:, sm_idx] * beta_s
+        # `sm.X` is bitwise `m.X[:, sm_idx]`, and this sits in a per-smooth
+        # loop — reassembling the full matrix here would do it once per smooth.
+        f_hat = sm.X * beta_s
         partial_r = f_hat .+ resid
 
         var = spec.term_vars[1]
@@ -522,7 +526,7 @@ function fitted_samples(m::GamModel;
     draws = posterior_samples(m; n = n, seed = seed, unconditional = unconditional)
 
     if data === nothing
-        X = m.X
+        X = model_matrix(m)
     else
         X = _build_prediction_matrix(m, data)
     end

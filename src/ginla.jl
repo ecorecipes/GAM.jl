@@ -252,7 +252,7 @@ function ginla(model::GamModel;
         A = idxs
     end
 
-    X = model.X
+    X = model_matrix(model)
     p = size(X, 2)
     beta = model.coefficients
 
