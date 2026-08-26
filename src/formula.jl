@@ -698,7 +698,7 @@ Falls back to `setup_gam` wholesale when smooths share a covariate, since side
 constraints need the `n`-row blocks.
 """
 function setup_gam_discrete(gf::GamFormula, data, m_grid::Int;
-    family::UnivariateDistribution = Normal())
+    family::UnivariateDistribution = Normal(), build_X::Bool = true)
 
     _smooths_share_variables(gf.smooth_specs) &&
         return setup_gam(gf, data; family = family)
@@ -725,21 +725,31 @@ function setup_gam_discrete(gf::GamFormula, data, m_grid::Int;
 
     # Fill the model matrix column-block by column-block instead of `hcat`,
     # which would hold a second full copy while concatenating.
+    #
+    # With `build_X = false` the `n x p` matrix is never formed at all: the
+    # caller assembles the design from `X_para` and the per-smooth bases via
+    # `bam_design_reduced`, and `model_matrix(m)` reassembles on demand. That
+    # matrix was in peak RSS whether or not it was retained, which is what
+    # masked design-side wins of 53.66x (factor-`by`), 421x (tensor) and 127x
+    # (random effect).
     p = n_parametric + sum(size(sm.X, 2) for sm in smooths; init = 0)
-    X_full = Matrix{Float64}(undef, n, p)
-    @inbounds X_full[:, 1:n_parametric] .= X_para
+    X_full = build_X ? Matrix{Float64}(undef, n, p) :
+             Matrix{Float64}(undef, 0, 0)
+    build_X && (@inbounds X_full[:, 1:n_parametric] .= X_para)
     c = n_parametric
     for (sm, k) in zip(smooths, idx)
         pb = size(sm.X, 2)
         cols = (c + 1):(c + pb)
         if k === nothing
-            @inbounds X_full[:, cols] .= sm.X
+            build_X && (@inbounds X_full[:, cols] .= sm.X)
         else
-            Xd = sm.X
-            @inbounds for j in 1:pb
-                col = view(X_full, :, c + j)
-                for i in 1:n
-                    col[i] = Xd[k[i], j]
+            if build_X
+                Xd = sm.X
+                @inbounds for j in 1:pb
+                    col = view(X_full, :, c + j)
+                    for i in 1:n
+                        col[i] = Xd[k[i], j]
+                    end
                 end
             end
             # Keep the REDUCED basis and record the row map, rather than

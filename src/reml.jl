@@ -291,12 +291,17 @@ Two consequences worth stating, because both matter downstream:
 function _penalty_range_basis(penalty::PenaltySetup, p::Int)
     St = zeros(Float64, p, p)
     for block in penalty.blocks
-        idx = block.start:block.stop
-        for Si in block.S
+        for (i, Si) in enumerate(block.S)
             nrm = sqrt(sum(abs2, Si))
             nrm > 0 || continue
-            @inbounds for j in eachindex(idx), k in eachindex(idx)
-                St[idx[j], idx[k]] += Si[j, k] / nrm
+            # Bound the loop by the sub-penalty's own size at its offset, not
+            # by the block width: a narrow `Si` would otherwise be read past
+            # its end under `@inbounds`, returning a finite wrong basis. See
+            # `_sub_penalty_idx`.
+            sidx = _sub_penalty_idx(block, i)
+            m = size(Si, 1)
+            @inbounds for j in 1:m, k in 1:m
+                St[sidx[j], sidx[k]] += Si[j, k] / nrm
             end
         end
     end
@@ -657,7 +662,17 @@ is returned directly — identical to the existing routine.
 function _stable_block_logdet_derivs(block, log_sp_block)
     nS = length(block.S)
     nS == 1 && return [Float64(block.rank)]
-    Ss = [Matrix{Float64}(Si) for Si in block.S]
+    if _penalties_disjoint(block)
+        # Disjoint sub-penalties: `log|Σⱼ λⱼSⱼ|₊ = Σⱼ log|λⱼSⱼ|₊`, so
+        # `∂/∂ρⱼ` is exactly `rank(Sⱼ)` — independent of every λ. The
+        # similarity transform below would work in the wrong space and return
+        # silently wrong values; measured on a 4-level k=3 block it gave
+        # [0.365, 0.090, 2.00] where the answer is [3, 3, 3].
+        return [Float64(rank(Matrix{Float64}(Si))) for Si in block.S]
+    end
+    # Widen any narrow sub-penalty: the transform assumes one shared
+    # coordinate system (see `_block_width_penalties`).
+    Ss = [Matrix{Float64}(Si) for Si in _block_width_penalties(block)]
     lsp = Float64[Float64(log_sp_block[j]) for j in 1:nS]
     st = _stable_penalty_factor(Ss, lsp; key = block.S)
     st === nothing && return zeros(Float64, nS)
@@ -677,14 +692,39 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
     for block in penalty.blocks
         k = block.stop - block.start + 1
         nS = length(block.S)
+        if nS > 1 && _penalties_disjoint(block)
+            # Pairwise-disjoint sub-penalties (a factor-`by` block: `I_L ⊗ S_k`
+            # stored as L copies of a narrow `S_k`). The determinant is then
+            # separable — `log|Σⱼ λⱼSⱼ|₊ = Σⱼ log|λⱼSⱼ|₊` — which is exact and
+            # needs no eigen-decomposition of the whole block.
+            #
+            # The similarity-transform path below MUST NOT be used here: it
+            # works in the sub-penalty's own k-dimensional space, which for
+            # disjoint penalties is not the block's space, and returns a
+            # determinant for the wrong object with no error. Measured on a
+            # 4-level, k=3 block: 8.81502 against the correct 12.09240.
+            for i in 1:nS
+                Si = block.S[i]
+                λ = exp(log_sp[sp_idx])
+                eig = eigvals(Symmetric(Matrix{Float64}(Si)))
+                mx = maximum(abs.(eig))
+                thresh = eps(Float64) * mx
+                for ev in eig
+                    ev > thresh && (ldet += log(ev) + log_sp[sp_idx])
+                end
+                sp_idx += 1
+            end
+            continue
+        end
         if nS > 1
-            # Multi-penalty block (te/ti/t2, adaptive, fs). Factoring out λmax
-            # is not enough here: once the within-block λ ratio approaches
-            # 1/eps the sub-dominant components fall below the eigen threshold
-            # and their contribution is silently lost. Use mgcv's similarity
-            # transform instead — see `_stable_penalty_factor`.
+            # Multi-penalty block (te/ti/t2, adaptive, fs) with OVERLAPPING
+            # sub-penalties. Factoring out λmax is not enough here: once the
+            # within-block λ ratio approaches 1/eps the sub-dominant components
+            # fall below the eigen threshold and their contribution is silently
+            # lost. Use mgcv's similarity transform instead — see
+            # `_stable_penalty_factor`.
             lsp_block = Float64[Float64(log_sp[sp_idx + j - 1]) for j in 1:nS]
-            Ss = [Matrix{Float64}(Si) for Si in block.S]
+            Ss = [Matrix{Float64}(Si) for Si in _block_width_penalties(block)]
             st = _stable_penalty_factor(Ss, lsp_block; key = block.S)
             if st !== nothing
                 ldet += _stable_penalty_logdet(st)
@@ -701,10 +741,14 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
             lsp_max = max(lsp_max, log_sp[sp_idx + j - 1])
         end
         S_block = zeros(T, k, k)
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
             λr = exp(log_sp[sp_idx] - lsp_max)
-            @inbounds for j in 1:k, m in 1:k
-                S_block[j, m] += λr * Si[j, m]
+            # Block-local placement: bound by the sub-penalty's own size at its
+            # offset, never by the block width (see `_sub_penalty_idx`).
+            off = block.offsets[i_pen]
+            m_i = size(Si, 1)
+            @inbounds for j in 1:m_i, m in 1:m_i
+                S_block[off + j, off + m] += λr * Si[j, m]
             end
             sp_idx += 1
         end
@@ -1367,9 +1411,11 @@ function _gcv_gradient(X::Matrix{Float64}, y::Vector{Float64},
     sp_idx = 1
     b1 = zeros(p, n_sp)
     for block in penalty.blocks
-        idx = block.start:block.stop
-        beta_block = beta[idx]
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
+            # A sub-penalty may be narrower than its block (factor-`by`), so
+            # index by its own extent, not `block.start:block.stop`.
+            idx = _sub_penalty_idx(block, i_pen)
+            beta_block = beta[idx]
             λ = exp(log_sp[sp_idx])
             # -λ_j S_j β (padded to full p vector)
             rhs = zeros(p)
@@ -1397,10 +1443,10 @@ function _gcv_gradient(X::Matrix{Float64}, y::Vector{Float64},
     trA1 = zeros(n_sp)
     sp_idx = 1
     for block in penalty.blocks
-        idx = block.start:block.stop
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
+            idx = _sub_penalty_idx(block, i_pen)
             λ = exp(log_sp[sp_idx])
-            # dS/d(log_sp_j) = λ_j S_j (in the block)
+            # dS/d(log_sp_j) = λ_j S_j (over the sub-penalty's own columns)
             dS_block = λ .* Si
             # -tr(A⁻¹ dS F) = -tr(A⁻¹[idx,idx] dS F[idx,idx])
             Ainv_block = Ainv[idx, idx]
@@ -1587,11 +1633,13 @@ function _accumulate_penalty_j!(out::Vector{Float64}, penalty::PenaltySetup,
 
     sp_idx = 1
     for block in penalty.blocks
-        idx = block.start:block.stop
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
             if sp_idx == j
                 λ = exp(log_sp[j])
-                @inbounds for a in eachindex(idx), b in eachindex(idx)
+                # Sub-penalty extent, not block width (see `_sub_penalty_idx`).
+                idx = _sub_penalty_idx(block, i_pen)
+                m_i = size(Si, 1)
+                @inbounds for a in 1:m_i, b in 1:m_i
                     out[idx[a]] += λ * Si[a, b] * beta[idx[b]]
                 end
                 return out
@@ -1613,11 +1661,12 @@ function _penalty_block_j(penalty::PenaltySetup, log_sp::AbstractVector,
     out = zeros(p, p)
     sp_idx = 1
     for block in penalty.blocks
-        idx = block.start:block.stop
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
             if sp_idx == j
                 λ = exp(log_sp[j])
-                @inbounds for a in eachindex(idx), b in eachindex(idx)
+                idx = _sub_penalty_idx(block, i_pen)
+                m_i = size(Si, 1)
+                @inbounds for a in 1:m_i, b in 1:m_i
                     out[idx[a], idx[b]] = λ * Si[a, b]
                 end
                 return out
@@ -1639,12 +1688,13 @@ function _bSb_j(penalty::PenaltySetup, log_sp::AbstractVector, j::Int,
 
     sp_idx = 1
     for block in penalty.blocks
-        idx = block.start:block.stop
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
             if sp_idx == j
                 λ = exp(log_sp[j])
+                idx = _sub_penalty_idx(block, i_pen)
+                m_i = size(Si, 1)
                 s = 0.0
-                @inbounds for a in eachindex(idx), b in eachindex(idx)
+                @inbounds for a in 1:m_i, b in 1:m_i
                     s += beta[idx[a]] * Si[a, b] * beta[idx[b]]
                 end
                 return λ * s

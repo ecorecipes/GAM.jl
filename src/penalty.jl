@@ -174,8 +174,11 @@ function _initial_sp(X::Matrix{Float64}, penalty::PenaltySetup)
     sp_init = zeros(n_sp)
     sp_idx = 1
     for block in penalty.blocks
-        idx = block.start:block.stop
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
+            # Sub-penalty extent, not block width: `ind` below is derived from
+            # `Si` and indexes `xx`, so a narrow penalty against a wide `xx`
+            # would raise on the logical index.
+            idx = _sub_penalty_idx(block, i_pen)
             ss = diag(Si)
             xx = ldxx[idx]
             # Use only truly penalized columns
@@ -203,8 +206,8 @@ function _initial_sp(X::Matrix{Float64}, penalty::PenaltySetup)
     ldss = zeros(p)
     sp_idx = 1
     for block in penalty.blocks
-        idx = block.start:block.stop
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
+            idx = _sub_penalty_idx(block, i_pen)
             ldss[idx] .+= sp_init[sp_idx] .* diag(Si)
             sp_idx += 1
         end

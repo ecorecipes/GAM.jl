@@ -136,3 +136,145 @@
         @test size(b.S[1]) == (k, k)
     end
 end
+
+@testset "every penalty consumer honours sub-penalty offsets" begin
+    # A narrow sub-penalty inside a wider block is what a factor-`by` penalty
+    # is: `I_L ⊗ S_k` stored as L copies of `S_k` at disjoint offsets. Several
+    # consumers looped over the BLOCK width while indexing `Si[j,k]`, under
+    # `@inbounds`, so the read ran past the end of `Si` and returned a
+    # plausible, finite, WRONG answer. Measured before the fix, on the
+    # 4-level k=3 block below:
+    #
+    #   _log_penalty_det       8.81502  against the correct 12.09240
+    #   _block_logdet_derivs   [0.365, 0.090, 2.00]  against [3, 3, 3]
+    #   _penalty_range_basis   raised on Inf/NaN from garbage reads
+    #
+    # Each case here compares the narrow form against the same penalty
+    # materialised block-width, which is the ground truth.
+    _mk(k, L, seed) = begin
+        rng = StableRNG(seed)
+        B = randn(rng, k, k)
+        Sk = B'B + 0.5I
+        w = k * L
+        narrow = [Matrix{Float64}(Sk) for _ in 1:L]
+        offs = [(l - 1) * k for l in 1:L]
+        wide = [begin
+                    Z = zeros(w, w)
+                    Z[((l - 1) * k + 1):(l * k), ((l - 1) * k + 1):(l * k)] .= Sk
+                    Z
+                end for l in 1:L]
+        (GAM.PenaltyBlock(narrow, k * L, 1, w, offs),
+         GAM.PenaltyBlock(wide, k * L, 1, w), w)
+    end
+
+    @testset "disjoint narrow block matches the materialised form" begin
+        bn, bw, w = _mk(3, 4, 4242)
+        L = length(bn.S)
+        pn = GAM.PenaltySetup([bn], zeros(L), falses(L))
+        pw = GAM.PenaltySetup([bw], zeros(L), falses(L))
+        lsp = [0.3, -1.1, 2.0, 0.7]
+        beta = randn(StableRNG(11), w)
+
+        # Exact, not approximate: same additions in the same order.
+        @test GAM.total_penalty(pn, lsp, w) == GAM.total_penalty(pw, lsp, w)
+
+        # These three were the silent ones.
+        Yn = GAM._penalty_range_basis(pn, w)
+        Yw = GAM._penalty_range_basis(pw, w)
+        @test Yn * Yn' ≈ Yw * Yw' rtol = 1e-10
+        @test GAM._log_penalty_det(pn, lsp) ≈ GAM._log_penalty_det(pw, lsp) rtol = 1e-10
+        @test GAM._block_logdet_derivs(bn, lsp) ≈
+              GAM._block_logdet_derivs(bw, lsp) rtol = 1e-10
+
+        # For pairwise-disjoint sub-penalties the derivative is exactly the
+        # rank of each, with no dependence on any smoothing parameter.
+        @test GAM._block_logdet_derivs(bn, lsp) ≈ fill(3.0, 4) rtol = 1e-10
+        @test GAM._block_logdet_derivs(bn, [5.0, -3.0, 0.0, 1.0]) ≈
+              GAM._block_logdet_derivs(bn, lsp) rtol = 1e-10
+
+        # ... and the log-determinant is separable.
+        @test GAM._log_penalty_det(pn, lsp) ≈
+              sum(3 * lsp[l] for l in 1:4) + 4 * logdet(Matrix(bn.S[1])) rtol = 1e-10
+
+        # Single-penalty helpers.
+        on = zeros(w); ow = zeros(w)
+        GAM._accumulate_penalty_j!(on, pn, lsp, 2, beta)
+        GAM._accumulate_penalty_j!(ow, pw, lsp, 2, beta)
+        @test on ≈ ow rtol = 1e-10
+        @test GAM._penalty_block_j(pn, lsp, 3, w) ≈
+              GAM._penalty_block_j(pw, lsp, 3, w) rtol = 1e-10
+        @test GAM._bSb_j(pn, lsp, 2, beta) ≈ GAM._bSb_j(pw, lsp, 2, beta) rtol = 1e-10
+    end
+
+    @testset "mixed widths (the select=true shape)" begin
+        # `select = true` appends a BLOCK-WIDTH null-space penalty beside the
+        # narrow by-penalties, so the block is neither all-narrow nor
+        # disjoint. That combination raised DimensionMismatch in the
+        # similarity-transform path until it widened its inputs.
+        k, L = 3, 4
+        w = k * L
+        rng = StableRNG(99)
+        B = randn(rng, k, k); Sk = B'B + 0.5I
+        C = randn(rng, w, w); Snull = C'C .* 1e-3 + 1e-4I
+        mixed = vcat([Matrix{Float64}(Sk) for _ in 1:L], [Matrix{Float64}(Snull)])
+        moffs = vcat([(l - 1) * k for l in 1:L], [0])
+        wide = vcat([begin
+                         Z = zeros(w, w)
+                         Z[((l - 1) * k + 1):(l * k), ((l - 1) * k + 1):(l * k)] .= Sk
+                         Z
+                     end for l in 1:L], [Matrix{Float64}(Snull)])
+        bm = GAM.PenaltyBlock(mixed, k * L, 1, w, moffs)
+        bw = GAM.PenaltyBlock(wide, k * L, 1, w)
+        pm = GAM.PenaltySetup([bm], zeros(L + 1), falses(L + 1))
+        pw = GAM.PenaltySetup([bw], zeros(L + 1), falses(L + 1))
+        lsp = [0.3, -1.1, 2.0, 0.7, -0.5]
+
+        @test !GAM._penalties_disjoint(bm)   # the wide one overlaps all others
+        @test GAM.total_penalty(pm, lsp, w) == GAM.total_penalty(pw, lsp, w)
+        @test GAM._log_penalty_det(pm, lsp) ≈ GAM._log_penalty_det(pw, lsp) rtol = 1e-10
+        Ym = GAM._penalty_range_basis(pm, w); Yw = GAM._penalty_range_basis(pw, w)
+        @test Ym * Ym' ≈ Yw * Yw' rtol = 1e-10
+    end
+
+    @testset "block not starting at index 1" begin
+        # Parametric columns sit ahead of the block, so `start != 1` and the
+        # absolute index is `start + offset + j - 1`.
+        np, k, L = 3, 4, 3
+        w = k * L; p = np + w
+        rng = StableRNG(77)
+        B = randn(rng, k, k); Sk = B'B + 0.4I
+        narrow = [Matrix{Float64}(Sk) for _ in 1:L]
+        wide = [begin
+                    Z = zeros(w, w)
+                    Z[((l - 1) * k + 1):(l * k), ((l - 1) * k + 1):(l * k)] .= Sk
+                    Z
+                end for l in 1:L]
+        bn = GAM.PenaltyBlock(narrow, k * L, np + 1, np + w, [(l - 1) * k for l in 1:L])
+        bw = GAM.PenaltyBlock(wide, k * L, np + 1, np + w)
+        pn = GAM.PenaltySetup([bn], zeros(L), falses(L))
+        pw = GAM.PenaltySetup([bw], zeros(L), falses(L))
+        lsp = [0.9, -0.4, 1.3]
+        beta = randn(StableRNG(6), p)
+
+        @test GAM.total_penalty(pn, lsp, p) == GAM.total_penalty(pw, lsp, p)
+        @test GAM._log_penalty_det(pn, lsp) ≈ GAM._log_penalty_det(pw, lsp) rtol = 1e-10
+        @test GAM._penalty_block_j(pn, lsp, 2, p) ≈
+              GAM._penalty_block_j(pw, lsp, 2, p) rtol = 1e-10
+        @test GAM._bSb_j(pn, lsp, 3, beta) ≈ GAM._bSb_j(pw, lsp, 3, beta) rtol = 1e-10
+        # The penalty must land at the right absolute columns, not at 1:w.
+        St = GAM.total_penalty(pn, lsp, p)
+        @test all(iszero, St[1:np, :])
+        @test all(iszero, St[:, 1:np])
+    end
+
+    @testset "disjointness detection" begin
+        k, L = 3, 4
+        bn, bw, w = _mk(k, L, 1234)
+        @test GAM._penalties_disjoint(bn)      # L narrow at (l-1)k
+        @test !GAM._penalties_disjoint(bw)     # L block-width, all overlapping
+        # A single-penalty block is never "disjoint" in the sense used here:
+        # it has no siblings and takes the exact `block.rank` path instead.
+        one = GAM.PenaltyBlock([zeros(4, 4) + I], 4, 1, 4)
+        @test !GAM._penalties_disjoint(one)
+    end
+end

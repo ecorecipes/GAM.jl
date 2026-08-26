@@ -854,7 +854,7 @@ m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 ```
 """
 function bam(f::FormulaTerm, data;
-    retain_X::Bool = true,
+    retain_X::Union{Bool, Nothing} = nothing,
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
@@ -878,12 +878,13 @@ function bam(f::FormulaTerm, data;
     na_action === :fail && _validate_model_columns(data, _model_covariates(f))
 
     y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
-    return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
-        method, weights, offset, select, control, bam_ctrl, discrete, retain_X)
+    return _fit_bam(y, X, X_para, smooths, n_parametric, f, data, family, link,
+        method, weights, offset, select, control, bam_ctrl, discrete,
+        _resolve_retain_X(retain_X, discrete))
 end
 
 function bam(gf::GamFormula, data;
-    retain_X::Bool = true,
+    retain_X::Union{Bool, Nothing} = nothing,
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
@@ -911,25 +912,58 @@ function bam(gf::GamFormula, data;
     # The result is indistinguishable downstream; what it avoids is the
     # construction transient, which for thin-plate at `max_knots = 2000` is an
     # `n × 2000` dense matrix and dominates peak RSS.
+    keep_X = _resolve_retain_X(retain_X, discrete)
     y, X, X_para, smooths, n_parametric = if discrete === false
         setup_gam(gf, data; family = family)
     else
+        # `build_X = false` skips the `n x p` assembly entirely: the design is
+        # built from `X_para` plus the per-smooth bases, and `model_matrix(m)`
+        # reassembles bitwise on demand.
         setup_gam_discrete(gf, data, discrete === true ? 1000 : Int(discrete);
-            family = family)
+            family = family, build_X = keep_X)
     end
     f = term(gf.response) ~ term(1)
-    return _fit_bam(y, X, smooths, n_parametric, f, data, family, link,
-        method, weights, offset, select, control, bam_ctrl, discrete, retain_X)
+    return _fit_bam(y, X, X_para, smooths, n_parametric, f, data, family, link,
+        method, weights, offset, select, control, bam_ctrl, discrete, keep_X)
 end
 
-function _fit_bam(y, X, smooths, n_parametric, f, data,
+"""
+    _resolve_retain_X(retain_X, discrete) -> Bool
+
+Whether to keep the `n x p` model matrix on the returned model.
+
+`nothing` (the default) means "retain for a dense fit, drop for a discrete
+one". Dropping is the point of `discrete`: the assembly sits in peak RSS
+whether or not it is kept, so retaining it masks the design-side wins the
+feature exists to deliver. mgcv does the same -- `bam` sets
+`G\$smooth <- G\$X <- NULL` and `model.matrix.gam` recomputes.
+
+Pass `retain_X = true` explicitly to keep it under `discrete` as well; that
+restores the pre-existing behaviour at the pre-existing cost.
+"""
+_resolve_retain_X(retain_X::Bool, discrete) = retain_X
+_resolve_retain_X(::Nothing, discrete) = discrete === false
+
+function _fit_bam(y, X, X_para, smooths, n_parametric, f, data,
     family, link, method, weights, offset, select, control, bam_ctrl,
     discrete = false, retain_X::Bool = true)
     # Construct the design once for the whole fit: `DenseDesign` memoises the
     # O(n·p) intercept scan, so the outer loop's inner P-IRLS solves inherit it
     # rather than repeating it. Under `discrete`, 1-D smooths are replaced by
     # their basis at the unique covariate values plus an index vector.
-    D = bam_design(X, smooths, data, discrete)
+    # When `X` was never assembled, build the design from the parametric block
+    # and the per-smooth bases instead. `p` comes from the smooth indices,
+    # which `_assign_smooth_indices!` has already laid out.
+    D = if size(X, 1) > 0
+        bam_design(X, smooths, data, discrete)
+    else
+        n_rows = length(y)
+        p_tot = n_parametric
+        for sm in smooths
+            p_tot = max(p_tot, sm.last_para)
+        end
+        bam_design_reduced(X_para, smooths, data, discrete, n_rows, p_tot)
+    end
     n, p = nrows(D), ncols(D)
 
     wts = weights === nothing ? ones(n) : Float64.(weights)
@@ -1017,9 +1051,20 @@ function _fit_bam(y, X, smooths, n_parametric, f, data,
         Tables.columntable(data),
     )
     # `m.X` duplicates the retained per-smooth blocks bitwise, so dropping it
-    # costs nothing but the parametric columns, which `drop_model_matrix!`
-    # keeps. Default is to retain: `X` is a public field, and
-    # `model_matrix(m)` reassembles FROM `ConstructedSmooth.X`.
-    retain_X || drop_model_matrix!(m)
+    # costs nothing but the parametric columns. `model_matrix(m)` reassembles
+    # FROM `ConstructedSmooth.X`, bitwise.
+    #
+    # Two ways to end up dropped. If `X` was assembled, take the parametric
+    # columns out of it. If it was never assembled at all (the `discrete`
+    # default), `drop_model_matrix!` has nothing to slice, so set the field
+    # from the parametric block we already hold -- that is the whole saving,
+    # since the assembly would otherwise sit in peak RSS regardless.
+    if !retain_X
+        if size(m.X, 1) > 0
+            drop_model_matrix!(m)
+        else
+            m.X_par = X_para
+        end
+    end
     return m
 end

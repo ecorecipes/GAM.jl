@@ -519,6 +519,96 @@ function PenaltyBlock(S::Vector{Matrix{Float64}}, rank::Int, start::Int, stop::I
 end
 
 """
+    _sub_penalty_idx(block::PenaltyBlock, i::Int) -> UnitRange{Int}
+
+Absolute coefficient indices occupied by sub-penalty `i` of `block`.
+
+Every consumer of `block.S[i]` must index through this rather than through
+`block.start:block.stop`. A sub-penalty may be narrower than its block — a
+factor-`by` penalty is `L` copies of a narrow `S_k` at disjoint offsets — and
+iterating the block width while indexing `Si[j,k]` reads past the end of `Si`.
+Several such loops carried `@inbounds`, so the read did not raise: it returned
+a plausible, finite, wrong answer. `total_penalty` was fixed first; this helper
+exists so the remaining consumers cannot reintroduce the same bug.
+"""
+@inline function _sub_penalty_idx(block::PenaltyBlock, i::Int)
+    off = block.offsets[i]
+    m = size(block.S[i], 1)
+    return (block.start + off):(block.start + off + m - 1)
+end
+
+"""
+    _penalties_disjoint(block::PenaltyBlock) -> Bool
+
+Whether `block`'s sub-penalties occupy pairwise non-overlapping coefficient
+ranges, as a factor-`by` block does (`I_L ⊗ S_k` stored as `L` copies of `S_k`).
+
+This is worth detecting because the log pseudo-determinant is then *separable*:
+`log|Σⱼ λⱼSⱼ|₊ = Σⱼ log|λⱼSⱼ|₊`, and `∂/∂ρⱼ` is exactly `rank(Sⱼ)`. Both are
+exact and need no eigen-decomposition. The similarity-transform path
+(`_stable_penalty_factor`) cannot be used on such a block: it works in the
+sub-penalty's own `k`-dimensional space, which for disjoint penalties is not
+the block's space at all, and silently returns a determinant for the wrong
+object. Overlapping multi-penalty blocks — `te`, `ti`, `t2`, adaptive, `fs` —
+are unaffected and keep that path.
+"""
+function _penalties_disjoint(block::PenaltyBlock)
+    length(block.S) > 1 || return false
+    width = block.stop - block.start + 1
+    # Cheap early-out that keeps this allocation-free for every block that
+    # exists today: `te`, `ti`, `t2`, adaptive and `fs` all store block-width
+    # sub-penalties, which with more than one penalty must overlap. Only a
+    # genuinely narrow block reaches the bitmap below.
+    for Si in block.S
+        size(Si, 1) == width && return false
+    end
+    covered = falses(width)
+    for i in eachindex(block.S)
+        off = block.offsets[i]
+        for j in 1:size(block.S[i], 1)
+            covered[off + j] && return false
+            covered[off + j] = true
+        end
+    end
+    return true
+end
+
+"""
+    _block_width_penalties(block::PenaltyBlock) -> Vector{Matrix{Float64}}
+
+`block.S` widened so every sub-penalty spans the block, returning the stored
+vector itself — no copy — in the common case where they already do.
+
+`_stable_penalty_factor` (mgcv's `gam.reparam` transform) assumes all its inputs
+share one coordinate system. That holds for `te`/`ti`/`t2`/adaptive/`fs`, whose
+sub-penalties are all block-width, but not for a block mixing widths: under
+`select = true` a factor-`by` block carries `L` narrow penalties at disjoint
+offsets *plus* a block-width null-space penalty. Such a block is not disjoint,
+so the separable shortcut does not apply either, and handing ragged matrices to
+the transform raises `DimensionMismatch`. Widening first is correct and costs a
+transient only for the blocks that need it.
+"""
+function _block_width_penalties(block::PenaltyBlock)
+    width = block.stop - block.start + 1
+    all(size(Si, 1) == width for Si in block.S) && return block.S
+    out = Vector{Matrix{Float64}}(undef, length(block.S))
+    for (i, Si) in enumerate(block.S)
+        if size(Si, 1) == width
+            out[i] = Matrix{Float64}(Si)
+        else
+            W = zeros(Float64, width, width)
+            off = block.offsets[i]
+            m = size(Si, 1)
+            @inbounds for j in 1:m, k in 1:m
+                W[off + j, off + k] = Si[j, k]
+            end
+            out[i] = W
+        end
+    end
+    return out
+end
+
+"""
     PenaltySetup
 
 Complete block-diagonal penalty structure for a GAM.
