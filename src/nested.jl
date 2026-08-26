@@ -737,9 +737,9 @@ function gam_nl(gf::GamFormula, data;
     if !isempty(std_specs)
         pen_std = setup_penalties(smooths, p_para)
         for block in pen_std.blocks
-            for S in block.S
+            for (i_pen, S) in enumerate(block.S)
                 Sfull = zeros(p_tot, p_tot)
-                idx = block.start:block.stop
+                idx = _sub_penalty_idx(block, i_pen)
                 Sfull[idx, idx] .= S
                 push!(penalties, Sfull)
                 push!(pen_ranks, Float64(rank(S)))

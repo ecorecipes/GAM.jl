@@ -291,6 +291,41 @@
     end
 
     # ------------------------------------------------------------------
+    # 5b. `discrete=true` never ASSEMBLES the model matrix.
+    #
+    # Dropping X after building it saves retention but not peak: the n x p
+    # assembly sat in peak RSS either way, which is what masked design-side
+    # wins of 53.66x (factor-by), 421x (tensor) and 127x (random effect).
+    # Under `discrete` the matrix is now never formed, so `retain_X` defaults
+    # to false there. Asserting on the DESIGN rather than on fitted values,
+    # because a fit is identical either way and would not catch a regression
+    # back to assembling it.
+    # ------------------------------------------------------------------
+    @testset "discrete=true does not assemble X" begin
+        gfx = GAM.GamFormula(:y, Symbol[], true,
+            [GAM.s(:x1; k = 10, bs = :cr), GAM.s(:x2; k = 10, bs = :cr)])
+        mq = bam(gfx, _rep_df; discrete = true)
+        mk = bam(gfx, _rep_df; discrete = true, retain_X = true)
+        mr = bam(gfx, _rep_df)                   # dense default: retained
+
+        @test isempty(mq.X)                      # never assembled
+        @test size(mq.X_par, 1) == _rep_n        # parametric block available
+        @test size(mk.X, 1) == _rep_n            # explicit opt-in still builds
+        @test size(mr.X, 1) == _rep_n            # dense default unchanged
+
+        # The X-free path must produce the same fit as the X-holding one,
+        # exactly — the design is assembled from the same blocks either way.
+        @test coef(mq) == coef(mk)
+        @test fitted(mq) == fitted(mk)
+        @test GAM.model_matrix(mq) == mk.X       # bitwise reassembly
+
+        # And it must still actually discretise, not fall back to dense.
+        D, = _design([GAM.s(:x1; k = 10, bs = :cr), GAM.s(:x2; k = 10, bs = :cr)])
+        @test D isa GAM.DiscreteDesign
+        @test length(D.blocks) == 2
+    end
+
+    # ------------------------------------------------------------------
     # 6. The compact representations agree with dense end to end.
     #
     # Reconstruction fidelity (3) proves the encoding; this proves the fit

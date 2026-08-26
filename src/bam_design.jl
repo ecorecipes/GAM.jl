@@ -659,7 +659,40 @@ function _re_block(spec::SmoothSpec, t, n::Int, cols::UnitRange{Int})
 end
 
 """
-    _by_block(sm, X, t, m_grid, n, cols) -> ByBlock | nothing
+    _smooth_rows(sm, rows) -> Matrix{Float64}
+
+Rows `rows` of the smooth's `n`-row model-matrix block, without ever forming
+that block.
+
+`sm.X` is bitwise `X[:, sm.first_para:sm.last_para]`, so for an ordinary
+smooth this is a plain gather. When the smooth holds a REDUCED basis
+(`bam(...; discrete=true)` builds it at the `m` unique covariate values),
+row `i` of the dense block is `sm.X[sm.rowmap[i], :]`, so the row map has to
+be composed in.
+
+That composition is not cosmetic: `setup_gam_discrete` bins with
+`shuffle = false` while `bam_design` bins with mgcv's row shuffle, so the two
+grids can order their cells differently. Indexing `sm.X` directly with a row
+number computed here would silently pick the wrong cell.
+"""
+function _smooth_rows(sm, rows::AbstractVector{Int})
+    Xsm = sm.X
+    if isempty(sm.rowmap)
+        return Xsm[rows, :]
+    end
+    rm = sm.rowmap
+    out = Matrix{Float64}(undef, length(rows), size(Xsm, 2))
+    @inbounds for (j, i) in enumerate(rows)
+        src = rm[i]
+        for c in axes(Xsm, 2)
+            out[j, c] = Xsm[src, c]
+        end
+    end
+    return out
+end
+
+"""
+    _by_block(sm, t, m_grid, n, cols) -> ByBlock | nothing
 
 Build a [`ByBlock`](@ref) for a factor-`by` smooth, or `nothing` if it does
 not qualify.
@@ -677,8 +710,7 @@ representative row per cell reproduces `Xd` BIT-for-bit. When the covariate
 had to be rounded onto a grid, the base spec is rebuilt (`by=` stripped) and
 evaluated at the grid values, as mgcv does.
 """
-function _by_block(sm, X::Matrix{Float64}, t, m_grid::Int, n::Int,
-    cols::UnitRange{Int})
+function _by_block(sm, t, m_grid::Int, n::Int, cols::UnitRange{Int})
     spec = sm.spec
     length(spec.term_vars) == 1 || return nothing
     spec.by === nothing && return nothing
@@ -726,12 +758,18 @@ function _by_block(sm, X::Matrix{Float64}, t, m_grid::Int, n::Int,
             end
         end
         any(==(0), rep) && return nothing
+        # Read out of the smooth's OWN block rather than the assembled model
+        # matrix: `sm.X` is bitwise `X[:, cols]`, so this is the same numbers
+        # without needing `X` to exist. A `by` smooth is never reduced
+        # (`_reduced_smooth` rejects `spec.by !== nothing`), so `sm.X` has n
+        # rows here and needs no row map.
+        Xsm = sm.X
         B = Matrix{Float64}(undef, mm, kb)
         @inbounds for j in 1:mm
             i = rep[j]
             off = (lev[i] - 1) * kb
             for c in 1:kb
-                B[j, c] = X[i, cols[off + c]]
+                B[j, c] = Xsm[i, off + c]
             end
         end
         B
@@ -846,26 +884,14 @@ function _tensor_block(sm, t, m_grid::Int, n::Int, cols::UnitRange{Int})
 end
 
 """
-    bam_design(X, smooths, data, discrete) -> BamDesign
+    _discrete_blocks(smooths, t, m_grid, n, p) -> (blocks, tblocks, byblocks, taken)
 
-Build the design for a `bam` fit, discretising where `discrete` allows.
-
-`discrete` is `false` (always dense), `true` (mgcv's default grid, `m = 1000`
-for a 1-D marginal), or an integer giving the grid resolution directly.
-
-A smooth is discretised only if it is 1-D, has no `by=` variable, and its
-basis reproduces the dense block from the unique covariate values. Everything
-else stays in the dense remainder, so an unsupported term costs correctness
-nothing. Returns a [`DenseDesign`](@ref) unchanged if nothing qualifies.
+Build every compact block a discrete design can hold, reading only the
+per-smooth bases — never an assembled `n x p` model matrix. `taken[j]` marks
+column `j` as covered by some block; the caller supplies the dense remainder
+for the rest.
 """
-function bam_design(X::Matrix{Float64}, smooths, data, discrete)
-    discrete === false && return DenseDesign(X)
-    m_grid = discrete === true ? 1000 : Int(discrete)
-    m_grid >= 2 || throw(ArgumentError(
-        "discrete grid resolution must be at least 2, got $m_grid"))
-
-    n, p = size(X)
-    t = Tables.columntable(data)
+function _discrete_blocks(smooths, t, m_grid::Int, n::Int, p::Int)
     blocks = DiscreteBlock[]
     tblocks = TensorBlock[]
     byblocks = ByBlock[]
@@ -917,7 +943,7 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
         if spec.by !== nothing
             cols = sm.first_para:sm.last_para
             bb = (first(cols) >= 1 && last(cols) <= p) ?
-                _by_block(sm, X, t, m_grid, n, cols) : nothing
+                _by_block(sm, t, m_grid, n, cols) : nothing
             if bb !== nothing
                 push!(byblocks, bb)
                 taken[cols] .= true
@@ -953,7 +979,7 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
                     nfilled == mm && break
                 end
             end
-            X[rep, cols]
+            _smooth_rows(sm, rep)
         else
             # Rounded: bin members differ, so evaluate the basis at the grid
             # value, as mgcv does.
@@ -971,6 +997,31 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
         taken[cols] .= true
     end
 
+    return blocks, tblocks, byblocks, taken
+end
+
+"""
+    bam_design(X, smooths, data, discrete) -> BamDesign
+
+Build the design for a `bam` fit, discretising where `discrete` allows.
+
+`discrete` is `false` (always dense), `true` (mgcv's default grid, `m = 1000`
+for a 1-D marginal), or an integer giving the grid resolution directly.
+
+A smooth is discretised only if it is 1-D, has no `by=` variable, and its
+basis reproduces the dense block from the unique covariate values. Everything
+else stays in the dense remainder, so an unsupported term costs correctness
+nothing. Returns a [`DenseDesign`](@ref) unchanged if nothing qualifies.
+"""
+function bam_design(X::Matrix{Float64}, smooths, data, discrete)
+    discrete === false && return DenseDesign(X)
+    m_grid = _discrete_grid(discrete)
+
+    n, p = size(X)
+    t = Tables.columntable(data)
+    blocks, tblocks, byblocks, taken =
+        _discrete_blocks(smooths, t, m_grid, n, p)
+
     (isempty(blocks) && isempty(tblocks) && isempty(byblocks)) &&
         return DenseDesign(X)
 
@@ -985,6 +1036,125 @@ function bam_design(X::Matrix{Float64}, smooths, data, discrete)
     end
     return DiscreteDesign(blocks, Xdense, dense_cols, n, p, icpt, tblocks,
         byblocks)
+end
+
+"""
+    bam_design_reduced(X_para, smooths, data, discrete, n, p) -> BamDesign
+
+Build a discrete design **without an assembled `n x p` model matrix**.
+
+`X` is `[X_para | sm_1.X | sm_2.X | ...]` block-wise, so every quantity the
+design needs is available from the parametric block and the individual
+smooths. Avoiding the assembly is the point: `setup_gam` materialises the full
+matrix before the design is built, so it sat in peak RSS whether or not it was
+retained, masking design-side wins of 53.66x (factor-`by`), 421x (tensor) and
+127x (random effect).
+
+Falls back to a dense design assembled the same way when no smooth discretises,
+so the caller never has to special-case that.
+"""
+function bam_design_reduced(X_para::Matrix{Float64}, smooths, data, discrete,
+    n::Int, p::Int)
+    m_grid = _discrete_grid(discrete)
+    t = Tables.columntable(data)
+    blocks, tblocks, byblocks, taken =
+        _discrete_blocks(smooths, t, m_grid, n, p)
+
+    npar = size(X_para, 2)
+    if isempty(blocks) && isempty(tblocks) && isempty(byblocks)
+        # Nothing discretised: assemble the dense matrix after all. This costs
+        # exactly what the non-discrete path costs and keeps the contract that
+        # a design is always returned.
+        return DenseDesign(_assemble_dense(X_para, smooths, n, p))
+    end
+
+    dense_cols = findall(!, taken)
+    Xdense = _gather_columns(X_para, smooths, dense_cols, npar, n)
+    # The intercept can only be a parametric column -- no smooth basis is
+    # identically one -- so scanning `X_para` is both sufficient and cheap.
+    icpt = 0
+    for j in 1:npar
+        if all(==(1.0), view(X_para, :, j))
+            icpt = j
+            break
+        end
+    end
+    return DiscreteDesign(blocks, Xdense, dense_cols, n, p, icpt, tblocks,
+        byblocks)
+end
+
+_discrete_grid(discrete) = begin
+    m_grid = discrete === true ? 1000 : Int(discrete)
+    m_grid >= 2 || throw(ArgumentError(
+        "discrete grid resolution must be at least 2, got $m_grid"))
+    m_grid
+end
+
+"""
+    _assemble_dense(X_para, smooths, n, p) -> Matrix{Float64}
+
+Assemble the `n x p` model matrix from its blocks, filling column-block by
+column-block rather than `hcat`ing (which would hold a second full copy).
+"""
+function _assemble_dense(X_para::Matrix{Float64}, smooths, n::Int, p::Int)
+    X = Matrix{Float64}(undef, n, p)
+    npar = size(X_para, 2)
+    npar > 0 && copyto!(view(X, :, 1:npar), X_para)
+    for sm in smooths
+        _scatter_block!(view(X, :, sm.first_para:sm.last_para), sm)
+    end
+    return X
+end
+
+"""
+    _gather_columns(X_para, smooths, cols, npar, n) -> Matrix{Float64}
+
+The `n x length(cols)` sub-matrix of the model matrix at absolute column
+indices `cols`, read from the parametric block and the smooth bases directly.
+Used for the dense remainder of a discrete design, which is the parametric
+columns plus any smooth that did not discretise.
+"""
+function _gather_columns(X_para::Matrix{Float64}, smooths,
+    cols::Vector{Int}, npar::Int, n::Int)
+    out = Matrix{Float64}(undef, n, length(cols))
+    for (c, j) in enumerate(cols)
+        if j <= npar
+            @inbounds copyto!(view(out, :, c), view(X_para, :, j))
+            continue
+        end
+        placed = false
+        for sm in smooths
+            if sm.first_para <= j <= sm.last_para
+                _scatter_column!(view(out, :, c), sm, j - sm.first_para + 1)
+                placed = true
+                break
+            end
+        end
+        placed || throw(ArgumentError(
+            "bam_design_reduced: model-matrix column $j belongs to no " *
+            "parametric block or smooth; the design cannot be built without " *
+            "an assembled X."))
+    end
+    return out
+end
+
+"""
+    _scatter_column!(dest, sm, c) -> dest
+
+Column `c` of the smooth's `n`-row block, written into `dest` without forming
+the block. Honours a reduced basis via `sm.rowmap`.
+"""
+function _scatter_column!(dest::AbstractVector{Float64}, sm, c::Int)
+    Xsm = sm.X
+    if isempty(sm.rowmap)
+        @inbounds copyto!(dest, view(Xsm, :, c))
+    else
+        rm = sm.rowmap
+        @inbounds for i in eachindex(dest)
+            dest[i] = Xsm[rm[i], c]
+        end
+    end
+    return dest
 end
 
 function mul_eta!(eta::Vector{Float64}, D::DiscreteDesign,

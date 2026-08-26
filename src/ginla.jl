@@ -110,9 +110,11 @@ function _logf(beta::Vector{Float64}, model::GamModel, X::Matrix{Float64};
     pen = 0.0
     sp_idx = 1
     for block in model.penalty.blocks
-        idx = block.start:block.stop
-        b_block = beta[idx]
-        for Si in block.S
+        for (i_pen, Si) in enumerate(block.S)
+            # Sub-penalty extent, not block width: a factor-`by` block holds L
+            # narrow penalties at disjoint offsets.
+            idx = GAM._sub_penalty_idx(block, i_pen)
+            b_block = beta[idx]
             λ = exp(model.sp[sp_idx])
             Sb = λ .* (Si * b_block)
             pen += dot(b_block, Sb)
