@@ -63,18 +63,38 @@ function _apply_by_variable!(sm::ConstructedSmooth, t)
     n, k = size(sm.X)
     Xb = zeros(n, k * L)
     S_new = Matrix{Float64}[]
+    # The replicated penalty is I_L ⊗ S_k. Store it as L NARROW k×k copies
+    # plus per-sub-penalty offsets — O(L·k²) instead of O(L³k²) (186.92 MiB →
+    # 0.075 MiB at L=50, k=14), and every penalty hot path bounds its loops by
+    # `size(Si,1)`, so the same L² comes off `total_penalty!` and
+    # `_log_penalty_det` per sp-iteration. This matches mgcv, whose factor-`by`
+    # replicates the smooth per level with each copy keeping its k×k S
+    # (R/smooth.r:3980). Consumers needing block width call
+    # `penalty_matrices(sm)`.
+    #
+    # SCAM smooths (p_ident !== nothing) keep the full-width form: the
+    # GAMTuringExt constrained-smooth path reads `sm.S[1]` at block width, and
+    # SCAM factor-`by` is not worth a narrow path of its own.
+    narrow = sm.p_ident === nothing && L > 1
+    S_offs = Int[]
     for (l, lev) in enumerate(levels)
         mask = by_col .== lev
         cols = ((l - 1) * k + 1):(l * k)
         Xb[mask, cols] .= sm.X[mask, :]
         for Si in sm.S
-            Sfull = zeros(k * L, k * L)
-            Sfull[cols, cols] .= Si
-            push!(S_new, Sfull)
+            if narrow
+                push!(S_new, copy(Si))
+                push!(S_offs, (l - 1) * k)
+            else
+                Sfull = zeros(k * L, k * L)
+                Sfull[cols, cols] .= Si
+                push!(S_new, Sfull)
+            end
         end
     end
     sm.X = Xb
     sm.S = S_new
+    sm.S_offsets = S_offs
     sm.null_dim *= L
     sm.rank *= L
     # Replicate the shape-constraint pattern per level so each level's smooth
@@ -105,12 +125,10 @@ end
 # existing fit stays bit-identical and a caller that wants the compact form
 # asks for it explicitly.
 #
-# Penalty note: the replicated penalty is `I_L ⊗ S_k`. `_apply_by_variable!`
-# stores that as `L` matrices of the FULL `kL x kL` block width, each with a
-# single diagonal sub-block filled — `O(L^3 k^2)` storage, which is 0.9 MB at
-# L=8, k=15 but 225 MB at L=50, k=15. Storing `L` copies of the `k x k` `S_k`
-# instead needs a per-sub-penalty offset that `PenaltyBlock` does not carry;
-# see the note in `total_penalty`.
+# Penalty note: the replicated penalty is `I_L ⊗ S_k`, stored by
+# `_apply_by_variable!` as `L` NARROW `k x k` copies plus `sm.S_offsets`
+# (`O(L·k²)`), forwarded into `PenaltyBlock.offsets` by `setup_penalties`.
+# Consumers needing the block-width form call `penalty_matrices(sm)`.
 # ============================================================================
 
 """
@@ -310,9 +328,13 @@ end
 """
     penalty_matrix(smooth::ConstructedSmooth) -> Vector{Matrix{Float64}}
 
-Return the penalty matrices for this smooth.
+Return the penalty matrices for this smooth, each spanning the smooth's full
+column width. A factor-`by` smooth stores its `I_L ⊗ S_k` penalty as `L`
+narrow `k×k` copies internally; this accessor widens them so the documented
+block-width contract holds regardless of storage. When nothing is narrow the
+stored vector is returned as-is, with no copy.
 """
-penalty_matrix(smooth::ConstructedSmooth) = smooth.S
+penalty_matrix(smooth::ConstructedSmooth) = penalty_matrices(smooth)
 
 """
     null_space_dim(smooth::ConstructedSmooth) -> Int
@@ -645,6 +667,17 @@ function side_constrain!(smooths::Vector{<:ConstructedSmooth}, X_para::Matrix{Fl
             isnothing(ind) && continue
 
             # Stage 6: Remove dependent columns
+            # Narrow factor-`by` penalties must be widened BEFORE column
+            # removal: `S[j][keep, keep]` indexes by block width, and the
+            # null-dim recompute below sums the matrices — which SUCCEEDS on
+            # same-size narrow matrices and silently returns the sub-block's
+            # null dimension (measured: 1 where the answer is 4). Column
+            # removal destroys the offset structure anyway, so the widened
+            # form is also the correct storage from here on.
+            if !isempty(smooths[i].S_offsets)
+                smooths[i].S = penalty_matrices(smooths[i])
+                smooths[i].S_offsets = Int[]
+            end
             keep = setdiff(1:size(smooths[i].X, 2), ind)
             smooths[i].X = smooths[i].X[:, keep]
 
@@ -710,16 +743,20 @@ function _augment_smooth_X(sm::ConstructedSmooth, nobs::Int, np::Int, col_offset
     X_aug = zeros(nobs + np, k)
     X_aug[1:nobs, :] = sm.X
 
-    if !isempty(sm.S)
+    # Widened view of the penalties: every index below is in block-width
+    # coordinates (`ind` masks columns of `sm.X`), so narrow factor-`by`
+    # storage must be materialised first. No copy when nothing is narrow.
+    Ss = penalty_matrices(sm)
+    if !isempty(Ss)
         # Combine all penalties, scaled by data magnitude
-        ind = vec(any(abs.(sm.S[1]) .> 0, dims=1))
+        ind = vec(any(abs.(Ss[1]) .> 0, dims=1))
         sqrmaX = mean(abs2, @view(sm.X[:, ind]))
-        St = sm.S[1] * (sqrmaX / max(mean(abs, @view(sm.S[1][ind, ind])), 1e-20))
-        for j in 2:length(sm.S)
-            ind_j = vec(any(abs.(sm.S[j]) .> 0, dims=1))
+        St = Ss[1] * (sqrmaX / max(mean(abs, @view(Ss[1][ind, ind])), 1e-20))
+        for j in 2:length(Ss)
+            ind_j = vec(any(abs.(Ss[j]) .> 0, dims=1))
             if any(ind_j)
-                alpha = sqrmaX / max(mean(abs, @view(sm.S[j][ind_j, ind_j])), 1e-20)
-                St .+= sm.S[j] * alpha
+                alpha = sqrmaX / max(mean(abs, @view(Ss[j][ind_j, ind_j])), 1e-20)
+                St .+= Ss[j] * alpha
             end
         end
         # Matrix square root

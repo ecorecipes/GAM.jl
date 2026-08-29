@@ -62,6 +62,10 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
 
         S_list = copy(sm.S)
         block_rank = sm.rank
+        # Narrow factor-`by` storage: forward the smooth's per-sub-penalty
+        # offsets into the PenaltyBlock rather than materialising I_L ⊗ S_k.
+        # Empty means all block-width (the common case).
+        S_offs = isempty(sm.S_offsets) ? Int[] : copy(sm.S_offsets)
 
         # select=TRUE (Marra & Wood 2011): append a penalty on the null space
         # of the existing penalties so the unpenalized part of each smooth
@@ -70,10 +74,15 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
         # penalized (e.g. random effects, or ts/cs which carry their own
         # shrinkage penalty).
         if select
-            S_null = _null_space_penalty(S_list, k)
+            S_null = _null_space_penalty(S_list, k;
+                offsets = isempty(S_offs) ? nothing : S_offs)
             if S_null !== nothing
                 push!(S_list, S_null)
                 block_rank = k  # combined penalty is now full rank
+                # The null-space penalty is block-width (offset 0), so a block
+                # that was all-narrow now mixes widths — exactly the shape
+                # `_block_width_penalties` exists for.
+                isempty(S_offs) || push!(S_offs, 0)
             end
         end
 
@@ -83,7 +92,9 @@ function setup_penalties(smooths::Vector{<:ConstructedSmooth}, n_parametric::Int
         # `eps^0.8`, which reproduces mgcv's per-penalty rank vector exactly
         # (adaptive k=40 m=8: [8,15,23,30,30,23,15,8], matching `object$rank`).
         # The dead eigen-per-penalty cost 1.6 ms per call on that smooth.
-        block = PenaltyBlock(S_list, block_rank, p_start, p_start + k - 1)
+        block = isempty(S_offs) ?
+            PenaltyBlock(S_list, block_rank, p_start, p_start + k - 1) :
+            PenaltyBlock(S_list, block_rank, p_start, p_start + k - 1, S_offs)
         push!(blocks, block)
 
         # Initial smoothing parameters (log scale) — one per penalty matrix.
@@ -133,11 +144,20 @@ smooth) and return the projection onto that null space, scaled to the same
 order of magnitude as the existing penalty so the two smoothing parameters
 are comparable. Returns `nothing` if there is no null space to penalize.
 """
-function _null_space_penalty(S_list::Vector{Matrix{Float64}}, k::Int)
+function _null_space_penalty(S_list::Vector{Matrix{Float64}}, k::Int;
+    offsets::Union{Nothing, Vector{Int}} = nothing)
     isempty(S_list) && return nothing
     S_sum = zeros(k, k)
-    for Si in S_list
-        S_sum .+= Si
+    for (i, Si) in enumerate(S_list)
+        m = size(Si, 1)
+        if offsets === nothing || m == k
+            S_sum .+= Si
+        else
+            # Narrow sub-penalty: accumulate at its offset. Same entries as
+            # widening first — the padding is zeros — without the O(k²) copy.
+            off = offsets[i]
+            @views S_sum[(off + 1):(off + m), (off + 1):(off + m)] .+= Si
+        end
     end
     eg = eigen(Symmetric(S_sum))
     maxev = maximum(abs, eg.values)
