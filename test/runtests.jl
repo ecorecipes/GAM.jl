@@ -1249,6 +1249,9 @@ _spde_csv_ok && @eval include("test_spde_rcall.jl")
 # Representation guards: discrete blocks must actually engage (no R needed)
 @eval include("test_representation.jl")
 
+# Every model-facing consumer on a discrete fit vs dense (no R needed)
+@eval include("test_discrete_consumers.jl")
+
 # method=:ML criterion parity with mgcv (range-space determinant, Dp/n scale)
 @eval include("test_ml_criterion.jl")
 

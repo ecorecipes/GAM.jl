@@ -333,15 +333,28 @@ mgcv arrives here differently: `gam.reparam` *assumes* its inputs are already
 projected into the total penalty's range (`R/gam.fit3.r:15-16`, via
 `totalPenaltySpace`/`mini.roots`), which is what lets it take a plain
 determinant at the end. We project explicitly instead.
+
+`offsets` places each `Sⱼ` within the common space. Without it the loop bound
+came from `Ss[1]` while indexing every other `Sⱼ` under `@inbounds`, so a
+narrower component read past its end and returned a plausible, finite, wrong
+basis — the same shape that made `_log_penalty_det` return 8.81502 where the
+answer is 12.09240. Both callers happen to pre-widen today, so this was latent;
+each inner loop is now bounded by its own component's size, which makes the
+`@inbounds` valid by construction rather than by caller discipline. For
+equal-sized components at offset 0 the loop and its arithmetic are unchanged.
 """
-function _total_range_basis(Ss::AbstractVector{<:AbstractMatrix{Float64}})
-    k = size(Ss[1], 1)
+function _total_range_basis(Ss::AbstractVector{<:AbstractMatrix{Float64}},
+    offsets::Union{Nothing, AbstractVector{Int}} = nothing)
+    k = offsets === nothing ? maximum(size(S, 1) for S in Ss) :
+        maximum(offsets[i] + size(Ss[i], 1) for i in eachindex(Ss))
     Snorm = zeros(Float64, k, k)
-    for S in Ss
+    for (i, S) in enumerate(Ss)
         nrm = sqrt(sum(abs2, S))
         nrm > 0 || continue
-        @inbounds for j in 1:k, m in 1:k
-            Snorm[j, m] += S[j, m] / nrm
+        off = offsets === nothing ? 0 : offsets[i]
+        ki = size(S, 1)
+        @inbounds for j in 1:ki, m in 1:ki
+            Snorm[off + j, off + m] += S[j, m] / nrm
         end
     end
     e = eigen(Symmetric(Snorm))
@@ -672,7 +685,15 @@ function _stable_block_logdet_derivs(block, log_sp_block)
     end
     # Widen any narrow sub-penalty: the transform assumes one shared
     # coordinate system (see `_block_width_penalties`).
-    Ss = [Matrix{Float64}(Si) for Si in _block_width_penalties(block)]
+    # `convert`, not `Matrix{Float64}(...)`: the constructor always COPIES,
+    # while `convert` returns the argument itself when it is already a
+    # `Matrix{Float64}` — which it is for every stored penalty.
+    # `_block_width_penalties` likewise returns `block.S` unchanged in the
+    # common case, so this whole line was duplicating every penalty matrix on
+    # every call: measured 187.5 MiB at L=50, k=14. Safe because nothing
+    # downstream mutates `Ss` — the prologue builds fresh `Z'SⱼZ` matrices and
+    # `_stable_penalty_factor` copies `pro.Si`/`pro.R` before touching them.
+    Ss = [convert(Matrix{Float64}, Si) for Si in _block_width_penalties(block)]
     lsp = Float64[Float64(log_sp_block[j]) for j in 1:nS]
     st = _stable_penalty_factor(Ss, lsp; key = block.S)
     st === nothing && return zeros(Float64, nS)
@@ -724,7 +745,10 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
             # lost. Use mgcv's similarity transform instead — see
             # `_stable_penalty_factor`.
             lsp_block = Float64[Float64(log_sp[sp_idx + j - 1]) for j in 1:nS]
-            Ss = [Matrix{Float64}(Si) for Si in _block_width_penalties(block)]
+            # `convert` rather than the `Matrix{Float64}` constructor, which
+            # always copies — see `_stable_block_logdet_derivs` above.
+            Ss = [convert(Matrix{Float64}, Si)
+                  for Si in _block_width_penalties(block)]
             st = _stable_penalty_factor(Ss, lsp_block; key = block.S)
             if st !== nothing
                 ldet += _stable_penalty_logdet(st)
@@ -1106,9 +1130,6 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
 
     sp_idx = 1
     for block in penalty.blocks
-        idx = block.start:block.stop
-        beta_block = beta[idx]
-
         # λⱼ·tr(S_λ⁺Sⱼ) per penalty: equals block.rank for single-penalty
         # blocks; differs per margin for multi-penalty (tensor) blocks.
         # Uses the similarity-transformed route so the gradient stays
@@ -1120,6 +1141,12 @@ function _reml_gradient(X::Matrix{Float64}, w::Vector{Float64},
 
         for (j_pen, Si) in enumerate(block.S)
             λ = exp(log_sp[sp_idx])
+            # Sub-penalty extent, not block width: `dS[idx,idx] .= λ .* Si`
+            # against a block-width range raises `DimensionMismatch` for a
+            # narrow penalty. For a full-width penalty (every block today)
+            # this range IS `block.start:block.stop`.
+            idx = _sub_penalty_idx(block, j_pen)
+            beta_block = beta[idx]
             dS = zeros(p, p)
             dS[idx, idx] .= λ .* Si
 

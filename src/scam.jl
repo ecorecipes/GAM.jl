@@ -706,9 +706,6 @@ function scam_outer_iteration(
         max_change = 0.0
 
         for block in penalty.blocks
-            idx = block.start:block.stop
-            beta_block = beta[idx]
-
             # Per-penalty λⱼ·∂log|S_λ|₊/∂λⱼ: equals block.rank only for
             # single-penalty blocks (all current SCAM smooths); the general
             # form future-proofs multi-penalty constrained blocks the same
@@ -723,8 +720,19 @@ function scam_outer_iteration(
                 end
                 λ = exp(log_sp[sp_idx])
 
+                # Sub-penalty extent, not block width: a narrow penalty at an
+                # offset would otherwise raise `DimensionMismatch` here. For a
+                # full-width penalty (every SCAM block today) this range IS
+                # `block.start:block.stop`, so the arithmetic is unchanged.
+                # Views rather than copies, since this now runs per penalty.
+                idx = _sub_penalty_idx(block, jS)
+                beta_block = view(beta, idx)
+                Ainv_block = view(Ainv, idx, idx)
+
+                # Expressions left exactly as they were: `dot(b, S, b)` and
+                # `dot(A, S)` are mathematically equal but sum in a different
+                # order, which would perturb the last bits.
                 bSb = dot(beta_block, Si * beta_block)
-                Ainv_block = Ainv[idx, idx]
                 # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(p²), not O(p³)
                 trVS = sum(Ainv_block .* Si)
 

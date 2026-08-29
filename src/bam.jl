@@ -631,13 +631,15 @@ function outer_iteration_bam(D::BamDesign, y::Vector{Float64},
         E_blk = zeros(p, 0)
         for block in penalty.blocks
             idx = block.start:block.stop
-            beta_block = beta[idx]
             kb = length(idx)
             E_blk = zeros(p, kb)
             @inbounds for (c, j) in enumerate(idx)
                 E_blk[j, c] = 1.0
             end
-            Ainv_block = (A_fact \ E_blk)[idx, :]
+            # Solved ONCE per block, then sliced per sub-penalty below. Moving
+            # this inside the sub-penalty loop would run nS identical solves
+            # per block — a real regression for te/adaptive smooths.
+            Ainv_blk = (A_fact \ E_blk)[idx, :]
 
             # Per-penalty λⱼ·tr(S_λ⁺Sⱼ): equals block.rank only for
             # single-penalty blocks; using block.rank per margin of a tensor
@@ -652,6 +654,17 @@ function outer_iteration_bam(D::BamDesign, y::Vector{Float64},
                     continue
                 end
                 λ = exp(log_sp[sp_idx])
+
+                # A sub-penalty may be narrower than its block (factor-by
+                # penalties stored as L copies of a k×k S_k). `r` is its
+                # position WITHIN the block; for a full-width penalty off = 0
+                # and msz = kb, so r = 1:kb and everything below reduces to
+                # the block-width expressions exactly — bit-identical.
+                off = block.offsets[jS]
+                msz = size(Si, 1)
+                r = (off + 1):(off + msz)
+                beta_block = beta[block.start .+ r .- 1]
+                Ainv_block = view(Ainv_blk, r, r)
 
                 bSb = dot(beta_block, Si * beta_block)
                 # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(k²), not O(k³)
