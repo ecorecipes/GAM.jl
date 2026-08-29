@@ -318,11 +318,15 @@ function build_block_penalty(smooths_list::Vector{Vector{ConstructedSmooth}},
     sp_idx = 0
     for (k, smooths) in enumerate(smooths_list)
         for sm in smooths
-            for Sj in sm.S
+            for (j_pen, Sj) in enumerate(sm.S)
                 sp_idx += 1
                 λ = exp(sp[sp_idx])
-                s = sm.first_para
-                e = sm.last_para
+                # A narrow factor-`by` sub-penalty sits at its offset within
+                # the smooth's block; full-width penalties have offset 0 and
+                # span it, so this reduces to the block-width expression.
+                off = isempty(sm.S_offsets) ? 0 : sm.S_offsets[j_pen]
+                s = sm.first_para + off
+                e = s + size(Sj, 1) - 1
                 S[s:e, s:e] .+= λ .* Sj
             end
         end
@@ -347,10 +351,11 @@ function build_penalty_matrices(smooths_list::Vector{Vector{ConstructedSmooth}},
     Sl = Matrix{Float64}[]
     for (k, smooths) in enumerate(smooths_list)
         for sm in smooths
-            for Sj in sm.S
+            for (j_pen, Sj) in enumerate(sm.S)
                 Smat = zeros(p, p)
-                s = sm.first_para
-                e = sm.last_para
+                off = isempty(sm.S_offsets) ? 0 : sm.S_offsets[j_pen]
+                s = sm.first_para + off
+                e = s + size(Sj, 1) - 1
                 Smat[s:e, s:e] .= Sj
                 push!(Sl, Smat)
             end

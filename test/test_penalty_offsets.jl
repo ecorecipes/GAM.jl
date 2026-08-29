@@ -400,3 +400,152 @@ end
         @test GAM._total_range_basis(eq) == GAM._total_range_basis(eq, [0, 0])
     end
 end
+
+@testset "narrow factor-by storage end to end" begin
+    # Stage 3 of the narrow-storage plan: `_apply_by_variable!` emits L narrow
+    # k×k copies plus `sm.S_offsets`, `setup_penalties` forwards them into
+    # `PenaltyBlock.offsets`, and every consumer computes the same quantities.
+    # The case is COMPUTE as much as memory: each penalty hot path bounds its
+    # loops by `size(Si,1)`, so narrow storage takes the same L² off
+    # `total_penalty!` and `_log_penalty_det` per sp-iteration (measured warm:
+    # 700×/264× at L=50, k=14 — and 2500× on stored bytes).
+    rng_nb = StableRNG(2468)
+    n = 600
+    dfn = DataFrame(
+        x = rand(rng_nb, n),
+        x2 = rand(rng_nb, n),
+        f = string.(rand(rng_nb, ["a", "b", "c", "d"], n)),
+    )
+    dfn.y = sin.(2π .* dfn.x) .+ 0.2 .* randn(rng_nb, n)
+    L = 4
+
+    @testset "storage is narrow and the block inherits the offsets" begin
+        gf = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x; k = 8, bs = :ps, by = :f)])
+        m = gam(gf, dfn)
+        sm = m.smooths[1]
+        k_eff = size(sm.S[1], 1)
+        @test k_eff * L == size(sm.X, 2)             # genuinely narrow
+        @test sm.S_offsets == [(l - 1) * k_eff for l in 1:L]
+        blk = m.penalty.blocks[1]
+        @test blk.offsets == sm.S_offsets            # forwarded, not rebuilt
+        @test size(blk.S[1], 1) == k_eff
+        # total_penalty over the narrow block == the materialised reference.
+        p = size(m.X, 2)
+        lsp = m.sp
+        Sn = GAM.total_penalty(m.penalty, lsp, p)
+        wide = GAM.penalty_matrices(sm)
+        blk_w = GAM.PenaltyBlock(wide, blk.rank, blk.start, blk.stop)
+        pw = GAM.PenaltySetup([blk_w], copy(m.penalty.sp), copy(m.penalty.fixed))
+        @test Sn == GAM.total_penalty(pw, lsp, p)    # elementwise ==, not ≈
+
+        # The discrete path builds its smooths through the same producer, so
+        # it inherits narrow storage for free — assert it rather than assume.
+        mq = bam(gf, dfn; discrete = true)
+        smq = mq.smooths[1]
+        @test !isempty(smq.S_offsets)
+        @test size(smq.S[1], 1) == k_eff
+    end
+
+    @testset "select=true mixes narrow by-penalties with a wide null penalty" begin
+        gf = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x; k = 8, bs = :ps, by = :f)])
+        m = gam(gf, dfn; select = true)
+        blk = m.penalty.blocks[1]
+        widths = unique(size.(blk.S, 1))
+        @test length(blk.S) == L + 1                 # L narrow + 1 null-space
+        @test length(widths) == 2                    # genuinely mixed widths
+        @test blk.offsets[end] == 0                  # null penalty at offset 0
+        @test size(blk.S[end], 1) == blk.stop - blk.start + 1
+        @test m.converged
+    end
+
+    @testset "vector sp= still validates against the penalty count" begin
+        gf = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x; k = 8, bs = :ps, by = :f, sp = [1.0, 2.0])])
+        @test_throws ArgumentError gam(gf, dfn)
+    end
+
+    @testset "side_constrain! null-dim is correct on narrow storage" begin
+        # THE silent-wrong site: `St .+= S[j]` succeeds on same-size narrow
+        # matrices — every one is k×k — and returned the SUB-BLOCK's null
+        # dimension (measured: 1 where the answer is 4). Materialising before
+        # the recompute makes it correct by construction.
+        #
+        # Fixture note: side constraints compare a smooth only against
+        # strictly LOWER-dimensional smooths sharing a variable name, and the
+        # `by` variable is baked into that name — so s(x) never constrains
+        # s(x, by=f), and two same-dimension by-smooths never constrain each
+        # other (probed: del_index = [] for both). The natural trigger is a
+        # 1-D by-smooth nested under a te with the SAME by — mgcv's gam.side
+        # nesting semantics — which fires on the ordinary with_pen path.
+        smA = smooth_construct(GAM.s(:x; k = 6, bs = :cr, by = :f), dfn)
+        smB = smooth_construct(GAM.te(:x, :x2; k = 4, bs = [:cr, :cr], by = :f), dfn)
+        @test !isempty(smB.S_offsets)                # narrow going in
+        smooths = GAM.ConstructedSmooth[smA, smB]
+        GAM._assign_smooth_indices!(smooths, 1)
+        # Widened control: identical smooths, penalties materialised up front.
+        smooths_w = GAM.ConstructedSmooth[deepcopy(smA), deepcopy(smB)]
+        for smw in smooths_w
+            smw.S = GAM.penalty_matrices(smw)
+            smw.S_offsets = Int[]
+        end
+        Xp = ones(nrow(dfn), 1)
+        mod_n = GAM.side_constrain!(smooths, Xp)
+        mod_w = GAM.side_constrain!(smooths_w, Xp)
+        # Fixture-validity gate: if the removal branch stops firing this test
+        # must FAIL loudly rather than pass vacuously.
+        @test mod_n && mod_w
+        @test !isempty(smooths[2].del_index)
+        @test smooths[2].del_index == smooths_w[2].del_index
+        # Post-removal: offsets cleared, penalties at (reduced) block width…
+        @test isempty(smooths[2].S_offsets)
+        @test all(size(Si, 1) == size(smooths[2].X, 2) for Si in smooths[2].S)
+        # …and the null-dim recompute agrees with the widened control — this
+        # is the assertion that was silently wrong (1 instead of 4) before.
+        @test smooths[2].null_dim == smooths_w[2].null_dim
+        @test smooths[2].rank == smooths_w[2].rank
+        @test length(smooths[2].S) == length(smooths_w[2].S)
+        @test all(smooths[2].S[i] == smooths_w[2].S[i]
+                  for i in eachindex(smooths[2].S))
+    end
+
+    @testset "smooth2random on narrow storage matches the widened form" begin
+        gf = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x; k = 6, bs = :ps, by = :f)])
+        m = gam(gf, dfn)
+        sm = m.smooths[1]
+        @test !isempty(sm.S_offsets)                 # narrow going in
+        mm = GAM.smooth2random(sm)
+        # Reference: identical smooth with penalties materialised up front.
+        smw = deepcopy(sm)
+        smw.S = GAM.penalty_matrices(sm)
+        smw.S_offsets = Int[]
+        mw = GAM.smooth2random(smw)
+        # Entries are NOT bitwise equal, and the reason is worth recording:
+        # `sum_S` is the same set of values summed in a different association
+        # order (25 dense entries vs 400 mostly-zero ones under pairwise
+        # reduction), so it differs at the last ulp — measured 7.1e-15 — and a
+        # factor-`by` penalty has L-fold DEGENERATE eigenvalues (four
+        # identical blocks), so that ulp rotates the eigenvectors within each
+        # degenerate subspace by O(1) while the eigenvalues agree to 4e-14.
+        # The implied mixed model is invariant to that rotation (i.i.d.
+        # normal effects; the fixed part is span-identified), so assert the
+        # invariants, not the basis realisation.
+        @test length(mm.Zs) == length(mw.Zs)
+        for i in eachindex(mm.Zs)
+            # λ·Z·Zᵀ is the implied covariance contribution — rotation-invariant.
+            @test mm.Zs[i] * mm.Zs[i]' ≈ mw.Zs[i] * mw.Zs[i]' rtol = 1e-8
+        end
+        # Fixed part spans the same space: each column of one reproduces from
+        # the other by least squares.
+        if size(mm.Xf, 2) > 0
+            resid = mm.Xf .- mw.Xf * (mw.Xf \ mm.Xf)
+            @test maximum(abs, resid) < 1e-8
+        end
+        # trans_D carries eigenvalue-derived scalings of the ulp-perturbed
+        # sum_S: one-ulp difference measured (5.6e-17), so ≈ not ==.
+        @test mm.trans_D ≈ mw.trans_D atol = 1e-13
+        @test mm.pen_ind == mw.pen_ind
+    end
+end

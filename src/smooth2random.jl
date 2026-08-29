@@ -201,21 +201,27 @@ end
 """Check if penalties are diagonal with non-overlapping supports (t2 pattern)."""
 function _is_t2_style(sm::ConstructedSmooth)
     k = size(sm.X, 2)
-    # For each column, count how many penalties have nonzero diagonal entry
+    # For each column, count how many penalties have nonzero diagonal entry.
+    # A narrow factor-`by` sub-penalty occupies columns `off .+ (1:size(S,1))`
+    # of the block; its widened form is zero elsewhere, so scanning the narrow
+    # matrix at its offset gives the identical verdict at k² instead of (kL)²
+    # per penalty.
     pen_count = zeros(Int, k)
-    for S in sm.S
+    for (ip, S) in enumerate(sm.S)
+        off = isempty(sm.S_offsets) ? 0 : sm.S_offsets[ip]
+        ks = size(S, 1)
         dmax = max(maximum(abs.(diag(S))), eps())
         # The diag-rescaling in _smooth2random_t2 is only valid for genuinely
         # DIAGONAL penalties — diagonal support alone is not enough
         off_max = 0.0
-        for j in 1:k, i in 1:k
+        for j in 1:ks, i in 1:ks
             i == j && continue
             off_max = max(off_max, abs(S[i, j]))
         end
         off_max > 1e-10 * dmax && return false
-        for j in 1:k
+        for j in 1:ks
             if abs(S[j, j]) > eps() * dmax
-                pen_count[j] += 1
+                pen_count[off + j] += 1
             end
         end
     end
@@ -240,12 +246,16 @@ uniformly with the other paths.
 function _smooth2random_t2(sm::ConstructedSmooth)
     k = size(sm.X, 2)
 
+    # Column indices below are block-width, so narrow factor-`by` storage is
+    # widened first (no copy when nothing is narrow). Runs once per fit.
+    Ss = penalty_matrices(sm)
+
     order = Int[]
     scales = Float64[]
     pen_ind = Int[]
     assigned = falses(k)
 
-    for (i, Si) in enumerate(sm.S)
+    for (i, Si) in enumerate(Ss)
         d = diag(Si)
         thresh = eps() * max(maximum(abs, d), 1.0)
         indi = findall(j -> abs(d[j]) > thresh, 1:k)
@@ -269,7 +279,7 @@ function _smooth2random_t2(sm::ConstructedSmooth)
     X_trans = sm.X[:, order] * Diagonal(scales)
 
     Zs = Matrix{Float64}[]
-    for i in 1:length(sm.S)
+    for i in 1:length(Ss)
         cols = findall(==(i), pen_ind)
         isempty(cols) || push!(Zs, X_trans[:, cols])
     end
@@ -306,11 +316,22 @@ function _smooth2random_tensor(sm::ConstructedSmooth)
     k = size(sm.X, 2)
 
     # Sum penalties (each normalized by its mean absolute value — equal weights)
+    # A narrow sub-penalty is accumulated at its offset instead of being
+    # widened first: 2.67 ms / 4.6 MiB at L=50 against 196 ms / 187.5 MiB for
+    # the materialised form. The normalising mean is over the BLOCK-width
+    # entry count k² — the widened matrix's `mean(abs, ·)` — not the narrow
+    # matrix's own, which would differ by exactly L² (the padding is zeros,
+    # so the two sums of |entries| are equal; only the divisor changes).
     sum_S = zeros(k, k)
-    for Si in sm.S
-        m_abs = mean(abs.(Si))
-        if m_abs > 0
+    for (ip, Si) in enumerate(sm.S)
+        m_abs = sum(abs, Si) / (k * k)
+        m_abs > 0 || continue
+        ks = size(Si, 1)
+        if ks == k
             sum_S .+= Si ./ m_abs
+        else
+            off = sm.S_offsets[ip]
+            @views sum_S[(off + 1):(off + ks), (off + 1):(off + ks)] .+= Si ./ m_abs
         end
     end
 

@@ -305,6 +305,19 @@ mutable struct ConstructedSmooth{B<:AbstractBasisType}
     # -- the storage `bam(...; discrete=true)` builds before it is re-expanded.
     # Use `smooth_matrix(sm)` rather than `sm.X` wherever `n` rows are needed.
     rowmap::Vector{Int32}
+    # Per-sub-penalty offsets for NARROW penalty storage. Empty (the default)
+    # means every matrix in `S` spans the smooth's full column width. Non-empty
+    # means `S[i]` occupies columns `S_offsets[i] .+ (1:size(S[i], 1))` of the
+    # smooth's own column space (0-based offsets, mirroring
+    # `PenaltyBlock.offsets`). A factor-`by` penalty is `I_L ⊗ S_k`; storing it
+    # as `L` narrow `k×k` copies is O(L·k²) instead of O(L³k²) — 186.92 MiB →
+    # 0.075 MiB at L=50, k=14 — and every penalty hot path bounds its loops by
+    # `size(Si,1)`, so the same L² factor comes off `total_penalty!` and
+    # `_log_penalty_det` per sp-iteration. mgcv's own factor-`by` storage is
+    # already narrow (R/smooth.r:3980 replicates per level, each keeping its
+    # k×k S). Consumers that need the widened form call `penalty_matrices(sm)`,
+    # which returns `S` itself — no copy — on the empty (common) path.
+    S_offsets::Vector{Int}
 end
 
 function ConstructedSmooth(
@@ -328,7 +341,7 @@ function ConstructedSmooth(
     return ConstructedSmooth{B}(
         spec, X, S, knots, null_dim, rank, constraint, qrc,
         first_para, last_para, Sigma, cmX, p_ident, del_index,
-        nothing, nothing, nothing, nothing, predict_cache, Int32[],
+        nothing, nothing, nothing, nothing, predict_cache, Int32[], Int[],
     )
 end
 
@@ -356,7 +369,7 @@ function ConstructedSmooth(
     return ConstructedSmooth{B}(
         spec, X, S, knots, null_dim, rank, constraint, qrc,
         first_para, last_para, Sigma, cmX, p_ident, del_index,
-        Ain, bin, Aeq, beq, predict_cache, Int32[],
+        Ain, bin, Aeq, beq, predict_cache, Int32[], Int[],
     )
 end
 
@@ -599,6 +612,39 @@ function _block_width_penalties(block::PenaltyBlock)
             W = zeros(Float64, width, width)
             off = block.offsets[i]
             m = size(Si, 1)
+            @inbounds for j in 1:m, k in 1:m
+                W[off + j, off + k] = Si[j, k]
+            end
+            out[i] = W
+        end
+    end
+    return out
+end
+
+"""
+    penalty_matrices(sm::ConstructedSmooth) -> Vector{Matrix{Float64}}
+
+`sm.S` with every sub-penalty widened to the smooth's full column width.
+
+Returns the stored vector ITSELF — no copy — on the common path where
+`sm.S_offsets` is empty (all penalties already block-width). When the smooth
+carries narrow factor-`by` penalties (`L` copies of a `k×k` `S_k` at offsets
+`(l-1)k`), each is zero-padded to `size(sm.X, 2)` — the `ConstructedSmooth`
+analogue of `_block_width_penalties`. Consumers that only need the
+*count* of penalties, or that index through offsets themselves, should keep
+reading `sm.S` directly.
+"""
+function penalty_matrices(sm::ConstructedSmooth)
+    isempty(sm.S_offsets) && return sm.S
+    width = size(sm.X, 2)
+    out = Vector{Matrix{Float64}}(undef, length(sm.S))
+    for (i, Si) in enumerate(sm.S)
+        m = size(Si, 1)
+        if m == width
+            out[i] = Matrix{Float64}(Si)
+        else
+            W = zeros(Float64, width, width)
+            off = sm.S_offsets[i]
             @inbounds for j in 1:m, k in 1:m
                 W[off + j, off + k] = Si[j, k]
             end

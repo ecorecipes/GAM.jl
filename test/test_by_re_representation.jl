@@ -8,8 +8,9 @@
 # relies on that, and a silent drift between the two forms would show up as a
 # plausible-but-wrong fit rather than a failure.
 #
-# The dense paths are deliberately untouched; `smooth_construct` and
-# `_apply_by_variable!` behave exactly as before.
+# The dense DESIGN path is untouched: `_apply_by_variable!` still replicates
+# `X` into `n x (k*L)`. Its PENALTY storage is now narrow — L copies of the
+# k x k S_k plus `sm.S_offsets` — which the penalty testsets below pin.
 
 @testset "marginal by= / re representations" begin
     rng_m = StableRNG(20250825)
@@ -118,10 +119,10 @@
     # ── Penalty bookkeeping ─────────────────────────────────────────────────
     # The plan proposed storing the replicated penalty as `L` copies of the
     # k x k `S_k` and called that "a change in penalty.jl bookkeeping, not in
-    # total_penalty". These tests establish that the second half is false.
-    @testset "factor-by penalty is I_L ⊗ S_k at full block width" begin
+    # total_penalty". These tests establish that the storage IS narrow now and
+    # that the widened view reproduces I_L ⊗ S_k exactly.
+    @testset "factor-by penalty stored as L narrow copies plus offsets" begin
         L = length(fs_lev)
-        k_eff = 0
         spec_dense = GAM.s(:x; k = 8, bs = :cr, by = :f)
         sm_dense = smooth_construct(spec_dense, df)
         base_sm, _ = GAM.by_marginal_representation(
@@ -129,10 +130,21 @@
         k_eff = size(base_sm.X, 2)
 
         @test length(sm_dense.S) == L * length(base_sm.S)
-        # Every stored sub-penalty is the FULL kL x kL block width, with a
-        # single diagonal sub-block filled: O(L^3 k^2) storage.
-        @test all(size(Si) == (k_eff * L, k_eff * L) for Si in sm_dense.S)
-        @test sum(sm_dense.S) ≈ kron(Matrix{Float64}(I, L, L), base_sm.S[1])
+        # NARROW storage: L copies of the k x k S_k plus per-sub-penalty
+        # offsets — O(L·k²), not the old O(L³k²) materialised form. This is
+        # also mgcv's own layout (R/smooth.r:3980 replicates the smooth per
+        # level, each keeping its k x k S).
+        @test all(size(Si) == (k_eff, k_eff) for Si in sm_dense.S)
+        @test sm_dense.S_offsets == [(l - 1) * k_eff for l in 1:L]
+        # The widened view — what consumers that need block width see —
+        # reproduces the materialised penalty exactly.
+        Sw = GAM.penalty_matrices(sm_dense)
+        @test all(size(Si) == (k_eff * L, k_eff * L) for Si in Sw)
+        @test sum(Sw) ≈ kron(Matrix{Float64}(I, L, L), base_sm.S[1])
+        # And the exported accessor keeps its documented block-width contract
+        # (it silently returned narrow matrices before being routed).
+        @test all(size(Si) == (k_eff * L, k_eff * L)
+                  for Si in GAM.penalty_matrix(sm_dense))
     end
 
     @testset "total_penalty tiles narrow sub-penalties via offsets" begin
