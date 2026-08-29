@@ -414,10 +414,6 @@ function _efs_sp_update(log_sp::Vector{Float64}, beta::Vector{Float64},
     log_sp_new = copy(log_sp)
     sp_idx = 1
     for block in penalty.blocks
-        idx = block.start:block.stop
-        beta_block = view(beta, idx)
-        Ainv_block = view(Ainv, idx, idx)
-
         # The EFS numerator needs λⱼ·∂log|S_λ|₊/∂λⱼ = λⱼ·tr(S_λ⁺ Sⱼ).
         # For a single-penalty block this equals the penalty rank; for
         # multi-penalty blocks (tensor smooths) the per-penalty terms differ
@@ -431,6 +427,16 @@ function _efs_sp_update(log_sp::Vector{Float64}, beta::Vector{Float64},
                 continue
             end
             λ = exp(log_sp[sp_idx])
+
+            # Index by the sub-penalty's own extent, not the block width: a
+            # factor-`by` penalty is L narrow copies at disjoint offsets, and
+            # `dot(beta_block, Si, beta_block)` against a block-width view
+            # raises `DimensionMismatch`. For a full-width penalty (every
+            # block today) this range IS `block.start:block.stop`, so the
+            # arithmetic is unchanged.
+            idx = _sub_penalty_idx(block, j)
+            beta_block = view(beta, idx)
+            Ainv_block = view(Ainv, idx, idx)
 
             bSb = dot(beta_block, Si, beta_block)
             # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(k²), not O(k³)
@@ -475,45 +481,23 @@ These are the derivatives ∂log|S_λ|₊/∂log λⱼ and sum to rank(S_λ).
 For single-penalty blocks this is just `[block.rank]` (no eigen needed).
 
 Multi-penalty blocks delegate to `_stable_block_logdet_derivs`, which ports
-mgcv's `gam.reparam`/`get_stableS` similarity transform. The naive form below
-is kept for reference and for the single-penalty path: forming
-`S_λ = Σⱼ λⱼSⱼ` directly loses the sub-dominant components entirely once the
-within-block λ ratio is large, giving 1.33 nats of error against mgcv at a
-ratio of 1e16 and `NaN` by 1e24. Such ratios are ordinary when one tensor
+mgcv's `gam.reparam`/`get_stableS` similarity transform. Forming
+`S_λ = Σⱼ λⱼSⱼ` directly instead loses the sub-dominant components entirely
+once the within-block λ ratio is large, giving 1.33 nats of error against mgcv
+at a ratio of 1e16 and `NaN` by 1e24. Such ratios are ordinary when one tensor
 marginal is driven toward linearity, and `select = true` pushes further.
+
+A `_block_logdet_derivs_naive` doing exactly that was kept here for reference
+and has been removed: it had no callers, its docstring wrongly claimed the
+single-penalty path used it (that path returns above, before reaching it), and
+it accumulated `S_block .+= exp(...) .* Si` over the block width — the same
+shape that silently miscomputed for narrow sub-penalties elsewhere. Dead code
+carrying a latent bug invites someone to trust it.
 """
 function _block_logdet_derivs(block, log_sp_block)
     nS = length(block.S)
     nS == 1 && return [Float64(block.rank)]
     return _stable_block_logdet_derivs(block, log_sp_block)
-end
-
-function _block_logdet_derivs_naive(block, log_sp_block)
-    nS = length(block.S)
-    nS == 1 && return [Float64(block.rank)]
-
-    k = block.stop - block.start + 1
-    S_block = zeros(k, k)
-    for (j, Si) in enumerate(block.S)
-        S_block .+= exp(log_sp_block[j]) .* Si
-    end
-    eg = eigen(Symmetric(S_block))
-    tol = max(maximum(abs, eg.values), eps()) * 1e-9
-    # S_λ⁺ = U diag(1/λᵢ; λᵢ>tol) U'
-    keep = eg.values .> tol
-    U = eg.vectors[:, keep]
-    invvals = 1.0 ./ eg.values[keep]
-    derivs = Vector{Float64}(undef, nS)
-    for (j, Si) in enumerate(block.S)
-        # tr(S_λ⁺ Sⱼ) = Σᵢ (uᵢ'Sⱼuᵢ)/λᵢ over kept eigenpairs
-        t = 0.0
-        SU = Si * U
-        @inbounds for (c, iv) in enumerate(invvals)
-            t += iv * dot(view(U, :, c), view(SU, :, c))
-        end
-        derivs[j] = exp(log_sp_block[j]) * t
-    end
-    return derivs
 end
 
 """

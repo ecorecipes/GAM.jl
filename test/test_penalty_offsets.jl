@@ -278,3 +278,125 @@ end
         @test !GAM._penalties_disjoint(one)
     end
 end
+
+# ---------------------------------------------------------------------------
+# The four sites the FIRST offset pass missed.
+#
+# `_sub_penalty_idx` was applied to nine consumers, and that was reported as
+# "the penalty layer is now ready". An audit proved otherwise: five more sites
+# still derived their index range from `block.start:block.stop`. Four are live
+# (`gam`/`bam`/`scam` EFS and the REML gradient), so a narrow block would have
+# crashed a fit; the fifth was dead code, since removed.
+#
+# Verified against a worktree at 9520a08, on the L=4, k=3 block below:
+#
+#   _efs_sp_update        RAISED DimensionMismatch   ->  OK
+#   REML gradient loop    RAISED DimensionMismatch   ->  OK
+#   _total_range_basis    silently read past the end ->  bounded per component
+#
+# None of these was covered by the testset above, which is why they survived a
+# pass that was believed complete.
+# ---------------------------------------------------------------------------
+@testset "sites missed by the first offset pass" begin
+
+    # Matched narrow/wide pair: L copies of a k x k penalty at disjoint
+    # offsets, against the same thing materialised block-width. The wide form
+    # is the ground truth — both describe the identical penalty.
+    _pair(k, L, seed) = begin
+        rng = StableRNG(seed)
+        B = randn(rng, k, k)
+        Sk = B'B + 0.5I
+        w = k * L
+        narrow = [Matrix{Float64}(Sk) for _ in 1:L]
+        offs = [(l - 1) * k for l in 1:L]
+        wide = [begin
+                    Z = zeros(w, w)
+                    r = ((l - 1) * k + 1):(l * k)
+                    Z[r, r] .= Sk
+                    Z
+                end for l in 1:L]
+        (GAM.PenaltyBlock(narrow, k * L, 1, w, offs),
+         GAM.PenaltyBlock(wide, k * L, 1, w), w)
+    end
+
+    @testset "_efs_sp_update accepts a narrow block" begin
+        k, L = 3, 4
+        bn, bw, w = _pair(k, L, 90210)
+        pn = GAM.PenaltySetup([bn], zeros(L), falses(L))
+        pw = GAM.PenaltySetup([bw], zeros(L), falses(L))
+
+        rng = StableRNG(7)
+        beta = randn(rng, w)
+        M = randn(rng, w, w)
+        Ainv = Matrix(Symmetric(M'M + w * I))
+        lsp = [0.4, -0.9, 1.3, 0.1]
+
+        # Raised `DimensionMismatch` before the fix: `beta_block` was a
+        # block-width view and `dot(beta_block, Si, beta_block)` mismatched.
+        upd_n = GAM._efs_sp_update(lsp, beta, Ainv, pn, 1.0, 1.0)
+        upd_w = GAM._efs_sp_update(lsp, beta, Ainv, pw, 1.0, 1.0)
+        # Not merely "does not throw" — it must agree with the ground truth.
+        @test upd_n ≈ upd_w rtol = 1e-10
+        @test length(upd_n) == L
+        @test all(isfinite, upd_n)
+    end
+
+    @testset "REML gradient accepts a narrow block" begin
+        k, L = 3, 3
+        bn, bw, w = _pair(k, L, 31337)
+        pn = GAM.PenaltySetup([bn], zeros(L), falses(L))
+        pw = GAM.PenaltySetup([bw], zeros(L), falses(L))
+
+        rng = StableRNG(11)
+        n = 60
+        X = randn(rng, n, w)
+        y = randn(rng, n)
+        wv = ones(n)
+        lsp = [0.2, -0.5, 0.8]
+
+        # Gaussian identity so the gradient is exercised without needing a
+        # converged PIRLS state; the narrow-vs-wide comparison is what matters.
+        _grad(pen) = begin
+            St = GAM.total_penalty(pen, lsp, w)
+            A = Symmetric(X' * X + St)
+            Ach = cholesky(A)
+            beta = Ach \ (X' * y)
+            mu = X * beta
+            dev = sum(abs2, y .- mu)
+            GAM._reml_gradient(X, wv, Matrix(St), Ach, beta, mu, y, pen, lsp,
+                dev, 1.0, n, w, :REML, 1.0, Normal(), IdentityLink(), wv)
+        end
+
+        # Raised `DimensionMismatch` before the fix: `dS[idx, idx] .= λ .* Si`
+        # used a block-width `idx` against a narrow `Si`.
+        gn = _grad(pn)
+        gw = _grad(pw)
+        @test gn ≈ gw rtol = 1e-8
+        @test all(isfinite, gn)
+        @test length(gn) == L
+    end
+
+    @testset "_total_range_basis is bounded by each component, not the first" begin
+        # Ragged input: the old loop took its bounds from `Ss[1]` and
+        # `@inbounds`-indexed every other component, so a narrower one read
+        # past its end. It returned the right SHAPE with garbage in it, which
+        # is why a size check would not have caught this.
+        rng = StableRNG(4242)
+        A = randn(rng, 3, 3); S3 = A'A + 0.5I
+        B = randn(rng, 2, 2); S2 = B'B + 0.5I
+
+        # Placing narrow components at offsets must equal widening them first.
+        wide3 = zeros(5, 5); wide3[1:3, 1:3] .= S3
+        wide2 = zeros(5, 5); wide2[4:5, 4:5] .= S2
+        got = GAM._total_range_basis([Matrix{Float64}(S3), Matrix{Float64}(S2)], [0, 3])
+        ref = GAM._total_range_basis([wide3, wide2])
+        # Compare the projectors: an orthonormal basis is defined up to
+        # rotation within the range, the subspace is not.
+        @test size(got) == size(ref)
+        @test got * got' ≈ ref * ref' atol = 1e-10
+
+        # Equal-sized components at offset 0 must be untouched by the change.
+        eq = [Matrix{Float64}(S3), Matrix{Float64}(A'A + 0.25I)]
+        @test GAM._total_range_basis(eq) == GAM._total_range_basis(eq, [0, 0])
+    end
+end

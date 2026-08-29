@@ -370,4 +370,42 @@
         # so the whole design must stay dense rather than drop the multiplier.
         @test D isa GAM.DenseDesign
     end
+
+    # ------------------------------------------------------------------
+    # 8. A factor `by` smooth is stored REDUCED, not just compactly designed.
+    #
+    # The `ByBlock` design was compact well before the smooth was: a by
+    # smooth's `ConstructedSmooth.X` stayed `n x (kb*L)` (427.25 MiB at
+    # n=5e5, L=8, k=15) because `_reduced_smooth` rejected `by`. Only the
+    # ASSEMBLY was avoided, which is why `by` gained 1.28x where a plain `cr`
+    # smooth gained 2.32x.
+    #
+    # Its distinct rows are the distinct observed (cell, level) pairs, so it
+    # uses the same `rowmap` contract as every other reduced smooth. Assert
+    # BOTH halves: the smooth is reduced AND the ByBlock still engages — a
+    # silent fallback in either direction would still fit correctly.
+    # ------------------------------------------------------------------
+    @testset "factor by= smooth is stored reduced" begin
+        gf = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x1; k = 8, bs = :cr, by = :f)])
+        mq = bam(gf, _rep_df; discrete = true)
+        sm = only(mq.smooths)
+        @test GAM.is_reduced(sm)
+        # One row per observed (cell, level) pair, far fewer than n.
+        @test size(sm.X, 1) < _rep_n
+        @test length(sm.rowmap) == _rep_n
+        # `smooth_matrix` scatters back to the dense block.
+        @test size(GAM.smooth_matrix(sm), 1) == _rep_n
+
+        # The design still uses the compact by representation.
+        D, = _design([GAM.s(:x1; k = 8, bs = :cr, by = :f)])
+        @test length(D.byblocks) == 1
+
+        # And the fit matches the dense one — this data is exactly binnable,
+        # so any difference beyond floating-point noise is a bug.
+        md = bam(gf, _rep_df)
+        @test maximum(abs.(coef(mq) .- coef(md))) /
+              max(maximum(abs, coef(md)), 1.0) < 1e-10
+        @test maximum(abs.(fitted(mq) .- fitted(md))) < 1e-8
+    end
 end

@@ -578,7 +578,10 @@ column-RMS `col_scales` from the same scoped value.
 """
 function _reduced_smooth(spec::SmoothSpec, t, m_grid::Int, n::Int)
     length(spec.term_vars) == 1 || return nothing
-    spec.by === nothing || return nothing
+    # A factor `by` reduces too, on the (cell, level) pair grid; numeric `by`
+    # is a per-row multiplier rather than a level replication and is rejected
+    # inside `_reduced_by_smooth`.
+    spec.by === nothing || return _reduced_by_smooth(spec, t, m_grid, n)
     # A random effect's `k` is its level count, so rebuilding it on a reduced
     # grid yields a different (and possibly negative) k -- it used to throw
     # `ArgumentError: k must be >= 1, got -1`. The compact form for `bs=:re`
@@ -616,6 +619,111 @@ function _reduced_smooth(spec::SmoothSpec, t, m_grid::Int, n::Int)
     end
     size(sm.X, 1) == m || return nothing
     return (sm, k, counts)
+end
+
+"""
+    _reduced_by_smooth(spec, t, m_grid, n) -> (sm, pairidx, counts) | nothing
+
+Reduced construction for a **factor** `by=` smooth. Returns `nothing` when the
+smooth does not qualify, leaving the caller to construct it densely.
+
+The dense block is `n × (kb·L)`, and row `i` is zero except in level `lev[i]`'s
+`kb` columns, where it holds the base basis at `x[i]`. So its distinct rows are
+exactly the distinct observed `(cell, level)` pairs — at most `m·L`, and in
+practice far fewer than `n`. That makes it the same "row `i` is row
+`rowmap[i]`" contract the plain reduced path already uses.
+
+The base is built on the plain **cell** grid, not on the pair grid, and that is
+deliberate: `smooth_construct` applies `_apply_by_variable!` *after* the base is
+constructed and its constraint absorbed, so the base only ever sees the
+covariate. Building it on the pair grid instead would repeat each covariate
+value `L` times, and `_reduced_knots` returns `nothing` for TPRS precisely
+because the reduced grid's unique values *are* its knots — a repeated column
+would change the knot ORDER and silently reparameterise the basis, the same
+failure that made the row shuffle unsafe for TPRS elsewhere.
+
+Row weights therefore come from the **cell** counts summed over levels, which
+is what the base constraint `C = colSums(X)` sees across all `n` rows.
+"""
+function _reduced_by_smooth(spec::SmoothSpec, t, m_grid::Int, n::Int)
+    spec.by === nothing && return nothing
+    # `bs=:re` with a `by` silently dropped the multiplier once already
+    # (relΔcoef 0.49, 31% of fitted range); keep it dense.
+    spec.basis isa RandomEffect && return nothing
+    v = spec.term_vars[1]
+    v in Tables.columnnames(t) || return nothing
+    spec.by in Tables.columnnames(t) || return nothing
+    col = Tables.getcolumn(t, v)
+    eltype(col) <: Real || return nothing
+    by_col = Tables.getcolumn(t, spec.by)
+    # Numeric `by` multiplies every row; it is not a level replication.
+    eltype(by_col) <: Real && return nothing
+
+    xu, kcell, _ = _bin_covariate(col, m_grid; shuffle = false)
+    m = length(xu)
+    m < n || return nothing
+
+    levels = sort!(_unique_levels(by_col))
+    L = length(levels)
+    L >= 1 || return nothing
+    pos = Dict(lev => l for (l, lev) in enumerate(levels))
+
+    # Distinct observed (cell, level) pairs. Sorting the packed key orders them
+    # cell-major, which keeps the expanded rows grouped by covariate value.
+    key = Vector{Int}(undef, n)
+    @inbounds for i in 1:n
+        l = get(pos, by_col[i], 0)
+        l == 0 && return nothing      # unseen level: leave it to the dense path
+        key[i] = (Int(kcell[i]) - 1) * L + l
+    end
+    ukeys = sort!(unique(key))
+    mp = length(ukeys)
+    mp < n || return nothing
+    kpos = Dict(kk => Int32(p) for (p, kk) in enumerate(ukeys))
+    pairidx = Int32[kpos[key[i]] for i in 1:n]
+
+    cell_of_pair = Vector{Int}(undef, mp)
+    lev_of_pair = Vector{Int}(undef, mp)
+    @inbounds for (p, kk) in enumerate(ukeys)
+        cell_of_pair[p] = div(kk - 1, L) + 1
+        lev_of_pair[p] = mod(kk - 1, L) + 1
+    end
+
+    pair_counts = zeros(Float64, mp)
+    cell_counts = zeros(Float64, m)
+    @inbounds for i in 1:n
+        pair_counts[pairidx[i]] += 1.0
+        cell_counts[kcell[i]] += 1.0
+    end
+
+    knots = _reduced_knots(spec, col)
+    nt_cells = NamedTuple{(v,)}((xu,))
+    sm = try
+        with_row_weights(cell_counts) do
+            s = _smooth_construct(spec.basis, spec, nt_cells, knots)
+            _append_pc_constraints!(s, nt_cells)
+            s
+        end
+    catch
+        return nothing
+    end
+    size(sm.X, 1) == m || return nothing
+    # `_apply_by_variable!` rejects linear-constraint (scasm) smooths outright.
+    (sm.Ain === nothing && sm.Aeq === nothing) || return nothing
+
+    # Expand cell rows to pair rows, then let the ordinary by-expansion
+    # replicate per level exactly as the dense path does.
+    sm.X = sm.X[cell_of_pair, :]
+    pair_t = NamedTuple{(v, spec.by)}(
+        (xu[cell_of_pair], [levels[l] for l in lev_of_pair]))
+    try
+        _apply_by_variable!(sm, pair_t)
+    catch
+        return nothing
+    end
+    size(sm.X, 1) == mp || return nothing
+
+    return (sm, pairidx, pair_counts)
 end
 
 
@@ -760,16 +868,23 @@ function _by_block(sm, t, m_grid::Int, n::Int, cols::UnitRange{Int})
         any(==(0), rep) && return nothing
         # Read out of the smooth's OWN block rather than the assembled model
         # matrix: `sm.X` is bitwise `X[:, cols]`, so this is the same numbers
-        # without needing `X` to exist. A `by` smooth is never reduced
-        # (`_reduced_smooth` rejects `spec.by !== nothing`), so `sm.X` has n
-        # rows here and needs no row map.
+        # without needing `X` to exist.
+        #
+        # A `by` smooth CAN now be reduced, so observation `i` maps through
+        # `sm.rowmap`. Going via the observation index is what makes this safe
+        # despite the two binnings disagreeing: `setup_gam_discrete` bins with
+        # `shuffle = false` while the `k` above comes from mgcv's shuffled
+        # binning, so the cell numberings differ and indexing `sm.X` by `k[i]`
+        # would silently read the wrong cell.
         Xsm = sm.X
+        red = is_reduced(sm)
         B = Matrix{Float64}(undef, mm, kb)
         @inbounds for j in 1:mm
             i = rep[j]
+            ri = red ? Int(sm.rowmap[i]) : i
             off = (lev[i] - 1) * kb
             for c in 1:kb
-                B[j, c] = Xsm[i, off + c]
+                B[j, c] = Xsm[ri, off + c]
             end
         end
         B
