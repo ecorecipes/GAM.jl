@@ -184,13 +184,26 @@ s(:x, bs=:gp);                                  # mgcv default (Matérn κ = 1.5
 s(:x, bs=:gp, m=5);                             # Matérn κ = 3.5
 s(:x, bs=:gp, m=-3);                            # stationary variant
 s(:x, bs=:gp, k=20, xt=Dict(:rho => 0.5));      # fixed range
+s(:x, :z, bs=:gp, k=30);                        # 2-D (spatial) GP smooth
 nothing
 ```
 
-!!! note "Currently one-dimensional"
-    `bs=:gp` supports a single covariate. mgcv also supports multi-dimensional
-    GP smooths; use `bs=:tp`, `bs=:spde` or `bs=:sos` for multivariate
-    spatial smoothing in the meantime.
+Multi-dimensional GP smooths are supported, which is the usual spatial
+use — `s(:x, :z, bs=:gp, k=30)`. Knots are unique covariate *combinations*,
+distances are Euclidean, and the default range is the largest knot-to-knot
+distance, all as in mgcv; 2-D fitted values agree with mgcv to ~5e-13 at
+fixed `sp`.
+
+!!! warning "Covariates are centred but not scaled"
+    Following mgcv, the kernel is isotropic in the covariates' **own units**:
+    no per-column standardisation is applied. Two covariates on very different
+    scales (metres and kilometres, say) therefore give a different model from
+    the same data rescaled. Standardise them yourself when they are not already
+    commensurate. Note also that GAM.jl's default `k` for a 2-D `s()` is 30
+    where mgcv's is `d + 1 + 30`, so pass `k` explicitly when porting.
+
+    User-supplied `knots=` remains 1-D only for `:gp` and raises an
+    informative error for multi-dimensional terms.
 
 ### Loess Smooth (`bs=:lo`)
 
@@ -225,14 +238,32 @@ nothing
 
 ### Duchon Splines (`bs=:ds`)
 
-!!! warning "Approximation"
-    `:ds` is currently an **alias for the thin plate spline** (`:tp`) —
-    Duchon's fractional-order generalization is not yet implemented.
+Duchon (1977) splines generalise thin-plate splines by letting the penalty
+order and the space dimension combine so that the basis admits **fractional**
+powers. A direct port of mgcv's `bs="ds"`: penalty scaling matches to 9-10
+significant digits and smoothing parameters transfer between the packages in
+both directions.
+
+Duchon needs **two** orders, mgcv's `m = c(m, s)`. GAM.jl takes `m` as usual
+and the second through `xt`:
+
+| mgcv | GAM.jl |
+|---|---|
+| `s(x, z, bs="ds", m=c(2, 0))` | `s(:x, :z, bs=:ds, m=2)` |
+| `s(x, z, bs="ds", m=c(2, 0.5))` | `s(:x, :z, bs=:ds, m=2, xt=Dict(:s => 0.5))` |
+| `s(x, z, bs="ds", m=c(3, -0.5))` | `s(:x, :z, bs=:ds, m=3, xt=Dict(:s => -0.5))` |
+
+`s` is snapped to the half-integer grid and clamped to `|s| < d/2`, as in
+mgcv. For a single covariate that leaves `s = 0` as the only legal value, so
+`s` only becomes useful from two dimensions up — and with `m = 2, s = 0` in
+1-D the construction reduces to an ordinary thin-plate spline, as the theory
+says it should (fitted values agree with `bs=:tp` to ~3e-8).
 
 **Default k**: 10.
 
 ```@example smooths
-s(:x, bs=:ds);
+s(:x, bs=:ds);                                  # 1-D: reduces to :tp
+s(:x, :z, bs=:ds, m=2, xt=Dict(:s => 0.5));     # mgcv's m = c(2, 0.5)
 nothing
 ```
 

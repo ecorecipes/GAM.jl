@@ -19,8 +19,8 @@ against the R packages in the test suite).
   random effects (`:re`), tensor products (`te`/`ti`/`t2`),
   linear-constraint bases (`:sc`, `:scad`),
   and 8 SCAM shape-constrained bases (`:mpi`, `:mpd`, `:cx`, `:cv`, `:micx`, `:micv`, `:mdcx`, `:mdcv`).
-  One (`:so`) is a documented approximation of its mgcv namesake; `:ds` is an
-  alias of `:tp` that warns rather than posing as a Duchon spline
+  One (`:so`) is a documented approximation of its mgcv namesake; every other
+  basis is a direct port
 - **Automatic smoothing**: REML, ML, and GCV smoothing parameter estimation via
   Extended Fellner-Schall (EFS) method
 - **Multiple families**: Gaussian, Poisson, Binomial, Gamma, Inverse Gaussian,

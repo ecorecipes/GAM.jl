@@ -358,7 +358,6 @@
             bsym in excluded && continue
             gfb = GAM.GamFormula(:y, Symbol[], true,
                 GAM.SmoothSpec[GAM.s(:x; k = 10, bs = bsym, sp = 0.9)])
-            # (:ds prints its tp-alias warning here; expected and harmless.)
             md = bam(gfb, dfpb; discrete = false)
             mq = bam(gfb, dfpb; discrete = true)
             probed += 1

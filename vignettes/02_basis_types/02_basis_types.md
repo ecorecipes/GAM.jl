@@ -270,9 +270,9 @@ println(rpad("tp + select", 14), rpad(round(r_sel.edf_x; digits = 3), 9),
     basis           edf(x)   edf(z)
     ────────────────────────────────────────
     tp            8.421    1.6805
-    ts            7.866    0.0016
+    ts            7.866    0.0
     cr            8.397    1.6905
-    cs            7.819    0.2864
+    cs            7.818    0.0
     tp + select   8.385    0.0065
 
 With `:tp` the irrelevant term keeps about 1.7 effective degrees of
@@ -392,7 +392,7 @@ end
     └ @ GAM ~/Projects/gam/GAM.jl/src/basis_adaptive.jl:103
     m = 3: 3 smoothing parameters, edf = 26.09
     m = 5: 5 smoothing parameters, edf = 19.08
-    m = 8: 8 smoothing parameters, edf = 18.78
+    m = 8: 8 smoothing parameters, edf = 18.64
 
 More sub-penalties means more flexibility to vary the smoothing, at the
 cost of more parameters to estimate.
@@ -495,6 +495,13 @@ group; the others, factor-`by` smooths (each level with its own
 smoothing parameter) and `bs = :fs` (all levels sharing a small fixed
 set of smoothing parameters, however many levels there are), are covered
 in the seasonality and mixed-model vignettes respectively.
+
+The [seasonality vignette](../16_seasonality/16_seasonality.md) fits all
+three side by side on the same data, where `:sz` recovers a common
+seasonal curve plus per-region deviations that sum to zero to machine
+precision, and the region whose amplitude happens to sit at the average
+deviates by almost nothing — a reading that three separately-fitted `by`
+curves do not give you.
 
 ## A note on `bam(...; discrete = true)`
 

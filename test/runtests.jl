@@ -929,6 +929,9 @@ include("test_multiparameter.jl")
 include("test_vignette_bugs.jl")
 include("test_docstrings.jl")
 include("test_ncv.jl")
+include("test_gp_multid.jl")
+include("test_sz_penalties.jl")
+include("test_duchon.jl")
 
 # Derivative audit — hand-coded tables vs ForwardDiff vs Symbolics (heavy
 # Symbolics load; ~30 s). Opt-in: set GAM_DERIVATIVE_AUDIT=true to run.
@@ -950,6 +953,8 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
 
     if _rcall_available
         @eval include("test_rcall.jl")
+        @eval include("test_sz_rcall.jl")
+        @eval include("test_duchon_rcall.jl")
 
         # evgam R comparison tests — need evgam and evd packages
         _evgam_available = try

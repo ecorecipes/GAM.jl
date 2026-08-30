@@ -63,10 +63,13 @@ const rng_sz = StableRNG(456)
             @test all(evals .>= -1e-8)
         end
 
-        # Penalty is I_{L-1} ⊗ S_marginal in the contrast parameterization:
-        # block-diagonal across the L-1 contrast blocks, identical diagonal
-        # blocks, zero off-diagonal blocks.
-        S = sm.S[1]
+        # There is now one penalty PER LEVEL, matching mgcv
+        # (`R/smooth.r:2281-2286`); see test_sz_penalties.jl. Each individual
+        # penalty is (q_i q_i') ⊗ S_marginal and therefore has NON-zero
+        # off-diagonal blocks — it is the SUM over levels that recovers the
+        # block-diagonal I_{L-1} ⊗ S_marginal this test used to assert of
+        # `sm.S[1]` back when the smooth carried a single summed penalty.
+        S = sum(sm.S)
         ncols = size(sm.X, 2)
         n_blocks = 2            # L - 1 contrast blocks for 3 levels
         k_per_block = ncols ÷ n_blocks
@@ -74,6 +77,9 @@ const rng_sz = StableRNG(456)
         @test norm(off_block) < 1e-10
         @test S[1:k_per_block, 1:k_per_block] ≈
               S[(k_per_block+1):end, (k_per_block+1):end]
+        # And the decomposition is genuine: a single penalty is not itself
+        # block-diagonal, which is what lets each level be smoothed on its own.
+        @test norm(sm.S[1][1:k_per_block, (k_per_block+1):end]) > 1e-6
     end
 
     @testset "GAM fitting works" begin

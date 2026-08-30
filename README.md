@@ -8,7 +8,7 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 
 ## Features
 
-- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 31 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (one is a documented approximation of its mgcv namesake — see the table below)
+- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 31 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (one, `:so`, is a documented approximation of its mgcv namesake — see the table below)
 - **Automatic smoothness estimation** — REML/ML via Extended Fellner-Schall (EFS, default) or Newton optimization; GCV/UBRE via direct criterion optimization
 - **Neighbourhood cross validation (NCV)** — `gam(...; method=:NCV)`, a port of mgcv's `ncv.c`. Leaves out a *neighbourhood* of each point rather than the point alone, which is what you want when observations are correlated and GCV/REML under-smooth; supply neighbourhoods with `nei=` (`loo_neighbourhoods`, `interval_neighbourhoods`)
 - **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta, and the scaled-t `ScatFamily` for outlier-robust regression (mgcv's `scat()`)
@@ -445,8 +445,11 @@ identity/log/logit links. The optional MixedModels.jl GAMM backend is disabled
 
 One basis type is a documented approximation rather than an exact port of its
 mgcv namesake: `:so` (grid-PDE soap film). Fits with it will differ from mgcv's.
-`:sos` is now a direct port of mgcv's spherical-spline kernel, and `:ds` is an
-alias of `:tp` that warns rather than silently posing as a Duchon spline.
+`:sos` is a direct port of mgcv's spherical-spline kernel, and `:ds` is now a
+real Duchon spline (previously an aliased `:tp` that warned) — its penalty
+scaling matches mgcv to 9-10 digits and smoothing parameters transfer both
+ways. Pass the second Duchon order via `xt`: `s(:x, :z, bs=:ds, m=2,
+xt=Dict(:s => 0.5))` is mgcv's `m = c(2, 0.5)`.
 
 Some algorithms differ from their R counterparts while targeting the same
 criterion, with measured consequences: smoothing parameters are selected by

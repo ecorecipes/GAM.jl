@@ -39,7 +39,11 @@
         @test c.rho ≈ 0.990049751243781 atol = 1e-12
         @test c.kappa == 1.0
         @test c.stationary == false
-        @test c.shift ≈ 0.5 atol = 1e-12
+        # `shift` is a per-covariate vector (mgcv's `colMeans(x)`) since GP
+        # smooths gained multi-dimensional support; for a 1-D term it holds a
+        # single mean.
+        @test c.shift[1] ≈ 0.5 atol = 1e-12
+        @test length(c.shift) == 1
         # Knots are all unique covariate values (n < max.knots = 2000).
         @test length(c.knots) == n
         # Unpenalized null space [1, x]; rank = k - M.

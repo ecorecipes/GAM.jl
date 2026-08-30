@@ -65,6 +65,13 @@ using Plots
 using Printf
 ```
 
+    Precompiling packages...
+      10202.4 ms  ✓ GAM
+      1 dependency successfully precompiled in 14 seconds. 118 already precompiled.
+    Precompiling packages...
+       6856.7 ms  ✓ GAM → GAMPlotsExt
+      1 dependency successfully precompiled in 12 seconds. 239 already precompiled.
+
 ## The data
 
 ``` julia
@@ -426,8 +433,8 @@ round.(edf(m_sz), digits = 3)
 ```
 
     2-element Vector{Float64}:
-      8.455
-     14.63
+      8.456
+     10.244
 
 The first smooth is the common seasonal curve, the second the pooled set
 of per-region deviations. At the same `k` as the factor-`by` model
@@ -440,7 +447,7 @@ flexibility:
 @printf("by  deviance = %.3f\n", deviance(m_by))
 ```
 
-    sz  deviance = 157.999
+    sz  deviance = 158.456
     by  deviance = 157.697
 
 The constraint is what makes the decomposition interpretable, and it
@@ -457,7 +464,7 @@ M_sz = reshape(dev_sz, length(gw_sz), length(regions))
         maximum(abs.(sum(M_sz, dims = 2))))
 ```
 
-    max |sum of deviations over levels| = 6.1e-16
+    max |sum of deviations over levels| = 1.1e-15
 
 Reading the deviations recovers the simulation directly:
 
@@ -468,15 +475,41 @@ for (j, r) in enumerate(regions)
 end
 ```
 
-    coastal   deviation range [-0.199,  0.997]
-    highland  deviation range [-1.009,  0.168]
-    inland    deviation range [-0.045,  0.064]
+    coastal   deviation range [-0.210,  1.009]
+    highland  deviation range [-1.013,  0.189]
+    inland    deviation range [-0.002,  0.027]
 
 Coastal (true amplitude 1.40) sits above the common curve and highland
 (0.35) below it, while **inland is almost exactly the common curve** —
 its amplitude, 0.90, is close to the mean of the three, so it has almost
 nothing to deviate by. That is the reading `:sz` is for, and it is not
 visible at all in three separately-fitted `by` curves.
+
+Like a factor `by=` smooth, `:sz` carries **one smoothing parameter per
+level** — three here, plus one for the common curve. That is what lets
+it shrink a weakly-deviating level hard while leaving a
+strongly-deviating one alone, and it is why inland’s deviation collapses
+almost to nothing above while coastal’s does not.
+
+``` julia
+@printf("smoothing parameters: %d (1 common curve + %d levels)\n",
+        length(m_sz.sp), length(regions))
+```
+
+    smoothing parameters: 4 (1 common curve + 3 levels)
+
+> [!NOTE]
+>
+> ### Comparing `:sz` with mgcv
+>
+> The fits agree closely — deviation edf 10.244 here against mgcv’s
+> 10.2412, deviance 158.456 against 158.457, and fitted values within
+> 4.1e-5 (about 1.2e-5 of the fitted range). The *smoothing parameters*
+> do not transfer, though: GAM.jl absorbs an orthonormal level contrast
+> at construction where mgcv applies its own non-orthonormal contrast
+> afterwards, so λ sits on a different scale and not even by a constant
+> factor. Compare edf, deviance and fitted curves; do not compare `:sz`
+> smoothing parameters between the packages.
 
 ## Numeric `by`: varying-coefficient terms
 
@@ -528,7 +561,7 @@ pv
     β(week) recovery: correlation = 0.99854, RMSE = 0.0178
     fitted range = 0.888   true range = 0.900
 
-![](16_seasonality_files/figure-commonmark/cell-20-output-2.svg)
+![](16_seasonality_files/figure-commonmark/cell-21-output-2.svg)
 
 Against a model in which rainfall has a single constant slope:
 
@@ -652,7 +685,7 @@ pt
     fitted seasonal range: year 1 = 2.155, year 8 = 3.350  (ratio 1.55)
     true   seasonal range: year 1 = 1.879, year 8 = 3.523  (ratio 1.88)
 
-![](16_seasonality_files/figure-commonmark/cell-26-output-2.svg)
+![](16_seasonality_files/figure-commonmark/cell-27-output-2.svg)
 
 The direction and rough size of the change are recovered. The fitted
 ratio is smaller than the truth because the interaction is penalized
