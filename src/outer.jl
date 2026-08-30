@@ -33,7 +33,8 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     weights::Vector{Float64} = ones(length(y)),
     offset::Vector{Float64} = zeros(length(y)),
     start::Union{Vector{Float64}, Nothing} = nothing,
-    control::GamControl = gam_control())
+    control::GamControl = gam_control(),
+    nei::Union{NeighbourhoodStructure, Nothing} = nothing)
 
     n, p = size(X)
     n_sp = length(penalty.sp)
@@ -47,14 +48,14 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
 
     # GCV/UBRE are optimized directly (criterion evaluated at full P-IRLS
     # refits); the EFS/Newton machinery below targets REML/ML.
-    if method == :GCV || method == :UBRE
+    if method == :GCV || method == :UBRE || method == :NCV
         if method == :UBRE && _needs_scale_estimate(family)
             throw(ArgumentError(
                 ":UBRE assumes a known scale parameter; use :GCV or :REML " *
                 "for $(typeof(family).name.name) models"))
         end
         return _outer_iteration_criterion(X, y, penalty, family, link,
-            method, weights, offset, start, control)
+            method, weights, offset, start, control; nei = nei)
     end
 
     log_sp = copy(penalty.sp)
@@ -266,10 +267,14 @@ function _outer_iteration_criterion(X::Matrix{Float64}, y::Vector{Float64},
     weights::Vector{Float64},
     offset::Vector{Float64},
     start::Union{Vector{Float64}, Nothing},
-    control::GamControl)
+    control::GamControl;
+    nei::Union{NeighbourhoodStructure, Nothing} = nothing)
 
     n, p = size(X)
     gamma = control.gamma
+    # `:NCV` defaults to leave-one-out, matching mgcv's default `nei`.
+    nei_use = method == :NCV ?
+        (nei === nothing ? loo_neighbourhoods(n) : nei) : nei
 
     # Only free (non user-fixed) smoothing parameters are optimized
     free_idx = findall(.!penalty.fixed)
@@ -306,6 +311,13 @@ function _outer_iteration_criterion(X::Matrix{Float64}, y::Vector{Float64},
         dev = result.deviance
         score = if method == :GCV
             n * dev / max(n - gamma * edf, 1e-3)^2
+        elseif method == :NCV
+            # Neighbourhood cross validation: deviance of the held-out points
+            # at their cross-validated means. Unlike GCV/UBRE this does not
+            # read off `edf`; it needs the fit itself, because each fold is a
+            # Newton step away from it (see src/ncv.jl).
+            first(ncv_score(X, y, result.coefficients, result.linear_predictor,
+                family, link, S_total, weights, offset, nei_use; gamma = gamma))
         else  # :UBRE with known scale σ² = 1
             dev / n + 2 * gamma * edf / n - 1.0
         end
@@ -554,7 +566,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     n, p = size(X)
     n_sp = length(penalty.sp)
 
-    if method == :GCV || method == :UBRE
+    if method == :GCV || method == :UBRE || method == :NCV
         throw(ArgumentError(
             "Extended families support method = :REML or :ML only " *
             "(got :$method)"))

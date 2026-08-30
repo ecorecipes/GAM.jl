@@ -164,3 +164,18 @@ GCV
 UBRE
 ```
 
+### Neighbourhood cross validation
+
+`method = :NCV` selects smoothing parameters by leaving out a *neighbourhood*
+of each observation rather than the observation alone, which is what you want
+when the data are correlated and GCV/REML under-smooth. The default
+neighbourhood is leave-one-out; `nei=` supplies another.
+
+```@docs
+NeighbourhoodStructure
+loo_neighbourhoods
+interval_neighbourhoods
+validate_neighbourhoods
+ncv_score
+```
+

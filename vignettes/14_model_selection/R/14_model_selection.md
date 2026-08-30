@@ -13,6 +13,8 @@ Simon Frost
   assumptions](#step-5--distributional-assumptions)
 - [Step 6 — Influential observations](#step-6--influential-observations)
 - [Step 7 — Partial residuals](#step-7--partial-residuals)
+- [Step 8 — When the observations are correlated:
+  NCV](#step-8--when-the-observations-are-correlated-ncv)
 - [Summary](#summary)
   - [Numerical agreement with the Julia
     vignette](#numerical-agreement-with-the-julia-vignette)
@@ -113,10 +115,10 @@ k.check(m)
 ```
 
           k'      edf   k-index p-value
-    s(x0)  9 3.191462 0.9908050  0.4575
-    s(x1)  9 2.566080 0.9659281  0.2125
-    s(x2)  9 7.797928 1.0782549  0.9500
-    s(x3)  9 1.000885 1.0536908  0.8450
+    s(x0)  9 3.191462 0.9908050  0.4200
+    s(x1)  9 2.566080 0.9659281  0.1850
+    s(x2)  9 7.797928 1.0782549  0.9275
+    s(x3)  9 1.000885 1.0536908  0.8750
 
 All four p-values are comfortable and the edf sit well below `k`, so the
 bases are large enough — the same conclusion the Julia vignette reaches
@@ -250,10 +252,10 @@ gam.check(m)
     indicate that k is too low, especially if edf is close to k'.
 
             k'  edf k-index p-value
-    s(x0) 9.00 3.19    0.99    0.40
-    s(x1) 9.00 2.57    0.97    0.24
-    s(x2) 9.00 7.80    1.08    0.95
-    s(x3) 9.00 1.00    1.05    0.81
+    s(x0) 9.00 3.19    0.99    0.42
+    s(x1) 9.00 2.57    0.97    0.26
+    s(x2) 9.00 7.80    1.08    0.91
+    s(x3) 9.00 1.00    1.05    0.88
 
 The outlier at observation 100 is visible in the QQ tail and in the
 residuals-versus-linear-predictor panel.
@@ -314,6 +316,50 @@ plot(m, residuals = TRUE, pch = 16, cex = 0.4, shade = TRUE, seWithMean = TRUE)
 
 `s(x3)` is visibly flat with a band covering zero — the graphical
 counterpart of the `select = TRUE` result in step 2.
+
+## Step 8 — When the observations are correlated: NCV
+
+mgcv’s `method = "NCV"` is neighbourhood cross validation. The data is a
+smooth mean plus AR(1) errors with $\rho = 0.9$, so the truth has about
+3 effective degrees of freedom buried in strongly correlated noise.
+
+Note the `nei` encoding, which is easy to get wrong: the dropped sets
+are `a` with endpoints `ma`, and the prediction points are `d` with
+endpoints `md`. **If `a` or `ma` is missing mgcv silently falls back to
+leave-one-out** rather than erroring, so a mis-named list looks like it
+worked and simply reproduces the LOO answer.
+
+``` r
+d_ar <- read.csv("../data_ar1.csv")
+n <- nrow(d_ar); hw <- 15
+rmse_true <- function(m) sqrt(mean((fitted(m) - d_ar$f_true)^2))
+
+m_gcv <- gam(y ~ s(x, k = 30, bs = "cr"), data = d_ar, method = "GCV.Cp")
+m_loo <- gam(y ~ s(x, k = 30, bs = "cr"), data = d_ar, method = "NCV")
+
+sets <- lapply(1:n, function(i) max(1, i - hw):min(n, i + hw))
+nei <- list(a = unlist(sets), ma = cumsum(sapply(sets, length)),
+            d = 1:n, md = 1:n)
+m_nei <- gam(y ~ s(x, k = 30, bs = "cr"), data = d_ar, method = "NCV", nei = nei)
+
+for (nm in c("GCV", "NCV (leave-one-out)", "NCV (half-width 15)")) {
+  mm <- switch(nm, "GCV" = m_gcv, "NCV (leave-one-out)" = m_loo, m_nei)
+  cat(sprintf("%-22s edf = %6.2f   RMSE vs truth = %.4f\n",
+              nm, sum(pen.edf(mm)), rmse_true(mm)))
+}
+```
+
+    GCV                    edf =  28.10   RMSE vs truth = 0.9999
+    NCV (leave-one-out)    edf =  28.24   RMSE vs truth = 1.0021
+    NCV (half-width 15)    edf =   4.47   RMSE vs truth = 0.7270
+
+This is close agreement with the GAM.jl vignette: GCV selects edf 28.10
+with RMSE 0.9999 in both packages, leave-one-out NCV 28.24 / 1.0021 in
+both, and the half-width-15 neighbourhood recovers **edf 4.47 in both**.
+The RMSE differs slightly there (0.7270 here against GAM.jl’s 0.7069)
+because the two optimizers stop at marginally different smoothing
+parameters on a flat optimum — GAM.jl selects with a derivative-free
+optimizer where mgcv uses analytic derivatives of the NCV score.
 
 ## Summary
 

@@ -56,13 +56,13 @@ xi_true <- 0.1
 summary(dat_gev)
 ```
 
-           y                x            
-     Min.   : 1.789   Min.   :0.0002389  
-     1st Qu.: 4.167   1st Qu.:0.2320806  
-     Median : 5.697   Median :0.4803411  
-     Mean   : 5.604   Mean   :0.4895690  
-     3rd Qu.: 6.783   3rd Qu.:0.7433844  
-     Max.   :17.110   Max.   :0.9965527  
+           y                x           
+     Min.   : 1.478   Min.   :0.004638  
+     1st Qu.: 3.939   1st Qu.:0.283245  
+     Median : 5.620   Median :0.518871  
+     Mean   : 5.413   Mean   :0.511419  
+     3rd Qu.: 6.661   3rd Qu.:0.754566  
+     Max.   :13.157   Max.   :0.997954  
 
 ### Fit the GEV model
 
@@ -85,25 +85,25 @@ summary(m_gev)
 
     location
                 Estimate Std. Error t value Pr(>|t|)
-    (Intercept)     5.04       0.04  127.88   <2e-16
+    (Intercept)     4.88       0.04  125.34   <2e-16
 
     logscale
                 Estimate Std. Error t value Pr(>|t|)
-    (Intercept)    -0.28       0.04   -7.22 2.68e-13
+    (Intercept)    -0.31       0.04   -7.76 4.14e-15
 
     shape
                 Estimate Std. Error t value Pr(>|t|)
-    (Intercept)     0.14       0.04    3.98 3.39e-05
+    (Intercept)     0.12       0.04    3.26 0.000548
 
     ** Smooth terms **
 
     location
           edf max.df  Chi.sq Pr(>|t|)
-    s(x) 7.54      9 1574.86   <2e-16
+    s(x) 7.65      9 1794.21   <2e-16
 
     logscale
           edf max.df Chi.sq Pr(>|t|)
-    s(x) 1.02      7  21.24 4.41e-06
+    s(x) 2.02      7  24.01 6.33e-06
 
 ### Examine parameter estimates
 
@@ -115,37 +115,37 @@ xi_hat <- coef(m_gev)
 cat("Location fitted range:", range(mu_hat), "\n")
 ```
 
-    Location fitted range: 3.017471 7.014204 
+    Location fitted range: 2.746228 6.901044 
 
 ``` r
 cat("Location true range:", range(mu_true), "\n")
 ```
 
-    Location true range: 3.000021 6.999916 
+    Location true range: 3.000042 7 
 
 ``` r
 cat("Correlation (location):", cor(mu_hat, mu_true), "\n")
 ```
 
-    Correlation (location): 0.9957934 
+    Correlation (location): 0.9977496 
 
 ``` r
 cat("Log-scale fitted range:", range(psi_hat), "\n")
 ```
 
-    Log-scale fitted range: -0.5732695 0.02187721 
+    Log-scale fitted range: -0.5041728 0.09042698 
 
 ``` r
 cat("Log-scale true range:", range(logsigma_true), "\n")
 ```
 
-    Log-scale true range: -0.4998806 -0.00172366 
+    Log-scale true range: -0.497681 -0.001022947 
 
 ``` r
 cat("Correlation (log-scale):", cor(psi_hat, logsigma_true), "\n")
 ```
 
-    Correlation (log-scale): 0.9999996 
+    Correlation (log-scale): 0.9542529 
 
 ### Compare fitted vs true
 
@@ -155,13 +155,13 @@ rmse_psi <- sqrt(mean((psi_hat - logsigma_true)^2))
 cat("RMSE (location):", round(rmse_mu, 3), "\n")
 ```
 
-    RMSE (location): 0.13 
+    RMSE (location): 0.109 
 
 ``` r
 cat("RMSE (log-scale):", round(rmse_psi, 3), "\n")
 ```
 
-    RMSE (log-scale): 0.039 
+    RMSE (log-scale): 0.089 
 
 ### GEV fitted vs true plots
 

@@ -13,6 +13,8 @@ Simon Frost
   assumptions](#step-5--distributional-assumptions)
 - [Step 6 — Influential observations](#step-6--influential-observations)
 - [Step 7 — Partial residuals](#step-7--partial-residuals)
+- [Step 8 — When the observations are correlated:
+  NCV](#step-8--when-the-observations-are-correlated-ncv)
 - [Summary](#summary)
 - [See also](#see-also)
 
@@ -100,10 +102,10 @@ m
     ──────────────────────────────────────────────────────────────────
     Smooth                    edf   Ref.df          F    p-value     
     ──────────────────────────────────────────────────────────────────
-    s(x0,bs=cr)              3.20     3.96      4.528   0.001384 **  
-    s(x1,bs=cr)              2.57     3.18    114.545  5.272e-53 *** 
-    s(x2,bs=cr)              7.80     8.62     70.801  6.614e-71 *** 
-    s(x3,bs=cr)              1.00     1.01      0.255     0.6137     
+    s(x0,bs=cr)              3.20     3.96      4.528   0.001383 **  
+    s(x1,bs=cr)              2.57     3.18    114.547  5.264e-53 *** 
+    s(x2,bs=cr)              7.80     8.62     70.802  6.595e-71 *** 
+    s(x3,bs=cr)              1.00     1.00      0.255     0.6137     
     ──────────────────────────────────────────────────────────────────
     Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
@@ -124,10 +126,10 @@ for r in k_check(m)
 end
 ```
 
-    s(x0,bs=cr)      k= 9  edf= 3.20  k-index=0.988  p=0.330
-    s(x1,bs=cr)      k= 9  edf= 2.57  k-index=0.964  p=0.215
-    s(x2,bs=cr)      k= 9  edf= 7.80  k-index=1.076  p=0.950
-    s(x3,bs=cr)      k= 9  edf= 1.00  k-index=1.051  p=0.845
+    s(x0,bs=cr)      k= 9  edf= 3.20  k-index=0.988  p=0.465
+    s(x1,bs=cr)      k= 9  edf= 2.57  k-index=0.964  p=0.220
+    s(x2,bs=cr)      k= 9  edf= 7.80  k-index=1.076  p=0.940
+    s(x3,bs=cr)      k= 9  edf= 1.00  k-index=1.051  p=0.860
 
 All four p-values are comfortable, and the edf sit well below `k`, so
 the bases are large enough. Had `s(x2)` come back with edf near its `k`
@@ -153,7 +155,7 @@ end
     s(x0,bs=cr)      edf(plain) =  3.202   edf(select) =  2.414
     s(x1,bs=cr)      edf(plain) =  2.567   edf(select) =  2.558
     s(x2,bs=cr)      edf(plain) =  7.798   edf(select) =  7.790
-    s(x3,bs=cr)      edf(plain) =  1.004   edf(select) =  0.004
+    s(x3,bs=cr)      edf(plain) =  1.000   edf(select) =  0.000
 
 `s(x3)` — the null smooth — collapses from about 1 effective degree of
 freedom (a straight line, the least a plain penalty can shrink it to) to
@@ -235,7 +237,7 @@ m_gamma = gam(@formula(ypos ~ s(x0, k=10, bs=:cr) + s(x1, k=10, bs=:cr) +
 ```
 
     Gaussian  AIC =   1769.81  (edf 14.56)
-    Gamma/log AIC =   1867.34  (edf 12.11)
+    Gamma/log AIC =   1867.11  (edf 11.87)
 
 Note the caveat: these two models have **different responses** (`y`
 versus a shifted `ypos`), so their AIC values are *not* comparable with
@@ -302,7 +304,7 @@ cook = GAM.cooksdistance(m)
         argmax(cook), maximum(cook), median(cook))
 ```
 
-    sum(leverage) = 15.570   edf_total = 15.570   (should match)
+    sum(leverage) = 15.566   edf_total = 15.566   (should match)
     largest Cook's distance at observation 100 (value 0.1427, median 0.00089)
 
 The planted outlier is identified as the most influential point.
@@ -337,9 +339,9 @@ first(DataFrame(pr), 3)
 | Row | smooth      | xname  |        x | residual |
 |----:|:------------|:-------|---------:|---------:|
 |     | String      | String |  Float64 |  Float64 |
-|   1 | s(x0,bs=cr) | x0     |  0.74297 | 0.308782 |
-|   2 | s(x0,bs=cr) | x0     | 0.436851 | 0.308732 |
-|   3 | s(x0,bs=cr) | x0     | 0.645113 |  1.98115 |
+|   1 | s(x0,bs=cr) | x0     |  0.74297 | 0.308848 |
+|   2 | s(x0,bs=cr) | x0     | 0.436851 | 0.308714 |
+|   3 | s(x0,bs=cr) | x0     | 0.645113 |  1.98111 |
 
 </div>
 
@@ -364,6 +366,85 @@ plot(plots...; layout=(2,2), size=(800,700))
 
 `s(x3)` is visibly flat with a band covering zero — the graphical
 counterpart of the `select=true` result in step 2.
+
+## Step 8 — When the observations are correlated: NCV
+
+Every criterion used so far — GCV, REML, AIC — assumes the observations
+are independent given the model. When they are not, the residual
+autocorrelation looks like signal, and the criterion buys it: the fit
+chases the correlated noise and reports far more effective degrees of
+freedom than the truth has.
+
+`method = :NCV` (neighbourhood cross validation, mgcv’s `ncv.c`)
+addresses this directly. Ordinary leave-one-out cross validation is
+defeated by correlation because a point’s neighbours carry most of its
+information, so dropping it alone changes very little. NCV leaves out a
+whole **neighbourhood** of each point instead.
+
+The data below is a smooth mean plus an AR(1) error with $\rho = 0.9$:
+
+$$y_i = 2\sin(2\pi x_i) + u_i, \qquad u_i = 0.9\,u_{i-1} + 0.6\,\varepsilon_i$$
+
+so the truth is a simple curve — about 3 effective degrees of freedom —
+buried in strongly correlated noise.
+
+``` julia
+df_ar = CSV.read("data_ar1.csv", DataFrame)
+@printf("lag-1 residual correlation in the simulated noise: %.3f\n",
+        cor(df_ar.y[1:end-1] .- df_ar.f_true[1:end-1],
+            df_ar.y[2:end]   .- df_ar.f_true[2:end]))
+```
+
+    lag-1 residual correlation in the simulated noise: 0.865
+
+Fit the same model three ways — GCV, NCV with the default leave-one-out
+neighbourhoods, and NCV with neighbourhoods 15 points wide either side:
+
+``` julia
+form_ar = @formula(y ~ s(x, k = 30, bs = :cr))
+m_gcv = gam(form_ar, df_ar; method = :GCV)
+m_loo = gam(form_ar, df_ar; method = :NCV)
+nei15 = GAM.interval_neighbourhoods(nrow(df_ar), 15)
+m_nei = gam(form_ar, df_ar; method = :NCV, nei = nei15)
+
+rmse_true(m) = sqrt(mean((fitted(m) .- df_ar.f_true) .^ 2))
+for (nm, m) in (("GCV", m_gcv), ("NCV (leave-one-out)", m_loo),
+                ("NCV (half-width 15)", m_nei))
+    @printf("%-22s edf = %6.2f   RMSE vs truth = %.4f\n",
+            nm, sum(edf(m)), rmse_true(m))
+end
+```
+
+    GCV                    edf =  28.10   RMSE vs truth = 0.9999
+    NCV (leave-one-out)    edf =  28.24   RMSE vs truth = 1.0021
+    NCV (half-width 15)    edf =   4.47   RMSE vs truth = 0.7069
+
+Three things to read here. GCV selects around 28 effective degrees of
+freedom for a curve that truly has about 3 — it is fitting the
+autocorrelation. **NCV with leave-one-out neighbourhoods behaves just
+like GCV**, which is the expected result and a useful check that the
+default really is leave-one-out: leaving out one point cannot help when
+its neighbours still carry its information. Only widening the
+neighbourhood breaks that, and it recovers both a far smoother fit and a
+**more accurate** one — the RMSE against the true curve drops by roughly
+29%.
+
+``` julia
+xs = df_ar.x
+plot(xs, df_ar.y; seriestype = :scatter, ms = 1.5, alpha = 0.35,
+     label = "data", xlabel = "x", ylabel = "y",
+     title = "Correlated errors: GCV vs NCV")
+plot!(xs, df_ar.f_true; lw = 2, ls = :dash, color = :black, label = "truth")
+plot!(xs, fitted(m_gcv); lw = 2, color = :darkorange, label = "GCV")
+plot!(xs, fitted(m_nei); lw = 2, color = :steelblue, label = "NCV (hw=15)")
+```
+
+![](14_model_selection_files/figure-commonmark/cell-19-output-1.svg)
+
+The neighbourhood width is a modelling choice, not something the
+criterion can select for you: it should reflect the range over which
+observations are genuinely dependent. Passing `nei =` with any method
+other than `:NCV` is an error rather than being silently ignored.
 
 ## Summary
 

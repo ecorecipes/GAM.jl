@@ -731,8 +731,8 @@ A fitted generalized additive model. Implements the StatsBase interface
   NaN otherwise. Minimized, so it is the *negative* log marginal likelihood —
   the same sign convention as mgcv, whose `b\$gcv.ubre` holds this quantity for
   `method="REML"`/`"ML"` (`R/gam.fit3.r:611-614`).
-- `criterion`: achieved GCV/UBRE score when `method` is `:GCV` or `:UBRE`;
-  NaN otherwise. Also used by SCAM.
+- `criterion`: achieved GCV/UBRE/NCV score when `method` is `:GCV`, `:UBRE`
+  or `:NCV`; NaN otherwise. Also used by SCAM.
 
   Between them these two fields are the analogue of mgcv's single
   `b\$gcv.ubre`, which likewise stores whichever score the smoothness selection
@@ -740,7 +740,7 @@ A fitted generalized additive model. Implements the StatsBase interface
   from `method` at `R/mgcv.r:1946-1965`, using GCV when the scale is estimated
   and UBRE when it is known). Use [`sp_criterion`](@ref) to read whichever one
   applies without branching on `method`.
-- `method`: smoothing method used (:REML, :ML, :GCV, :UBRE)
+- `method`: smoothing method used (:REML, :ML, :GCV, :UBRE, :NCV)
 - `Vp`: Bayesian posterior covariance of parameters
 - `Ve`: frequentist covariance of parameters
 - `hat_matrix_diag`: diagonal of the hat/influence matrix
@@ -999,8 +999,8 @@ log marginal likelihoods, matching mgcv's sign. Comparisons are only meaningful
 between fits to the same response with the same criterion.
 
 Reads [`GamModel`](@ref)'s `reml` field for `:REML`/`:ML` and `criterion` for
-`:GCV`/`:UBRE`, so callers need not branch on `method`. Returns `NaN` when no
-score was recorded.
+`:GCV`/`:UBRE`/`:NCV`, so callers need not branch on `method`. Returns `NaN`
+when no score was recorded.
 
 # Examples
 ```julia

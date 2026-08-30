@@ -23,7 +23,7 @@ The smoothness-selection criterion line, mirroring mgcv's `-REML = …` /
 function _criterion_footer(m::GamModel)
     if m.method in (:REML, :ML) && isfinite(m.reml)
         return @sprintf("-%s = %.4g", string(m.method), m.reml)
-    elseif m.method in (:GCV, :UBRE) && isfinite(m.criterion)
+    elseif m.method in (:GCV, :UBRE, :NCV) && isfinite(m.criterion)
         return @sprintf("%s = %.4g", string(m.method), m.criterion)
     end
     return nothing

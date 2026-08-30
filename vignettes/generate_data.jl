@@ -12,7 +12,7 @@
 # narrative, and regenerating would churn rendered output for no benefit):
 #   01, 03, 08, 09, 11 data files; the pre-existing 05 CSVs; the pre-existing 02 and 04 CSVs
 #   (data_shrink/data_adaptive and data_incidence/data_incidence_od ARE
-#   generated below); 06 data_gev.csv; 07 data.csv;
+#   generated below); 07 data.csv;
 #   10 data_repeated_measures.csv (unused by the current vignette).
 
 using Random
@@ -50,6 +50,23 @@ function gen_2d()
     path = joinpath(VIGNETTES, "05_diagnostics", "data_2d.csv")
     CSV.write(path, DataFrame(x = x, z = z, y = y))
     println("wrote $(path)")
+end
+
+# ── 06_extreme_values: data_gev.csv ─────────────────────────────────────────
+# GEV block maxima with covariate-dependent location and scale:
+#   μ(x) = 5 + 2 sin(2πx),  log σ(x) = -0.5 + 0.5x,  ξ = 0.1 (constant)
+# Sampled by inverse CDF: y = μ + σ/ξ ((-log u)^(-ξ) - 1), u ~ U(0,1).
+function gen_gev()
+    rng = MersenneTwister(20260313)
+    n = 500
+    x = rand(rng, n)          # one vectorized pass per variable
+    u = rand(rng, n)
+    ξ = 0.1
+    μ = 5.0 .+ 2.0 .* sin.(2π .* x)
+    σ = exp.(-0.5 .+ 0.5 .* x)
+    y = μ .+ σ ./ ξ .* ((-log.(u)) .^ (-ξ) .- 1.0)
+    write_csv(joinpath(VIGNETTES, "06_extreme_values", "data_gev.csv"),
+        ["y" => y, "x" => x])
 end
 
 # ── 06_extreme_values: data_gpd.csv ─────────────────────────────────────────
@@ -231,6 +248,28 @@ function gen_model_selection()
     y[100] += 15.0   # gross outlier for the influence section
     write_csv(joinpath(VIGNETTES, "14_model_selection", "data.csv"),
         ["y" => y, "x0" => x0, "x1" => x1, "x2" => x2, "x3" => x3, "x4" => x4])
+end
+
+# ── 14_model_selection: data_ar1.csv ────────────────────────────────────────
+# Smooth mean plus strongly autocorrelated errors, for the NCV section:
+#   y_i = 2 sin(2πx_i) + u_i,  u_i = 0.9 u_{i-1} + 0.6 ε_i,  ε ~ N(0,1)
+# u is started from its stationary distribution so the series is stationary
+# throughout rather than burning in. The true mean has ~3 effective df, which
+# GCV badly overestimates on correlated data and NCV recovers.
+function gen_ar1()
+    rng = MersenneTwister(20260901)
+    n = 300
+    rho, sigma = 0.9, 0.6
+    x = collect(range(0, 1; length = n))
+    f = 2 .* sin.(2π .* x)
+    e = randn(rng, n)                    # one vectorized pass
+    u = similar(e)
+    u[1] = e[1] * sigma / sqrt(1 - rho^2)
+    for i in 2:n
+        u[i] = rho * u[i - 1] + sigma * e[i]
+    end
+    write_csv(joinpath(VIGNETTES, "14_model_selection", "data_ar1.csv"),
+        ["x" => x, "y" => f .+ u, "f_true" => f])
 end
 
 # ── 15_large_and_spatial: data_large.csv, data_mrf.csv, nb.csv, data_sphere.csv
@@ -445,6 +484,7 @@ end
 
 
 gen_2d()
+gen_gev()
 gen_gpd()
 gen_cx()
 gen_micv()
@@ -454,6 +494,7 @@ gen_fs_trajectories()
 gen_nested()
 gen_migration()
 gen_model_selection()
+gen_ar1()
 gen_large_spatial()
 gen_shrink()
 gen_adaptive()

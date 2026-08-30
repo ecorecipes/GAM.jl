@@ -201,7 +201,14 @@ GAM Integrated Nested Laplace Approximation (GINLA).
 - `select`: convenience alternative to `A` — an index (or indices) of smooth
   terms whose coefficients to compute posteriors for, e.g. `select=1` for the
   first smooth. Mutually exclusive with `A`.
-- `nk`: number of evaluation points for log posterior density (default: 16)
+- `nk`: number of evaluation points for log posterior density (default: 16,
+  matching mgcv's `ginla`). This is a quadrature resolution, and 16 is not
+  exact: measured against a Gaussian model whose posterior is Gaussian in
+  closed form, the returned posterior standard deviation is understated by
+  about 1.7% at `nk=16`, and the error roughly halves with each doubling
+  (-1.705%, -0.853%, -0.456%, -0.272% at nk = 16, 32, 64, 128). The default is
+  kept at mgcv's value; raise `nk` when quoting GINLA intervals to three
+  significant figures.
 - `nb`: number of points in the returned gridded density (default: 100)
 - `J`: number of determinant update steps (default: 1)
 - `approx`: approximation level: 0 = full Newton refinement of modes,

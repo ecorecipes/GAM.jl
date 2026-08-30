@@ -4,12 +4,13 @@
 
 A comprehensive Julia implementation of Generalized Additive Models, inspired by R's [mgcv](https://cran.r-project.org/package=mgcv) package by Simon N. Wood. GAM.jl follows the conventions of [StatsModels.jl](https://github.com/JuliaStats/StatsModels.jl) and [GLM.jl](https://github.com/JuliaStats/GLM.jl) and implements most of the [StatsAPI](https://github.com/JuliaStats/StatsAPI.jl) model interface.
 
-It covers a large fraction of mgcv's day-to-day functionality (smooths, families, REML/GCV smoothness selection, `by` variables, offsets, prediction with standard errors and per-term contributions) plus several companion packages (gamlss, scam, qgam, evgam). Some mgcv features are not yet implemented — see [Scope and limitations](#scope-and-limitations).
+It covers a large fraction of mgcv's day-to-day functionality (smooths, families, REML/GCV/NCV smoothness selection, `by` variables, offsets, prediction with standard errors and per-term contributions) plus several companion packages (gamlss, scam, qgam, evgam). Some mgcv features are not yet implemented — see [Scope and limitations](#scope-and-limitations).
 
 ## Features
 
 - **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 31 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (one is a documented approximation of its mgcv namesake — see the table below)
 - **Automatic smoothness estimation** — REML/ML via Extended Fellner-Schall (EFS, default) or Newton optimization; GCV/UBRE via direct criterion optimization
+- **Neighbourhood cross validation (NCV)** — `gam(...; method=:NCV)`, a port of mgcv's `ncv.c`. Leaves out a *neighbourhood* of each point rather than the point alone, which is what you want when observations are correlated and GCV/REML under-smooth; supply neighbourhoods with `nei=` (`loo_neighbourhoods`, `interval_neighbourhoods`)
 - **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta, and the scaled-t `ScatFamily` for outlier-robust regression (mgcv's `scat()`)
 - **Multi-parameter models (GAMLSS)** — location-scale-shape regression with RS and CG solvers, local ML/GAIC/GCV smoothing parameter selection
 - **Shape-constrained smooths (SCAM)** — monotone increasing/decreasing, convex/concave constraints and combinations

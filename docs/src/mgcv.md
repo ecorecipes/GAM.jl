@@ -86,7 +86,17 @@ The achieved score is available as `sp_criterion(m)`, the analogue of mgcv's
 `b$gcv.ubre`. Both are minimized, so REML/ML values are negative log marginal
 likelihoods and lower is better.
 
-All four criteria agree with mgcv: `:ML` matches to ~4e-16 on the Gaussian
+`:NCV` (neighbourhood cross validation, mgcv's `ncv.c`) is also available.
+Its criterion matches mgcv to every printed digit at fixed `sp` (e.g.
+`6.310240995` against `6.310240995` at `sp = 0.001`), and for a Gaussian
+identity model — where the underlying Newton step is exact — it reproduces a
+brute-force leave-one-out refit to `7.8e-16`. One documented divergence:
+mgcv computes analytic derivatives of the NCV score to drive a Newton
+optimizer, whereas GAM.jl supplies the criterion and selects with the existing
+derivative-free optimizer, reaching the same optimum in more iterations
+(free-fit `sp` differs by ~0.03% on a flat optimum).
+
+All four remaining criteria agree with mgcv: `:ML` matches to ~4e-16 on the Gaussian
 reference (the range-space determinant `MLpenalty1` uses and the ML-profiled
 scale are both ported — an earlier 1–8% gap is fixed), and `:REML`, `:GCV`
 and `:UBRE` agree to between `4e-12` and `2e-4` depending on family and link
@@ -143,8 +153,13 @@ identified, so fitted values/EDF — not raw sp — are the meaningful
 comparison there; the `tp`, `gp` and `sos` bases are **rotation-equivalent**
 to mgcv's, not elementwise — fits, EDF and predictions match at fixed `sp`
 (to ~1e-12 or better) but raw coefficient vectors differ, so never compare
-those elementwise; and `fs` smoothing parameters do **not** transfer from
-mgcv. The penalty structure matches, but mgcv's `nat.param(type=1)`
+those elementwise; `bs=:sz` uses a **single** penalty on the deviation term where
+mgcv uses one per factor level, so its bases and coefficient count match
+mgcv exactly but its deviation edf is larger when levels differ markedly in
+how far they depart from the common curve (10.24 vs 14.63 on a three-region
+seasonal model, deviance 158.46 vs 158.00) — compare deviance and fitted
+curves for `:sz`, not per-term edf; and `fs` smoothing parameters do **not**
+transfer from mgcv. The penalty structure matches, but mgcv's `nat.param(type=1)`
 parameterisation puts the null-space components on a different footing, so
 feeding mgcv's `sp` in makes agreement *worse* rather than better — on a
 random-slope trajectory model, 0.52% of fitted range against 0.16% for the
