@@ -89,6 +89,10 @@ GAM.ELFLSSFamily
 ```@docs
 pinball_loss
 quantile_residuals
+cqcheck
+CQCheckResult
+check_qgam
+QGamCheck
 ```
 
 ## evgam (Extreme Values)
@@ -115,6 +119,8 @@ gamm
 GammModel
 ranef
 VarCorr
+re
+GAM.@gamm_formula
 ```
 
 ```@docs

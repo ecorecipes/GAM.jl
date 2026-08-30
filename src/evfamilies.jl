@@ -10,8 +10,15 @@
 #
 # All small-|ξ| branches share the _EV_XI_EPS threshold so the objective and
 # its derivatives switch to the Gumbel/exponential limit consistently.
+#
+# 1e-4, not smaller: the exact-branch ξξ second derivatives lose 3+ digits to
+# cancellation for |ξ| ∈ (1e-7, ~1e-5) — measured against 256-bit BigFloat,
+# the GEV ξξ term returned −0.021 where the truth is ≈ −0.37 at one probe
+# point, and GPD ξξ was 20% off — while the limit branch is accurate to ~1e-7
+# throughout that band. The derivative audit (test_derivative_audit.jl) pins
+# both branches near the switch.
 
-const _EV_XI_EPS = 1e-7
+const _EV_XI_EPS = 1e-4
 
 # ============================================================================
 # GEV family

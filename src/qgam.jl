@@ -74,8 +74,10 @@ enabling quantile regression within the standard GAM fitting framework.
 - `qu`: target quantile ∈ (0, 1)
 - `co`: smoothness constant (typically determined from data)
 - `theta`: log learning rate log(σ). If `estimate_theta=false`, this is fixed.
-- `link`: link function for the quantile location (default: identity)
 - `estimate_theta`: whether to estimate θ during fitting
+
+(The link for the quantile location is identity by default and is chosen via
+`gam`'s `link=` argument, not here — the constructor takes no `link` keyword.)
 
 The ELF negative log-likelihood per observation is:
 ```
@@ -612,7 +614,8 @@ use `cqcheck` to diagnose.
 - `formula`: GAM formula
 - `data`: data table
 - `qu`: vector of quantiles ∈ (0, 1)
-- `lsig`: log learning rate (scalar or vector of same length as qu)
+- `lsig`: log learning rate — a single scalar shared across quantiles, or
+  `nothing` (default) for automatic selection
 - `co`: smoothness constant (scalar)
 
 # Returns
@@ -960,34 +963,6 @@ struct CQCheckResult
     flagged::Vector{Bool}
 end
 
-"""
-    cqcheck(model::GamModel, v::AbstractVector; nbin=10, lev=0.05, y=nothing)
-
-Check quantile calibration by binning observations along variable `v`.
-
-For a well-calibrated quantile model at level τ, the proportion of observations
-with y < μ̂ should be approximately τ in every region of covariate space.
-This function bins observations along `v` and checks whether the observed
-proportion in each bin is consistent with the target quantile (using a
-binomial confidence interval).
-
-# Arguments
-- `model`: a fitted qgam `GamModel` (must have `ELFFamily`)
-- `v`: conditioning variable (numeric vector of length n)
-- `nbin`: number of bins (default: 10)
-- `lev`: significance level for binomial CI (default: 0.05)
-- `y`: response vector (default: extracted from model)
-
-# Returns
-A `CQCheckResult` with per-bin calibration diagnostics.
-
-# Examples
-```julia
-fit = qgam(@formulak(y ~ s(x, k=20)), data, 0.5)
-res = cqcheck(fit, data.x; nbin=10)
-res.flagged  # which bins have miscalibration
-```
-"""
 function _cqcheck(mu::AbstractVector, y_obs::AbstractVector, v::AbstractVector, qu::Real;
                   nbin::Int=10, lev::Real=0.05)
     n = length(y_obs)
@@ -1051,6 +1026,35 @@ function _cqcheck(mu::AbstractVector, y_obs::AbstractVector, v::AbstractVector, 
                          bin_sizes, qu, lev, flagged)
 end
 
+"""
+    cqcheck(model::GamModel, v::AbstractVector; nbin=10, lev=0.05, y=nothing)
+
+Check quantile calibration by binning observations along variable `v`.
+
+For a well-calibrated quantile model at level τ, the proportion of observations
+with y < μ̂ should be approximately τ in every region of covariate space.
+This function bins observations along `v` and checks whether the observed
+proportion in each bin is consistent with the target quantile (using a
+binomial confidence interval).
+
+# Arguments
+- `model`: a fitted qgam `GamModel`; a non-`ELFFamily` fit warns and
+  assumes `qu = 0.5`
+- `v`: conditioning variable (numeric vector of length n)
+- `nbin`: number of bins (default: 10)
+- `lev`: significance level for binomial CI (default: 0.05)
+- `y`: response vector (default: extracted from model)
+
+# Returns
+A `CQCheckResult` with per-bin calibration diagnostics.
+
+# Examples
+```julia
+fit = qgam(@formulak(y ~ s(x, k=20)), data, 0.5)
+res = cqcheck(fit, data.x; nbin=10)
+res.flagged  # which bins have miscalibration
+```
+"""
 function cqcheck(model::GamModel, v::AbstractVector;
                  nbin::Int=10, lev::Real=0.05,
                  y::Union{Nothing, AbstractVector}=nothing)
@@ -1110,7 +1114,8 @@ Result of comprehensive qgam diagnostic checks.
 # Fields
 - `target_qu`: target quantile
 - `actual_proportion`: actual proportion of negative residuals
-- `integrated_abs_bias`: mean |F(μ̂) - F(μ₀)| — quantile bias from smoothed loss
+- `integrated_abs_bias`: mean |logistic((μ̂-y)/λ) - 1(μ̂>y)| — the average gap
+  between the smoothed indicator the ELF loss uses and the exact one
 - `bias_values`: per-observation bias values
 - `calibration`: `CQCheckResult` from cqcheck on fitted values
 """
@@ -1122,27 +1127,6 @@ struct QGamCheck
     calibration::CQCheckResult
 end
 
-"""
-    check_qgam(model::GamModel; nbin=10, lev=0.05)
-
-Comprehensive diagnostic check for a fitted qgam model.
-
-Computes:
-1. Proportion of negative residuals vs target quantile
-2. Bias due to smoothed loss: |F(μ̂) - F(μ₀)| using the logistic approximation
-3. Calibration check (cqcheck) on fitted values
-
-# Returns
-A `QGamCheck` with diagnostic results.
-
-# Examples
-```julia
-fit = qgam(@formulak(y ~ s(x, k=20)), data, 0.5)
-chk = check_qgam(fit)
-chk.actual_proportion   # should be ≈ 0.5
-chk.integrated_abs_bias # should be small (< 0.05)
-```
-"""
 function _check_qgam(mu::AbstractVector, y::AbstractVector, qu::Real, lam::Real;
                      nbin::Int=10, lev::Real=0.05)
     n = length(y)
@@ -1166,6 +1150,28 @@ function _check_qgam(mu::AbstractVector, y::AbstractVector, qu::Real, lam::Real;
     return QGamCheck(qu, actual_prop, iab, bias, cal)
 end
 
+"""
+    check_qgam(model::GamModel; nbin=10, lev=0.05)
+
+Comprehensive diagnostic check for a fitted qgam model.
+
+Computes:
+1. Proportion of negative residuals vs target quantile
+2. Bias due to smoothed loss: mean |logistic((μ̂-y)/λ) - 1(μ̂>y)|, the gap
+   between the logistic approximation and the exact indicator
+3. Calibration check (cqcheck) on fitted values
+
+# Returns
+A `QGamCheck` with diagnostic results.
+
+# Examples
+```julia
+fit = qgam(@formulak(y ~ s(x, k=20)), data, 0.5)
+chk = check_qgam(fit)
+chk.actual_proportion   # should be ≈ 0.5
+chk.integrated_abs_bias # should be small (< 0.05)
+```
+"""
 function check_qgam(model::GamModel; nbin::Int=10, lev::Real=0.05)
     fam = model.family
     qu = fam isa ELFFamily ? fam.qu : 0.5
@@ -1280,11 +1286,12 @@ This is a GAMLSS-style model with two linear predictors:
 The ELF density with varying σ per observation allows the learning rate to
 adapt across covariate space, potentially improving calibration.
 
-NLL per observation:
+NLL per observation (matching `nll_obs` exactly), with z = (y - μ)/σ and
+λ = co/σ:
 ```
-nll(y, μ, σ) = (1-τ)·z - (co/σ)·log(1+exp(z·σ/co)) + log(co·B(co(1-τ)/σ, co·τ/σ))
+nll(y, μ, σ) = -(1-τ)·z + λ·log(1+exp(z/λ)) + log(σ·λ·B(λ(1-τ), λ·τ))
 ```
-where z = (y - μ)/σ and B is the beta function.
+where B is the beta function.
 
 # Arguments
 - `qu`: target quantile ∈ (0, 1)

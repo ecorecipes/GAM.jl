@@ -173,6 +173,31 @@ using StatsAPI: predict
         @test vcov_corrected(mb) === mb.Vp
         @test ref_df(mb) == GAM.edf(mb)
         @test GAM.aic(mb) ≈ conditional_aic(mb)
-        @test isempty(edf2(mb)) || length(edf2(mb)) == length(mb.coefficients)
+        # The old guard here (`isempty || right length`) was vacuous — it
+        # passed if edf2 regressed to empty. The fallback contract is now
+        # pinned for real below.
+        @test length(edf2(mb)) == length(mb.coefficients)
+    end
+
+    @testset "edf2 fallback is per-coefficient edf, not edf1" begin
+        # mgcv builds Vc even at fully fixed sp, where it collapses to Vp and
+        # therefore edf2 collapses to per-coefficient edf = diag(F). Our
+        # fallback used to return edf1 instead (measured live: sum 9.088 vs
+        # mgcv's 8.032 on a fixed-sp Gamma control), contradicting both mgcv
+        # and edf2's own docstring. diag(F) = 1 − diag(Vp·S_λ)/φ, so the two
+        # decisive properties are: the fallback sums to edf_total exactly,
+        # and it differs from edf1 whenever the fit is genuinely penalized.
+        dfe = DataFrame(x = collect(range(0, 1; length = 250)))
+        dfe.y = sin.(2π .* dfe.x) .+ 0.3 .* randn(StableRNG(77), 250)
+        gfe = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x; k = 10, sp = 0.5)])
+        me = gam(gfe, dfe)                       # fixed sp ⇒ no Vc
+        @test !has_vc(me)
+        e2 = edf2(me)
+        @test length(e2) == length(me.coefficients)
+        @test sum(e2) ≈ me.edf_total atol = 1e-8
+        # edf1 ≥ edf strictly for a penalized smooth: the old fallback fails
+        # this assertion, the corrected one passes it.
+        @test sum(e2) < sum(me.edf1) - 1e-3
     end
 end

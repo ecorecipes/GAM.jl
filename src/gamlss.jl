@@ -728,6 +728,9 @@ BetaLS() = BetaRegression()
 """Alias: `NegBinLS()` → `NegativeBinomialLocationScale()`"""
 NegBinLS() = NegativeBinomialLocationScale()
 
+"""Alias: `InverseGaussianLS()` → `InverseGaussianLocationScale()`"""
+InverseGaussianLS() = InverseGaussianLocationScale()
+
 # ═══════════════════════════════════════════════════════════════════════
 # gamlss() — main interface
 # ═══════════════════════════════════════════════════════════════════════

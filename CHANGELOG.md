@@ -2,6 +2,81 @@
 
 ## Unreleased
 
+### mgcv-parity, discretization and inference round (August 2026)
+
+Breaking changes:
+
+- **Tensor scalar `k` is now per-marginal, matching mgcv.** `te(:x, :z, k=8)`
+  builds an 8×8 tensor product; previously a scalar was a *total* dimension
+  hint split as `round(Int, k^(1/d))` per margin, so the same call meant
+  roughly 3×3. mgcv models now port with `k` unchanged; GAM.jl code written
+  against the old convention should switch to the vector form
+  (`k = [5, 5]`) to keep its basis size. Applies to `te`, `ti` and `t2`.
+- **`smooth2random` yields one variance component per level for factor-`by`
+  smooths** (mgcv's convention — `smoothCon` replicates the smooth per level,
+  each with its own smoothing variance). Previously all levels were lumped
+  into a single component, a strictly smaller model class. Breaking for
+  downstream consumers that assumed one block per smooth; the Turing and
+  MixedModels extensions iterate blocks generically and needed no change.
+  Verified against mgcv: per-level `Z·Zᵀ` to ~1e-14, and a simulation with a
+  413× spread in per-level variance recovers each to 4 significant figures.
+- **`retain_X` defaults to `false` under `bam(...; discrete=true)`** (still
+  `true` for dense fits): the `n × p` model matrix is never built — matching
+  mgcv, which retains no model matrix — and `model_matrix(m)` reassembles it
+  bitwise on demand. `m.X` is therefore empty on a discrete fit.
+- **P-IRLS no longer declares convergence on a failed or heavily halved
+  step.** Previously a step halved to 2⁻²³ of its length could satisfy the
+  relative-deviance test and return a badly wrong fit flagged `converged`
+  (InverseGaussian+log at high dispersion: deviance 427.7 against mgcv's
+  299.6). `scam`/`scasm` gained the analogous `step_ok` guard.
+
+Added:
+
+- **`ScatFamily`** — mgcv's `scat()` scaled-t family for outlier-robust
+  regression, with `ν` and `σ` estimated alongside the smooths. Derivatives
+  are bit-identical to mgcv's `scat()$Dd`; on contaminated data RMSE against
+  truth is ~3.8× better than a Gaussian fit.
+- **`na_action`** on `gam`/`bam`/`gamm`/`gam_nl` with mgcv's `na.omit`
+  semantics (`:fail` remains the default), plus `na_omit_rows` for aligning
+  results with the original table. Weight and offset validation is wired at
+  every entry point (negative weights now raise an informative error rather
+  than a `DomainError` from `sqrt`).
+- **Vector `sp` for multi-penalty smooths** (`:ad`, `te`/`t2`, factor-`by`,
+  `fs`): each penalty gets its own fixed smoothing parameter, validated
+  against the penalty count at fit time. Scalar `sp` still broadcasts.
+- **Factor-`by` smooths discretize under `bam(...; discrete=true)`** via a
+  shared per-level basis plus level/cell index vectors (the `X'WX` kernel is
+  block-diagonal over levels — measured 126× faster than dense accumulation
+  at L=8 and 895× at L=32), and their penalties are stored as `L` narrow
+  `k×k` copies with offsets instead of a materialised `I_L ⊗ S_k`
+  (2500× less penalty storage at L=50, and `L²` less penalty work per
+  smoothing-parameter iteration). Numeric-`by`, `ti` and `t2` still fall back
+  to dense.
+- **`edf2`, `ref_df`, `vcov_corrected`, `has_vc` and `unconditional=true`**
+  across `predict`/`smooth_estimates`/`derivatives`/`posterior_samples`: the
+  Wood, Pya & Säfken (2016) smoothing-parameter-uncertainty correction `Vc`,
+  computed lazily on first access. `aic(m)` now returns what mgcv's `AIC(m)`
+  reports (the `edf2`-based df); `conditional_aic(m)` gives mgcv's `m$aic`.
+- **REML/ML criteria matched to mgcv**: the REML score is evaluated at
+  mgcv's profiled `reml.scale` rather than the Fletcher estimate (Gamma
+  agreement 4.5e-4 → 3e-13); non-canonical links use mgcv's full-Newton
+  working weights in `log|X'WX+S|` (Gamma+log ~330,000× closer); `:ML` uses
+  the range-space determinant of `MLpenalty1` (was 1–8% off, now ~4e-16);
+  and `log|S|₊` uses mgcv's `gam.reparam` similarity transform, stable to
+  within-block smoothing-parameter ratios of 1e24 (previously NaN by 1e16).
+
+Fixed:
+
+- `bs=:gp` is now a direct port of mgcv's Kammann & Wand Matérn spline
+  (correlation types via `m`, fixed range, `[1, x]` null space); at mgcv's
+  own `sp`, edf agrees to ~3e-12 (was 0.37 off).
+- `fs` factor smooths use one penalty per null-space dimension and receive
+  mgcv's `scale.penalty` rescale (edf gaps vs mgcv fell from 0.14–0.33 to
+  ~1e-4). Note `fs` smoothing parameters still do not transfer from mgcv —
+  the `nat.param(type=1)` parameterisation differs; compare fits, not `sp`.
+- `k_check` p-values are reproducible (`seed = 11` by default) and
+  `gam_check` forwards the same default.
+
 Round-5 review follow-up. The review found the engines match mgcv more closely
 than earlier rounds assumed, and relocated the real risks: a fix that had been
 applied to only one of five P-IRLS loops, an identifiability constraint correct
@@ -108,13 +183,11 @@ correct side-by-side code compare different models.
 - **`bs=:gp` gains `xt[:corfun]` and `xt[:params]`**, and a new `:mgcv_m32`
   correlation function reproducing mgcv's `gp` default (`gpE` type 3),
   `(1 + E)·exp(-E)` — Matérn 3/2 with length-scale `rho/√3`, i.e. without the
-  `√3` the standard parameterization carries. The **default is unchanged**
-  (`:matern32`): switching it does not buy agreement with mgcv, because the
-  low-rank construction differs more fundamentally (mgcv eigen-reduces the
-  correlation matrix by Lanczos; this basis is the Kammann & Wand Nyström
-  cross-correlation). On the reference model edf is 7.98 here against mgcv's
-  7.53, and `:mgcv_m32` moves it only to 7.92. The docstring now says plainly
-  that `bs=:gp` is a GP smoother in its own right, not a port of mgcv's.
+  `√3` the standard parameterization carries. (This entry is superseded: `bs=:gp` has since become a direct port
+  of mgcv's construction — default correlation, range, knots and null space
+  all match, and edf agrees with mgcv to ~3e-12 at fixed `sp`; see the
+  round above. The legacy named correlations remain available via
+  `xt[:corfun]` for backward compatibility.)
 
 - **`bs=:ds` now warns** that it is not a Duchon spline. It delegates to
   `bs=:tp`, which is a genuinely different basis from mgcv's `bs="ds"` (on the
@@ -166,10 +239,11 @@ correct side-by-side code compare different models.
 - **`bam(...; discrete=true)` — covariate discretization, as in
   `mgcv::bam(discrete=TRUE)`.** Each supported smooth is stored as its basis
   at the *unique* covariate values plus an integer index vector, instead of an
-  `n × p` block. Discretized: 1-D smooths, `te` tensor smooths, and `bs=:re`
-  random effects (factor and random slope). Still dense: `by=` terms and
-  `ti`/`t2`, which carry per-marginal reparameterizations the discrete path
-  does not implement; unsupported terms fall back silently, changing the
+  `n × p` block. Discretized: 1-D smooths, `te` tensor smooths, `bs=:re`
+  random effects (factor and random slope) and — since the follow-up round —
+  factor-`by` smooths. Still dense: numeric-`by` terms and `ti`/`t2`, which
+  carry per-marginal reparameterizations the discrete path does not
+  implement; unsupported terms fall back silently, changing the
   representation and not the fit.
 
   **It is an approximation, by construction.** Covariates with at most
@@ -187,22 +261,23 @@ correct side-by-side code compare different models.
   but end-to-end gains are Amdahl-bounded and can be negative: a Normal fit
   with 4 × `s(k=20)` at n = 2·10⁵ measures **0.95×, slightly slower**, because
   Gaussian accumulates `X'WX` once so binning is pure overhead. The same shape
-  with `Poisson()` is 1.71×, and 6.09× at `k=100`. Peak memory is largely
-  unchanged today: the compact representations are dramatic in isolation (a
-  tensor block is 8.13 MB against a 1716.61 MB dense block; a 200-level random
-  effect 766.75 → 6.03 MiB) but `setup_gam` still materializes the dense block
-  first, and `ConstructedSmooth.X` is re-expanded to `n` rows for downstream
-  consumers.
+  with `Poisson()` is 1.71×, and 6.09× at `k=100`. Peak memory now falls too
+  (superseding an earlier note here): the dense block is no longer built
+  under `discrete=true` and smooths keep their reduced `m × k` bases, so a
+  4 × `s(k=20)` cr fit at n = 10⁶ peaks at 1554 MB against 3053 dense, with
+  retained design storage down ~50× (a tensor block is 8.13 MB against a
+  1716.61 MB dense block; a 200-level random effect 766.75 → 6.03 MiB).
 
 - **`bam(...; retain_X = false)` drops the model matrix after fitting**, from
   587.5 MiB to 7.6 MiB at n = 10⁶. `GamModel.X` duplicates data already held
   per smooth — every smooth block is bitwise identical to the corresponding
   `ConstructedSmooth.X` — so `model_matrix(m)` reassembles it bitwise on
-  demand, with no basis re-evaluation. Default remains `true`.
+  demand, with no basis re-evaluation. Default: `true` for dense fits,
+  `false` under `discrete=true` (see the breaking-changes list above).
 
 - **Per-marginal `k` for tensor smooths**: `te(:x, :z, k = [4, 7])` sets the
-  marginal basis dimensions directly, alongside the existing scalar form
-  (which specifies the *total* dimension).
+  marginal basis dimensions directly. (A scalar `k` is also per-marginal now
+  — see the breaking-changes list above; it previously specified a total.)
 
 - **`summary(m)` now prints an mgcv-style model summary.** It previously fell
   through to `Base.summary`'s type-name fallback (`"GamModel"`), which is the
@@ -277,17 +352,16 @@ correct side-by-side code compare different models.
   set in `gam.outer`). mgcv's `AIC(m)` is *not* that value: `logLik.gam`
   reports a df based on `edf2`, the Wood, Pya & Säfken (2016) correction for
   smoothing-parameter uncertainty, so `AIC(m) = m$aic + 2*(sum(edf2) -
-  sum(edf))`. GAM.jl does not compute `edf2` yet (it needs the corrected
-  covariance `Vc`), so `aic(m)` is the conditional AIC. For `method="GCV.Cp"`
+  sum(edf))`. `edf2`/`Vc` have since shipped (see above), so `aic(m)` now IS
+  mgcv's `AIC(m)` and `conditional_aic(m)` gives `m$aic`. For `method="GCV.Cp"`
   fits mgcv leaves `edf2` unset and the two conventions coincide — measured
   agreement there is 8e-5. The smoothing penalty is accounted for in both,
   through the effective degrees of freedom.
 
-- **Documented the two conventions that differ from mgcv**: `k` counts basis
-  functions per margin in mgcv but in total in GAM.jl for tensor smooths
-  (`te(x, z, k=5)` is 24 columns in mgcv, 8 here — use `k_julia = k_mgcv^d`
-  or the new vector form), and mgcv's `gam()` defaults to `method="GCV.Cp"`
-  while GAM.jl defaults to `:REML`. Both are now in the README, the mgcv
+- **Documented the two conventions that differed from mgcv**: tensor `k`
+  (since aligned to mgcv's per-marginal convention — see the breaking-changes
+  list above) and mgcv's `gam()` defaulting to `method="GCV.Cp"` while GAM.jl
+  defaults to `:REML`. Both are now in the README, the mgcv
   comparison page, `smooths.md`, and the migration vignette.
 - Documented the remaining algorithmic differences with their measured
   consequences (EFS vs mgcv's outer Newton; `scam`'s scan-and-refine vs R
@@ -299,9 +373,9 @@ correct side-by-side code compare different models.
   break-even near n ≈ 5,000-10,000, about 4x faster at n = 100,000.
 - Marked the benchmark snapshot provisional: it predates several correctness
   fixes, and the SCAM and QGAM rows are now slower by design.
-- Disclosed five further gaps against mgcv: `edf1`/`edf2` with the
-  Wood-Pya-Säfken corrected AIC, `NCV`, `scat`, `mvn`, gamlss `SHASH`/`twlss`,
-  and `paraPen`.
+- Disclosed further gaps against mgcv: `NCV`, `mvn`, gamlss
+  `SHASH`/`twlss`, and `paraPen`. (`edf1`/`edf2` with the corrected AIC and
+  `scat` were on this list and have since shipped — see above.)
 
 - **The README Quick Start now runs verbatim.** It imported `StatsAPI` after
   `GAM`, which leaves `coef`, `fitted` and the other verbs ambiguous, so the
@@ -322,7 +396,7 @@ correct side-by-side code compare different models.
   two settings correspond to mgcv's `iterms` and `terms` intervals, which
   target different quantities; measured coverages are 0.976 and 0.964.
 
-- **The API reference is complete and the docs build genuinely gates.** About
+- **The API reference covers every export and the docs build genuinely gates.** About
   65 exported bindings were missing from the manual, and six cross-references
   in shipped docstrings resolved to nothing. All six are fixed. `api.md` had
   grown past Documenter's hard HTML size limit, so the reference is now three

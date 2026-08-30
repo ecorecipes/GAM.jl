@@ -228,15 +228,23 @@ Produces one penalty matrix per marginal dimension.
 
 # Arguments
 - `vars`: two or more variable names (Symbols)
-- `k`: total basis dimension hint. Marginal dimensions are `round(Int, k^(1/d))`.
+- `k`: **per-marginal** basis dimension, recycled across margins (mgcv's
+       convention): `te(:x1, :x2, k=8)` builds an 8×8 tensor product. Pass a
+       vector for unequal margins (`k = [4, 7]` ≙ mgcv's `k = c(4, 7)`).
        Default `-1` gives 5 per margin.
 - `bs`: marginal basis type — a single Symbol applied to all margins, or a Vector{Symbol}
 - `by`, `id`, `sp`, `fx`, `m`: as for `s()`
 
+!!! warning "Breaking change in 0.2"
+    A scalar `k` was previously a *total* dimension hint split as `k^(1/d)`
+    per margin, so `te(:x1, :x2, k=25)` meant 5×5; it now means 25×25. Use
+    the vector form (`k = [5, 5]`) to keep an old model's basis size.
+
 # Examples
 ```julia
-te(:x1, :x2)              # tensor product with CR margins, default k
-te(:x1, :x2, k=25)        # k^(1/2) ≈ 5 per margin
+te(:x1, :x2)              # tensor product with CR margins, 5 per margin
+te(:x1, :x2, k=8)         # 8 basis functions per margin (8×8), as in mgcv
+te(:x1, :x2, k=[4, 7])    # unequal marginal dimensions
 te(:x1, :x2, bs=:ps)      # P-spline margins
 ```
 """
@@ -289,8 +297,10 @@ end
 Specify a tensor product interaction smooth (main effects removed).
 Like `te()` but only includes interaction terms, useful in ANOVA-like decompositions.
 
-`k` is a total-dimension hint split across the margins; pass a vector for
-per-marginal dimensions (mgcv's convention), e.g. `k = [4, 7]`.
+A scalar `k` is the **per-marginal** basis dimension, recycled across
+margins (mgcv's convention); pass a vector for unequal margins, e.g.
+`k = [4, 7]`. Before 0.2 a scalar was a *total* hint split as `k^(1/d)` —
+use the vector form to reproduce an old model's basis size.
 
 # Example
 ```julia
@@ -298,7 +308,7 @@ using GAM, DataFrames
 df = DataFrame(x = rand(200), z = rand(200), y = randn(200))
 
 # main effects plus a pure interaction (ANOVA decomposition)
-m = gam(@formula(y ~ s(x) + s(z) + ti(x, z, k = 25)), df)
+m = gam(@formula(y ~ s(x) + s(z) + ti(x, z, k = 5)), df)
 
 ti(:x, :z, k = [4, 7])        # per-marginal basis dimensions
 ```
@@ -364,7 +374,7 @@ variables, following mgcv's convention exactly.
 
 A scalar `k` is the **per-marginal** basis dimension, recycled across margins:
 `te(x, z, k = 8)` builds an 8×8 tensor product, as in mgcv's
-`te(x, z, k = 8)` (`R/smooth.r`, `te`: `if (length(k)==1) k <- rep(k,n.bases)`).
+`te(x, z, k = 8)` (`R/smooth.r`, `te`: `if (length(k)==1&&ok) k<-rep(k,n.bases)`).
 A vector gives the marginal dimensions directly (`k = [4, 7]` ≙ mgcv's
 `k = c(4, 7)`), and `k = -1` selects mgcv's default of 5 per margin
 (mgcv's `k <- 5^d` with `d = 1` per basis).
@@ -430,24 +440,29 @@ end
     t2(vars...; k=-1, bs=:cr, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing)
 
 Specify an alternative tensor product smooth (mgcv's `t2()`). Like `te()`, the basis
-matrix is the row-wise Kronecker product of marginal bases. The penalties differ:
-each marginal penalty acts independently in its own direction via
-`I ⊗ ... ⊗ S_j ⊗ ... ⊗ I`, plus a full interaction penalty `S_1 ⊗ S_2 ⊗ ...`.
+matrix is the row-wise Kronecker product of marginal bases. The penalties follow
+Wood, Scheipl & Faraway (2013): each marginal is split into orthogonal null and
+range parts, and the tensor columns partition into blocks that each carry their
+own identity penalty on their own columns — diagonal penalties with
+non-overlapping support.
 
-This gives more penalties than `te()` but each is "simpler", providing more separate
-control over penalization in each marginal direction.
+That non-overlap is what lets a `t2()` smooth be written as independent
+random-effect blocks (one variance component per penalty), the property `te()`
+lacks; use `t2()` when you need the mixed-model decomposition (as gamm4 does).
 
 # Arguments
 - `vars`: two or more variable names (Symbols)
-- `k`: total basis dimension hint. Marginal dimensions are `round(Int, k^(1/d))`.
-       Default `-1` gives 5 per margin.
+- `k`: **per-marginal** basis dimension, recycled across margins (mgcv's
+       convention); pass a vector for unequal margins. Default `-1` gives 5
+       per margin. (Before 0.2 a scalar was a *total* hint split as
+       `k^(1/d)`; use the vector form to keep an old model's basis size.)
 - `bs`: marginal basis type — a single Symbol applied to all margins, or a Vector{Symbol}
 - `by`, `id`, `sp`, `fx`, `m`: as for `s()`
 
 # Examples
 ```julia
-t2(:x1, :x2)              # t2 tensor product with CR margins
-t2(:x1, :x2, k=25)        # k^(1/2) ≈ 5 per margin
+t2(:x1, :x2)              # t2 tensor product with CR margins, 5 per margin
+t2(:x1, :x2, k=8)         # 8 basis functions per margin, as in mgcv
 t2(:x1, :x2, bs=:ps)      # P-spline margins
 ```
 """

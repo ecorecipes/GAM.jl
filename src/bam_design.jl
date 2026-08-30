@@ -558,10 +558,54 @@ and passing knots back would be wrong:
     They place knots from the covariate range alone, which the grid spans.
 """
 _reduced_knots(spec::SmoothSpec{ThinPlateSpline}, col) = nothing
+# ThinPlateShrink shares `_construct_tprs` with ThinPlateSpline, so the same
+# rule applies: its dense knots are the unique covariate values, which on the
+# reduced grid ARE the unique values. Feeding it `place_knots` quantile knots
+# instead built a different basis — fitted values 29% off dense, silently.
+_reduced_knots(spec::SmoothSpec{ThinPlateShrink}, col) = nothing
 _reduced_knots(spec::SmoothSpec{PSpline}, col) = nothing
 _reduced_knots(spec::SmoothSpec{CyclicPSpline}, col) = nothing
 _reduced_knots(spec::SmoothSpec{BSplineBasis}, col) = nothing
 _reduced_knots(spec::SmoothSpec, col) = place_knots(col, spec.k)
+
+"""
+    _reduced_eligible(basis) -> Bool
+
+Whitelist of bases proven faithful under reduced construction — building at
+the `m` unique covariate values reproduces the dense basis (verified against
+the dense path at fixed `sp` to ≤1e-12 per basis; pinned by the per-basis
+parity testset in test/test_discrete.jl). Everything else falls back to dense
+construction for that smooth: silently-correct rather than silently-wrong.
+
+This is a WHITELIST deliberately. The previous default-allow rule fed
+`place_knots` quantile knots into constructors whose dense path uses
+`user_knots === nothing`, silently mis-discretising five bases (`:ts` fitted
+values 29% off dense, `:gp` 4.2%, `:ad` even changing the coefficient count,
+`:fp`, `:lo`) with no warning — the same defect shape as five earlier silent
+representation regressions in this package. Known non-members and why:
+
+  - `GPSmooth`: dense knots are the unique covariate values capped at 2000;
+    quantile knots build a different basis.
+  - `AdaptiveSmooth`: internal evenly-spaced knot builder; supplying knots
+    changes the basis DIMENSION itself.
+  - `FractionalPolynomial`, `LoessSmooth`: construction is not
+    row-weight-faithful (loess local regression especially).
+  - `DuchonSpline`: warns-and-delegates to `tp`; keep it dense rather than
+    reason about the aliasing under reduction.
+  - `RandomEffect`: guarded separately (its `k` is the level count).
+
+To add a basis: prove parity first — the per-basis testset fails for any
+registered basis that is neither faithful nor falling back.
+"""
+_reduced_eligible(::AbstractBasisType) = false
+_reduced_eligible(::ThinPlateSpline) = true
+_reduced_eligible(::ThinPlateShrink) = true
+_reduced_eligible(::CubicSpline) = true
+_reduced_eligible(::CubicShrink) = true
+_reduced_eligible(::CyclicCubic) = true
+_reduced_eligible(::PSpline) = true
+_reduced_eligible(::CyclicPSpline) = true
+_reduced_eligible(::BSplineBasis) = true
 
 """
     _reduced_smooth(spec, t, m_grid, n) -> (sm, k, counts) | nothing
@@ -588,6 +632,10 @@ function _reduced_smooth(spec::SmoothSpec, t, m_grid::Int, n::Int)
     # exists (`re_marginal_representation`, basis_re.jl) but is not wired into
     # the design yet, so fall back to dense rather than error.
     spec.basis isa RandomEffect && return nothing
+    # Whitelist gate: only bases proven faithful under reduced construction
+    # reduce; the rest are constructed densely by the caller (see
+    # `_reduced_eligible` for the roll of silently-wrong bases this replaced).
+    _reduced_eligible(spec.basis) || return nothing
     v = spec.term_vars[1]
     v in Tables.columnnames(t) || return nothing
     col = Tables.getcolumn(t, v)
@@ -650,6 +698,9 @@ function _reduced_by_smooth(spec::SmoothSpec, t, m_grid::Int, n::Int)
     # `bs=:re` with a `by` silently dropped the multiplier once already
     # (relΔcoef 0.49, 31% of fitted range); keep it dense.
     spec.basis isa RandomEffect && return nothing
+    # Same whitelist as the plain path: the base basis must itself be
+    # faithful under reduced construction.
+    _reduced_eligible(spec.basis) || return nothing
     v = spec.term_vars[1]
     v in Tables.columnnames(t) || return nothing
     spec.by in Tables.columnnames(t) || return nothing

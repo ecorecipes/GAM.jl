@@ -26,7 +26,10 @@ Specification for a grouped random effect term in a GAMM formula.
 - `grouping::Symbol`: name of the grouping factor variable
 - `terms::Vector{Symbol}`: variables for random slopes (empty = intercept only)
 - `has_intercept::Bool`: whether to include a random intercept
-- `correlated::Bool`: if true, intercept+slopes share a correlation matrix (default)
+- `correlated::Bool`: accepted for interface compatibility, but correlations
+  between intercept and slopes are NOT estimated — the penalized-smooth
+  parameterization fits independent variance components and warns when
+  `correlated=true` is requested with more than one term
 - `label::String`: human-readable label
 """
 struct RandomEffectSpec
@@ -962,18 +965,6 @@ function Base.show(io::IO, gf::GammFormula)
     end
 end
 
-"""
-    @gamm_formula(ex)
-
-Compatibility macro for GAMM formulas with smooth terms and random effects.
-Prefer [`@formula`](@ref) for new code.
-
-# Examples
-```julia
-gf = @formula(y ~ s(x, k=20) + (1|group))
-gf = @formula(y ~ x1 + s(x2) + (1|site) + (x1|subject))
-```
-"""
 function _gamm_formula_expr(ex)
     ex.head == :call && ex.args[1] == :(~) ||
         throw(ArgumentError(
@@ -1000,6 +991,18 @@ function _gamm_formula_expr(ex)
     end)
 end
 
+"""
+    @gamm_formula(ex)
+
+Compatibility macro for GAMM formulas with smooth terms and random effects.
+Prefer `GAM.@formula` for new code.
+
+# Examples
+```julia
+gf = @gamm_formula(y ~ s(x, k=20) + (1|group))
+gf = @gamm_formula(y ~ x1 + s(x2) + (1|site) + (x1|subject))
+```
+"""
 macro gamm_formula(ex)
     return _gamm_formula_expr(ex)
 end

@@ -56,7 +56,7 @@ using Statistics, Printf
 | `k.check(m)` | `k_check(m)` | same k-index semantics |
 | `concurvity(m, full = TRUE)` | `concurvity(m; full=true)` | returns all three measures |
 | `AIC(m)` / `logLik(m)` | `aic(m)` / `loglikelihood(m)` | |
-| `bam(...)` | `bam(...)` | chunked accumulation, not `discrete=TRUE` |
+| `bam(..., discrete=TRUE)` | `bam(...; discrete=true)` | both bin covariates; GAM.jl keeps numeric-`by`/`ti`/`t2` dense |
 | `gamm(y ~ s(x), random = ...)` | `gamm(@formula(y ~ s(x) + (1\|g)), df)` | lme4-style RE syntax |
 | `gamlss`-style `gaulss()` | `gamlss([f1, f2], df, GaussianLS())` | vector of formulas |
 | `qgam::qgam(form, data, qu)` | `qgam(@formula(...), df, qu)` | |
@@ -232,9 +232,13 @@ not expect it to reproduce those fits. Everything else in the basis table,
 **`bs=:sos` takes degrees, latitude first.** Matching mgcv. If your
 coordinates are in radians, pass `xt = Dict(:units => :radians)`.
 
-**`bam()` is not `bam(discrete=TRUE)`.** GAM.jl's `bam` bounds memory by
-chunked accumulation of the normal equations; it does not discretize
-covariates, so expect mgcv's `discrete=TRUE` to be faster on very large data.
+**`bam(...; discrete=true)` mirrors `bam(discrete=TRUE)`.** GAM.jl's `bam`
+bounds memory by chunked accumulation, and `discrete = true` additionally
+bins covariates exactly as mgcv does: 1-D smooths, `te` tensors, `bs=:re`
+random effects and factor-`by` smooths are stored at the unique covariate
+values, the `n × p` model matrix is never built, and the fit becomes
+approximate through covariate rounding alone. Numeric-`by`, `ti` and `t2`
+still fall back to dense. See the large-data vignette for measurements.
 
 ## Further reading
 

@@ -518,6 +518,7 @@ function _predict_matrix(::FactorSmooth, smooth::ConstructedSmooth, newdata)
 
     X = zeros(n_new, total_cols)
     level_map = Dict(lev => i for (i, lev) in enumerate(info.levels))
+    unseen = Set{eltype(factor_col)}()
     for i in 1:n_new
         l = get(level_map, factor_col[i], 0)
         if l > 0
@@ -525,8 +526,17 @@ function _predict_matrix(::FactorSmooth, smooth::ConstructedSmooth, newdata)
             @inbounds for j in 1:k_eff
                 X[i, col_offset + j] = X_marginal[i, j]
             end
+        else
+            push!(unseen, factor_col[i])
         end
         # Unknown levels get zero rows → no contribution to prediction
+    end
+    if !isempty(unseen)
+        # Same warn-and-zero convention as `by=` and `bs=:re`; this path used
+        # to zero SILENTLY, unlike its siblings (mgcv errors here).
+        @warn "Factor smooth $(smooth.spec.label): level(s) not seen during " *
+              "fitting get zero contribution." unseen_levels =
+            sort!(collect(unseen); by = string)
     end
 
     return X

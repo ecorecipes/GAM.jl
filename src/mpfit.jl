@@ -806,8 +806,11 @@ const evgam_control = mp_control
     evgam(formulas, data, family; control=mp_control(), sp=nothing, trace=false,
           offset=nothing)
 
-Fit a multi-parameter GAM. Alias for [`gamlss`](@ref) — any `MultiParameterFamily`
-works here (GEV, GPD, EGPD, GaussianLS, GammaLS, etc.).
+Fit a multi-parameter GAM (any `MultiParameterFamily` works here — GEV, GPD,
+EGPD, GaussianLS, GammaLS, etc.). Equivalent in purpose to [`gamlss`](@ref)
+but an independent implementation with its own keyword set — the signature
+above is complete; `gamlss`'s `links`/`method`/`gamlss_ctrl`/`priors`
+keywords do not apply here.
 
 `offset` adds known terms to the linear predictors (η_k = X_k β_k + off_k):
 pass a single length-`n` vector for an offset on the first linear predictor
@@ -816,7 +819,7 @@ entries (`nothing` or length-`n` vectors). Offsets are stored on the model
 and used by `predict`/`fitted` on the training data; supply `offset=` to
 `predict` for new data.
 
-See [`gamlss`](@ref) for full documentation.
+See [`gamlss`](@ref) for the alternative interface.
 
 # Example
 ```julia

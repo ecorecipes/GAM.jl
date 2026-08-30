@@ -323,11 +323,11 @@ println("Gaussian, n = ", nrow(df), ":  dense ", round(t_dense; digits = 3),
         " s   speedup ", round(t_dense / t_disc; digits = 2), "x")
 ```
 
-Peak memory is also largely unchanged today. The compact representations are
-dramatic in isolation, but `setup_gam` still materializes the dense block
-before the discrete design replaces it, so `discrete = true` is currently a
-throughput option for non-Gaussian fits rather than a way to fit models that
-would not otherwise fit in memory.
+Peak memory falls too: under `discrete = true` the dense `n × p` model
+matrix is never built (`retain_X` defaults to `false` here, and
+`model_matrix(m)` reassembles it bitwise on demand), and smooths keep their
+reduced `m × k` bases. Measured at n = 10⁶ with 4 × `s(k=20)` cr smooths,
+peak RSS drops from about 3.0 GB dense to 1.5 GB discrete.
 
 ## Part 2 — Areal data: Markov random fields
 
@@ -585,13 +585,13 @@ data before treating them as anything more than a starting point.
 
 ## Notes and known differences from mgcv
 
-- **`discrete = true` is implemented, with a narrower scope than mgcv's.**
-  1-D smooths, `te` tensors and `bs=:re` random effects are discretized;
-  `by=` terms and `ti`/`t2` stay dense and fall back silently. It is a
-  keyword on `bam` itself — `bam_control(discrete = …)` remains deprecated
-  and warns. As in mgcv the fit becomes approximate through covariate
-  rounding, and unlike mgcv the peak-memory benefit is not yet realised: the
-  dense block is still built before the discrete design replaces it. See
+- **`discrete = true` is implemented, with a slightly narrower scope than
+  mgcv's.** 1-D smooths, `te` tensors, `bs=:re` random effects and
+  factor-`by` smooths are discretized; numeric-`by`, `ti` and `t2` stay
+  dense and fall back silently. It is a keyword on `bam` itself —
+  `bam_control(discrete = …)` remains deprecated and warns. As in mgcv the
+  fit becomes approximate through covariate rounding; the dense model matrix
+  is never built, so the peak-memory benefit is realised. See
   [Discretization](#discretization).
 - **`sos` now takes degrees**, matching mgcv, with
   `xt = Dict(:units => :radians)` to opt out. Latitude comes first in both

@@ -20,7 +20,10 @@ using Random
         A_sub3 = A[[1, 2], [1, 2]]
         @test R_drop3' * R_drop3 ≈ A_sub3 atol = 1e-10
 
-        # Larger matrix
+        # Larger matrix. `rng` was previously undefined in this file and the
+        # test only ran because another included file leaked a global of that
+        # name — an include-order landmine.
+        rng = MersenneTwister(20260829)
         n = 10
         M = randn(rng, n, n)
         A_big = M' * M + 5 * I

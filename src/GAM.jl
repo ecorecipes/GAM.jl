@@ -190,6 +190,7 @@ export
     GammaLS,
     BetaLS,
     NegBinLS,
+    InverseGaussianLS,
     gamlss,
     GamlssControl,
     gamlss_control,

@@ -1000,7 +1000,19 @@ mgcv's `AIC()`. Falls back to the per-coefficient `edf` when unavailable
 """
 function edf2(m::GamModel)
     has_vc(m) && return m.edf2
-    return isempty(m.edf1) ? Float64[] : copy(m.edf1)
+    # Fallback: per-coefficient edf = diag(F), matching mgcv, which builds Vc
+    # even at fully fixed sp — where Vc collapses to Vp and its
+    # `edf2 = rowSums(Vc ∘ X'WX)/φ` collapses to diag(F). diag(F) is not
+    # stored, but F = A⁻¹X'WX = A⁻¹(A − S_λ) gives
+    # diag(F) = 1 − diag(Vp·S_λ)/φ from fields the model does carry; the sum
+    # reproduces `edf_total` exactly (verified to machine precision). The
+    # previous fallback returned edf1, which overstates the df of every
+    # penalized fit (edf1 ≥ edf strictly) and contradicted both mgcv and this
+    # docstring.
+    p = length(m.coefficients)
+    (isempty(m.Vp) || p == 0 || !(m.scale > 0)) && return Float64[]
+    S_total = total_penalty(m.penalty, m.sp, p)
+    return 1.0 .- vec(sum(m.Vp .* S_total; dims = 2)) ./ m.scale
 end
 
 """

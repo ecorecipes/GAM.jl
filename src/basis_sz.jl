@@ -137,9 +137,13 @@ function _predict_matrix(::ConstrainedFactorSmooth, smooth::ConstructedSmooth, n
     X = zeros(n_new, total_cols)
     level_map = Dict(lev => i for (i, lev) in enumerate(info.levels))
 
+    unseen = Set{eltype(factor_col)}()
     @inbounds for i in 1:n_new
         l = get(level_map, factor_col[i], 0)
-        l == 0 && continue  # unknown levels get zero rows
+        if l == 0  # unknown levels get zero rows
+            push!(unseen, factor_col[i])
+            continue
+        end
         for c in 1:(L - 1)
             w = Q_L[l, c]
             w == 0.0 && continue
@@ -148,6 +152,13 @@ function _predict_matrix(::ConstrainedFactorSmooth, smooth::ConstructedSmooth, n
                 X[i, off + j] = w * X_marginal[i, j]
             end
         end
+    end
+    if !isempty(unseen)
+        # Same warn-and-zero convention as `by=` and `bs=:re`; this path used
+        # to zero SILENTLY, unlike its siblings (mgcv errors here).
+        @warn "Constrained factor smooth $(smooth.spec.label): level(s) not " *
+              "seen during fitting get zero contribution." unseen_levels =
+            sort!(collect(unseen); by = string)
     end
 
     return X

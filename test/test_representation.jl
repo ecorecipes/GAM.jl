@@ -408,4 +408,52 @@
               max(maximum(abs, coef(md)), 1.0) < 1e-10
         @test maximum(abs.(fitted(mq) .- fitted(md))) < 1e-8
     end
+
+    @testset "bam keyword misuse gets curated errors" begin
+        # `discrete=:yes` used to die with a bare TypeError from the keyword's
+        # type constraint, and a wrong-typed `retain_X` with a MethodError
+        # from `_resolve_retain_X` — neither said what the keyword accepts.
+        gfk = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x1; k = 8, bs = :cr)])
+        @test_throws ArgumentError bam(gfk, _rep_df; discrete = :yes)
+        @test_throws ArgumentError bam(gfk, _rep_df; discrete = 1)
+        @test_throws ArgumentError bam(gfk, _rep_df; discrete = 0)
+        @test_throws ArgumentError bam(gfk, _rep_df; retain_X = :never)
+        @test_throws ArgumentError bam(gfk, _rep_df; retain_X = 1)
+        # Valid forms still work: integer grid size, and explicit retain_X.
+        mi = bam(gfk, _rep_df; discrete = 50, retain_X = true)
+        @test mi.converged
+    end
+
+    @testset "fs and sz warn-and-zero on unseen factor levels" begin
+        # `by=` and `bs=:re` warn on unseen levels; `fs` and `sz` used to
+        # zero SILENTLY (mgcv errors here). All four now share the documented
+        # warn-and-zero convention.
+        dfl = DataFrame(x = repeat(collect(range(0, 1; length = 50)), 4),
+            g = repeat(["a", "b", "c", "d"]; inner = 50))
+        dfl.y = sin.(2π .* dfl.x) .+
+            0.2 .* (dfl.g .== "b") .+ 0.1 .* randn(StableRNG(5), 200)
+
+        mfs = gam(GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x, :g; bs = :fs, k = 6)]), dfl)
+        nd = DataFrame(x = [0.5, 0.5], g = ["a", "ZZZ"])
+        local pfs
+        @test_logs (:warn, r"not seen during") begin
+            pfs = predict(mfs, nd)
+        end
+        @test all(isfinite, pfs)
+
+        msz = gam(GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.s(:x, :g; bs = :sz, k = 6)]), dfl)
+        local psz
+        @test_logs (:warn, r"not seen during") begin
+            psz = predict(msz, nd)
+        end
+        @test all(isfinite, psz)
+
+        # Seen-only prediction stays silent (no log records at all).
+        nds = DataFrame(x = [0.5], g = ["a"])
+        @test_logs predict(mfs, nds)
+        @test_logs predict(msz, nds)
+    end
 end

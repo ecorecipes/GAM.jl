@@ -867,7 +867,7 @@ m = bam(@formulak(y ~ s(x, k=20, bs=:cr)), df)
 ```
 """
 function bam(f::FormulaTerm, data;
-    retain_X::Union{Bool, Nothing} = nothing,
+    retain_X = nothing,
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
@@ -875,11 +875,12 @@ function bam(f::FormulaTerm, data;
     offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
     na_action::Symbol = :fail,
     select::Bool = false,
-    discrete::Union{Bool, Integer} = false,
+    discrete = false,
     control::GamControl = gam_control(),
     bam_ctrl::BamControl = bam_control())
 
     _bam_check_method(method)
+    _validate_bam_kwargs(discrete, retain_X)
 
     if link === nothing
         link = GLM.canonicallink(family)
@@ -897,7 +898,7 @@ function bam(f::FormulaTerm, data;
 end
 
 function bam(gf::GamFormula, data;
-    retain_X::Union{Bool, Nothing} = nothing,
+    retain_X = nothing,
     family::UnivariateDistribution = Normal(),
     link::Union{GLM.Link, Nothing} = nothing,
     method::Symbol = :REML,
@@ -905,11 +906,12 @@ function bam(gf::GamFormula, data;
     offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
     na_action::Symbol = :fail,
     select::Bool = false,
-    discrete::Union{Bool, Integer} = false,
+    discrete = false,
     control::GamControl = gam_control(),
     bam_ctrl::BamControl = bam_control())
 
     _bam_check_method(method)
+    _validate_bam_kwargs(discrete, retain_X)
 
     if link === nothing
         link = GLM.canonicallink(family)
@@ -941,6 +943,35 @@ function bam(gf::GamFormula, data;
 end
 
 """
+    _validate_bam_kwargs(discrete, retain_X)
+
+Curated errors for `bam`'s newer keywords, in the same house style as the
+`na_action`/`sp` validation. Without this, a wrong-typed `discrete` died with
+a bare `TypeError` from the keyword's type constraint, and a wrong-typed
+`retain_X` with a `MethodError` from `_resolve_retain_X` — both technically
+informative, neither telling the user what the keyword accepts.
+"""
+function _validate_bam_kwargs(discrete, retain_X)
+    if !(discrete isa Bool)
+        discrete isa Integer || throw(ArgumentError(
+            "discrete = $(repr(discrete)): `discrete` must be `false` (dense, " *
+            "the default), `true` (bin covariates onto up to 1000 distinct " *
+            "values, as mgcv's `bam(discrete=TRUE)`), or an integer giving " *
+            "the grid size directly."))
+        discrete >= 2 || throw(ArgumentError(
+            "discrete = $discrete: an integer `discrete` is the binning grid " *
+            "size and must be at least 2. Use `discrete = true` for the " *
+            "default grid of 1000."))
+    end
+    retain_X === nothing || retain_X isa Bool || throw(ArgumentError(
+        "retain_X = $(repr(retain_X)): `retain_X` must be `true`, `false`, " *
+        "or left unset (which keeps X for dense fits and drops it under " *
+        "`discrete`, matching mgcv). `model_matrix(m)` reassembles X on " *
+        "demand either way."))
+    return nothing
+end
+
+"""
     _resolve_retain_X(retain_X, discrete) -> Bool
 
 Whether to keep the `n x p` model matrix on the returned model.
@@ -954,6 +985,7 @@ feature exists to deliver. mgcv does the same -- `bam` sets
 Pass `retain_X = true` explicitly to keep it under `discrete` as well; that
 restores the pre-existing behaviour at the pre-existing cost.
 """
+
 _resolve_retain_X(retain_X::Bool, discrete) = retain_X
 _resolve_retain_X(::Nothing, discrete) = discrete === false
 

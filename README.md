@@ -8,14 +8,14 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 
 ## Features
 
-- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 30 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (one is a documented approximation of its mgcv namesake — see the table below)
+- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 31 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (one is a documented approximation of its mgcv namesake — see the table below)
 - **Automatic smoothness estimation** — REML/ML via Extended Fellner-Schall (EFS, default) or Newton optimization; GCV/UBRE via direct criterion optimization
-- **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta
+- **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta, and the scaled-t `ScatFamily` for outlier-robust regression (mgcv's `scat()`)
 - **Multi-parameter models (GAMLSS)** — location-scale-shape regression with RS and CG solvers, local ML/GAIC/GCV smoothing parameter selection
 - **Shape-constrained smooths (SCAM)** — monotone increasing/decreasing, convex/concave constraints and combinations
 - **Quantile regression (QGAM)** — Extended Log-F families with automatic calibration
 - **Extreme value models** — GEV, GPD, and extended GPD families
-- **Large-scale fitting (BAM)** — chunked accumulation of the normal equations for large datasets
+- **Large-scale fitting (BAM)** — chunked accumulation of the normal equations, plus mgcv-style covariate discretization (`bam(...; discrete=true)`) and a droppable model matrix (`retain_X`)
 - **Mixed models (GAMM)** — random intercepts/slopes via `gamm()` with `GAM.@formula(...)`, fitted by a pure-Julia penalized-smooth backend (PQL for non-Gaussian families)
 - **Prior weights** — `gam(...; weights=...)` for observation weights, as in mgcv
 - **Bayesian inference** — Turing.jl extension for posterior sampling with smooth-aware priors
@@ -83,7 +83,7 @@ use `GAM.@formula(...)` or `using GAM: @formula`.
 | `s(x, bs=:ps)` | P-spline | B-spline basis with difference penalty |
 | `s(x, bs=:cps)` | Cyclic P-spline | Periodic P-spline |
 | `s(x, bs=:bs)` | B-spline | Penalized B-spline (integrated squared derivative penalty, as in mgcv) |
-| `s(x, bs=:gp)` | Gaussian process | Matérn 3/2 covariance as smooth |
+| `s(x, bs=:gp)` | Gaussian process | Port of mgcv's Kammann & Wand Matérn spline (`m` selects the correlation type) |
 | `s(x, bs=:ds)` | Duchon spline | Currently an alias for the thin-plate spline (`:tp`) |
 | `s(x, bs=:re)` | Random effect | i.i.d. Gaussian random effects |
 | `s(x, bs=:mrf)` | Markov random field | Spatial smoothing on discrete regions (requires an `xt` neighborhood structure) |
@@ -108,29 +108,21 @@ gam(@formula(y ~ z + s(x, by=z)), df)        # numeric by: z * f(x)
 gam(@formula(y ~ g + s(x, by=g)), df)        # factor by: one smooth per level of g
 ```
 
-### `k` in tensor smooths differs from mgcv
+### `k` in tensor smooths matches mgcv (changed in 0.2)
 
-For `te`, `ti` and `t2`, mgcv's `k` is the dimension of **each marginal**
-basis (so the tensor has `k^d` columns); GAM.jl's `k` is the **total** target
-dimension, split as `round(Int, k^(1/d))` per margin and floored at 3. The
-same source text therefore builds different models:
-
-| `k` in `te(x, z, k=…)` | mgcv columns | GAM.jl columns |
-|------|------|------|
-| 4 | 15 | 8 |
-| 5 | 24 | 8 |
-| 16 | 255 | 15 |
-| 25 | 624 | 24 |
-
-To reproduce an mgcv model, raise `k` to the power of the number of
-covariates (`k_julia = k_mgcv^d`), or give the marginal dimensions directly:
+For `te`, `ti` and `t2`, a scalar `k` is the dimension of **each marginal**
+basis, recycled across margins — mgcv's convention — so mgcv models port with
+their `k` unchanged:
 
 ```julia
-te(:x, :z, k = 25)        # ≡ mgcv's te(x, z, k = 5): 5 per margin, 24 columns
-te(:x, :z, k = [4, 7])    # marginal dimensions given explicitly
+te(:x, :z, k = 5)         # 5 per margin, the same model as mgcv's te(x, z, k = 5)
+te(:x, :z, k = [4, 7])    # unequal marginal dimensions, mgcv's k = c(4, 7)
 ```
 
-Plain `s()` smooths use the same meaning of `k` in both packages. See the
+**This changed in 0.2**: previously a scalar `k` was a *total* dimension hint
+split as `round(Int, k^(1/d))` per margin, so `te(x, z, k = 25)` meant 5×5 and
+now means 25×25. Code written against the old behaviour should use the vector
+form to keep its basis size. Plain `s()` smooths are unaffected. See the
 [migrating from mgcv](vignettes/13_migrating_from_mgcv/) vignette.
 
 ## Family and Link Support
@@ -152,6 +144,9 @@ gam(@formula(y ~ s(x)), df, TweedieFamily(p=1.5))
 
 # Beta regression
 gam(@formula(y ~ s(x)), df, BetaFamily())
+
+# Scaled-t (robust to outliers; nu and sigma estimated)
+gam(@formula(y ~ s(x)), df; family = ScatFamily())
 ```
 
 ## Multi-Parameter Models (GAMLSS)
@@ -278,6 +273,12 @@ the crossover:
 
 ```julia
 m = bam(@formula(y ~ s(x1, k=20) + s(x2, k=20)), df)
+
+# mgcv-style covariate discretization: 1-D, te, bs=:re and factor-by smooths
+# are stored at the unique covariate values; the n x p model matrix is never
+# built (retain_X defaults to false here; model_matrix(m) reassembles it).
+# Approximate by covariate rounding, exactly as in mgcv.
+mb = bam(@formula(y ~ s(x1, k=20) + s(x2, k=20)), df; discrete = true)
 ```
 
 ## Mixed Models (GAMM)
@@ -399,7 +400,7 @@ details.
 > it settled on a degenerate near-linear fit (EDF 0.999), and the old QGAM was
 > fast because it never actually solved the quantile problem.
 
-The latest checked-in benchmark snapshot (`benchmark/results.txt`, 2026-08-23) shows an overall geometric mean speedup of **11.16x** over R on Julia 1.12.5 / R 4.6.1 / macOS ARM64. Both sides use the same data, knot count `k`, and `method="REML"`; Julia timings exclude JIT compilation (warm-up runs) and R timings exclude interpreter startup. The harness measures *fitting time*, not fit equivalence — it does not assert that the two implementations return identical coefficients (correctness is covered by the elementwise R-comparison tests instead). The BAM row compares Julia's chunked accumulation against mgcv's `bam(method="fREML")` without `discrete=TRUE`, i.e. different algorithms; the BAM and SCAM "families" are each a single benchmark, and the SCAM figure reflects that `scam()` now performs full GCV criterion optimization (matching R scam's method) rather than the faster REML-flavored EFS updates.
+The latest checked-in benchmark snapshot (`benchmark/results.txt`, 2026-08-23) shows an overall geometric mean speedup of **11.16x** over R on Julia 1.12.5 / R 4.6.1 / macOS ARM64. Both sides use the same data, knot count `k`, and `method="REML"`; Julia timings exclude JIT compilation (warm-up runs) and R timings exclude interpreter startup. The harness measures *fitting time*, not fit equivalence — it does not assert that the two implementations return identical coefficients (correctness is covered by the elementwise R-comparison tests instead). The BAM row compares Julia's chunked accumulation against mgcv's `bam(method="fREML")` without `discrete=TRUE` on either side (GAM.jl has since gained `bam(...; discrete=true)`, not yet benchmarked here), i.e. different algorithms; the BAM and SCAM "families" are each a single benchmark, and the SCAM figure reflects that `scam()` now performs full GCV criterion optimization (matching R scam's method) rather than the faster REML-flavored EFS updates.
 
 | Benchmark family | Speedup |
 |-----------|---------|
@@ -480,7 +481,7 @@ The key difference from mgcv: GAM.jl's model-fitting code is written in Julia ra
 
 ## Testing
 
-GAM.jl has roughly 2,440 test assertion macros across 55 test files, including:
+GAM.jl has roughly 3,500 test assertion macros across 80+ test files, including:
 
 - Unit tests for all basis types, families, and link functions
 - End-to-end tests for GAM, BAM, SCAM, QGAM, GAMLSS, GAMM, evgam, GINLA

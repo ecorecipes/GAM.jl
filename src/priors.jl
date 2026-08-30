@@ -102,7 +102,9 @@ end
 """
     default_priors(family) -> PriorSpec
 
-Sensible default priors for a given family, following brms conventions.
+Return an empty [`PriorSpec`](@ref), signalling that the Bayesian backend
+should use its own internal defaults. The `family` argument is currently
+ignored — no family-specific priors are implemented.
 """
 function default_priors(family)
     return PriorSpec()
