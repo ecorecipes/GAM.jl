@@ -113,6 +113,116 @@ using Statistics: mean
     end
 end
 
+@testset "smooth2random factor-by: L variance components" begin
+    # mgcv replicates a factor-`by` smooth per level (R/smooth.r:3980), so
+    # each level gets its OWN random-effect block and variance component from
+    # smooth2random. GAM.jl used to send the (disjoint, non-diagonal) L
+    # sub-penalties down the tensor path, which summed them into ONE
+    # component — forcing all levels to share a smoothing variance, a
+    # genuinely smaller model class. These pin the per-level decomposition.
+    rng_by = Random.Xoshiro(20250829)
+    n_by = 400
+    df_by = DataFrame(
+        x = rand(rng_by, n_by),
+        f = string.(rand(rng_by, ["a", "b", "c"], n_by)),
+        y = randn(rng_by, n_by),
+    )
+    sm_by = smooth_construct(s(:x, bs = :cr, k = 8, by = :f), df_by)
+    L = 3
+
+    @testset "disjointness detection routes factor-by, and only factor-by" begin
+        @test GAM._smooth_penalties_disjoint(sm_by)
+        # te/t2/adaptive carry block-width sub-penalties — never disjoint.
+        df2 = DataFrame(x = rand(rng_by, n_by), z = rand(rng_by, n_by),
+            y = randn(rng_by, n_by))
+        sm_t2 = smooth_construct(t2(:x, :z; k = 4), df2)
+        @test !GAM._smooth_penalties_disjoint(sm_t2)
+        sm_ad = smooth_construct(s(:x; bs = :ad, k = 12), df2)
+        @test !GAM._smooth_penalties_disjoint(sm_ad)
+        sm_1 = smooth_construct(s(:x; bs = :cr, k = 8), df2)
+        @test !GAM._smooth_penalties_disjoint(sm_1)
+    end
+
+    smm = smooth2random(sm_by)
+
+    @testset "one block and one null space per level" begin
+        @test length(smm.Zs) == L                      # L variance components
+        rank_l = sm_by.rank ÷ L
+        @test all(size(Z, 2) == rank_l for Z in smm.Zs)
+        @test sum(size(Z, 2) for Z in smm.Zs) == sm_by.rank
+        # Each level's constrained basis has its own (1-dim, for cr) null
+        # space, exactly as each of mgcv's replicated smooths does.
+        @test size(smm.Xf, 2) == size(sm_by.X, 2) - sm_by.rank
+        @test length(smm.rind) == sm_by.rank
+        @test count(==(0), smm.pen_ind) == size(smm.Xf, 2)
+    end
+
+    @testset "each block is supported only on its level's rows" begin
+        levs = sort(unique(df_by.f))
+        for (l, Z) in enumerate(smm.Zs)
+            off_rows = findall(df_by.f .!= levs[l])
+            @test maximum(abs.(Z[off_rows, :]); init = 0.0) == 0.0
+        end
+    end
+
+    @testset "reassembly and basis-independent per-level covariance" begin
+        # β_original = U * (D .* [b_1; …; b_L; β_f]) must reproduce X*β.
+        k = size(sm_by.X, 2)
+        bc = randn(rng_by, k)
+        β_orig = smm.trans_U * (smm.trans_D .* bc)
+        lhs = sm_by.X * β_orig
+        nr = sum(size(Z, 2) for Z in smm.Zs)
+        rhs = smm.Xf * bc[(nr + 1):k]
+        off = 0
+        for Z in smm.Zs
+            rhs = rhs .+ Z * bc[(off + 1):(off + size(Z, 2))]
+            off += size(Z, 2)
+        end
+        @test maximum(abs.(lhs .- rhs)) < 1e-10
+
+        # Z_l * Z_l' is the level's unit-variance prior covariance and is
+        # basis-independent: it must equal X_l * S_l⁺ * X_l' — the quantity
+        # mgcv's per-level rand[[1]] %*% t(rand[[1]]) reproduces (verified
+        # against live mgcv at 6e-14 relative during development).
+        for (l, Z) in enumerate(smm.Zs)
+            off_l = sm_by.S_offsets[l]
+            ks = size(sm_by.S[l], 1)
+            Xl = sm_by.X[:, (off_l + 1):(off_l + ks)]
+            ref = Xl * pinv(sm_by.S[l]) * Xl'
+            @test maximum(abs.(Z * Z' .- ref)) < 1e-8 * max(maximum(abs.(ref)), 1.0)
+        end
+    end
+
+    @testset "s2r_predict reproduces the training decomposition" begin
+        smp = GAM.s2r_predict(smm, sm_by, df_by)
+        @test length(smp.Zs) == L
+        for l in 1:L
+            @test isapprox(smp.Zs[l], smm.Zs[l]; atol = 1e-10)
+        end
+        @test isapprox(smp.Xf, smm.Xf; atol = 1e-10)
+    end
+
+    @testset "per-level smoothing variances are recoverable" begin
+        # Fitting side: level wiggliness differing in truth must give
+        # per-level sp spanning orders of magnitude (σ²_l = φ/λ_l). With one
+        # lumped component a single σ had to represent all three.
+        rng_s = Random.Xoshiro(7)
+        ns = 900
+        xs = rand(rng_s, ns)
+        fs = rand(rng_s, ["a", "b", "c"], ns)
+        amp = Dict("a" => 0.1, "b" => 1.0, "c" => 3.0)
+        ys = [amp[fs[i]] * sin(2π * xs[i]) + 0.2 * randn(rng_s) for i in 1:ns]
+        dfs = DataFrame(x = xs, f = string.(fs), y = ys)
+        gf = GAM.GamFormula(:y, Symbol[:f], true,
+            GAM.SmoothSpec[s(:x; k = 10, bs = :cr, by = :f)])
+        m = gam(gf, dfs)
+        sp = exp.(m.sp)
+        @test length(sp) == L
+        # Flat level heavily smoothed, wiggly level lightly: monotone and wide.
+        @test sp[1] > 10 * sp[2] > 10 * sp[3]
+    end
+end
+
 @testset "PriorSpec" begin
     @testset "Default construction" begin
         ps = PriorSpec()
@@ -259,6 +369,44 @@ end
                 y_recon = smm.Xf * β_mm[(p_rank + 1):end] + smm.Zs[1] * β_mm[1:p_rank]
                 @test maximum(abs.(y_orig - y_recon)) < 1e-10
             end
+        end
+
+        @testset "factor-by: per-level blocks match mgcv's replicated smooths" begin
+            # mgcv's smoothCon returns one smooth per level, each of which
+            # smooth2random gives its own random block. GAM.jl keeps one
+            # smooth with L disjoint sub-penalties; the per-level blocks must
+            # agree with mgcv's on the basis-independent quantity Z_l * Z_l'.
+            Random.seed!(11)
+            nb = 250
+            xb = rand(nb)
+            fb = string.(rand(["a", "b", "c"], nb))
+            _rcall.globalEnv[:xb_r] = xb
+            _rcall.globalEnv[:fb_r] = fb
+            dfb = DataFrame(x = xb, f = fb, y = randn(nb))
+            sm_b = smooth_construct(s(:x, bs = :cr, k = 8, by = :f), dfb)
+            smm_b = smooth2random(sm_b)
+            @test length(smm_b.Zs) == 3
+
+            _reval("""
+                datb <- data.frame(x = xb_r, f = factor(fb_r))
+                smlb <- smoothCon(s(x, k = 8, by = f, bs = "cr"), data = datb,
+                                  absorb.cons = TRUE)
+                stopifnot(length(smlb) == 3)
+            """)
+            for l in 1:3
+                ZZt_r = _rcopy(_reval("""
+                    rb <- mgcv:::smooth2random(smlb[[$l]], "", 2)
+                    rb\$rand[[1]] %*% t(rb\$rand[[1]])
+                """))
+                Z = smm_b.Zs[l]
+                scale_r = max(maximum(abs.(ZZt_r)), 1.0)
+                @test maximum(abs.(Z * Z' .- ZZt_r)) < 1e-9 * scale_r
+                # Each mgcv replicated smooth carries one null-space column
+                # here (cr, constrained): our shared Xf must have L of them.
+                nXf_r = Int(_rcopy(_reval("ncol(mgcv:::smooth2random(smlb[[$l]], \"\", 2)\$Xf)")))
+                @test nXf_r == 1
+            end
+            @test size(smm_b.Xf, 2) == 3
         end
     else
         @test_skip "R/mgcv not available — skipping smooth2random comparison"

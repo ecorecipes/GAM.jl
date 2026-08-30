@@ -1133,7 +1133,11 @@ function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
         push!(con_X, sm.X)
         push!(con_dims, size(sm.X, 2))
         push!(con_labels, sm.spec.label)
-        push!(con_penalties, sm.S[1])  # primary penalty
+        # `penalty_matrices` returns `sm.S` itself for full-width storage and
+        # widens narrow (offset) storage to block width — this site assumes
+        # block width, and was the sole reason narrow factor-by storage was
+        # gated off for SCAM smooths.
+        push!(con_penalties, GAM.penalty_matrices(sm)[1])  # primary penalty
     end
     n_con_blocks = length(con_X)
     total_con = sum(con_dims; init = 0)
