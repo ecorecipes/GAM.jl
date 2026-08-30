@@ -25,11 +25,13 @@ This vignette is a *tour of the tools* — what each diagnostic returns and how 
 ```{julia}
 #| output: false
 using GAM
-using StatsAPI: fitted, predict, residuals
+using StatsAPI: fitted, predict, residuals, aic
 using DataFrames
 using CSV
 using Random
 using Statistics
+using LinearAlgebra: norm, diag
+using Printf
 using Plots
 ```
 
@@ -317,6 +319,227 @@ from a naive EDF/$k'$ ratio, where *high* values flag trouble).
 kc = k_check(m)
 ```
 
+## Evaluation grids with `data_slice`
+
+`data_slice` builds an evaluation grid for the smooth containing a given
+variable. It returns *only that smooth's own* variables, so it is designed to
+feed per-term evaluation rather than whole-model `predict` (which would also
+need `x1`, `x2`, `x3` here):
+
+```{julia}
+ds = data_slice(m; var=:x0, n=5)
+```
+
+## Uncertainty when the smoothing parameters are estimated
+
+Everything above treats the smoothing parameters $\lambda$ as **known**. They
+are not — they were estimated from the same data. This section covers the
+machinery that accounts for that, which is where the `edf`/`edf1`/`edf2`
+family and the corrected covariance $\mathbf{V}_c$ come in.
+
+### Three degrees-of-freedom measures
+
+Let $\mathbf{F} = (\mathbf{X}^\top\mathbf{W}\mathbf{X} + \mathbf{S}_\lambda)^{-1}\mathbf{X}^\top\mathbf{W}\mathbf{X}$
+be the hat-matrix analogue in coefficient space. Then:
+
+| Quantity | Definition | Accounts for |
+|----------|-----------|--------------|
+| `edf` | $\mathrm{tr}(\mathbf{F})$ | the penalty only |
+| `edf1` | $2\,\mathrm{tr}(\mathbf{F}) - \mathrm{tr}(\mathbf{F}^2)$ | smoothing **bias**, for term-wise tests |
+| `edf2` | $\mathrm{rowSums}(\mathbf{V}_c \circ \mathbf{X}^\top\mathbf{W}\mathbf{X})/\phi$ | smoothing-parameter **uncertainty** |
+
+A wrinkle worth knowing: `edf(m)` returns one value **per smooth term**,
+whereas `m.edf1` and `edf2(m)` are **per coefficient**. So compare their
+*sums*, not their elements:
+
+```{julia}
+#| echo: false
+@printf("per-smooth edf      : %s\n", round.(edf(m), digits=3))
+@printf("edf_total           : %.4f   (includes the intercept)\n", m.edf_total)
+@printf("sum(edf1)           : %.4f\n", sum(m.edf1))
+@printf("sum(edf2)           : %.4f\n", sum(edf2(m)))
+@printf("lengths: edf=%d (per smooth), edf1=%d, edf2=%d (per coefficient)\n",
+    length(edf(m)), length(m.edf1), length(edf2(m)))
+```
+
+The ordering $\texttt{edf} \le \texttt{edf2} \le \texttt{edf1}$ is the general
+pattern: `edf1` inflates the df most (it is built for hypothesis tests, where
+under-stating df would inflate significance), while `edf2` sits between the
+two. `sum(edf2)` is the df behind mgcv's `AIC()`.
+
+### The corrected covariance $\mathbf{V}_c$
+
+`vcov_corrected(m)` returns the Wood, Pya & Säfken (2016) covariance
+$\mathbf{V}_c$ — mgcv's `Vc`, the matrix behind `predict.gam(..., unconditional = TRUE)`.
+It is wider than the Bayesian $\mathbf{V}_p$, which conditions on
+$\hat\lambda$ as though it were the truth. `has_vc(m)` reports whether it is
+available (it requires REML or ML with at least one free smoothing parameter).
+
+```{julia}
+#| echo: false
+Vp = m.Vp
+Vc = vcov_corrected(m)
+ratio = sqrt.(diag(Vc)) ./ sqrt.(diag(Vp))
+@printf("has_vc              : %s\n", has_vc(m))
+@printf("relative Frobenius ‖Vc − Vp‖/‖Vp‖ : %.4f\n", norm(Vc .- Vp) / norm(Vp))
+@printf("SE ratio Vc/Vp — min %.4f, median %.4f, max %.4f\n",
+    minimum(ratio), median(ratio), maximum(ratio))
+@printf("intercept SE ratio  : %.4f\n", ratio[1])
+```
+
+Note the intercept's ratio is exactly 1: the intercept is unpenalized, so no
+smoothing parameter governs it and there is nothing to correct. The
+correction concentrates on the penalized smooth coefficients, where it
+reaches roughly 40% here.
+
+### Does the correction actually work? A coverage experiment
+
+The claim is that intervals from $\mathbf{V}_p$ **under-cover** because they
+ignore the uncertainty in $\hat\lambda$, and that $\mathbf{V}_c$ repairs part
+of the shortfall. That is a testable claim, so we test it rather than assert
+it: simulate from a known function, fit, and count how often the nominal 95%
+interval contains the truth.
+
+```{julia}
+f_true(x) = sin(2π * x) + 0.4 * sin(6π * x)
+
+function coverage_study(; nrep, n, k, sigma, seed = 20260830, z = 1.96)
+    rng = Xoshiro(seed)
+    cp = Float64[]; cc = Float64[]; wp = Float64[]; wc = Float64[]
+    for _ in 1:nrep
+        x = rand(rng, n)
+        y = f_true.(x) .+ sigma .* randn(rng, n)
+        d = DataFrame(x = x, y = y)
+        mi = gam(@formula(y ~ s(x, k = k, bs = :cr)), d)
+        has_vc(mi) || continue
+        ep, sep = predict(mi, d; type = :link, se = true, unconditional = false)
+        ec, sec = predict(mi, d; type = :link, se = true, unconditional = true)
+        tr = f_true.(x)
+        push!(cp, mean(abs.(ep .- tr) .<= z .* sep))
+        push!(cc, mean(abs.(ec .- tr) .<= z .* sec))
+        push!(wp, mean(2z .* sep)); push!(wc, mean(2z .* sec))
+    end
+    return (; cp, cc, wp, wc)
+end
+```
+
+Each replicate contributes its own *across-the-function* coverage (the
+fraction of the $n$ points covered), and we average those. Because the two
+intervals are computed on the **same** replicates, the paired difference is
+far better determined than either column on its own — so we report its
+Monte Carlo standard error too.
+
+```{julia}
+#| echo: false
+mcse(v) = std(v) / sqrt(length(v))
+@printf("%-18s %-17s %-17s %-19s %s\n",
+    "setting", "Vp coverage", "Vc coverage", "paired difference", "width")
+for (n, k, sg) in [(200, 20, 0.5), (100, 20, 0.5), (80, 20, 0.8)]
+    r = coverage_study(; nrep = 150, n = n, k = k, sigma = sg)
+    d = r.cc .- r.cp
+    @printf("n=%3d k=%2d sd=%.1f  %.4f (±%.4f)  %.4f (±%.4f)  %+.4f (±%.4f)   ×%.3f\n",
+        n, k, sg, mean(r.cp), mcse(r.cp), mean(r.cc), mcse(r.cc),
+        mean(d), mcse(d), mean(r.wc) / mean(r.wp))
+end
+```
+
+Three things to read off this table:
+
+1. **The size of the correction tracks how well $\lambda$ is determined.** At
+   $n = 200$ the data pin down the smoothing parameter, $\mathbf{V}_p$ is
+   already close to nominal, and $\mathbf{V}_c$ widens intervals by only
+   ~3%. At $n = 80$ with heavier noise, $\lambda$ is poorly determined,
+   $\mathbf{V}_p$ coverage falls to ~0.85, and the correction widens
+   intervals by ~13%.
+2. **The improvement is real, not noise.** Every paired difference is many
+   standard errors from zero — this is exactly why the paired statistic is
+   worth reporting.
+3. **$\mathbf{V}_c$ is a partial fix, not a cure.** In the hardest setting it
+   lifts coverage from ~0.85 to ~0.89, still short of 0.95. It corrects for
+   having *estimated* $\lambda$; it does not correct the **smoothing bias**
+   that a penalized fit also carries. Under-coverage from bias needs a
+   different remedy (more basis functions, or less penalization).
+
+Everything downstream accepts `unconditional = true` to use $\mathbf{V}_c$:
+
+```{julia}
+se_unc = smooth_estimates(m; select = "s(x0)", n = 100, unconditional = true)
+se_con = smooth_estimates(m; select = "s(x0)", n = 100, unconditional = false)
+```
+
+```{julia}
+#| echo: false
+@printf("mean SE for s(x0): conditional (Vp) = %.5f, unconditional (Vc) = %.5f (×%.3f)\n",
+    mean(se_con.se), mean(se_unc.se), mean(se_unc.se) / mean(se_con.se))
+```
+
+### Model-selection scores
+
+`sp_criterion` returns the achieved smoothness-selection score — the
+analogue of mgcv's `b$gcv.ubre`, holding the REML/ML score under those
+methods and the GCV/UBRE score otherwise. `conditional_aic` returns the AIC
+conditional on the estimated smoothing parameters, which differs from the
+marginal `aic`:
+
+```{julia}
+#| echo: false
+@printf("sp_criterion (%s score) : %.4f\n", m.method, sp_criterion(m))
+@printf("aic                       : %.4f\n", aic(m))
+@printf("conditional_aic           : %.4f\n", conditional_aic(m))
+```
+
+Both are only comparable between fits to the *same* response with the *same*
+criterion.
+
+## Visualizing 2-D smooths
+
+The diagnostics above are one-dimensional. For a 2-D smooth, `vis_gam`
+returns the fitted surface on a grid and `gamcontour` gives a plot recipe.
+We simulate a surface with a stated data-generating process,
+$f(x, z) = \sin(2\pi x)\cos(\pi z)$ with Gaussian noise ($\sigma = 0.3$):
+
+```{julia}
+d2 = CSV.read("data_2d.csv", DataFrame)
+m2d = gam(@formula(y ~ s(x, z, k = 40, bs = :tp)), d2)
+```
+
+`vis_gam` returns grid vectors `x1`, `x2` and the surface `z`. The `too_far`
+argument masks grid cells far from any observed data (set to `NaN`), which
+keeps the plot from advertising extrapolation:
+
+```{julia}
+#| fig-width: 9
+#| fig-height: 4
+vg = vis_gam(m2d; select = 1, n_grid = 40, too_far = 0.1)
+
+p_surf = heatmap(vg.x1, vg.x2, vg.z';
+    xlabel = string(vg.x1_label), ylabel = string(vg.x2_label),
+    title = "vis_gam: fitted surface", color = :viridis)
+
+z_true = [sin(2π * a) * cos(π * b) for a in vg.x1, b in vg.x2]
+p_true = heatmap(vg.x1, vg.x2, (z_true .- mean(z_true))';
+    xlabel = "x", ylabel = "z", title = "truth (centered)", color = :viridis)
+
+plot(p_surf, p_true; layout = (1, 2), size = (900, 380))
+```
+
+```{julia}
+#| echo: false
+ok = .!isnan.(vg.z)
+@printf("grid cells masked by too_far : %d of %d\n", count(isnan, vg.z), length(vg.z))
+@printf("surface RMSE vs centered truth: %.4f  (noise sd = 0.3)\n",
+    sqrt(mean((vg.z[ok] .- mean(vg.z[ok]) .- (z_true[ok] .- mean(z_true[ok]))) .^ 2)))
+```
+
+Pass `se = true` for pointwise standard errors on the same grid, and use
+`gamcontour` for a contour view:
+
+```{julia}
+#| fig-width: 6
+#| fig-height: 5
+plot(gamcontour(m2d; select = 1, n_grid = 40); size = (600, 450))
+```
+
 ## Summary
 
 GAM.jl provides a comprehensive set of gratia-style diagnostics:
@@ -333,3 +556,15 @@ GAM.jl provides a comprehensive set of gratia-style diagnostics:
 | `partial_residuals` | Partial residuals per smooth |
 | `concurvity` | Smooth collinearity measures |
 | `k_check` | Basis dimension adequacy |
+| `data_slice` | Evaluation grid for one smooth's variables |
+| `edf` / `edf1` / `edf2` | Degrees of freedom: penalty / bias-corrected / $\lambda$-uncertainty-corrected |
+| `vcov_corrected`, `has_vc` | Wood–Pya–Säfken $\mathbf{V}_c$ and its availability |
+| `sp_criterion` | Achieved smoothness-selection score |
+| `conditional_aic` | AIC conditional on the estimated $\lambda$ |
+| `vis_gam` | 2-D fitted surface on a grid (with `too_far` masking) |
+| `gamcontour` | Contour-plot recipe for a 2-D smooth |
+
+Anything that produces standard errors or posterior draws —
+`smooth_estimates`, `derivatives`, `posterior_samples`, `fitted_samples`,
+`predict` — accepts `unconditional = true` to use $\mathbf{V}_c$ in place of
+$\mathbf{V}_p$.

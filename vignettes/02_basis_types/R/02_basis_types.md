@@ -9,6 +9,11 @@ Simon Frost
 - [Comparing EDF and deviance](#comparing-edf-and-deviance)
 - [Comparing smooth estimates](#comparing-smooth-estimates)
 - [Visualizing basis functions](#visualizing-basis-functions)
+- [Shrinkage bases: `"ts"` and `"cs"`](#shrinkage-bases-ts-and-cs)
+- [Adaptive smooths: `"ad"`](#adaptive-smooths-ad)
+- [B-splines and cyclic P-splines](#b-splines-and-cyclic-p-splines)
+- [Bases without an mgcv
+  counterpart](#bases-without-an-mgcv-counterpart)
 - [When to use which basis](#when-to-use-which-basis)
 - [Summary](#summary)
 
@@ -24,10 +29,17 @@ basis types:
 | `"tp"` | Thin plate regression spline | Default. Optimal in a certain sense; no knot placement needed |
 | `"cr"` | Cubic regression spline | Cubic spline with knots at data quantiles; efficient for 1D |
 | `"ps"` | P-spline | B-spline basis with difference penalty |
-| `"gp"` | Gaussian process | Squared-exponential covariance as a basis |
+| `"gp"` | Gaussian process | Matérn covariance as a basis |
+| `"ts"` | Thin plate with shrinkage | As `"tp"`, but the penalty also covers the null space |
+| `"cs"` | Cubic with shrinkage | As `"cr"`, but the penalty also covers the null space |
+| `"bs"` | B-spline | B-spline basis with an integrated squared-derivative penalty |
+| `"cp"` | Cyclic P-spline | P-spline constrained to wrap around |
+| `"ad"` | Adaptive smooth | Smoothing parameter varies across the domain |
 
 This vignette fits the same data with each basis and compares the
-results.
+results. The GAM.jl companion uses the symbols `:tp`, `:cr`, `:ps`,
+`:gp`, `:ts`, `:cs`, `:bs`, `:cps` and `:ad` for the same bases — note
+that mgcv’s cyclic P-spline is `"cp"` where GAM.jl writes `:cps`.
 
 ## Setup
 
@@ -168,6 +180,141 @@ for (i in seq_along(bases)) {
 par(mfrow = c(1, 1))
 ```
 
+## Shrinkage bases: `"ts"` and `"cs"`
+
+An ordinary spline penalty leaves a null space unpenalised, so however
+large the smoothing parameter grows a linear trend survives and the term
+cannot be removed. The shrinkage bases extend the penalty over the null
+space, letting a single smoothing parameter shrink the whole term to
+zero.
+
+We use a dataset with a relevant covariate `x` and an irrelevant `z`:
+
+``` r
+sh <- read.csv("../data_shrink.csv")
+
+edf_pair <- function(basis, select = FALSE) {
+  m <- gam(y ~ s(x, k = 15, bs = basis) + s(z, k = 15, bs = basis),
+           data = sh, method = "REML", select = select)
+  e <- summary(m)$edf
+  c(edf_x = e[1], edf_z = e[2], logsp = log(m$sp))
+}
+
+res <- t(sapply(c("tp", "ts", "cr", "cs"), function(b) edf_pair(b)[1:2]))
+print(round(res, 4))
+```
+
+        edf_x  edf_z
+    tp 8.4214 1.6758
+    ts 8.1330 0.0003
+    cr 8.3971 1.6854
+    cs 8.0988 0.0002
+
+``` r
+sel <- edf_pair("tp", select = TRUE)
+cat(sprintf("tp + select: edf(x)=%.3f edf(z)=%.4f\n", sel[1], sel[2]))
+```
+
+    tp + select: edf(x)=8.385 edf(z)=0.0001
+
+`"ts"` and `"cs"` both drive the irrelevant term to essentially zero
+here, where `"tp"` and `"cr"` leave it around 1.7 effective degrees of
+freedom.
+
+The smoothing parameters are worth inspecting, because this is where
+GAM.jl and mgcv part company:
+
+``` r
+for (b in c("ts", "cs")) {
+  m <- gam(y ~ s(x, k = 15, bs = b) + s(z, k = 15, bs = b),
+           data = sh, method = "REML")
+  cat(sprintf("%s: log(sp) = %s\n", b, paste(round(log(m$sp), 2), collapse = ", ")))
+}
+```
+
+    ts: log(sp) = -3.98, 16.8
+    cs: log(sp) = 4.27, 22.61
+
+mgcv drives the irrelevant term’s smoothing parameter well past
+$\log \lambda = 15$ — for `"cs"` it reaches about 22.6. GAM.jl caps
+$\log \lambda$ at 15, which is ample for `:ts` but leaves `:cs` stalled
+around `edf(z) ≈ 0.29`. The shrinkage penalties themselves agree; the
+bound on the smoothing parameter does not.
+
+## Adaptive smooths: `"ad"`
+
+``` r
+ad <- read.csv("../data_adaptive.csv")
+flat <- ad$x < 0.5
+
+for (b in c("ps", "tp", "ad")) {
+  m <- gam(y ~ s(x, k = 40, bs = b), data = ad, method = "REML")
+  fv <- fitted(m)
+  cat(sprintf("%-3s edf=%.2f RMSE(flat)=%.4f RMSE(wiggly)=%.4f\n", b,
+      sum(m$edf) - 1,
+      sqrt(mean((fv[flat] - ad$f_true[flat])^2)),
+      sqrt(mean((fv[!flat] - ad$f_true[!flat])^2))))
+}
+```
+
+    ps  edf=28.33 RMSE(flat)=0.0322 RMSE(wiggly)=0.0509
+    tp  edf=31.74 RMSE(flat)=0.0339 RMSE(wiggly)=0.0526
+    ad  edf=19.08 RMSE(flat)=0.0113 RMSE(wiggly)=0.0503
+
+As in GAM.jl, the adaptive basis is roughly three times more accurate on
+the flat half while using fewer effective degrees of freedom. `m` sets
+the number of adaptive sub-penalties (mgcv’s `p.order`), each with its
+own smoothing parameter:
+
+``` r
+for (mm in c(3, 5, 8)) {
+  m <- gam(y ~ s(x, k = 40, bs = "ad", m = mm), data = ad, method = "REML")
+  cat(sprintf("m = %d: %d smoothing parameters, edf = %.2f\n",
+              mm, length(m$sp), sum(m$edf) - 1))
+}
+```
+
+    m = 3: 3 smoothing parameters, edf = 26.09
+    m = 5: 5 smoothing parameters, edf = 19.08
+    m = 8: 8 smoothing parameters, edf = 18.63
+
+## B-splines and cyclic P-splines
+
+mgcv’s `"bs"` takes a **vector** `m = c(spline_order, penalty_order)`.
+GAM.jl takes a scalar `m` — the penalty order — and fixes the spline
+order at `m + 2`, so GAM.jl’s `m = j` corresponds to mgcv’s
+`m = c(3, j)`. The defaults agree.
+
+``` r
+for (mm in list(c(3, 1), c(3, 2), c(3, 3))) {
+  m <- gam(y ~ s(x, k = 20, bs = "bs", m = mm), data = df, method = "REML")
+  cat(sprintf("m=c(%s): edf=%.3f deviance=%.3f\n",
+              paste(mm, collapse = ","), sum(m$edf) - 1, deviance(m)))
+}
+```
+
+    m=c(3,1): edf=15.386 deviance=64.218
+    m=c(3,2): edf=12.491 deviance=64.466
+    m=c(3,3): edf=10.394 deviance=65.041
+
+``` r
+m_cp <- gam(y ~ s(x, k = 20, bs = "cp"), data = df, method = "REML")
+cat(sprintf("cp: edf=%.3f deviance=%.3f\n", sum(m_cp$edf) - 1, deviance(m_cp)))
+```
+
+    cp: edf=10.795 deviance=64.880
+
+The simulated function is genuinely periodic on $[0, 1]$, so the cyclic
+constraint is legitimate and buys a comparable fit for fewer degrees of
+freedom.
+
+## Bases without an mgcv counterpart
+
+GAM.jl also provides `:fp` (fractional polynomials) and `:lo` (a
+loess-style basis). Neither is an mgcv basis, so there is no
+side-by-side comparison for them; they are demonstrated only in the
+GAM.jl vignette.
+
 ## When to use which basis
 
 - **Thin plate (`"tp"`)**: The default choice. Works well in any
@@ -183,9 +330,26 @@ par(mfrow = c(1, 1))
   adjacent coefficients. Evenly spaced knots. Computationally efficient
   and well-behaved, especially for evenly sampled data.
 
-- **Gaussian process (`"gp"`)**: Uses a squared-exponential covariance
-  kernel. Produces very smooth curves. Useful when the underlying
-  function is believed to be infinitely differentiable.
+- **Gaussian process (`"gp"`)**: Uses a Matérn covariance kernel by
+  default (the correlation family is chosen through `m`), whose sample
+  paths are finitely differentiable — smoother than an exponential
+  kernel but deliberately rougher than a squared-exponential. A good
+  choice when the underlying function is smooth but not analytically so.
+
+- **Shrinkage (`"ts"`, `"cs"`)**: `"tp"` and `"cr"` with the null space
+  penalised too, so the term can be shrunk out of the model entirely —
+  an alternative to `select = TRUE`.
+
+- **B-spline (`"bs"`)**: A B-spline basis penalising an integrated
+  squared derivative directly, with
+  `m = c(spline_order, penalty_order)`.
+
+- **Cyclic P-spline (`"cp"`)**: For periodic covariates, where the
+  smooth must join up at the ends.
+
+- **Adaptive (`"ad"`)**: For functions whose wiggliness varies across
+  the domain, at the cost of several smoothing parameters instead of
+  one.
 
 ## Summary
 

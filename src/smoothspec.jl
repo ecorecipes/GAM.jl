@@ -130,6 +130,38 @@ function _normalize_tensor_xt(xt, d::Int)
 end
 
 """
+    _normalize_m(m, fname) -> Union{Int, Nothing}
+
+Validate the `m` (penalty/basis order) argument.
+
+`m` is a SCALAR in GAM.jl. mgcv spells some orders as a vector — most often
+`bs = "bs"` with `m = c(spline_order, penalty_order)`, and `bs = "ds"` with
+`m = c(m, s)` — so a vector arrives here from anyone porting R code
+verbatim. It used to die with a bare `MethodError: no method matching
+Int64(::Vector{Int64})`, which says nothing about the convention; this raises
+an error that names the mapping instead.
+
+Note `sp` DOES accept a vector (adaptive smooths and `t2`/`fs` terms carry
+several smoothing parameters), so rejecting a vector here is a real
+asymmetry rather than a blanket rule — hence spelling it out.
+"""
+function _normalize_m(m, fname::String)
+    m === nothing && return nothing
+    if m isa AbstractVector
+        throw(ArgumentError(
+            "$fname(...; m = $(m)): `m` must be a scalar in GAM.jl, not a " *
+            "vector. mgcv writes some orders as a vector — `bs=\"bs\"` uses " *
+            "`m = c(spline_order, penalty_order)` and `bs=\"ds\"` uses " *
+            "`m = c(m, s)` — but GAM.jl takes the penalty order alone, so " *
+            "mgcv's `m = c(3, 2)` is `m = 2` here. (`sp` does accept a " *
+            "vector; `m` does not.)"))
+    end
+    m isa Real || throw(ArgumentError(
+        "$fname(...; m = $(m)): `m` must be an integer, got $(typeof(m))"))
+    return Int(m)
+end
+
+"""
     s(vars...; bs=:tp, k=-1, by=nothing, id=nothing, sp=nothing, fx=false, m=nothing,
       xt=Dict{Symbol,Any}())
 
@@ -201,7 +233,7 @@ function s(vars::Symbol...; bs::Symbol = :tp, k::Int = -1, by = nothing,
     by_sym = by isa Symbol ? by : (by isa Term ? by.sym : nothing)
     id_sym = id isa Symbol ? id : nothing
     sp_val = _normalize_sp(sp, "s", vars)
-    m_val = m === nothing ? nothing : Int(m)
+    m_val = _normalize_m(m, "s")
     xt_norm = _normalize_xt(xt; pc = pc)
     _check_sos_units(bs, xt_norm, vars)
 
@@ -270,7 +302,7 @@ function te(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
     # Marginals must not inherit a VECTOR sp: its entries index the tensor's
     # own penalties, not a marginal's. A scalar still propagates, unchanged.
     sp_marg = sp_val isa AbstractVector ? nothing : sp_val
-    m_val = m === nothing ? nothing : Int(m)
+    m_val = _normalize_m(m, "te")
     xt_vec = _normalize_tensor_xt(xt, d)
 
     marginals = SmoothSpec[]
@@ -331,7 +363,7 @@ function ti(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
     # Marginals must not inherit a VECTOR sp: its entries index the tensor's
     # own penalties, not a marginal's. A scalar still propagates, unchanged.
     sp_marg = sp_val isa AbstractVector ? nothing : sp_val
-    m_val = m === nothing ? nothing : Int(m)
+    m_val = _normalize_m(m, "ti")
     xt_vec = _normalize_tensor_xt(xt, d)
 
     marginals = SmoothSpec[]
@@ -484,7 +516,7 @@ function t2(vars::Symbol...; k::Union{Int,AbstractVector{<:Integer}}=-1, bs::Uni
     # Marginals must not inherit a VECTOR sp: its entries index the tensor's
     # own penalties, not a marginal's. A scalar still propagates, unchanged.
     sp_marg = sp_val isa AbstractVector ? nothing : sp_val
-    m_val = m === nothing ? nothing : Int(m)
+    m_val = _normalize_m(m, "t2")
     xt_vec = _normalize_tensor_xt(xt, d)
 
     marginals = SmoothSpec[]

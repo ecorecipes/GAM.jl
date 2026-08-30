@@ -678,7 +678,7 @@ function outer_iteration_bam(D::BamDesign, y::Vector{Float64},
                     log_sp_new[sp_idx] = log(λ) + 0.5 * (log(max(λ_new, 1e-15)) - log(λ))
                 end
 
-                log_sp_new[sp_idx] = clamp(log_sp_new[sp_idx], -15.0, 15.0)
+                log_sp_new[sp_idx] = clamp(log_sp_new[sp_idx], -LOG_SP_BOUND, LOG_SP_BOUND)
                 max_change = max(max_change, abs(log_sp_new[sp_idx] - log_sp[sp_idx]))
                 sp_idx += 1
             end
@@ -877,7 +877,8 @@ function bam(f::FormulaTerm, data;
     select::Bool = false,
     discrete = false,
     control::GamControl = gam_control(),
-    bam_ctrl::BamControl = bam_control())
+    bam_ctrl::BamControl = bam_control(),
+    knots = nothing)
 
     _bam_check_method(method)
     _validate_bam_kwargs(discrete, retain_X)
@@ -891,7 +892,8 @@ function bam(f::FormulaTerm, data;
         na_action; weights = weights, offset = offset)
     na_action === :fail && _validate_model_columns(data, _model_covariates(f))
 
-    y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
+    y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family,
+        knots = knots)
     return _fit_bam(y, X, X_para, smooths, n_parametric, f, data, family, link,
         method, weights, offset, select, control, bam_ctrl, discrete,
         _resolve_retain_X(retain_X, discrete))
@@ -908,7 +910,8 @@ function bam(gf::GamFormula, data;
     select::Bool = false,
     discrete = false,
     control::GamControl = gam_control(),
-    bam_ctrl::BamControl = bam_control())
+    bam_ctrl::BamControl = bam_control(),
+    knots = nothing)
 
     _bam_check_method(method)
     _validate_bam_kwargs(discrete, retain_X)
@@ -929,13 +932,13 @@ function bam(gf::GamFormula, data;
     # `n × 2000` dense matrix and dominates peak RSS.
     keep_X = _resolve_retain_X(retain_X, discrete)
     y, X, X_para, smooths, n_parametric = if discrete === false
-        setup_gam(gf, data; family = family)
+        setup_gam(gf, data; family = family, knots = knots)
     else
         # `build_X = false` skips the `n x p` assembly entirely: the design is
         # built from `X_para` plus the per-smooth bases, and `model_matrix(m)`
         # reassembles bitwise on demand.
         setup_gam_discrete(gf, data, discrete === true ? 1000 : Int(discrete);
-            family = family, build_X = keep_X)
+            family = family, build_X = keep_X, knots = knots)
     end
     f = term(gf.response) ~ term(1)
     return _fit_bam(y, X, X_para, smooths, n_parametric, f, data, family, link,

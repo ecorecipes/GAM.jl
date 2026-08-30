@@ -1,1 +1,1 @@
-{"entries":[],"headings":["overview","setup","loading-data","fitting-models-with-different-bases","comparing-edf-and-deviance","comparing-smooth-estimates","visualizing-basis-functions","when-to-use-which-basis","summary"]}
+{"entries":[],"headings":["overview","setup","loading-data","fitting-models-with-different-bases","comparing-edf-and-deviance","comparing-smooth-estimates","visualizing-basis-functions","shrinkage-bases-ts-and-cs","adaptive-smooths-ad","b-splines-and-cyclic-p-splines","bases-without-an-mgcv-counterpart","when-to-use-which-basis","summary"]}

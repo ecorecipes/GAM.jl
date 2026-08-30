@@ -215,8 +215,9 @@ GAM.jl's `gam()` is the fast one in absolute terms; mgcv's `bam()` has a large
 ratio to report mainly because mgcv's `gam()` re-forms a QR at every outer
 iteration. So the practical advice differs by package: in mgcv, reach for
 `bam()` almost as soon as $n$ leaves the hundreds; in GAM.jl, `gam()` stays
-competitive for longer. (mgcv's `bam(discrete = TRUE)`, which GAM.jl does not
-implement, would be faster again — these are `discrete = FALSE` timings.)
+competitive for longer. (These are `discrete = FALSE` timings on both sides;
+covariate discretization is faster again in either package, and GAM.jl
+implements it too — see [Discretization](#discretization) below.)
 
 ### Scaling in `k`, not just `n`
 

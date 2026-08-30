@@ -1,6 +1,29 @@
 # Core type hierarchy for GAM.jl
 
 # ============================================================================
+# Smoothing parameter bounds
+# ============================================================================
+
+"""
+Bounds on `log λ` shared by every smoothing-parameter optimizer (EFS, Newton,
+GCV/UBRE, `bam`, `scam`, `gamlss`, `mpfit`).
+
+`30.0`, not the former `15.0`. The old bound was too low to shrink a term out
+through a shrinkage basis: `bs=:cs` cascades its null-space eigenvalues down to
+`shrink^2`, so it needs roughly 100x more λ than `bs=:ts` for the same amount
+of shrinkage, and mgcv's own optima on a term that should vanish sit at
+`log λ = 16.8` (`ts`) and `22.61` (`cs`) — both above 15. Terms pinned exactly
+at the bound and could not shrink further: an irrelevant covariate held
+`edf = 0.286` where mgcv reached `0.0002`, and fixing λ by hand walked it to
+`0.0026` at `log λ = 20` and `1.8e-5` at `25`.
+
+Keep every optimizer on this constant rather than a literal, so the bound
+cannot drift between them — a term that can shrink out under one method and
+not another is a silent modelling difference.
+"""
+const LOG_SP_BOUND = 30.0
+
+# ============================================================================
 # Smoothing method selectors
 # ============================================================================
 

@@ -621,9 +621,37 @@ Set up a GAM from a GamFormula and data. Returns all components needed for fitti
 - Constructed smooths
 - Number of parametric columns
 """
+
+"""
+    _knots_for(spec, knots) -> Union{Vector{Float64}, Nothing}
+
+Per-smooth knot vector from a user `knots` mapping, mirroring mgcv's
+`knots = list(x = ...)`. Returns `nothing` when the user supplied none for
+this smooth's covariate, which is the "place knots at data quantiles"
+default.
+
+Only 1-D smooths are looked up. mgcv also accepts per-margin knots for tensor
+smooths; that is not supported here, and passing knots for a multivariate
+smooth's covariate is ignored rather than half-applied — see the `knots`
+documentation on `gam`.
+"""
+function _knots_for(spec::SmoothSpec, knots)
+    knots === nothing && return nothing
+    length(spec.term_vars) == 1 || return nothing
+    v = spec.term_vars[1]
+    haskey(knots, v) || return nothing
+    kv = Float64.(collect(knots[v]))
+    length(kv) >= 2 || throw(ArgumentError(
+        "knots for :$v must have at least 2 entries, got $(length(kv))"))
+    issorted(kv) || throw(ArgumentError(
+        "knots for :$v must be sorted in increasing order"))
+    return kv
+end
+
 function setup_gam(gf::GamFormula, data;
     family::UnivariateDistribution = Normal(),
-    contrasts::AbstractDict{Symbol} = Dict{Symbol, Any}())
+    contrasts::AbstractDict{Symbol} = Dict{Symbol, Any}(),
+    knots = nothing)
 
     t = Tables.columntable(data)
 
@@ -637,7 +665,7 @@ function setup_gam(gf::GamFormula, data;
     # Construct smooth bases
     smooths = ConstructedSmooth[]
     for spec in gf.smooth_specs
-        sm = smooth_construct(spec, t)
+        sm = smooth_construct(spec, t, _knots_for(spec, knots))
         push!(smooths, sm)
     end
 
@@ -699,10 +727,11 @@ Falls back to `setup_gam` wholesale when smooths share a covariate, since side
 constraints need the `n`-row blocks.
 """
 function setup_gam_discrete(gf::GamFormula, data, m_grid::Int;
-    family::UnivariateDistribution = Normal(), build_X::Bool = true)
+    family::UnivariateDistribution = Normal(), build_X::Bool = true,
+    knots = nothing)
 
     _smooths_share_variables(gf.smooth_specs) &&
-        return setup_gam(gf, data; family = family)
+        return setup_gam(gf, data; family = family, knots = knots)
 
     t = Tables.columntable(data)
     y = Float64.(Tables.getcolumn(t, gf.response))
@@ -713,9 +742,15 @@ function setup_gam_discrete(gf::GamFormula, data, m_grid::Int;
     smooths = ConstructedSmooth[]
     idx = Vector{Union{Nothing, Vector{Int32}}}()
     for spec in gf.smooth_specs
-        r = _reduced_smooth(spec, t, m_grid, n)
+        # Reduced construction builds the basis on the unique-value grid and
+        # supplies its OWN knots, so it cannot honour user knots. Fall back to
+        # dense construction for that smooth rather than silently discarding
+        # them — a `cc` smooth whose period was set via `knots=` and then
+        # ignored is a wrong model, not a slow one.
+        uk = _knots_for(spec, knots)
+        r = uk === nothing ? _reduced_smooth(spec, t, m_grid, n) : nothing
         if r === nothing
-            push!(smooths, smooth_construct(spec, t))
+            push!(smooths, smooth_construct(spec, t, uk))
             push!(idx, nothing)
         else
             sm, k, _ = r
@@ -776,7 +811,8 @@ end
 # Legacy: setup_gam from FormulaTerm (for @formula without smooth terms)
 function setup_gam(f::FormulaTerm, data;
     family::UnivariateDistribution = Normal(),
-    contrasts::AbstractDict{Symbol} = Dict{Symbol, Any}())
+    contrasts::AbstractDict{Symbol} = Dict{Symbol, Any}(),
+    knots = nothing)
 
     t = Tables.columntable(data)
     resp_col = f.lhs isa Term ? f.lhs.sym : error("LHS must be a single term")
@@ -789,7 +825,7 @@ function setup_gam(f::FormulaTerm, data;
 
     smooths = ConstructedSmooth[]
     for st in smooth_terms
-        sm = smooth_construct(st.spec, t)
+        sm = smooth_construct(st.spec, t, _knots_for(st.spec, knots))
         st.smooth = sm
         push!(smooths, sm)
     end

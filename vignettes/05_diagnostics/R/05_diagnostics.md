@@ -19,6 +19,9 @@ Simon Frost
   - [Fitted samples](#fitted-samples)
 - [Concurvity](#concurvity)
 - [Basis dimension check](#basis-dimension-check)
+- [Uncertainty when the smoothing parameters are
+  estimated](#uncertainty-when-the-smoothing-parameters-are-estimated)
+- [Visualizing 2-D smooths](#visualizing-2-d-smooths)
 - [Summary](#summary)
 
 ## Introduction
@@ -392,24 +395,159 @@ k.check(m)
 ```
 
           k'      edf   k-index p-value
-    s(x0)  9 3.426140 1.0475474  0.7925
-    s(x1)  9 3.199210 1.0197537  0.6300
-    s(x2)  9 7.833919 1.0422706  0.8025
-    s(x3)  9 1.886556 0.9756429  0.3125
+    s(x0)  9 3.426140 1.0475474  0.8000
+    s(x1)  9 3.199210 1.0197537  0.6575
+    s(x2)  9 7.833919 1.0422706  0.7575
+    s(x3)  9 1.886556 0.9756429  0.3100
+
+## Uncertainty when the smoothing parameters are estimated
+
+mgcv carries the same three degrees-of-freedom measures as GAM.jl, in
+`m$edf`, `m$edf1` and `m$edf2`, and the same corrected covariance in
+`m$Vc`. These are the quantities behind
+`predict.gam(..., unconditional = TRUE)`.
+
+``` r
+cat(sprintf("edf_total  : %.4f\n", sum(m$edf)))
+```
+
+    edf_total  : 17.3458
+
+``` r
+cat(sprintf("sum(edf1)  : %.4f\n", sum(m$edf1)))
+```
+
+    sum(edf1)  : 20.1950
+
+``` r
+cat(sprintf("sum(edf2)  : %.4f\n", sum(m$edf2)))
+```
+
+    sum(edf2)  : 19.6644
+
+``` r
+cat(sprintf("per-smooth edf: %s\n",
+    paste(round(sapply(m$smooth,
+        function(s) sum(m$edf[s$first.para:s$last.para])), 3), collapse = ", ")))
+```
+
+    per-smooth edf: 3.426, 3.199, 7.834, 1.887
+
+``` r
+Vp <- m$Vp; Vc <- m$Vc
+r <- sqrt(diag(Vc)) / sqrt(diag(Vp))
+cat(sprintf("rel. Frobenius |Vc - Vp|/|Vp| : %.4f\n",
+    norm(Vc - Vp, "F") / norm(Vp, "F")))
+```
+
+    rel. Frobenius |Vc - Vp|/|Vp| : 0.2794
+
+``` r
+cat(sprintf("SE ratio Vc/Vp - min %.4f, median %.4f, max %.4f\n",
+    min(r), median(r), max(r)))
+```
+
+    SE ratio Vc/Vp - min 1.0000, median 1.0860, max 1.4285
+
+``` r
+cat(sprintf("intercept SE ratio : %.4f\n", r[1]))
+```
+
+    intercept SE ratio : 1.0000
+
+``` r
+cat(sprintf("REML score (gcv.ubre) : %.4f\n", m$gcv.ubre))
+```
+
+    REML score (gcv.ubre) : 881.9628
+
+``` r
+cat(sprintf("AIC : %.4f\n", AIC(m)))
+```
+
+    AIC : 1752.8194
+
+These agree closely with the Julia vignette, which is the point of the
+comparison — the `Vc` machinery is a faithful port, not a re-derivation:
+
+| Quantity                                  | GAM.jl    | mgcv 1.9-4 |
+|-------------------------------------------|-----------|------------|
+| `edf_total`                               | 17.3502   | 17.3458    |
+| `sum(edf1)`                               | 20.2004   | 20.1950    |
+| `sum(edf2)`                               | 19.6689   | 19.6644    |
+| $\lVert V_c - V_p\rVert/\lVert V_p\rVert$ | 0.2794    | 0.2794     |
+| max SE ratio                              | 1.4279    | 1.4285     |
+| REML score                                | 881.9628  | 881.9628   |
+| AIC                                       | 1752.8195 | 1752.8194  |
+
+The residual differences (in the fifth significant figure) come from the
+two implementations converging to very slightly different smoothing
+parameters, not from a difference in the formulas.
+
+Interval widths with and without the correction:
+
+``` r
+p_con <- predict(m, se.fit = TRUE, unconditional = FALSE)
+p_unc <- predict(m, se.fit = TRUE, unconditional = TRUE)
+cat(sprintf("mean SE conditional (Vp)   : %.5f\n", mean(p_con$se.fit)))
+```
+
+    mean SE conditional (Vp)   : 0.43391
+
+``` r
+cat(sprintf("mean SE unconditional (Vc) : %.5f  (x%.4f)\n",
+    mean(p_unc$se.fit), mean(p_unc$se.fit) / mean(p_con$se.fit)))
+```
+
+    mean SE unconditional (Vc) : 0.46183  (x1.0644)
+
+## Visualizing 2-D smooths
+
+`vis.gam` is mgcv’s 2-D surface plot; the Julia vignette’s `vis_gam`
+returns the same surface as data (`x1`, `x2`, `z`) for plotting with any
+backend. Both accept `too.far` / `too_far` to mask grid cells far from
+the data.
+
+``` r
+d2 <- read.csv("../data_2d.csv")
+m2d <- gam(y ~ s(x, z, k = 40, bs = "tp"), data = d2, method = "REML")
+cat(sprintf("2-D fit: edf = %.3f\n", sum(m2d$edf)))
+```
+
+    2-D fit: edf = 31.366
+
+``` r
+op <- par(mfrow = c(1, 2))
+vis.gam(m2d, view = c("x", "z"), plot.type = "contour",
+        too.far = 0.1, main = "vis.gam contour")
+vis.gam(m2d, view = c("x", "z"), plot.type = "persp",
+        theta = 30, phi = 25, main = "vis.gam perspective")
+```
+
+![](05_diagnostics_files/figure-commonmark/unnamed-chunk-22-1.png)
+
+``` r
+par(op)
+```
 
 ## Summary
 
 Both GAM.jl and gratia provide equivalent diagnostic interfaces:
 
-| gratia (R)            | GAM.jl (Julia)        |
-|-----------------------|-----------------------|
-| `overview()`          | `overview()`          |
-| `smooth_estimates()`  | `smooth_estimates()`  |
-| `derivatives()`       | `derivatives()`       |
-| `appraise()`          | `appraise()`          |
-| `posterior_samples()` | `posterior_samples()` |
-| `fitted_samples()`    | `fitted_samples()`    |
-| `smooth_samples()`    | `smooth_samples()`    |
-| `partial_residuals()` | `partial_residuals()` |
-| `model_concurvity()`  | `concurvity()`        |
-| `k.check()`           | `k_check()`           |
+| gratia / mgcv (R)           | GAM.jl (Julia)              |
+|-----------------------------|-----------------------------|
+| `overview()`                | `overview()`                |
+| `smooth_estimates()`        | `smooth_estimates()`        |
+| `derivatives()`             | `derivatives()`             |
+| `appraise()`                | `appraise()`                |
+| `posterior_samples()`       | `posterior_samples()`       |
+| `fitted_samples()`          | `fitted_samples()`          |
+| `smooth_samples()`          | `smooth_samples()`          |
+| `partial_residuals()`       | `partial_residuals()`       |
+| `model_concurvity()`        | `concurvity()`              |
+| `k.check()`                 | `k_check()`                 |
+| `m$edf`, `m$edf1`, `m$edf2` | `edf()`, `m.edf1`, `edf2()` |
+| `m$Vc`                      | `vcov_corrected()`          |
+| `unconditional = TRUE`      | `unconditional = true`      |
+| `m$gcv.ubre`                | `sp_criterion()`            |
+| `vis.gam()`                 | `vis_gam()`, `gamcontour()` |

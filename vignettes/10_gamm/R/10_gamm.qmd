@@ -198,6 +198,88 @@ barplot(sort(re2_est), horiz = TRUE, las = 1,
 abline(v = 0, lty = 2)
 ```
 
+## Example 3: Factor-Smooth Interactions (`bs="fs"`)
+
+mgcv's `s(x, fac, bs="fs")` fits the same factor-smooth interaction as GAM.jl's
+`s(x, group, bs=:fs)`: one smooth curve per level, with a small fixed set of
+smoothing parameters shared across levels rather than one per level.
+
+```{r}
+traj <- read.csv("../data_fs_trajectories.csv")
+traj$subject <- factor(as.integer(traj$subject))
+cat(sprintf("n = %d, subjects = %d\n", nrow(traj), nlevels(traj$subject)))
+```
+
+### Fitting
+
+```{r}
+m_fs <- gam(y ~ s(t, subject, bs = "fs", k = 8), data = traj, method = "REML")
+cat(sprintf("edf = %.2f\n", sum(m_fs$edf)))
+cat(sprintf("deviance explained = %.4f\n", summary(m_fs)$dev.expl))
+cat(sprintf("smoothing parameters: %d\n", length(m_fs$sp)))
+cat(sprintf("sp = %s\n", paste(sprintf("%.5g", m_fs$sp), collapse = ", ")))
+```
+
+Three smoothing parameters for fifteen subjects, exactly as in GAM.jl: one for
+the per-subject intercepts, one for the slopes, one for the wiggliness.
+
+### What a random intercept cannot do
+
+```{r}
+truth <- traj$f_pop + traj$dev_true
+m_ri <- gam(y ~ s(t, k = 10) + s(subject, bs = "re"), data = traj, method = "REML")
+cat(sprintf("fs        : edf %6.2f   RMSE vs true curves %.4f\n",
+            sum(m_fs$edf), sqrt(mean((fitted(m_fs) - truth)^2))))
+cat(sprintf("pop + re  : edf %6.2f   RMSE vs true curves %.4f\n",
+            sum(m_ri$edf), sqrt(mean((fitted(m_ri) - truth)^2))))
+```
+
+### Plot
+
+```{r fig.width=9, fig.height=4}
+par(mfrow = c(1, 2))
+tg <- seq(0.02, 0.98, length.out = 150)
+levs <- levels(traj$subject)
+cols <- rainbow(length(levs))
+
+plot(traj$t, traj$y, col = adjustcolor(cols[traj$subject], alpha.f = 0.35),
+     pch = 16, cex = 0.5, xlab = "t (scaled follow-up)", ylab = "y",
+     main = 'bs="fs" — one curve per subject')
+for (i in seq_along(levs)) {
+  pr <- predict(m_fs, newdata = data.frame(t = tg, subject = factor(levs[i], levels = levs)))
+  lines(tg, pr, col = cols[i], lwd = 1.4)
+}
+lines(tg, 3 + 4 * sin(pi * tg) - 1.2 * tg, col = "black", lwd = 3, lty = 2)
+
+plot(range(tg), range(traj$y), type = "n", xlab = "t (scaled follow-up)",
+     ylab = "y", main = "fs (solid) vs random intercept (dashed)")
+for (i in 1:4) {
+  sub <- traj[traj$subject == levs[i], ]
+  lines(sub$t, sub$f_pop + sub$dev_true, col = adjustcolor(cols[i], alpha.f = 0.4), lwd = 3)
+  nd <- data.frame(t = tg, subject = factor(levs[i], levels = levs))
+  lines(tg, predict(m_fs, newdata = nd), col = cols[i], lwd = 2)
+  lines(tg, predict(m_ri, newdata = nd), col = cols[i], lwd = 1.6, lty = 2)
+}
+```
+
+### Agreement with GAM.jl, and the one caveat
+
+On this dataset the two packages agree closely: `edf` 89.64 (mgcv) against
+89.69 (GAM.jl), identical deviance explained (0.9546), and RMSE against the
+true subject curves of 0.1675 against 0.1672. Fitted values correlate at
+0.9999971, a maximum difference of 0.16% of the fitted range. The
+random-intercept comparison agrees to four decimal places in both packages
+(edf 20.73, RMSE 0.4250).
+
+The **smoothing parameters do not transfer**, though. Both packages report
+three, and the wiggliness parameter agrees closely (mgcv 0.010982, GAM.jl
+0.010959), but mgcv applies the `nat.param(type=1)` reparameterization to the
+null-space components, so the remaining two are expressed on a different
+footing and do not correspond elementwise. Feeding mgcv's `sp` into GAM.jl
+makes the fits agree *less* well (0.52% of range, versus 0.16% when each
+package selects its own). Compare `fs` fits at freely selected smoothing
+parameters, and compare fitted values and EDF rather than raw `sp`.
+
 ## Syntax Comparison
 
 | Feature | Julia (GAM.jl) | R (mgcv) |
@@ -206,6 +288,7 @@ abline(v = 0, lty = 2)
 | `@formula` path | `gamm(@formula(y ~ cr(x, 10) + (1\|g)), df)` | — |
 | `re()` shorthand | `gamm(@formula(y ~ cr(x, 10) + re(g)), df)` | — |
 | Equivalent GAM | `gam(@formula(y ~ s(x) + s(g, bs=:re)), df)` | `gam(y ~ s(x) + s(g, bs="re"), data=df)` |
+| Factor-smooth | `s(x, g, bs=:fs)` | `s(x, g, bs="fs")` |
 | Non-Gaussian | `gamm(..., Poisson())` | `gamm(..., family=poisson())` |
 | Extract RE | `ranef(m)` | `ranef(m$lme)` |
 | Variance components | `VarCorr(m)` | `VarCorr(m$lme)` |

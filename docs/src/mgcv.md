@@ -17,6 +17,7 @@ equivalence is verified separately — see below).
 | Family | `family=poisson()` | `family=Poisson()` |
 | Link | implicit | `link=LogLink()` |
 | Method | `method="REML"` (default: `"GCV.Cp"`) | `method=:REML` (default: `:REML`) |
+| Knots | `knots=list(x=c(0,52))` | `knots=Dict(:x => [0.0, 52.0])` |
 | Summary | `summary(m)` | `m` (pretty-printed) |
 | Coefficients | `coef(m)` | `coef(m)` |
 | Deviance | `deviance(m)` | `deviance(m)` |
@@ -190,7 +191,7 @@ differs, so compare `fs` fits at freely selected `sp`). Smoothing parameters
 | Soap film (`:so`) | ✅ | ⚠️ approximation |
 | `t2()` tensor construction (Wood–Scheipl–Faraway) | ✅ | ✅ (verified against mgcv: matching columns, penalty count, ranks, supports) |
 | Linear functional terms (matrix args) | ✅ | ❌ |
-| `bam(discrete=TRUE)` covariate discretization | ✅ | ✅ `bam(...; discrete=true)` — 1-D, `te`, `bs=:re` and factor-`by` terms; numeric-`by`, `ti` and `t2` stay dense. Approximate by covariate rounding, as in mgcv |
+| `bam(discrete=TRUE)` covariate discretization | ✅ | ✅ `bam(...; discrete=true)` — 1-D smooths (any basis), `te`, `bs=:re` and factor-`by` terms are binned; numeric-`by`, `ti` and `t2` stay dense. Within the binned smooths, `:tp`/`:ts`/`:cr`/`:cs`/`:cc`/`:ps`/`:cps`/`:bs` are also *constructed* at the unique values (the `n`-row basis is never formed); `:ad`/`:gp`/`:fp`/`:lo`/`:ds` are built densely then binned — same answer, higher one-off cost. Approximate by covariate rounding, as in mgcv |
 | Smoothing-parameter-uncertainty `Vc` / `unconditional=TRUE` | ✅ | ✅ `vcov_corrected`, `edf2`, and `unconditional=true` in `predict`/`smooth_estimates`/`derivatives`/`posterior_samples` |
 
 ### Extended Models

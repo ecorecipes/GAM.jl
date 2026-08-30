@@ -37,6 +37,17 @@ Simon Frost
   `smooth_prior`](#example-4-composable-smooth-terms-with-smooth_prior)
   - [Comparing `smooth_prior` to the brms-like `gam()`
     interface](#comparing-smooth_prior-to-the-brms-like-gam-interface)
+- [GINLA: approximate posteriors without
+  sampling](#ginla-approximate-posteriors-without-sampling)
+  - [A sanity check: where the posterior really is
+    Gaussian](#a-sanity-check-where-the-posterior-really-is-gaussian)
+  - [Where GINLA earns its keep: the Poisson
+    model](#where-ginla-earns-its-keep-the-poisson-model)
+  - [Marginal densities of the fitted
+    function](#marginal-densities-of-the-fitted-function)
+  - [Cost](#cost)
+  - [When to use which](#when-to-use-which)
+  - [Limitations](#limitations)
 - [Example 5: Low-level matrix
   extraction](#example-5-low-level-matrix-extraction)
 - [Summary](#summary)
@@ -124,8 +135,8 @@ m_bayes = gam(@formula(y ~ s(x, k = 10)), dat;
     ──────────────────────────────────────────────────────────
                     Estimate  Est.Error   l-95% CI    u-95% CI
     ──────────────────────────────────────────────────────────
-    (Intercept)    -0.112367  0.0222414  -0.155005  -0.0687538
-    s(x,bs=tp)_f1   1.32152   0.337587    0.669485   1.98747
+    (Intercept)    -0.112242  0.0221635  -0.155779  -0.0677805
+    s(x,bs=tp)_f1   1.33843   0.332884    0.684782   2.00003
     ──────────────────────────────────────────────────────────
 
     Smooth terms: s(x,bs=tp)
@@ -159,26 +170,26 @@ intervals:
     ──────────────────────────────────────────────────────────
                     Estimate  Est.Error   l-95% CI    u-95% CI
     ──────────────────────────────────────────────────────────
-    (Intercept)    -0.112367  0.0222414  -0.155005  -0.0687538
-    s(x,bs=tp)_f1   1.32152   0.337587    0.669485   1.98747
+    (Intercept)    -0.112242  0.0221635  -0.155779  -0.0677805
+    s(x,bs=tp)_f1   1.33843   0.332884    0.684782   2.00003
     ──────────────────────────────────────────────────────────
 
 Credible intervals at different levels:
 
 
     Intercept CIs:
-      90%: [-0.1490, -0.0753]
-      95%: [-0.1550, -0.0688]
+      90%: [-0.1482, -0.0756]
+      95%: [-0.1558, -0.0678]
 
 ### Accessing posterior samples
 
 The full MCMC chains are accessible via `m_bayes.chains`:
 
-    σ_obs posterior: mean = 0.3150, sd = 0.0156, median = 0.3144
-      95% CI: [0.2861, 0.3471]
+    σ_obs posterior: mean = 0.3154, sd = 0.0164, median = 0.3146
+      95% CI: [0.2853, 0.3502]
       Frequentist σ: 0.3134
 
-    σ_s[1] posterior: mean = 2.5234, sd = 0.5962
+    σ_s[1] posterior: mean = 2.5238, sd = 0.6042
       Larger σ_s → more flexible smooth; smaller → smoother
 
 ### Posterior density of σ_obs
@@ -194,8 +205,8 @@ vline!([freq_σ]; color=:red, linewidth=2, label="frequentist σ")
 
 ### Comparing posteriors: frequentist vs Bayesian
 
-    Intercept: frequentist = -0.1129, Bayesian posterior mean = -0.1124
-    σ: frequentist = 0.3134, Bayesian posterior mean = 0.3150
+    Intercept: frequentist = -0.1129, Bayesian posterior mean = -0.1122
+    σ: frequentist = 0.3134, Bayesian posterior mean = 0.3154
 
 ### Posterior density of intercept β\[1\]
 
@@ -214,13 +225,13 @@ vline!([freq_int]; color=:red, linewidth=2, label="frequentist")
 We compare the posterior distribution of $\sigma_{obs}$ against the
 frequentist point estimate using the empirical CDF:
 
-    Frequentist σ = 0.3134 sits at 47.5% of the posterior ECDF
+    Frequentist σ = 0.3134 sits at 47.3% of the posterior ECDF
       (values near 50% indicate good agreement)
-      ECDF 2.5%: σ_obs = 0.2860
-      ECDF 25.0%: σ_obs = 0.3039
-      ECDF 50.0%: σ_obs = 0.3144
-      ECDF 75.0%: σ_obs = 0.3254
-      ECDF 97.5%: σ_obs = 0.3471
+      ECDF 2.5%: σ_obs = 0.2853
+      ECDF 25.0%: σ_obs = 0.3040
+      ECDF 50.0%: σ_obs = 0.3146
+      ECDF 75.0%: σ_obs = 0.3259
+      ECDF 97.5%: σ_obs = 0.3502
 
 ### Posterior predictive check
 
@@ -287,7 +298,7 @@ Count data with $\log(\lambda) = 1 + 1.5\sin(2\pi x)$.
 m_freq2 = gam(@formula(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink())
 
-m_bayes2 = gam(@formula(y ~ s(x, k = 10)), dat2;
+t_mcmc2 = @elapsed m_bayes2 = gam(@formula(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink(),
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 2000, nchains = 2)
@@ -298,17 +309,17 @@ m_bayes2 = gam(@formula(y ~ s(x, k = 10)), dat2;
     ──────────────────────────────────────────────────────
                    Estimate  Est.Error  l-95% CI  u-95% CI
     ──────────────────────────────────────────────────────
-    (Intercept)    0.908686  0.0557093  0.79897    1.01792
-    s(x,bs=tp)_f1  1.9304    0.552546   0.867861   3.05925
+    (Intercept)    0.905507  0.0525777  0.801559   1.00682
+    s(x,bs=tp)_f1  1.96723   0.556294   0.903334   3.07533
     ──────────────────────────────────────────────────────
 
-    Intercept (log-scale): frequentist = 0.9094, Bayesian = 0.9087 (true = 1.0)
-    σ_s[1]: mean = 3.3659, sd = 0.7724
+    Intercept (log-scale): frequentist = 0.9094, Bayesian = 0.9055 (true = 1.0)
+    σ_s[1]: mean = 3.4528, sd = 0.8319
 
 ### ECDF comparison for intercept
 
-    Frequentist intercept = 0.9094 sits at 50.1% of Bayesian posterior
-    True intercept = 1.0 sits at 94.9% of posterior
+    Frequentist intercept = 0.9094 sits at 53.1% of Bayesian posterior
+    True intercept = 1.0 sits at 96.7% of posterior
 
 ### Poisson fit with credible intervals
 
@@ -393,17 +404,17 @@ end
 
     Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)
     ------------------|-------------------|-------------------|--------------
-    sigma  mean       | 0.3150             | 0.3151             | 0.3145
-    sigma  sd         | 0.0156             | 0.0161             | 0.0160
-    Intercept mean    | -0.1124            | -0.1131            | -0.1123
+    sigma  mean       | 0.3154             | 0.3151             | 0.3145
+    sigma  sd         | 0.0164             | 0.0161             | 0.0160
+    Intercept mean    | -0.1122            | -0.1131            | -0.1123
     Intercept sd      | 0.0222             | 0.0223             | 0.0221
 
 
     KS statistic (0 = indistinguishable) and ECDF correlation (Gaussian model):
     Comparison             | sigma KS | intercept KS | sigma ECDF cor | intercept ECDF cor
     -----------------------|----------|--------------|----------------|-------------------
-    GAM.jl vs brms         | 0.0165   | 0.0205       | 0.999957       | 0.999920
-    GAM.jl vs mgcv (approx)| 0.0228   | 0.0135       | 0.999906       | 0.999972
+    GAM.jl vs brms         | 0.0160   | 0.0255       | 0.999955       | 0.999883
+    GAM.jl vs mgcv (approx)| 0.0270   | 0.0148       | 0.999863       | 0.999973
     brms vs mgcv (approx)  | 0.0215   | 0.0220       | 0.999921       | 0.999904
 
 ### ECDF comparison plots (Gaussian)
@@ -435,8 +446,8 @@ plot(p1, p2; layout=(1, 2), size=(900, 400), legend=:bottomright)
 ### Poisson model
 
     KS statistic / ECDF correlation (Poisson intercept):
-    GAM.jl vs brms:          KS = 0.0210, ECDF cor = 0.999882
-    GAM.jl vs mgcv (approx): KS = 0.0175, ECDF cor = 0.999918
+    GAM.jl vs brms:          KS = 0.0310, ECDF cor = 0.999724
+    GAM.jl vs mgcv (approx): KS = 0.0348, ECDF cor = 0.999712
     brms vs mgcv (approx):   KS = 0.0172, ECDF cor = 0.999957
 
 ## Example 3: Custom priors — effect on smoothing
@@ -456,8 +467,8 @@ m_wide = gam(@formula(y ~ s(x, k = 10)), dat;
     nsamples = 1000, nchains = 1)
 ```
 
-    Tight prior (Exp(0.1)): posterior mean σ_s = 1.4719
-    Wide prior  (Exp(5.0)): posterior mean σ_s = 2.9733
+    Tight prior (Exp(0.1)): posterior mean σ_s = 1.4503
+    Wide prior  (Exp(5.0)): posterior mean σ_s = 2.9671
     Ratio: 2.0x
 
 ### Prior sensitivity: σ_s posterior
@@ -515,24 +526,24 @@ custom_chains = sample(my_gam(dat.y, sm), NUTS(), MCMCThreads(), 2000, 2; progre
     ┌ Warning: Only a single thread available: MCMC chains are not sampled in parallel
     └ @ AbstractMCMC ~/.julia/packages/AbstractMCMC/NK6XN/src/sample.jl:544
     ┌ Info: Found initial step size
-    └   ϵ = 0.2
-    ┌ Info: Found initial step size
     └   ϵ = 0.00625
+    ┌ Info: Found initial step size
+    └   ϵ = 0.0125
 
     Chains MCMC chain (2000×26×2 Array{Float64, 3}):
 
     Iterations        = 1001:1:3000
     Number of chains  = 2
     Samples per chain = 2000
-    Wall duration     = 17.77 seconds
-    Compute duration  = 16.43 seconds
+    Wall duration     = 20.41 seconds
+    Compute duration  = 18.4 seconds
     parameters        = β0, σ, f.s_x.β_f[1], f.s_x.σ_s[1], f.s_x.z[1], f.s_x.z[2], f.s_x.z[3], f.s_x.z[4], f.s_x.z[5], f.s_x.z[6], f.s_x.z[7], f.s_x.z[8]
     internals         = n_steps, is_accept, acceptance_rate, log_density, hamiltonian_energy, hamiltonian_energy_error, max_hamiltonian_energy_error, tree_depth, numerical_error, step_size, nom_step_size, logprior, loglikelihood, logjoint
 
     Use `describe(chains)` for summary statistics and quantiles.
 
-    Custom model σ posterior mean: 0.3154 (compare to 0.3150 from gam())
-    Custom model σ_s: 2.5572 (compare to 2.5234 from gam())
+    Custom model σ posterior mean: 0.3157 (compare to 0.3154 from gam())
+    Custom model σ_s: 2.5758 (compare to 2.5238 from gam())
 
 ### Comparing `smooth_prior` to the brms-like `gam()` interface
 
@@ -621,13 +632,13 @@ plot(p1, p2, p3, p4; layout=(2, 2), size=(900, 700))
 
 ![](11_bayesian_gam_files/figure-commonmark/cell-35-output-1.svg)
 
-    Posterior mean correlation:  r = 0.9906
-    Max |mean difference|:      0.348643
-    Mean CI width (smooth_prior): 0.2369
-    Mean CI width (gam()):        0.7354
+    Posterior mean correlation:  r = 0.9897
+    Max |mean difference|:      0.368802
+    Mean CI width (smooth_prior): 0.2363
+    Mean CI width (gam()):        0.7125
 
-    σ posterior:  gam() mean=0.3150 sd=0.0156  |  smooth_prior mean=0.3154 sd=0.0162
-    σ_s posterior: gam() mean=2.5234 sd=0.5962  |  smooth_prior mean=2.5572 sd=0.6061
+    σ posterior:  gam() mean=0.3154 sd=0.0164  |  smooth_prior mean=0.3157 sd=0.0162
+    σ_s posterior: gam() mean=2.5238 sd=0.6042  |  smooth_prior mean=2.5758 sd=0.6122
 
 This is much cleaner than manually extracting matrices. For multiple
 smooths, give each a unique prefix:
@@ -644,6 +655,188 @@ sm2 = GAM.gam_smooth(:x2, data; k = 8, bs = :cr)
     y ~ MvNormal(β0 .+ f1 .+ f2, σ^2 * I)
 end
 ```
+
+## GINLA: approximate posteriors without sampling
+
+MCMC is exact in the limit but slow. `ginla()` offers a middle path:
+**Integrated Nested Laplace Approximation**, in the simplified form of
+Wood (2020), which returns marginal posterior *densities* for
+coefficients — or for any linear combination of them — deterministically
+and without sampling.
+
+It is worth being precise about what each of the three approaches
+conditions on, because that is what the comparison below actually
+measures:
+
+| Method | Posterior for $\boldsymbol\beta$ | Shape | Uncertainty in $\lambda$ |
+|----|----|----|----|
+| Frequentist `gam()` | $N(\hat{\boldsymbol\beta}, \mathbf{V}_p)$ | Gaussian by construction | ignored (conditions on $\hat\lambda$) |
+| `ginla()` | marginal densities on a grid | **non-Gaussian** — captures skew | ignored (conditions on $\hat\lambda$) |
+| MCMC (`priors=`) | full joint posterior | non-Gaussian | **integrated over** (samples $\sigma_s$) |
+
+So GINLA relaxes the *Gaussianity* assumption but, like the frequentist
+fit, still treats the smoothing parameters as fixed at their estimates.
+(The complementary correction — keeping a Gaussian but widening it for
+$\lambda$ uncertainty — is $\mathbf{V}_c$; see [05 — Model
+diagnostics](../05_diagnostics/05_diagnostics.qmd).) Only MCMC does
+both.
+
+### A sanity check: where the posterior really is Gaussian
+
+For a Gaussian response with an identity link and fixed $\lambda$, the
+coefficient posterior *is* exactly Gaussian — so GINLA has nothing to
+discover, and should simply reproduce the closed-form answer. That makes
+it a good correctness check:
+
+``` julia
+function grid_moments(bg, dg)
+    dx = bg[2] - bg[1]
+    Z  = sum(dg) * dx
+    mu = sum(bg .* dg) * dx / Z
+    v  = sum((bg .- mu) .^ 2 .* dg) * dx / Z
+    m3 = sum((bg .- mu) .^ 3 .* dg) * dx / Z
+    return mu, sqrt(v), m3 / v^1.5      # mean, sd, skewness
+end
+
+function grid_quantile(bg, dg, q)
+    dx = bg[2] - bg[1]
+    c  = cumsum(dg) .* dx
+    c ./= c[end]
+    i = clamp(searchsortedfirst(c, q), 2, length(bg))
+    t = (q - c[i-1]) / (c[i] - c[i-1] + eps())
+    return bg[i-1] + t * (bg[i] - bg[i-1])
+end
+```
+
+    grid_quantile (generic function with 1 method)
+
+    Intercept, Gaussian model (posterior is exactly Gaussian here):
+      closed form : mean = -0.112854, sd = 0.022158
+      GINLA       : mean = -0.112854, sd = 0.021969
+      sd relative error: -0.853%
+
+The small negative bias in the SD is **quadrature error**, not a
+modelling difference: GINLA evaluates the log posterior at `nk` points
+and interpolates. It shrinks as `nk` grows, roughly halving each time
+`nk` doubles:
+
+      nk    GINLA sd     rel. error
+      16   0.0217803   -1.705%
+      32   0.0219690   -0.853%
+      64   0.0220571   -0.456%
+     128   0.0220979   -0.272%
+
+At the default `nk = 16` the posterior SD is understated by roughly 1.7%
+on this problem. That is usually irrelevant next to the modelling
+questions, but it is worth raising `nk` before quoting a GINLA interval
+to three figures.
+
+### Where GINLA earns its keep: the Poisson model
+
+The Poisson posterior is genuinely non-Gaussian, so here the three
+methods can disagree. We compare all three on the **intercept**, which
+is directly comparable across parameterizations:
+
+    Method            mean       sd        skewness   95% interval
+    Gaussian (Vp)    0.90943   0.05362    +0.0000   [0.80434, 1.01452]
+    GINLA            0.90738   0.05324    -0.0725   [0.79933, 1.00755]
+    MCMC             0.90551   0.05258    -0.0131   [0.80156, 1.00682]
+
+The Gaussian approximation reports a skewness of exactly zero because it
+*cannot* report anything else. GINLA and MCMC both recover a negative
+skew, and GINLA’s 95% interval is correspondingly asymmetric about the
+mode — the lower tail is longer than the upper one, which the symmetric
+Gaussian interval cannot express.
+
+The three standard deviations agree to within a few percent, but do not
+expect them to nest neatly. It is tempting to reason that MCMC “must” be
+widest because it integrates over the smoothing parameter, yet the
+Bayesian model also places an explicit prior on $\sigma_s$ (here
+`Exponential(1.0)`), which *regularizes* — so the prior can pull the
+posterior in while $\lambda$-uncertainty pushes it out, and the net
+effect can go either way. The MCMC column additionally carries its own
+Monte Carlo error, which for a standard deviation from correlated draws
+is not negligible at this chain length. The robust conclusions here are
+the qualitative ones: the posterior is mildly left-skewed, GINLA detects
+that skew, and the Gaussian approximation cannot.
+
+### Marginal densities of the fitted function
+
+Passing a matrix to `A` gives marginal posteriors of arbitrary linear
+combinations $\mathbf{A}\boldsymbol\beta$. Rows of the prediction matrix
+therefore give the posterior of the **linear predictor at chosen
+covariate values** — the quantity usually of interest:
+
+``` julia
+x_targets = [0.1, 0.3, 0.5, 0.9]
+Xp = Matrix{Float64}(GAM.lpmatrix(m_freq2, DataFrame(x = x_targets)))
+g_eta = ginla(m_freq2; A = Xp, nk = 32)
+
+plots_g = []
+for i in eachindex(x_targets)
+    bg, dg = g_eta.beta[i, :], g_eta.density[i, :]
+    mu_e = (Xp * coef(m_freq2))[i]
+    sd_e = sqrt((Xp * m_freq2.Vp * Xp')[i, i])
+    gauss = @. exp(-0.5 * ((bg - mu_e) / sd_e)^2) / (sd_e * sqrt(2π))
+
+    p = plot(bg, dg; color = :steelblue, linewidth = 2, label = "GINLA",
+        xlabel = "η(x = $(x_targets[i]))", ylabel = "density",
+        title = "x = $(x_targets[i])")
+    plot!(p, bg, gauss; color = :red, linestyle = :dash, linewidth = 2,
+        label = "Gaussian approx")
+    push!(plots_g, p)
+end
+plot(plots_g...; layout = (2, 2), size = (900, 600))
+```
+
+![](11_bayesian_gam_files/figure-commonmark/cell-42-output-1.svg)
+
+    Marginal posterior of η by method (Poisson model):
+       x     GINLA mean   GINLA sd   skew      Gaussian mean   Gaussian sd
+     0.10      1.84713    0.09056   -0.0571         1.84987       0.09128
+     0.30      2.44023    0.06368   -0.0419         2.44164       0.06420
+     0.50      1.12118    0.10398   -0.0622         1.12462       0.10480
+     0.90      0.17391    0.15044   -0.0859         0.18078       0.15153
+
+### Cost
+
+    MCMC (2000 draws × 2 chains)   :  30.51 s
+    GINLA (1 linear target, nk=32) :   2.20 s   → 14× faster
+    GINLA (all 10 coefficients)     :   1.72 s   → 18× faster
+
+GINLA is more than an order of magnitude faster than MCMC on a model of
+this size, and being deterministic it needs no convergence diagnostics —
+there is no $\hat{R}$, no effective sample size, no chain to inspect.
+
+Treat these as indicative rather than as a careful benchmark: they
+include Julia’s first-call compilation, which is why computing *all* the
+coefficients can come out no slower than the single linear target
+measured just before it — the first `ginla` call pays for compiling the
+code that the second one then reuses.
+
+### When to use which
+
+- **Frequentist `gam()`** — fastest; fine whenever a symmetric interval
+  is adequate and $\lambda$ is well determined by the data.
+- **`ginla()`** — when the posterior is likely skewed (small counts,
+  binary data, strongly non-canonical links) but a full MCMC is not
+  worth the cost. Raise `nk` if quoting intervals precisely.
+- **MCMC (`priors=`)** — when smoothing-parameter uncertainty matters,
+  when you want the joint posterior rather than marginals, or when the
+  model has structure (custom priors, hierarchy) that the other two
+  cannot express.
+
+### Limitations
+
+`ginla()` conditions on the estimated smoothing parameters, so it does
+not propagate $\lambda$ uncertainty — use $\mathbf{V}_c$
+(`unconditional = true`) or MCMC for that. It returns **marginal**
+densities one coefficient at a time, so it says nothing about posterior
+dependence between coefficients. The `approx` argument trades accuracy
+for speed (`0` = full Newton refinement of the conditional modes, the
+default; `1` = Gaussian conditional modes; `2` = additionally assume a
+constant Hessian), and `nk` controls the quadrature error demonstrated
+above.
 
 ## Example 5: Low-level matrix extraction
 
@@ -675,6 +868,9 @@ X, sms, labels = GAM.gam_matrices(gf, dat)
 | Coefficient table | `coeftable(m)` — posterior mean, SD, 95% CI |
 | Credible intervals | `confint(m; level = 0.95)` |
 | Full posterior | `m.chains[Symbol("σ_obs")]` |
+| Approximate posterior, no MCMC | `ginla(m_freq)` — marginal densities |
+| GINLA for a linear combination | `ginla(m; A = Xp)` — posterior of `Xp * β` |
+| GINLA for one smooth’s coefficients | `ginla(m; select = 1)` |
 
 ### Key design choices
 

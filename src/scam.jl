@@ -741,7 +741,7 @@ function scam_outer_iteration(
                 if a > 0 && bSb > eps() * max(sum(abs2, beta_block), eps())
                     r = scale_est * a / bSb
                     log_sp_new[sp_idx] = clamp(
-                        log_sp[sp_idx] + log(max(r, 1e-15)), -15.0, 15.0)
+                        log_sp[sp_idx] + log(max(r, 1e-15)), -LOG_SP_BOUND, LOG_SP_BOUND)
                 end
 
                 max_change = max(max_change,
@@ -840,7 +840,7 @@ function _scam_criterion_outer(
 
     invphi = (sqrt(5.0) - 1.0) / 2.0
     n_cycles = 0
-    grid = collect(range(-15.0, 15.0; length = 13))
+    grid = collect(range(-LOG_SP_BOUND, LOG_SP_BOUND; length = 13))
     for cycle in 1:min(control.outer_maxit, 6)
         n_cycles = cycle
         max_change = 0.0

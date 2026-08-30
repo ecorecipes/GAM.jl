@@ -57,10 +57,20 @@
         md = bam(gf, df)
         mk = bam(gf, df; discrete = true)
 
+        # Tolerances loosened when LOG_SP_BOUND rose from 15 to 30 (see
+        # src/types.jl), and the old ones were measuring the wrong thing. The
+        # x2 term here is exactly linear (0.5 * x2), so its smooth should
+        # shrink onto a straight line — its optimum sits at log sp = 19.90,
+        # above the old bound. Both the dense and discrete fits were therefore
+        # CLAMPED to exactly 15.0, which made them agree to 1e-10 by
+        # construction rather than by accuracy. Freed, they locate the optimum
+        # independently and land 3.9e-9 apart in log sp, giving relc 1.6e-10,
+        # fitted 1.8e-10, edf 5.7e-8 — the honest agreement between two
+        # different accumulation paths at n = 20,000.
         relc = maximum(abs.(coef(md) .- coef(mk))) / maximum(abs.(coef(md)))
-        @test relc < 1e-10
+        @test relc < 1e-9
         @test maximum(abs.(fitted(md) .- fitted(mk))) < 1e-9
-        @test abs(md.edf_total - mk.edf_total) < 1e-8
+        @test abs(md.edf_total - mk.edf_total) < 1e-6
         @test abs(md.deviance_val - mk.deviance_val) < 1e-6
     end
 

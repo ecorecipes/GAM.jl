@@ -17,6 +17,9 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 - **Extreme value models** — GEV, GPD, and extended GPD families
 - **Large-scale fitting (BAM)** — chunked accumulation of the normal equations, plus mgcv-style covariate discretization (`bam(...; discrete=true)`) and a droppable model matrix (`retain_X`)
 - **Mixed models (GAMM)** — random intercepts/slopes via `gamm()` with `GAM.@formula(...)`, fitted by a pure-Julia penalized-smooth backend (PQL for non-Gaussian families)
+- **User knots** — `gam(...; knots=Dict(:x => [...]))`, as in mgcv's `knots=`;
+  for a cyclic basis two knots give the period endpoints, which is how a
+  seasonal smooth's period is set when the covariate's range is not the period
 - **Prior weights** — `gam(...; weights=...)` for observation weights, as in mgcv
 - **Bayesian inference** — Turing.jl extension for posterior sampling with smooth-aware priors
 - **Diagnostics** — gratia-style smooth estimates, derivatives, posterior samples, concurvity, rootograms
@@ -384,6 +387,7 @@ Reach for **15 (Large data and spatial models)** when your data outgrow
 13. [Migrating from mgcv](vignettes/13_migrating_from_mgcv/13_migrating_from_mgcv.qmd)
 14. [Model selection and diagnostics](vignettes/14_model_selection/14_model_selection.qmd)
 15. [Large data and spatial models](vignettes/15_large_and_spatial/15_large_and_spatial.qmd)
+16. [Seasonal and group-varying smooths](vignettes/16_seasonality/16_seasonality.qmd)
 
 Rendered GFM versions (`.md`) are checked in alongside the sources; see
 [vignettes/README.md](vignettes/README.md) for rendering and data-generation

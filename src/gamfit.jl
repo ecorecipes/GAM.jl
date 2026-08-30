@@ -192,7 +192,8 @@ function gam(f::FormulaTerm, data;
     sampler::Any = nothing,
     nsamples::Int = 2000,
     nchains::Int = 4,
-    na_action::Symbol = :fail)
+    na_action::Symbol = :fail,
+    knots = nothing)
 
     # Input validation. `_na_prepare` subsumes `_validate_data_lengths` and
     # validates weights/offset against the retained rows.
@@ -230,12 +231,14 @@ function gam(f::FormulaTerm, data;
     end
 
     if family isa ExtendedFamily
-        y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal())
+        y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = Normal(),
+            knots = knots)
         _validate_response(y, family)
         return _fit_gam_extended(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, weights, control; start = start, offset = offset, select = select)
     else
-        y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family)
+        y, X, X_para, smooths, n_parametric = setup_gam(f, data; family = family,
+            knots = knots)
         _validate_response(y, family)
 
         if has_linear_constraints(smooths)
@@ -299,7 +302,8 @@ function gam(gf::GamFormula, data;
     sampler::Any = nothing,
     nsamples::Int = 2000,
     nchains::Int = 4,
-    na_action::Symbol = :fail)
+    na_action::Symbol = :fail,
+    knots = nothing)
 
     # Input validation. `_na_prepare` subsumes `_validate_data_lengths` and
     # validates weights/offset against the retained rows.
@@ -340,12 +344,14 @@ function gam(gf::GamFormula, data;
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
     if family isa ExtendedFamily
-        y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal())
+        y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = Normal(),
+            knots = knots)
         _validate_response(y, family)
         return _fit_gam_extended(y, X, smooths, n_parametric, gf, data, family, link_eff,
             method, weights, control; start = start, offset = offset, select = select)
     else
-        y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family)
+        y, X, X_para, smooths, n_parametric = setup_gam(gf, data; family = family,
+            knots = knots)
         _validate_response(y, family)
 
         if has_linear_constraints(smooths)
@@ -613,10 +619,20 @@ function _null_deviance(family, link::GLM.Link, y, wt, off, control::GamControl)
     end
     X1 = ones(length(y), 1)
     S0 = zeros(1, 1)
-    r = family isa ExtendedFamily ?
-        pirls_extended(X1, y, S0, family, link;
+    # Fit the null model against a COPY of the family. Extended families carry
+    # their extra parameter (NB θ, Beta φ, Tweedie p, scat ν/σ) as mutable
+    # state, and `pirls_extended` re-estimates it in place. Passing the real
+    # family here let this intercept-only fit overwrite the extra parameter
+    # that the actual model had just converged to — silently, and only when an
+    # offset was supplied, because the offset-free branch above returns before
+    # fitting anything. On a population-offset NB rate model that reported
+    # θ = 1.14 where the fit had converged to θ = 2.09 (truth 2.0), and a wrong
+    # θ propagates into standard errors and AIC.
+    fam_null = family isa ExtendedFamily ? deepcopy(family) : family
+    r = fam_null isa ExtendedFamily ?
+        pirls_extended(X1, y, S0, fam_null, link;
             weights = wt, offset = off, control = control) :
-        pirls(X1, y, S0, family, link;
+        pirls(X1, y, S0, fam_null, link;
             weights = wt, offset = off, control = control)
     return r.deviance
 end

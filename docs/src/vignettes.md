@@ -25,6 +25,7 @@ compared side by side.
 | [13_migrating_from_mgcv](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/13_migrating_from_mgcv) | Translation table from mgcv, measured parity, and every documented divergence |
 | [14_model_selection](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/14_model_selection) | End-to-end selection and diagnostics workflow: `select=true`, `k_check`, concurvity, influence |
 | [15_large_and_spatial](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/15_large_and_spatial) | Measured `gam` vs `bam` crossover, Markov random fields, and splines on the sphere, each against mgcv |
+| [16_seasonality](https://github.com/ecorecipes/GAM.jl/tree/main/vignettes/16_seasonality) | Cyclic smooths (`bs=:cc`), factor-`by` and numeric-`by` (varying-coefficient) terms, and `ti()` interactions, on simulated seasonal surveillance data |
 
 Datasets whose data-generating process is stated in a vignette are produced
 by `vignettes/generate_data.jl` with fixed seeds, so data and narrative

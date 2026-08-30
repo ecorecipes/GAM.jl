@@ -593,7 +593,7 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
 
             if a > 0 && bSb > eps()
                 r = a / bSb  # scale_est = 1 for multi-parameter
-                log_sp_new[j] = clamp(log_sp[j] + log(max(r, 1e-15)), -15.0, 15.0)
+                log_sp_new[j] = clamp(log_sp[j] + log(max(r, 1e-15)), -LOG_SP_BOUND, LOG_SP_BOUND)
             end
 
             max_change = max(max_change, abs(log_sp_new[j] - log_sp[j]))

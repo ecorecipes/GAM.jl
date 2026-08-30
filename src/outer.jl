@@ -292,7 +292,7 @@ function _outer_iteration_criterion(X::Matrix{Float64}, y::Vector{Float64},
 
     function crit(log_sp_free)
         lsp = copy(penalty.sp)
-        lsp[free_idx] .= clamp.(log_sp_free, -15.0, 15.0)
+        lsp[free_idx] .= clamp.(log_sp_free, -LOG_SP_BOUND, LOG_SP_BOUND)
         total_penalty!(S_total, penalty, lsp, p)
         result = if is_gaussian_identity
             pirls_gaussian(X, y, S_total, XtWX_cached, Xty_cached;
@@ -453,17 +453,17 @@ function _efs_sp_update(log_sp::Vector{Float64}, beta::Vector{Float64},
                 # sends λⱼ → ∞; take a bounded step toward the upper limit
                 # (mgcv's efsud pushes to the boundary) instead of freezing.
                 log_sp_new[sp_idx] = clamp(log_sp[sp_idx] + 5.0 * mult,
-                    -15.0, 15.0)
+                    -LOG_SP_BOUND, LOG_SP_BOUND)
             elseif a > 0
                 r = scale_est * a / bSb
                 log_sp_new[sp_idx] = clamp(
-                    log_sp[sp_idx] + log(max(r, 1e-15)) * mult, -15.0, 15.0)
+                    log_sp[sp_idx] + log(max(r, 1e-15)) * mult, -LOG_SP_BOUND, LOG_SP_BOUND)
             else
                 # a ≤ 0: the update target is on the λⱼ → 0 boundary; take a
                 # bounded downward step (the step-acceptance check in the
                 # caller rejects it if the criterion worsens).
                 log_sp_new[sp_idx] = clamp(log_sp[sp_idx] - 5.0 * mult,
-                    -15.0, 15.0)
+                    -LOG_SP_BOUND, LOG_SP_BOUND)
             end
 
             sp_idx += 1
@@ -862,7 +862,7 @@ function _newton_sp_update(log_sp::Vector{Float64},
     # User-fixed smoothing parameters (sp=) do not move
     step[penalty.fixed] .= 0.0
 
-    log_sp_new = clamp.(log_sp .+ step, -15.0, 15.0)
+    log_sp_new = clamp.(log_sp .+ step, -LOG_SP_BOUND, LOG_SP_BOUND)
 
     # Step halving if score increases
     cur_score = reml_fn(log_sp)
@@ -870,7 +870,7 @@ function _newton_sp_update(log_sp::Vector{Float64},
     for _ in 1:30
         trial_score <= cur_score && break
         step .*= 0.5
-        log_sp_new .= clamp.(log_sp .+ step, -15.0, 15.0)
+        log_sp_new .= clamp.(log_sp .+ step, -LOG_SP_BOUND, LOG_SP_BOUND)
         trial_score = reml_fn(log_sp_new)
     end
 
