@@ -70,7 +70,9 @@
     # `gratia` lists which of the gratia-style consumers this configuration
     # supports AT ALL. The excluded ones fail identically on the dense fit —
     # verified, and asserted below — so they are pre-existing gaps in that
-    # surface for string-valued and `by` smooths, not discretisation defects:
+    # surface for smooths carrying a string-valued covariate in `term_vars`
+    # (the `re` configurations, where the grid builder cannot make a numeric
+    # range out of a factor), not discretisation defects:
     #   :se = smooth_estimates, :pr = partial_residuals, :dv = derivatives
     # `ctol` is the concurvity tolerance, separate because concurvity is
     # computed from `qr(model_matrix(m)).R` and inherits the design's
@@ -93,8 +95,13 @@
         ("re slope",  _dcf([GAM.s(:x1; k = 8, bs = :cr),
                             GAM.s(:sl, :g; bs = :re)]),
                       1e-12, [:pr, :dv],      1e-10),
+        # `:se`/`:dv` joined this list when `_make_smooth_grid` learned to
+        # put the `by` column on the grid (it built only `term_vars`, so
+        # `predict_matrix` threw `FieldError` for every `by=` smooth). The
+        # grid is now repeated once per factor level, so these compare 3x the
+        # rows of a plain smooth — dense and discrete share that layout.
         ("factor-by", _dcf([GAM.s(:x1; k = 6, bs = :cr, by = :f)]),
-                      1e-12, [:pr],           1e-10),
+                      1e-12, [:se, :pr, :dv], 1e-10),
     ]
 
     # ── 1. deterministic consumers agree with the dense fit ─────────────

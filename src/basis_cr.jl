@@ -165,7 +165,19 @@ function _construct_cr(spec::SmoothSpec, data, user_knots;
 
     # Place knots at quantiles of x
     knots = if user_knots !== nothing
-        Float64.(user_knots)
+        uk = Float64.(user_knots)
+        # mgcv's convention for a cyclic basis: exactly two knots specify the
+        # PERIOD endpoints (`knots = list(week = c(0, 52))`) and the interior
+        # knots are filled in evenly; any other count is the full knot vector.
+        # Without this, a cyclic smooth always took its period from the
+        # observed data range, so a series covering weeks 0-51 wrapped over a
+        # 51-week year and f(0) differed from f(52) by 0.135 on an otherwise
+        # exactly periodic signal.
+        if cyclic && length(uk) == 2
+            collect(range(uk[1], uk[2]; length = k))
+        else
+            uk
+        end
     else
         place_knots(x, k)
     end

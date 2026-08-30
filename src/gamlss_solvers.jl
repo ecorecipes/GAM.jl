@@ -380,7 +380,7 @@ function _efs_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}}
         a = max(0.0, rank_j / λ - trAS)
         if a > 0 && bSb > eps()
             r = a / bSb
-            log_sp[j] = clamp(log_sp[j] + log(max(r, 1e-15)), -15.0, 15.0)
+            log_sp[j] = clamp(log_sp[j] + log(max(r, 1e-15)), -LOG_SP_BOUND, LOG_SP_BOUND)
         end
     end
 end
@@ -455,7 +455,7 @@ function _local_ml_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Floa
             tau2 = bDb / max(edf - order, 0.01)
 
             if tau2 > eps() && sigma2 > eps()
-                target_log_sp = clamp(log(sigma2 / tau2), -15.0, 15.0)
+                target_log_sp = clamp(log(sigma2 / tau2), -LOG_SP_BOUND, LOG_SP_BOUND)
                 # Damped log-scale update: Julia's η-space RS pseudo-data can make the
                 # raw ML fixed-point jump straight to the boundary, so move part-way
                 # toward the target each inner iteration.

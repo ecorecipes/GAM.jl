@@ -129,5 +129,14 @@
   },
   "15_large_and_spatial/R/15_large_and_spatial.qmd": {
     "15_large_and_spatial.md": "b8d96f67"
+  },
+  "16_seasonality/16_seasonality.qmd": {
+    "16_seasonality.md": "7ba6cfe3"
+  },
+  "16_seasonality/R/16_seasonality.qmd": {
+    "16_seasonality.md": "4db1c47a"
+  },
+  "14_model_selection/R/14_model_selection.qmd": {
+    "14_model_selection.md": "54d4c368"
   }
 }

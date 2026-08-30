@@ -27,13 +27,25 @@ estimated smooth values, and standard errors for one or more smooth terms.
   belonging to smooths that do not use a given covariate hold `NaN`.
 - `estimate`: estimated smooth effect f̂(x)
 - `se`: pointwise standard error of the estimate
+- `by_level`: for a factor-`by` smooth, the factor level the row belongs to;
+  `nothing` for every other row. A factor-`by` term is really one curve per
+  level, so the grid is repeated once per level and this column says which
+  curve a row is on — mask by it before plotting, or the levels join up into
+  one zig-zag.
 """
 struct SmoothEstimates
     smooth::Vector{String}
     covariates::Dict{Symbol, Vector{Float64}}
     estimate::Vector{Float64}
     se::Vector{Float64}
+    by_level::Vector{Union{String, Nothing}}
 end
+
+# Keep the 4-argument form working: `by_level` was appended, and every
+# existing construction site and consumer predates it.
+SmoothEstimates(smooth, covariates, estimate, se) =
+    SmoothEstimates(smooth, covariates, estimate, se,
+        Union{String, Nothing}[nothing for _ in eachindex(estimate)])
 
 """
     PartialResiduals
@@ -189,6 +201,7 @@ function smooth_estimates(m::GamModel;
     all_labels = String[]
     all_estimates = Float64[]
     all_se = Float64[]
+    all_by_levels = Union{String, Nothing}[]
     # per-smooth covariate values, assembled into row-aligned vectors below
     smooth_cov_vals = Vector{Tuple{Vector{Symbol}, Dict{Symbol, Vector{Float64}}, Int}}()
 
@@ -235,6 +248,23 @@ function smooth_estimates(m::GamModel;
             cov_dict[v] = Float64.(collect(Tables.getcolumn(eval_data, v)))
         end
         push!(smooth_cov_vals, (collect(vars), cov_dict, n_pts))
+
+        # Record which factor-`by` curve each row belongs to, so callers can
+        # separate the per-level curves without re-deriving the layout.
+        if spec.by !== nothing &&
+           spec.by in Tables.columnnames(eval_data)
+            bc = collect(Tables.getcolumn(eval_data, spec.by))
+            if !(eltype(bc) <: Real)
+                append!(all_by_levels,
+                    Union{String, Nothing}[string(b) for b in bc])
+            else
+                append!(all_by_levels,
+                    Union{String, Nothing}[nothing for _ in 1:n_pts])
+            end
+        else
+            append!(all_by_levels,
+                Union{String, Nothing}[nothing for _ in 1:n_pts])
+        end
     end
 
     # Assemble ROW-ALIGNED covariate vectors: one entry per table row, NaN
@@ -251,7 +281,8 @@ function smooth_estimates(m::GamModel;
         row0 += n_pts
     end
 
-    return SmoothEstimates(all_labels, all_covariates, all_estimates, all_se)
+    return SmoothEstimates(all_labels, all_covariates, all_estimates, all_se,
+        all_by_levels)
 end
 
 
@@ -930,7 +961,52 @@ function _make_smooth_grid(m::GamModel, sm::ConstructedSmooth, n::Int)
         data[v] = collect(range(x_lo, x_hi; length = n))
     end
 
-    return NamedTuple{Tuple(vars)}(Tuple(data[v] for v in vars))
+    spec.by === nothing &&
+        return NamedTuple{Tuple(vars)}(Tuple(data[v] for v in vars))
+
+    # A `by=` smooth needs its by column on the grid: `predict_matrix` reads
+    # it to apply the same transform it used when fitting. Omitting it threw
+    # `FieldError: type NamedTuple has no field ...` from every grid-based
+    # entry point (`smooth_estimates`, `derivatives`, `partial_residuals`,
+    # `data_slice`), so `by=` smooths were unreachable through all of them.
+    by_col = _raw_by_column(m, sm)
+    by_sym = spec.by
+    if eltype(by_col) <: Real
+        # Numeric `by`: the term contributes z * f(x), so evaluating at z = 1
+        # returns the varying coefficient f(x) itself — the curve users mean
+        # when they ask to see the smooth.
+        names = (vars..., by_sym)
+        vals = ((data[v] for v in vars)..., ones(n))
+        return NamedTuple{names}(vals)
+    end
+    # Factor `by`: the term is one separate curve per level, so evaluate the
+    # whole grid once per level and let the caller split on the level.
+    levels = spec.xt[:_by_levels]
+    L = length(levels)
+    names = (vars..., by_sym)
+    vals = ((repeat(data[v], L) for v in vars)..., repeat(levels, inner = n))
+    return NamedTuple{names}(vals)
+end
+
+"""
+Raw (unconverted) `by` column from the model's stored data.
+
+Separate from `_get_covariate_from_model`, which converts to `Float64` — a
+factor `by` is a string/categorical column and must keep its own type so it
+can be matched against `xt[:_by_levels]`.
+"""
+function _raw_by_column(m::GamModel, sm::ConstructedSmooth)
+    by_sym = sm.spec.by
+    if m.data !== nothing
+        ct = Tables.columntable(m.data)
+        if by_sym in Tables.columnnames(ct)
+            return collect(Tables.getcolumn(ct, by_sym))
+        end
+    end
+    throw(ArgumentError(
+        "by= variable :$by_sym for smooth $(sm.spec.label) is not available " *
+        "in the model's stored data — supply the evaluation data explicitly " *
+        "via the `data=` keyword"))
 end
 
 """Extract covariate values from the model's original data."""

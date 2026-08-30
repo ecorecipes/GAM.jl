@@ -24,6 +24,7 @@ Simon Frost
   - [mgcv Bayesian posterior](#mgcv-bayesian-posterior)
   - [Three-way comparison](#three-way-comparison)
   - [KS tests and ECDF](#ks-tests-and-ecdf)
+- [GINLA: mgcv’s `ginla()`](#ginla-mgcvs-ginla)
 - [Syntax Comparison](#syntax-comparison)
   - [Key findings](#key-findings)
 
@@ -407,11 +408,99 @@ abline(0, 1, col = "red", lwd = 2)
 
 ![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-18-1.png)
 
+## GINLA: mgcv’s `ginla()`
+
+mgcv implements the same simplified INLA of Wood (2020) that GAM.jl
+exposes as `ginla()`. There is one API difference worth knowing when
+migrating: **mgcv’s `ginla()` takes a *pre-fit* object** produced by
+`gam(..., fit = FALSE)`, whereas GAM.jl’s takes an ordinary fitted
+model. Calling mgcv’s on a fitted model fails with
+`Requires a gam or bam prefit object`.
+
+``` r
+d2 <- read.csv("../data_bayes_poisson.csv")
+m_pois  <- gam(y ~ s(x, k = 10), data = d2, family = poisson, method = "REML")
+G_pois  <- gam(y ~ s(x, k = 10), data = d2, family = poisson,
+               method = "REML", fit = FALSE)     # note: fit = FALSE
+t_ginla <- system.time(g <- ginla(G_pois))["elapsed"]
+cat(sprintf("mgcv ginla: %.3f s; beta %s, density %s\n",
+    t_ginla, paste(dim(g$beta), collapse = "x"),
+    paste(dim(g$density), collapse = "x")))
+```
+
+    mgcv ginla: 0.106 s; beta 10x100, density 10x100
+
+The return convention matches GAM.jl’s: `beta` and `density` are both
+`n_coef x nb`, one gridded marginal posterior per row.
+
+``` r
+grid_moments <- function(b, dn) {
+  dx <- b[2] - b[1]; Z <- sum(dn) * dx
+  mu <- sum(b * dn) * dx / Z
+  v  <- sum((b - mu)^2 * dn) * dx / Z
+  m3 <- sum((b - mu)^3 * dn) * dx / Z
+  c(mean = mu, sd = sqrt(v), skew = m3 / v^1.5)
+}
+s <- grid_moments(g$beta[1, ], g$density[1, ])
+cat(sprintf("mgcv GINLA intercept : mean=%.5f sd=%.5f skew=%+.4f\n",
+    s["mean"], s["sd"], s["skew"]))
+```
+
+    mgcv GINLA intercept : mean=0.90675 sd=0.05280 skew=-0.0771
+
+``` r
+cat(sprintf("mgcv Gaussian (Vp)   : mean=%.5f sd=%.5f skew=%+.4f\n",
+    coef(m_pois)[1], sqrt(m_pois$Vp[1, 1]), 0))
+```
+
+    mgcv Gaussian (Vp)   : mean=0.90937 sd=0.05362 skew=+0.0000
+
+Both implementations find the same mildly left-skewed intercept
+posterior that the Gaussian approximation cannot represent:
+
+| Quantity       | GAM.jl (`nk = 32`) | mgcv (`nk = 16` default) |
+|----------------|--------------------|--------------------------|
+| GINLA mean     | 0.90738            | 0.90675                  |
+| GINLA sd       | 0.05324            | 0.05280                  |
+| GINLA skewness | −0.0725            | −0.0771                  |
+| Gaussian sd    | 0.05362            | 0.05362                  |
+
+The small `sd` gap is consistent with the quadrature behaviour
+documented in the Julia vignette — both implementations understate the
+posterior SD at small `nk`, and mgcv is running the smaller default
+here.
+
+One honest difference: **mgcv’s `ginla()` is much faster** (well under a
+second, against a few seconds in GAM.jl on this model). mgcv’s is
+compiled C; GAM.jl’s is pure Julia and has not been optimized. Both are
+still far cheaper than MCMC.
+
+``` r
+op <- par(mfrow = c(1, 2))
+for (k in 1:2) {
+  b <- g$beta[k, ]; dn <- g$density[k, ]
+  mu <- coef(m_pois)[k]; sdk <- sqrt(m_pois$Vp[k, k])
+  plot(b, dn, type = "l", lwd = 2, col = "steelblue",
+       xlab = bquote(beta[.(k)]), ylab = "density",
+       main = paste0("GINLA vs Gaussian: beta[", k, "]"))
+  lines(b, dnorm(b, mu, sdk), lwd = 2, lty = 2, col = "red")
+  legend("topright", c("GINLA", "Gaussian"), col = c("steelblue", "red"),
+         lty = c(1, 2), lwd = 2, bty = "n", cex = 0.8)
+}
+```
+
+![](11_bayesian_gam_files/figure-commonmark/unnamed-chunk-21-1.png)
+
+``` r
+par(op)
+```
+
 ## Syntax Comparison
 
 | Feature | Julia (GAM.jl + Turing) | R (brms + Stan) | R (mgcv approx) |
 |----|----|----|----|
 | Bayesian GAM | `gam(f, data; priors=PriorSpec(...))` | `brm(f, data, prior=...)` | `gam(f, data) + mvrnorm` |
+| Simplified INLA | `ginla(m)` (fitted model) | — | `ginla(gam(..., fit=FALSE))` |
 | Smooth SD prior | `PriorSpec(sds=Exp(1))` | `prior(exponential(1), class="sds")` | Implicit via REML |
 | Residual SD prior | `PriorSpec(sigma=...)` | `prior(..., class="sigma")` | Scaled Inv-χ² |
 | Posterior samples | `m.chains[Symbol("σ_obs")]` | `as_draws_df(m)$sigma` | `mvrnorm(n, coef(m), Vp)` |
@@ -433,3 +522,11 @@ abline(0, 1, col = "red", lwd = 2)
 3.  **Prior specification**: GAM.jl uses `PriorSpec` with class-level
     defaults (single call). brms uses a vector of `prior()` statements
     (one per class). Both are more explicit than mgcv’s implicit priors.
+
+4.  **GINLA agrees across implementations**: GAM.jl’s `ginla()` and
+    mgcv’s reproduce the same mildly left-skewed Poisson intercept
+    posterior (skewness ≈ −0.07 in both), which neither Gaussian
+    approximation can express. GINLA sits between the Gaussian
+    approximation and full MCMC: it relaxes the Gaussian *shape*
+    assumption but, unlike MCMC, still conditions on the estimated
+    smoothing parameters.

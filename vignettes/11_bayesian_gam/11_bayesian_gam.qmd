@@ -266,7 +266,7 @@ dat2 = CSV.read("data_bayes_poisson.csv", DataFrame)
 m_freq2 = gam(@formula(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink())
 
-m_bayes2 = gam(@formula(y ~ s(x, k = 10)), dat2;
+t_mcmc2 = @elapsed m_bayes2 = gam(@formula(y ~ s(x, k = 10)), dat2;
     family = Poisson(), link = LogLink(),
     priors = PriorSpec(sds = Exponential(1.0)),
     nsamples = 2000, nchains = 2)
@@ -681,6 +681,219 @@ sm2 = GAM.gam_smooth(:x2, data; k = 8, bs = :cr)
 end
 ```
 
+## GINLA: approximate posteriors without sampling
+
+MCMC is exact in the limit but slow. `ginla()` offers a middle path:
+**Integrated Nested Laplace Approximation**, in the simplified form of
+Wood (2020), which returns marginal posterior *densities* for coefficients —
+or for any linear combination of them — deterministically and without
+sampling.
+
+It is worth being precise about what each of the three approaches conditions
+on, because that is what the comparison below actually measures:
+
+| Method | Posterior for $\boldsymbol\beta$ | Shape | Uncertainty in $\lambda$ |
+|--------|--------------------------------|-------|--------------------------|
+| Frequentist `gam()` | $N(\hat{\boldsymbol\beta}, \mathbf{V}_p)$ | Gaussian by construction | ignored (conditions on $\hat\lambda$) |
+| `ginla()` | marginal densities on a grid | **non-Gaussian** — captures skew | ignored (conditions on $\hat\lambda$) |
+| MCMC (`priors=`) | full joint posterior | non-Gaussian | **integrated over** (samples $\sigma_s$) |
+
+So GINLA relaxes the *Gaussianity* assumption but, like the frequentist fit,
+still treats the smoothing parameters as fixed at their estimates. (The
+complementary correction — keeping a Gaussian but widening it for
+$\lambda$ uncertainty — is $\mathbf{V}_c$; see
+[05 — Model diagnostics](../05_diagnostics/05_diagnostics.qmd).) Only MCMC
+does both.
+
+### A sanity check: where the posterior really is Gaussian
+
+For a Gaussian response with an identity link and fixed $\lambda$, the
+coefficient posterior *is* exactly Gaussian — so GINLA has nothing to
+discover, and should simply reproduce the closed-form answer. That makes it a
+good correctness check:
+
+```{julia}
+function grid_moments(bg, dg)
+    dx = bg[2] - bg[1]
+    Z  = sum(dg) * dx
+    mu = sum(bg .* dg) * dx / Z
+    v  = sum((bg .- mu) .^ 2 .* dg) * dx / Z
+    m3 = sum((bg .- mu) .^ 3 .* dg) * dx / Z
+    return mu, sqrt(v), m3 / v^1.5      # mean, sd, skewness
+end
+
+function grid_quantile(bg, dg, q)
+    dx = bg[2] - bg[1]
+    c  = cumsum(dg) .* dx
+    c ./= c[end]
+    i = clamp(searchsortedfirst(c, q), 2, length(bg))
+    t = (q - c[i-1]) / (c[i] - c[i-1] + eps())
+    return bg[i-1] + t * (bg[i] - bg[i-1])
+end
+```
+
+```{julia}
+#| echo: false
+g_gauss = ginla(m_freq; A = [1], nk = 32)
+mu_g, sd_g, _ = grid_moments(g_gauss.beta[1, :], g_gauss.density[1, :])
+@printf("Intercept, Gaussian model (posterior is exactly Gaussian here):\n")
+@printf("  closed form : mean = %.6f, sd = %.6f\n", coef(m_freq)[1], sqrt(m_freq.Vp[1, 1]))
+@printf("  GINLA       : mean = %.6f, sd = %.6f\n", mu_g, sd_g)
+@printf("  sd relative error: %+.3f%%\n", 100 * (sd_g - sqrt(m_freq.Vp[1, 1])) / sqrt(m_freq.Vp[1, 1]))
+```
+
+The small negative bias in the SD is **quadrature error**, not a modelling
+difference: GINLA evaluates the log posterior at `nk` points and interpolates.
+It shrinks as `nk` grows, roughly halving each time `nk` doubles:
+
+```{julia}
+#| echo: false
+exact_sd = sqrt(m_freq.Vp[1, 1])
+@printf("  nk    GINLA sd     rel. error\n")
+for nk in (16, 32, 64, 128)
+    g = ginla(m_freq; A = [1], nk = nk)
+    _, s, _ = grid_moments(g.beta[1, :], g.density[1, :])
+    @printf("%4d   %.7f   %+.3f%%\n", nk, s, 100 * (s - exact_sd) / exact_sd)
+end
+```
+
+At the default `nk = 16` the posterior SD is understated by roughly 1.7% on
+this problem. That is usually irrelevant next to the modelling questions, but
+it is worth raising `nk` before quoting a GINLA interval to three figures.
+
+### Where GINLA earns its keep: the Poisson model
+
+The Poisson posterior is genuinely non-Gaussian, so here the three methods
+can disagree. We compare all three on the **intercept**, which is directly
+comparable across parameterizations:
+
+```{julia}
+#| echo: false
+t_ginla = @elapsed g_pois = ginla(m_freq2; A = [1], nk = 32)
+mu_i, sd_i, sk_i = grid_moments(g_pois.beta[1, :], g_pois.density[1, :])
+b1_mcmc = vec(chains2[Symbol("β[1]")].data)
+sk_mcmc = mean(((b1_mcmc .- mean(b1_mcmc)) ./ std(b1_mcmc)) .^ 3)
+
+@printf("Method            mean       sd        skewness   95%% interval\n")
+@printf("Gaussian (Vp)   %8.5f  %8.5f   %+8.4f   [%.5f, %.5f]\n",
+    coef(m_freq2)[1], sqrt(m_freq2.Vp[1, 1]), 0.0,
+    coef(m_freq2)[1] - 1.96sqrt(m_freq2.Vp[1, 1]),
+    coef(m_freq2)[1] + 1.96sqrt(m_freq2.Vp[1, 1]))
+@printf("GINLA           %8.5f  %8.5f   %+8.4f   [%.5f, %.5f]\n",
+    mu_i, sd_i, sk_i,
+    grid_quantile(g_pois.beta[1, :], g_pois.density[1, :], 0.025),
+    grid_quantile(g_pois.beta[1, :], g_pois.density[1, :], 0.975))
+@printf("MCMC            %8.5f  %8.5f   %+8.4f   [%.5f, %.5f]\n",
+    mean(b1_mcmc), std(b1_mcmc), sk_mcmc,
+    quantile(b1_mcmc, 0.025), quantile(b1_mcmc, 0.975))
+```
+
+The Gaussian approximation reports a skewness of exactly zero because it
+*cannot* report anything else. GINLA and MCMC both recover a negative skew,
+and GINLA's 95% interval is correspondingly asymmetric about the mode — the
+lower tail is longer than the upper one, which the symmetric Gaussian
+interval cannot express.
+
+The three standard deviations agree to within a few percent, but do not
+expect them to nest neatly. It is tempting to reason that MCMC "must" be
+widest because it integrates over the smoothing parameter, yet the Bayesian
+model also places an explicit prior on $\sigma_s$ (here `Exponential(1.0)`),
+which *regularizes* — so the prior can pull the posterior in while
+$\lambda$-uncertainty pushes it out, and the net effect can go either way.
+The MCMC column additionally carries its own Monte Carlo error, which for a
+standard deviation from correlated draws is not negligible at this chain
+length. The robust conclusions here are the qualitative ones: the posterior
+is mildly left-skewed, GINLA detects that skew, and the Gaussian
+approximation cannot.
+
+### Marginal densities of the fitted function
+
+Passing a matrix to `A` gives marginal posteriors of arbitrary linear
+combinations $\mathbf{A}\boldsymbol\beta$. Rows of the prediction matrix
+therefore give the posterior of the **linear predictor at chosen covariate
+values** — the quantity usually of interest:
+
+```{julia}
+#| fig-width: 9
+#| fig-height: 6
+x_targets = [0.1, 0.3, 0.5, 0.9]
+Xp = Matrix{Float64}(GAM.lpmatrix(m_freq2, DataFrame(x = x_targets)))
+g_eta = ginla(m_freq2; A = Xp, nk = 32)
+
+plots_g = []
+for i in eachindex(x_targets)
+    bg, dg = g_eta.beta[i, :], g_eta.density[i, :]
+    mu_e = (Xp * coef(m_freq2))[i]
+    sd_e = sqrt((Xp * m_freq2.Vp * Xp')[i, i])
+    gauss = @. exp(-0.5 * ((bg - mu_e) / sd_e)^2) / (sd_e * sqrt(2π))
+
+    p = plot(bg, dg; color = :steelblue, linewidth = 2, label = "GINLA",
+        xlabel = "η(x = $(x_targets[i]))", ylabel = "density",
+        title = "x = $(x_targets[i])")
+    plot!(p, bg, gauss; color = :red, linestyle = :dash, linewidth = 2,
+        label = "Gaussian approx")
+    push!(plots_g, p)
+end
+plot(plots_g...; layout = (2, 2), size = (900, 600))
+```
+
+```{julia}
+#| echo: false
+@printf("Marginal posterior of η by method (Poisson model):\n")
+@printf("   x     GINLA mean   GINLA sd   skew      Gaussian mean   Gaussian sd\n")
+for i in eachindex(x_targets)
+    mu_e, sd_e, sk_e = grid_moments(g_eta.beta[i, :], g_eta.density[i, :])
+    gm = (Xp * coef(m_freq2))[i]
+    gs = sqrt((Xp * m_freq2.Vp * Xp')[i, i])
+    @printf("%5.2f   %10.5f   %8.5f   %+7.4f   %13.5f   %11.5f\n",
+        x_targets[i], mu_e, sd_e, sk_e, gm, gs)
+end
+```
+
+### Cost
+
+```{julia}
+#| echo: false
+t_all = @elapsed ginla(m_freq2)
+@printf("MCMC (2000 draws × 2 chains)   : %6.2f s\n", t_mcmc2)
+@printf("GINLA (1 linear target, nk=32) : %6.2f s   → %.0f× faster\n",
+    t_ginla, t_mcmc2 / t_ginla)
+@printf("GINLA (all %d coefficients)     : %6.2f s   → %.0f× faster\n",
+    length(coef(m_freq2)), t_all, t_mcmc2 / t_all)
+```
+
+GINLA is more than an order of magnitude faster than MCMC on a model of this
+size, and being deterministic it needs no convergence diagnostics — there is
+no $\hat{R}$, no effective sample size, no chain to inspect.
+
+Treat these as indicative rather than as a careful benchmark: they include
+Julia's first-call compilation, which is why computing *all* the coefficients
+can come out no slower than the single linear target measured just before it
+— the first `ginla` call pays for compiling the code that the second one then
+reuses.
+
+### When to use which
+
+- **Frequentist `gam()`** — fastest; fine whenever a symmetric interval is
+  adequate and $\lambda$ is well determined by the data.
+- **`ginla()`** — when the posterior is likely skewed (small counts, binary
+  data, strongly non-canonical links) but a full MCMC is not worth the cost.
+  Raise `nk` if quoting intervals precisely.
+- **MCMC (`priors=`)** — when smoothing-parameter uncertainty matters, when
+  you want the joint posterior rather than marginals, or when the model has
+  structure (custom priors, hierarchy) that the other two cannot express.
+
+### Limitations
+
+`ginla()` conditions on the estimated smoothing parameters, so it does not
+propagate $\lambda$ uncertainty — use $\mathbf{V}_c$ (`unconditional = true`)
+or MCMC for that. It returns **marginal** densities one coefficient at a
+time, so it says nothing about posterior dependence between coefficients.
+The `approx` argument trades accuracy for speed (`0` = full Newton
+refinement of the conditional modes, the default; `1` = Gaussian conditional
+modes; `2` = additionally assume a constant Hessian), and `nk` controls the
+quadrature error demonstrated above.
+
 ## Example 5: Low-level matrix extraction
 
 For maximum control, extract the raw matrices with `gam_matrices()`:
@@ -712,6 +925,9 @@ println("  Zs (penalized):  ", [size(Z) for Z in sms[1].Zs])
 | Coefficient table | `coeftable(m)` — posterior mean, SD, 95% CI |
 | Credible intervals | `confint(m; level = 0.95)` |
 | Full posterior | `m.chains[Symbol("σ_obs")]` |
+| Approximate posterior, no MCMC | `ginla(m_freq)` — marginal densities |
+| GINLA for a linear combination | `ginla(m; A = Xp)` — posterior of `Xp * β` |
+| GINLA for one smooth's coefficients | `ginla(m; select = 1)` |
 
 ### Key design choices
 

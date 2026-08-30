@@ -107,8 +107,18 @@ using Statistics, LinearAlgebra
     @testset "scasm: feasibility-gated acceptance holds from iteration 1" begin
         ysc = 2.0 .* x .+ 0.2 .* randn(StableRNG(14), n)
         msa = gam(@formulak(y ~ s(x, bs = :sc, xt = ["m+"], k = 10)), (y = ysc, x = x))
-        @test msa.deviance_val ≈ 12.699685917233 rtol = 1e-7
-        @test msa.edf_total ≈ 2.000412930824 rtol = 1e-7
+        # Anchors updated when LOG_SP_BOUND rose from 15 to 30 (see
+        # src/types.jl). This fit was PINNED at the old bound: `ysc` is exactly
+        # linear (2x + noise) under a monotone-increasing constraint, so the
+        # correct answer is a straight line with edf exactly 2. Freeing the
+        # bound let log sp reach 24.53 and drove edf from 2.000412930824 to
+        # 1.9999999728 — |edf - 2| improving 4.1e-4 -> 2.7e-8, a factor of
+        # 15,000. Deviance rises by 9e-6 relative (12.699685917233 ->
+        # 12.699804013947), which is the expected trade: shrinking onto the
+        # exact linear null space costs a hair of deviance and buys the right
+        # model. Monotonicity still holds (asserted below).
+        @test msa.deviance_val ≈ 12.699804013947 rtol = 1e-7
+        @test msa.edf_total ≈ 2.0 atol = 1e-6
         # The constrained solution must satisfy its shape constraint
         @test all(diff(fitted(msa)) .>= -1e-8)
     end

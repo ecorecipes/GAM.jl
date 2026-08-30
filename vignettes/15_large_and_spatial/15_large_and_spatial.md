@@ -152,11 +152,11 @@ end
 
     n       gam (s)   bam (s)   speedup   gam (MB)   bam (MB)   mem ratio
     ──────────────────────────────────────────────────────────────────────
-    1000    0.0117    0.0121    0.96×     20.5       26.1       0.78×
-    2000    0.0166    0.0132    1.26×     26.1       30.0       0.87×
-    5000    0.0392    0.0167    2.34×     43.7       40.7       1.07×
-    10000   0.0629    0.0231    2.72×     68.2       59.6       1.14×
-    20000   0.1118    0.0343    3.26×     131.8      90.1       1.46×
+    1000    0.0121    0.0123    0.99×     20.5       26.1       0.78×
+    2000    0.0197    0.0151    1.31×     26.1       30.0       0.87×
+    5000    0.0575    0.0187    3.08×     43.7       40.7       1.07×
+    10000   0.0759    0.0278    2.73×     69.3       65.1       1.06×
+    20000   0.1478    0.0673    2.2×      122.9      83.4       1.47×
 
 There are two separate crossovers in that table — one in time, one in
 memory — and they need not coincide:
@@ -177,7 +177,7 @@ println("at the largest n tried (", rows[end].n, "): ",
 
     bam() first beats gam() on time   at n = 2000
     bam() first beats gam() on memory at n = 5000
-    at the largest n tried (20000): 3.26× faster, 1.46× lighter
+    at the largest n tried (20000): 2.2× faster, 1.47× lighter
 
 `bam()`’s overhead is the $p \times p$ accumulator and the chunk
 buffers, which are pure cost when the design matrix is small — that is
@@ -264,19 +264,20 @@ end
 
     n       mgcv gam   GAM.jl gam   mgcv bam   GAM.jl bam   GAM.jl gam vs mgcv gam
     ────────────────────────────────────────────────────────────────────────────
-    1000    0.472 s    0.0117 s     0.041 s    0.0121 s     40.5× faster
-    2000    0.835 s    0.0166 s     0.045 s    0.0132 s     50.2× faster
-    5000    2.108 s    0.0392 s     0.079 s    0.0167 s     53.8× faster
-    10000   3.667 s    0.0629 s     0.136 s    0.0231 s     58.3× faster
-    20000   7.325 s    0.1118 s     0.276 s    0.0343 s     65.5× faster
+    1000    0.472 s    0.0121 s     0.041 s    0.0123 s     38.9× faster
+    2000    0.835 s    0.0197 s     0.045 s    0.0151 s     42.4× faster
+    5000    2.108 s    0.0575 s     0.079 s    0.0187 s     36.6× faster
+    10000   3.667 s    0.0759 s     0.136 s    0.0278 s     48.3× faster
+    20000   7.325 s    0.1478 s     0.276 s    0.0673 s     49.6× faster
 
 GAM.jl’s `gam()` is the fast one in absolute terms; mgcv’s `bam()` has a
 large ratio to report mainly because mgcv’s `gam()` re-forms a QR at
 every outer iteration. So the practical advice differs by package: in
 mgcv, reach for `bam()` almost as soon as $n$ leaves the hundreds; in
-GAM.jl, `gam()` stays competitive for longer. (mgcv’s
-`bam(discrete = TRUE)`, which GAM.jl does not implement, would be faster
-again — these are `discrete = FALSE` timings.)
+GAM.jl, `gam()` stays competitive for longer. (These are
+`discrete = FALSE` timings on both sides; covariate discretization is
+faster again in either package, and GAM.jl implements it too — see
+[Discretization](#discretization) below.)
 
 ### Scaling in `k`, not just `n`
 
@@ -306,10 +307,10 @@ end
 
     k     p     gam (s)    bam (s)    speedup
     ─────────────────────────────────────────────
-    10    30    0.0145     0.007      2.06×
-    20    60    0.0359     0.014      2.56×
-    40    120   0.1141     0.0388     2.94×
-    60    180   0.2465     0.0924     2.67×
+    10    30    0.014      0.0071     1.97×
+    20    60    0.0474     0.0192     2.47×
+    40    120   0.1922     0.0442     4.34×
+    60    180   0.2817     0.1167     2.41×
 
 Both fitters slow down steeply in `k`, as the $O(np^2)$ cost predicts —
 compare the growth here against the near-linear growth in the $n$ table
@@ -334,9 +335,9 @@ for cs in (1_000, 10_000, 20_000)
 end
 ```
 
-    chunk_size = 1000     time = 0.0337     EDF = 33.5785
-    chunk_size = 10000    time = 0.0424     EDF = 33.5785
-    chunk_size = 20000    time = 0.0433     EDF = 33.5785
+    chunk_size = 1000     time = 0.073      EDF = 33.5785
+    chunk_size = 10000    time = 0.0439     EDF = 33.5785
+    chunk_size = 20000    time = 0.0426     EDF = 33.5785
 
 ### Discretization
 
@@ -404,13 +405,13 @@ println("Gaussian, n = ", nrow(df), ":  dense ", round(t_dense; digits = 3),
         " s   speedup ", round(t_dense / t_disc; digits = 2), "x")
 ```
 
-    Gaussian, n = 20000:  dense 0.039 s   discrete 0.034 s   speedup 1.15x
+    Gaussian, n = 20000:  dense 0.036 s   discrete 0.028 s   speedup 1.27x
 
-Peak memory is also largely unchanged today. The compact representations
-are dramatic in isolation, but `setup_gam` still materializes the dense
-block before the discrete design replaces it, so `discrete = true` is
-currently a throughput option for non-Gaussian fits rather than a way to
-fit models that would not otherwise fit in memory.
+Peak memory falls too: under `discrete = true` the dense `n × p` model
+matrix is never built (`retain_X` defaults to `false` here, and
+`model_matrix(m)` reassembles it bitwise on demand), and smooths keep
+their reduced `m × k` bases. Measured at n = 10⁶ with 4 × `s(k=20)` cr
+smooths, peak RSS drops from about 3.0 GB dense to 1.5 GB discrete.
 
 ## Part 2 — Areal data: Markov random fields
 
@@ -751,15 +752,14 @@ point.
 
 ## Notes and known differences from mgcv
 
-- **`discrete = true` is implemented, with a narrower scope than
-  mgcv’s.** 1-D smooths, `te` tensors and `bs=:re` random effects are
-  discretized; `by=` terms and `ti`/`t2` stay dense and fall back
-  silently. It is a keyword on `bam` itself —
+- **`discrete = true` is implemented, with a slightly narrower scope
+  than mgcv’s.** 1-D smooths, `te` tensors, `bs=:re` random effects and
+  factor-`by` smooths are discretized; numeric-`by`, `ti` and `t2` stay
+  dense and fall back silently. It is a keyword on `bam` itself —
   `bam_control(discrete = …)` remains deprecated and warns. As in mgcv
-  the fit becomes approximate through covariate rounding, and unlike
-  mgcv the peak-memory benefit is not yet realised: the dense block is
-  still built before the discrete design replaces it. See
-  [Discretization](#discretization).
+  the fit becomes approximate through covariate rounding; the dense
+  model matrix is never built, so the peak-memory benefit is realised.
+  See [Discretization](#discretization).
 - **`sos` now takes degrees**, matching mgcv, with
   `xt = Dict(:units => :radians)` to opt out. Latitude comes first in
   both packages. This was a breaking change; earlier releases required

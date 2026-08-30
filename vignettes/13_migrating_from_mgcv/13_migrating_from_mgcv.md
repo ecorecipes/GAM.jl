@@ -55,6 +55,7 @@ using Statistics, Printf
 | `method = "REML"` | `method=:REML` | REML is the default in both |
 | `weights = w` | `weights=w` |  |
 | `offset(log(E))` in the formula | `gam(...; offset=log.(E))` | a keyword, not a formula term |
+| `knots = list(week = c(0, 52))` | `knots = Dict(:week => [0.0, 52.0])` | same meaning; two knots on a cyclic basis are the period endpoints |
 | `select = TRUE` | `select=true` |  |
 | `summary(m)` | `coeftable(m)`, `anova_gam(m)`, `overview(m)` | split across three calls |
 | `predict(m, nd)` | `predict(m, nd)` | link scale by default, as in R |
@@ -66,7 +67,7 @@ using Statistics, Printf
 | `k.check(m)` | `k_check(m)` | same k-index semantics |
 | `concurvity(m, full = TRUE)` | `concurvity(m; full=true)` | returns all three measures |
 | `AIC(m)` / `logLik(m)` | `aic(m)` / `loglikelihood(m)` |  |
-| `bam(...)` | `bam(...)` | chunked accumulation, not `discrete=TRUE` |
+| `bam(..., discrete=TRUE)` | `bam(...; discrete=true)` | both bin covariates; GAM.jl keeps numeric-`by`/`ti`/`t2` dense |
 | `gamm(y ~ s(x), random = ...)` | `gamm(@formula(y ~ s(x) + (1\|g)), df)` | lme4-style RE syntax |
 | `gamlss`-style `gaulss()` | `gamlss([f1, f2], df, GaussianLS())` | vector of formulas |
 | `qgam::qgam(form, data, qu)` | `qgam(@formula(...), df, qu)` |  |
@@ -281,10 +282,25 @@ basis table, `:sos` now included, is a faithful port.
 **`bs=:sos` takes degrees, latitude first.** Matching mgcv. If your
 coordinates are in radians, pass `xt = Dict(:units => :radians)`.
 
-**`bam()` is not `bam(discrete=TRUE)`.** GAM.jl’s `bam` bounds memory by
-chunked accumulation of the normal equations; it does not discretize
-covariates, so expect mgcv’s `discrete=TRUE` to be faster on very large
-data.
+**`bam(...; discrete=true)` mirrors `bam(discrete=TRUE)`.** GAM.jl’s
+`bam` bounds memory by chunked accumulation, and `discrete = true`
+additionally bins covariates exactly as mgcv does: 1-D smooths (on any
+basis), `te` tensors, `bs=:re` random effects and factor-`by` smooths
+are stored at the unique covariate values, the `n × p` model matrix is
+never built, and the fit becomes approximate through covariate rounding
+alone. Numeric-`by`, `ti` and `t2` are not discretised and stay fully
+dense.
+
+Within the discretised smooths there is a second distinction worth
+knowing for large fits. A whitelist of bases — `:tp`, `:ts`, `:cr`,
+`:cs`, `:cc`, `:ps`, `:cps`, `:bs` — is *constructed* directly at the
+unique values, so the `n`-row basis is never formed at all; the others
+(`:ad`, `:gp`, `:fp`, `:lo`, `:ds`) are built densely and then binned,
+giving the same answer for a higher one-off construction cost. That
+whitelist is deliberate: a basis joins it only once it is proven to
+reproduce the dense basis exactly, because a basis that discretises
+*almost* right is a silently wrong answer. See the large-data vignette
+for measurements.
 
 ## Further reading
 

@@ -83,6 +83,98 @@ applied to only one of five P-IRLS loops, an identifiability constraint correct
 on training data but not off it, and two undocumented conventions that make
 correct side-by-side code compare different models.
 
+### Vignette buildout (August 2026)
+
+Documentation round covering the features that had no worked example. Writing
+these surfaced five source bugs that the test suite had missed, because a
+tutorial exercises feature *combinations* that unit tests do not; those are
+listed under Fixed below.
+
+- **New vignette 16, "Seasonal and Group-Varying Smooths"** — the first fitted
+  examples anywhere of cyclic smooths (`bs=:cc`), factor-`by`, numeric-`by`
+  (varying-coefficient) terms, and `ti()`. The cyclic wrap is verified exact
+  (`|f(0) - f(52)| = 0` against `1.9e-2` for a non-cyclic `:cr` fit), per-level
+  smoothing parameters come out monotone in signal strength (amplitude 1.40 →
+  sp 1.93; 0.35 → 3.89, which a single shared λ cannot do), and fitted values
+  agree with mgcv to `2.4e-6` on the factor-`by` model.
+- **Vignette 04 gains a disease-counts arc** — `offset=` for log-exposure rate
+  models (fitted nowhere previously, despite being the standard construction
+  for incidence data), the naive alternatives shown failing, then
+  `NegBinFamily` / `QuasiPoissonFamily` / `TweedieFamily` for overdispersion,
+  with `rootogram` diagnostics. On the worked example a Poisson fit understates
+  the smooth's standard errors by 2.2-2.6× and expects 1.4 zeros where 15 occur.
+- **Vignette 02 gains eight previously-undemonstrated bases** — `:ts`/`:cs`
+  (shrinkage, with the null-space penalty shown shrinking an irrelevant term to
+  edf 0.0016 where `:tp` leaves 1.68, and the relationship to `select=true`
+  spelled out), `:ad` (adaptive: 2.85× lower RMSE on the flat half of an
+  inhomogeneous function while using 9 fewer effective df), `:bs`, `:cps`,
+  `:fp`, `:lo`, and `:sz` conceptually.
+- **Vignette 10 gains `bs=:fs`** — per-subject trajectories recovering the
+  truth 2.5× better than a random intercept (RMSE 0.167 vs 0.425). Documents
+  that `fs` shares a small *fixed set* of smoothing parameters (three:
+  wiggliness, intercept, slope — verified invariant at 5/10/15/25 levels)
+  rather than one, which is the real contrast with factor-`by`, and that `fs`
+  smoothing parameters do not transfer from mgcv.
+- **Vignette 05 gains the smoothing-parameter-uncertainty surface** —
+  `vcov_corrected`, `edf1`/`edf2`, `conditional_aic`, `sp_criterion`,
+  `data_slice`, `vis_gam`/`gamcontour`, with a *measured* coverage experiment
+  rather than an assertion: paired over shared replicates, `Vc` improves
+  coverage by `+0.005` (n=200) to `+0.043` (n=80), every difference 6-11 Monte
+  Carlo standard errors from zero. It also states plainly that `Vc` is a
+  partial fix — at n=80 it lifts coverage 0.85 → 0.89, short of nominal,
+  because it corrects for estimating λ, not for smoothing bias.
+- **Vignette 11 gains `ginla`** — compared directly against the MCMC posterior
+  already in that vignette (22× faster; captures the posterior skewness the
+  Gaussian approximation reports as exactly zero by construction), with a
+  quadrature-convergence table showing the default `nk=16` understates the
+  posterior SD by ~1.7%.
+- **Vignette 14 gains its R companion**, the only vignette that lacked one.
+- **Seven data generators added to `vignettes/generate_data.jl`**, so every
+  dataset with a stated DGP is now reproducible; a full regeneration leaves
+  every checked-in CSV byte-identical.
+
+Fixed (all five found by writing the vignettes above):
+
+- **Every extended family's estimated extra parameter was corrupted whenever
+  an `offset=` was supplied.** `_null_deviance` fitted its intercept-plus-offset
+  null model using the *caller's own mutable family object*, and
+  `pirls_extended` re-estimates the extra parameter in place, so the null fit
+  overwrote the value the real model had just converged to. Only offsets
+  triggered it, because the offset-free branch returns a closed-form deviance
+  without fitting. The fit itself was always correct — coefficients, fitted
+  values, edf and deviance — but the *reported* parameter was not: NegBin θ was
+  45% off (2.094 → 1.139), Beta φ 19.9% off, Tweedie `p` affected, and a wrong
+  θ propagates into standard errors and AIC. With the fix, θ agrees to 2e-5 and
+  fits are offset-invariant to 7.5e-8.
+- **The `log λ` upper bound of 15 was too low for the shrinkage bases to
+  shrink.** `:cs` stalled at edf 0.286 for an irrelevant term where mgcv reaches
+  0.0002, with the optimizer pinned *exactly* at the bound; mgcv's own optima
+  for these bases are `log λ` 16.8 (`ts`) and 22.61 (`cs`). Raised to a single
+  documented `LOG_SP_BOUND = 30.0` replacing 12 literal occurrences across five
+  optimizers, so the bound can no longer drift between methods. `:cs` now
+  reaches edf 5.0e-5. Two pinned test values moved, both of which had been
+  masking clamped fits — notably a dense-vs-discrete comparison that "agreed to
+  1e-10" because *both* sides were clamped to exactly 15.0, agreement by
+  construction rather than by accuracy; freed, they agree at 1.6e-10 honestly.
+- **`smooth_estimates` and friends failed on any `by=` smooth.** The default
+  evaluation grid was built from the smooth's own covariates only, so the `by`
+  column was absent and prediction raised `FieldError`. Numeric `by` now
+  evaluates at `z = 1`, returning the varying coefficient f(x) itself; factor
+  `by` returns the grid per level with the level recorded in a new `by_level`
+  field on `SmoothEstimates`. Applies to `smooth_estimates`, `derivatives`,
+  `partial_residuals` and `data_slice`.
+- **`gam()` and `bam()` gained `knots=`**, mgcv's mechanism for setting a
+  smooth's knots explicitly — most importantly a cyclic smooth's period, which
+  previously could only be controlled by coding the covariate so its observed
+  range *was* the period. Two knots on a cyclic basis are read as the period
+  endpoints with the interior filled in, matching mgcv. On data spanning 0–51
+  weeks with a true period of 52, the fitted curve previously failed to join by
+  0.2519; with `knots = Dict(:week => [0.0, 52.0])` it joins exactly. Per-margin
+  tensor knots are not supported and are ignored rather than half-applied.
+- **Vector `m` on a smooth raised a bare `MethodError`.** `s(:x; bs=:bs,
+  m=[3,2])` — mgcv's documented form — now raises an `ArgumentError` naming the
+  scalar convention and the mgcv mapping, on `s`/`te`/`ti`/`t2`.
+
 ### Breaking / behavior changes
 - **`k_check` is now reproducible by default.** Its p-value comes from a
   randomization test, and the shuffles previously drew from the global RNG, so

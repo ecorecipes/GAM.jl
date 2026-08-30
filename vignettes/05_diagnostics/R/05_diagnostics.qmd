@@ -265,11 +265,88 @@ model_concurvity(m, pairwise = TRUE)
 k.check(m)
 ```
 
+## Uncertainty when the smoothing parameters are estimated
+
+mgcv carries the same three degrees-of-freedom measures as GAM.jl, in
+`m$edf`, `m$edf1` and `m$edf2`, and the same corrected covariance in `m$Vc`.
+These are the quantities behind `predict.gam(..., unconditional = TRUE)`.
+
+```{r}
+cat(sprintf("edf_total  : %.4f\n", sum(m$edf)))
+cat(sprintf("sum(edf1)  : %.4f\n", sum(m$edf1)))
+cat(sprintf("sum(edf2)  : %.4f\n", sum(m$edf2)))
+cat(sprintf("per-smooth edf: %s\n",
+    paste(round(sapply(m$smooth,
+        function(s) sum(m$edf[s$first.para:s$last.para])), 3), collapse = ", ")))
+```
+
+```{r}
+Vp <- m$Vp; Vc <- m$Vc
+r <- sqrt(diag(Vc)) / sqrt(diag(Vp))
+cat(sprintf("rel. Frobenius |Vc - Vp|/|Vp| : %.4f\n",
+    norm(Vc - Vp, "F") / norm(Vp, "F")))
+cat(sprintf("SE ratio Vc/Vp - min %.4f, median %.4f, max %.4f\n",
+    min(r), median(r), max(r)))
+cat(sprintf("intercept SE ratio : %.4f\n", r[1]))
+cat(sprintf("REML score (gcv.ubre) : %.4f\n", m$gcv.ubre))
+cat(sprintf("AIC : %.4f\n", AIC(m)))
+```
+
+These agree closely with the Julia vignette, which is the point of the
+comparison — the `Vc` machinery is a faithful port, not a re-derivation:
+
+| Quantity | GAM.jl | mgcv 1.9-4 |
+|----------|--------|------------|
+| `edf_total` | 17.3502 | 17.3458 |
+| `sum(edf1)` | 20.2004 | 20.1950 |
+| `sum(edf2)` | 19.6689 | 19.6644 |
+| $\lVert V_c - V_p\rVert/\lVert V_p\rVert$ | 0.2794 | 0.2794 |
+| max SE ratio | 1.4279 | 1.4285 |
+| REML score | 881.9628 | 881.9628 |
+| AIC | 1752.8195 | 1752.8194 |
+
+The residual differences (in the fifth significant figure) come from the two
+implementations converging to very slightly different smoothing parameters,
+not from a difference in the formulas.
+
+Interval widths with and without the correction:
+
+```{r}
+p_con <- predict(m, se.fit = TRUE, unconditional = FALSE)
+p_unc <- predict(m, se.fit = TRUE, unconditional = TRUE)
+cat(sprintf("mean SE conditional (Vp)   : %.5f\n", mean(p_con$se.fit)))
+cat(sprintf("mean SE unconditional (Vc) : %.5f  (x%.4f)\n",
+    mean(p_unc$se.fit), mean(p_unc$se.fit) / mean(p_con$se.fit)))
+```
+
+## Visualizing 2-D smooths
+
+`vis.gam` is mgcv's 2-D surface plot; the Julia vignette's `vis_gam` returns
+the same surface as data (`x1`, `x2`, `z`) for plotting with any backend.
+Both accept `too.far` / `too_far` to mask grid cells far from the data.
+
+```{r}
+d2 <- read.csv("../data_2d.csv")
+m2d <- gam(y ~ s(x, z, k = 40, bs = "tp"), data = d2, method = "REML")
+cat(sprintf("2-D fit: edf = %.3f\n", sum(m2d$edf)))
+```
+
+```{r}
+#| fig-width: 9
+#| fig-height: 4.5
+op <- par(mfrow = c(1, 2))
+vis.gam(m2d, view = c("x", "z"), plot.type = "contour",
+        too.far = 0.1, main = "vis.gam contour")
+vis.gam(m2d, view = c("x", "z"), plot.type = "persp",
+        theta = 30, phi = 25, main = "vis.gam perspective")
+par(op)
+```
+
 ## Summary
 
 Both GAM.jl and gratia provide equivalent diagnostic interfaces:
 
-| gratia (R) | GAM.jl (Julia) |
+| gratia / mgcv (R) | GAM.jl (Julia) |
 |------------|-----------------|
 | `overview()` | `overview()` |
 | `smooth_estimates()` | `smooth_estimates()` |
@@ -281,3 +358,8 @@ Both GAM.jl and gratia provide equivalent diagnostic interfaces:
 | `partial_residuals()` | `partial_residuals()` |
 | `model_concurvity()` | `concurvity()` |
 | `k.check()` | `k_check()` |
+| `m$edf`, `m$edf1`, `m$edf2` | `edf()`, `m.edf1`, `edf2()` |
+| `m$Vc` | `vcov_corrected()` |
+| `unconditional = TRUE` | `unconditional = true` |
+| `m$gcv.ubre` | `sp_criterion()` |
+| `vis.gam()` | `vis_gam()`, `gamcontour()` |

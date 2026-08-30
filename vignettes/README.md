@@ -32,12 +32,17 @@ the narrative:
 julia --project=. generate_data.jl
 ```
 
-Currently that covers `06_extreme_values/data_gpd.csv`,
+Currently that covers `02_basis_types/{data_shrink,data_adaptive}.csv`,
+`04_families/{data_incidence,data_incidence_od}.csv`,
+`05_diagnostics/data_2d.csv`,
+`06_extreme_values/data_gpd.csv`,
 `07_shape_constraints/data_cx.csv`, `07_shape_constraints/data_micv.csv`,
 `10_gamm/data_gaussian_gamm.csv`, `10_gamm/data_poisson_gamm.csv`,
+`10_gamm/data_fs_trajectories.csv`,
 `12_nested_effects/data_si.csv`, `12_nested_effects/data_expsm.csv`,
-`13_migrating_from_mgcv/data.csv`, `14_model_selection/data.csv`, and
-`15_large_and_spatial/{data_large,data_mrf,nb,data_sphere}.csv`; the
+`13_migrating_from_mgcv/data.csv`, `14_model_selection/data.csv`,
+`15_large_and_spatial/{data_large,data_mrf,nb,data_sphere}.csv`, and
+`16_seasonality/{data_season,data_region}.csv`; the
 remaining CSVs predate the script and already match their vignettes.
 The reference posterior CSVs in `11_bayesian_gam/` were produced by the R code
 in `11_bayesian_gam/R/`.
