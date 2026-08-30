@@ -133,6 +133,21 @@ listed under Fixed below.
   dataset with a stated DGP is now reproducible; a full regeneration leaves
   every checked-in CSV byte-identical.
 
+Added:
+
+- **A docstring-attachment guard** (`test/test_docstrings.jl`). Julia binds a
+  docstring to whatever expression immediately follows it, so inserting a
+  helper — or even two blank lines — between a docstring and its definition
+  silently detaches it: `?name` goes empty and nothing else breaks. That
+  happened three times in this branch (`@gamm_formula`/`cqcheck`/`check_qgam`
+  documented on private helpers; a dangling docstring in `bam.jl`; and
+  `_normalize_m` inserted between the `s` docstring and `function s`, orphaning
+  the docs for the package's most-used function while the whole suite still
+  passed). The guard asserts every exported binding the package owns has an
+  attached docstring — 199 of them, all currently documented; re-exports from
+  StatsModels/GLM/Distributions are excluded as upstream's to maintain. Verified
+  to fail by re-injecting the `s` orphan, which it reports by name.
+
 Fixed (all five found by writing the vignettes above):
 
 - **Every extended family's estimated extra parameter was corrupted whenever
