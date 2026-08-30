@@ -153,12 +153,12 @@ identified, so fitted values/EDF — not raw sp — are the meaningful
 comparison there; the `tp`, `gp` and `sos` bases are **rotation-equivalent**
 to mgcv's, not elementwise — fits, EDF and predictions match at fixed `sp`
 (to ~1e-12 or better) but raw coefficient vectors differ, so never compare
-those elementwise; `bs=:sz` uses a **single** penalty on the deviation term where
-mgcv uses one per factor level, so its bases and coefficient count match
-mgcv exactly but its deviation edf is larger when levels differ markedly in
-how far they depart from the common curve (10.24 vs 14.63 on a three-region
-seasonal model, deviance 158.46 vs 158.00) — compare deviance and fitted
-curves for `:sz`, not per-term edf; and `fs` smoothing parameters do **not**
+those elementwise; `bs=:sz` smoothing parameters do not transfer from mgcv
+(GAM.jl absorbs an orthonormal level contrast at construction, mgcv applies
+its own non-orthonormal contrast afterwards, so λ sits on a different scale
+and not by a constant factor) — though edf, deviance and fitted values agree
+closely (10.244 vs 10.2412, 158.456 vs 158.457, fitted within 4.1e-5 on a
+three-region seasonal model); and `fs` smoothing parameters do **not**
 transfer from mgcv. The penalty structure matches, but mgcv's `nat.param(type=1)`
 parameterisation puts the null-space components on a different footing, so
 feeding mgcv's `sp` in makes agreement *worse* rather than better — on a
@@ -196,7 +196,7 @@ selected `sp`, where they agree closely (fitted correlation 0.9999971, edf
 | P-splines (`:ps`) | ✅ | ✅ |
 | Cyclic P-splines (`:cps`) | ✅ | ✅ |
 | B-splines (`:bs`) | ✅ | ✅ |
-| Gaussian process (`:gp`) | ✅ | ✅ 1-D only; `m` selects mgcv's correlation type |
+| Gaussian process (`:gp`) | ✅ | ✅ 1-D and multi-dimensional; `m` selects mgcv's correlation type. 2-D fitted values agree to ~5e-13 at fixed `sp`. Covariates are centred but **not** scaled, as in mgcv, so the kernel is isotropic in their own units; user-supplied `knots=` is 1-D only |
 | Duchon splines (`:ds`) | ✅ | ⚠️ alias for `:tp` — warns; not Duchon's fractional-order basis |
 | Markov random field (`:mrf`) | ✅ | ✅ |
 | Factor-smooth (`:fs`) | ✅ | ✅ |

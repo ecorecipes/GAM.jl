@@ -157,6 +157,40 @@ listed under Fixed below.
 
 Added:
 
+- **Duchon splines (`bs=:ds`) are now real.** Previously `:ds` warned once per
+  session and fitted an ordinary thin-plate spline — the only registered basis
+  that did not do what its name said, and the reason the README carried a
+  "one basis is a documented approximation" caveat. Now a direct port of
+  mgcv's `smooth.construct.ds.smooth.spec`, `DuchonE`, `DuchonT` and
+  `Predict.matrix.duchon.spline`, with the fractional-power kernel, the plain
+  QR null-space rotation (not TPRS's QT), and no column rescaling — the three
+  places mgcv's `ds` genuinely differs from its `tp`. Penalty scaling matches
+  to 9-10 digits (`S.scale` 0.3957335051 against 0.3957335051; the old stub's
+  tell was 0.427 against mgcv's 19.60), edf and deviance match at fixed `sp`,
+  and smoothing parameters transfer both ways. `m = c(2, 0)` reduces to a
+  thin-plate spline in 1-D as the theory requires, agreeing to 3.1e-8 — an
+  independent check that does not route through mgcv.
+  Duchon's second order goes in `xt`: mgcv's `m = c(2, 0.5)` is
+  `m = 2, xt = Dict(:s => 0.5)`, and the vector-`m` error now names that
+  spelling. Bases agree with mgcv up to per-column signs (R's `qr()` uses
+  LINPACK, Julia's LAPACK), which is unobservable in fits, edf or penalties.
+- **Multi-dimensional Gaussian-process smooths (`bs=:gp`)**, previously 1-D
+  only — which left the basis missing its main use, spatial smoothing. Ported
+  from mgcv's `smooth.construct.gp.smooth.spec`: knots are unique covariate
+  *combinations* (not unique values per column), distances are Euclidean, and
+  the default range is the largest knot-to-knot distance. 2-D fitted values
+  agree with mgcv to 4.6e-13 at fixed `sp`, `rho` to full printed precision,
+  and edf exactly (20.93675274 both); a known 2-D surface recovers at RMSE
+  0.093 against noise sd 0.30. The 1-D path is bit-unchanged and still pinned
+  by its 59-assertion parity suite.
+  Two behaviours worth knowing, both asserted rather than merely documented:
+  covariates are **centred but not scaled**, exactly as in mgcv, so the kernel
+  is isotropic in the covariates' own units and rescaling one covariate is a
+  genuinely different model; and GAM.jl's default `k` for a 2-D `s()` is 30
+  where mgcv's is `d + 1 + 30`, so pass `k` explicitly when porting. The model
+  space is invariant to covariate order (6.7e-16 at fixed `sp`), though free
+  fits can stop ~2% apart in `sp` on the flat optimum. User-supplied `knots=`
+  remains 1-D only and raises an informative error otherwise.
 - **Neighbourhood cross validation (`method = :NCV`)**, a port of mgcv's
   `src/ncv.c` and the last outstanding item from the agreed backlog. GCV and
   REML assume independent observations and under-smooth badly on correlated
@@ -195,6 +229,37 @@ Added:
   attached docstring — 199 of them, all currently documented; re-exports from
   StatsModels/GLM/Distributions are excluded as upstream's to maintain. Verified
   to fail by re-injecting the `s` orphan, which it reports by name.
+
+Fixed:
+
+- **A GP correlation-function test asserted on the wrong quantity.**
+  `test_tprs_parity.jl` checked that the default `:gp` correlation (mgcv's
+  √3-free type 3) differs from the √3-carrying `:matern32` by comparing
+  **edf** — but the target there is a plain sine with `k = 10`, so every one
+  of these bases fits to saturation and lands at edf ≈ 9 whatever the
+  correlation function. The two differed by 1.9e-5 relative while their design
+  matrices differed by 1.01 and their penalties by 13.1, so the check was
+  failing (and would equally have passed) for reasons unrelated to its claim.
+  It now asserts on the basis itself: the default is elementwise identical to
+  `:mgcv_m32`, and `:matern32` is a genuinely different `X` and `S`. The
+  underlying `corfun` handling was correct throughout; only the test was
+  measuring the wrong thing.
+- **`bs=:sz` now emits one penalty per factor level, as mgcv does.** GAM.jl
+  built the deviation term with a single summed penalty, which turns out to be
+  exactly mgcv's `id`-supplied branch (`R/smooth.r:2281-2286`) applied
+  unconditionally — mgcv's *default* is one penalty per level. With one shared
+  smoothing parameter the term could not shrink a weakly-deviating level while
+  leaving a strongly-deviating one alone, so it reported markedly more
+  effective degrees of freedom: on a three-region seasonal model, deviation
+  edf 14.63 against mgcv's 10.2412. It now gives 10.244, deviance 158.456
+  against 158.457, and fitted values within 4.09e-5 (1.2e-5 of range). The
+  change is a strict *decomposition* of the previous penalty rather than a
+  different model space — the per-level penalties sum back to the old one to
+  ~1e-15 — so bases and coefficient counts are unchanged. Note that `:sz`
+  smoothing parameters do **not** transfer between the packages: GAM.jl
+  absorbs an orthonormal level contrast at construction where mgcv applies a
+  non-orthonormal one afterwards, so λ is on a different scale and not by a
+  constant factor. Vector `sp` for an `:sz` term now takes one value per level.
 
 Fixed (all five found by writing the vignettes above):
 

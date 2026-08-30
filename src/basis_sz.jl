@@ -82,19 +82,57 @@ function _smooth_construct(::ConstrainedFactorSmooth, spec::SmoothSpec, data, us
 
     # Penalties: (Q_L ⊗ I)' (I_L ⊗ S_j) (Q_L ⊗ I) = (Q_L'Q_L) ⊗ S_j = I_{L-1} ⊗ S_j
     #
-    # Deliberately NOT stored narrow via `S_offsets`, unlike factor-`by`. That
-    # machinery gives each offset sub-penalty its OWN smoothing parameter;
-    # here the L-1 diagonal copies share ONE λ per marginal penalty — that
-    # sharing is sz's model. Narrowing would multiply the sp count, changing
-    # the model, not the storage. (The remaining waste is that this block-
-    # diagonal matrix is stored dense; fixing that needs Diagonal-capable
-    # `ConstructedSmooth.S` storage, a separate consumer-audit exercise.)
+    # mgcv requires the base smooth to be singly penalized (`smooth.r:2240`:
+    # `if (length(object$S)>1) stop("\"sz\" smooth cannot use a multiply
+    # penalized basis")`). The marginal here is always TPRS, so this holds by
+    # construction; assert it rather than silently producing L*n_marg
+    # penalties if the marginal ever becomes configurable.
+    length(marginal_sm.S) == 1 || throw(ArgumentError(
+        "sz smooth cannot use a multiply penalized base basis (got " *
+        "$(length(marginal_sm.S)) marginal penalties)"))
+    S_marg = marginal_sm.S[1]
+
+    # ONE PENALTY PER FACTOR LEVEL, matching mgcv (`smooth.r:2281-2286`):
+    #
+    #     if (is.null(object$id)) {   ## one penalty and one sp per smooth
+    #       for (i in 1:prod(nf)) { S0 <- matrix(0,p,p)
+    #                               S0[ind,ind] <- object$S[[1]]
+    #                               S[[i]] <- S0; ind <- ind + p0 }
+    #       object$rank <- rep(object$rank,prod(nf))
+    #     } else { ... single summed penalty ... }
+    #
+    # mgcv builds those on the UNCONSTRAINED L*k basis and applies the
+    # sum-to-zero contrast afterwards (`smooth.r:4139-4147`, the
+    # `length(sm$C)>1` branch, which hits each penalty with `XZKr` twice —
+    # i.e. Z'S_iZ with the same Z for every i). We absorb the contrast at
+    # construction instead, so we apply that transform here directly. With
+    # Z = Q_L ⊗ I and the i-th level's penalty S_i = (e_i e_i') ⊗ S_marg,
+    #
+    #     Z' S_i Z = (Q_L' e_i e_i' Q_L) ⊗ S_marg = (q_i q_i') ⊗ S_marg
+    #
+    # where q_i = Q_L[i, :]. These sum back to the old single penalty, since
+    # Σ_i q_i q_i' = Q_L'Q_L = I_{L-1} — so this is a strict decomposition of
+    # what was here before, not a different model.
+    #
+    # It matters because one λ per level lets a weakly-deviating level be
+    # shrunk almost to zero while a strongly-deviating one stays loose; a
+    # single shared λ must compromise, which showed up as a markedly larger
+    # deviation edf than mgcv's (14.63 against 10.24 on a three-region
+    # seasonal model).
+    #
+    # An explicit `id` selects mgcv's other branch: one summed penalty, one
+    # smoothing parameter, levels forced to share smoothness.
     penalties = Matrix{Float64}[]
-    for S_j in marginal_sm.S
+    if spec.id === nothing
+        for i in 1:L
+            q = Q_L[i, :]
+            push!(penalties, Matrix(Symmetric(kron(q * q', S_marg))))
+        end
+    else
         S_sz = zeros(total_cols, total_cols)
         for c in 1:(L - 1)
             rng = ((c - 1) * k_eff + 1):(c * k_eff)
-            S_sz[rng, rng] .= S_j
+            S_sz[rng, rng] .= S_marg
         end
         push!(penalties, Matrix(Symmetric(S_sz)))
     end

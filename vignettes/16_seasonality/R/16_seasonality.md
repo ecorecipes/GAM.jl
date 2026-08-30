@@ -395,11 +395,14 @@ for (j in seq_along(regs)) {
     highland  deviation range [-1.013,  0.189]
     inland    deviation range [-0.002,  0.027]
 
-Note when comparing with the Julia side: the *common* smooth’s edf
-agrees closely between the two packages, but the deviation term’s does
-not, and the two implementations reach a similar deviance by different
-splits of the effective degrees of freedom. Compare deviance and the
-fitted curves here rather than the per-term edf.
+Both packages give `sz` one penalty per level (three here) plus one for
+the common curve, and the fits agree closely: deviation edf 10.2412 here
+against GAM.jl’s 10.244, deviance 158.457 against 158.456, fitted values
+within 4.1e-5. The *smoothing parameters* are not comparable, though —
+mgcv applies its level contrast after building the penalties while
+GAM.jl absorbs an orthonormal contrast at construction, so λ sits on a
+different scale and not by a constant factor. Compare edf, deviance and
+fitted curves.
 
 ## Numeric `by`: varying-coefficient terms
 

@@ -136,19 +136,44 @@
         end
         # GAM.jl's default is now mgcv's √3-free type 3, so it must agree with
         # `:mgcv_m32` exactly and differ from the √3-carrying `:matern32`.
+        #
+        # Assert this on the BASIS, not on edf. edf cannot discriminate here:
+        # the target is a plain sine and k = 10, so every one of these bases
+        # fits it to saturation and lands at edf ≈ 9 whatever the correlation
+        # function — the two differed by 1.9e-5 relative while their design
+        # matrices differed by 1.01 and their penalties by 13.1. An edf-based
+        # check therefore fails (or passes) for reasons unrelated to the claim
+        # it is making.
         m_std = gam(gpf(), df)
         m_mgcv = gam(gpf(; xt = Dict{Symbol, Any}(:corfun => :mgcv_m32)), df)
-        m_m32 = gam(gpf(; xt = Dict{Symbol, Any}(:corfun => :matern32)), df)
         @test sum(GAM.edf(m_std)) ≈ sum(GAM.edf(m_mgcv))
-        @test !isapprox(sum(GAM.edf(m_std)), sum(GAM.edf(m_m32)); rtol = 1e-4)
+
+        cs(xt) = begin
+            sp = GAM.s(:x; k = 10, bs = :gp)
+            merge!(sp.xt, xt)
+            GAM.smooth_construct(sp, (x = df.x,))
+        end
+        c_std = cs(Dict{Symbol, Any}())
+        c_mgcv = cs(Dict{Symbol, Any}(:corfun => :mgcv_m32))
+        c_m32 = cs(Dict{Symbol, Any}(:corfun => :matern32))
+        # Default IS mgcv's type 3, elementwise.
+        @test maximum(abs.(c_std.X .- c_mgcv.X)) == 0.0
+        # …and the √3-carrying Matérn is a genuinely different basis.
+        @test maximum(abs.(c_std.X .- c_m32.X)) > 1e-3
+        @test maximum(abs.(GAM.penalty_matrices(c_std)[1] .-
+                           GAM.penalty_matrices(c_m32)[1])) > 1e-3
     end
 
-    @testset "bs=:ds warns that it is not a Duchon spline" begin
-        # It delegates to tp, which is a different basis from mgcv's ds; the
-        # docstring says so but a docstring is not visible at the call site.
-        @test_logs (:warn, r"not implemented as a Duchon spline") match_mode = :any begin
-            gam(tpf(10; bs = :ds), mkdata(120))
-        end
+    @testset "bs=:ds is a real Duchon basis, not a tp alias" begin
+        # `:ds` used to be a stub that warned once and fitted an ordinary
+        # thin-plate spline. It is now a port of mgcv's bs="ds" (see
+        # `_construct_duchon` and test/test_duchon*.jl), so it must NOT warn,
+        # and must NOT coincide with the tp basis it used to delegate to.
+        d = mkdata(120)
+        m_ds = @test_logs min_level = Base.CoreLogging.Warn gam(tpf(10; bs = :ds), d)
+        m_tp = gam(tpf(10; bs = :tp), d)
+        @test size(GAM.model_matrix(m_ds)) == size(GAM.model_matrix(m_tp))
+        @test maximum(abs.(GAM.model_matrix(m_ds) .- GAM.model_matrix(m_tp))) > 1e-3
     end
 
     # ── mgcv parameterization: what makes `sp` transferable ──────────────────

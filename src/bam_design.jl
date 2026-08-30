@@ -590,8 +590,9 @@ representation regressions in this package. Known non-members and why:
     changes the basis DIMENSION itself.
   - `FractionalPolynomial`, `LoessSmooth`: construction is not
     row-weight-faithful (loess local regression especially).
-  - `DuchonSpline`: warns-and-delegates to `tp`; keep it dense rather than
-    reason about the aliasing under reduction.
+  - `DuchonSpline`: a real Duchon construction with its own kernel, null-space
+    rotation and (absent) rescaling; its reduced-construction faithfulness has
+    not been proven, so it stays dense until it is.
   - `RandomEffect`: guarded separately (its `k` is the level count).
 
 To add a basis: prove parity first — the per-basis testset fails for any

@@ -150,11 +150,13 @@ function _normalize_m(m, fname::String)
     if m isa AbstractVector
         throw(ArgumentError(
             "$fname(...; m = $(m)): `m` must be a scalar in GAM.jl, not a " *
-            "vector. mgcv writes some orders as a vector — `bs=\"bs\"` uses " *
-            "`m = c(spline_order, penalty_order)` and `bs=\"ds\"` uses " *
-            "`m = c(m, s)` — but GAM.jl takes the penalty order alone, so " *
-            "mgcv's `m = c(3, 2)` is `m = 2` here. (`sp` does accept a " *
-            "vector; `m` does not.)"))
+            "vector. mgcv writes some orders as a vector. For `bs=\"bs\"`, " *
+            "`m = c(spline_order, penalty_order)`, GAM.jl takes the penalty " *
+            "order alone, so mgcv's `m = c(3, 2)` is `m = 2` here. For " *
+            "`bs=:ds` (Duchon), which genuinely needs both orders, the second " *
+            "goes in `xt`: mgcv's `m = c(2, 0.5)` is " *
+            "`m = 2, xt = Dict(:s => 0.5)`. (`sp` does accept a vector; `m` " *
+            "does not.)"))
     end
     m isa Real || throw(ArgumentError(
         "$fname(...; m = $(m)): `m` must be an integer, got $(typeof(m))"))

@@ -389,23 +389,27 @@ below it, while **inland is almost exactly the common curve** — its amplitude,
 by. That is the reading `:sz` is for, and it is not visible at all in three
 separately-fitted `by` curves.
 
-::: {.callout-warning}
-## A documented difference from mgcv
+Like a factor `by=` smooth, `:sz` carries **one smoothing parameter per
+level** — three here, plus one for the common curve. That is what lets it
+shrink a weakly-deviating level hard while leaving a strongly-deviating one
+alone, and it is why inland's deviation collapses almost to nothing above
+while coastal's does not.
 
-GAM.jl builds the `:sz` deviation term with a **single** penalty; mgcv builds
-it with one penalty per level (three here). The bases are identical — 10
-columns for the common smooth and 24 for the deviations in both packages, 35
-coefficients in total — and the common smooth agrees closely (edf 8.455 here
-against mgcv's 8.457, smoothing parameter 17.21 against 17.18). But because
-mgcv can smooth each level's deviation independently, it shrinks the weakly
-deviating levels much harder than a single shared penalty can, and reports a
-smaller deviation edf: 10.24 against 14.63 on this model. Deviance is close
-either way (157.999 here, 158.457 in mgcv).
+```{julia}
+@printf("smoothing parameters: %d (1 common curve + %d levels)\n",
+        length(m_sz.sp), length(regions))
+```
 
-The practical consequence: for `:sz`, compare deviance and the fitted
-deviation curves across the two packages, not the per-term edf, and expect
-GAM.jl's deviations to be somewhat less aggressively shrunk when levels differ
-a lot in how far they depart from the common curve.
+::: {.callout-note}
+## Comparing `:sz` with mgcv
+
+The fits agree closely — deviation edf 10.244 here against mgcv's 10.2412,
+deviance 158.456 against 158.457, and fitted values within 4.1e-5 (about
+1.2e-5 of the fitted range). The *smoothing parameters* do not transfer,
+though: GAM.jl absorbs an orthonormal level contrast at construction where
+mgcv applies its own non-orthonormal contrast afterwards, so λ sits on a
+different scale and not even by a constant factor. Compare edf, deviance and
+fitted curves; do not compare `:sz` smoothing parameters between the packages.
 :::
 
 ## Numeric `by`: varying-coefficient terms

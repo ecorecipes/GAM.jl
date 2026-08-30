@@ -1,38 +1,341 @@
 # Duchon spline smooth — bs="ds"
 #
-# NOTE: this is currently an ALIAS for the TPRS basis. mgcv's bs="ds"
-# implements Duchon's (1977) generalization with fractional smoothness
-# orders m = (m1, m2); none of that is implemented here — :ds simply
-# delegates to :tp with integer m. Scripts ported from mgcv that rely on
-# non-default Duchon orders will get a plain thin-plate spline instead.
+# A port of mgcv's `smooth.construct.ds.smooth.spec` (R/smooth.r), together
+# with its two helpers `DuchonE` and `DuchonT`. Duchon (1977) splines
+# generalize thin-plate splines: the kernel exponent is 2m + 2s − d rather
+# than 2m − d, so a second order `s` (which may be a half-integer) shifts the
+# kernel independently of the penalty order `m`.
+#
+# The construction differs from TPRS in three ways that matter, and each is
+# marked at the point where it bites:
+#   1. the kernel (`_duchon_eta`) carries mgcv's own sign convention and NO
+#      normalizing constant, where `_tps_eta` carries `_eta_const`;
+#   2. the null-space rotation comes from a plain QR of `U'T`, not from the
+#      QT factorization `tprs.c` uses (`_mgcv_qt`);
+#   3. there is NO column-RMS rescaling of `X`. mgcv's `tp` constructor
+#      rescales in C (tprs.c:493-498); its `ds` constructor does not.
 
 """
-Duchon spline basis (registered as `bs=:ds`).
+    _duchon_orders(spec, d) -> (m::Int, s::Float64)
 
-Currently an alias for [`ThinPlateSpline`](@ref): the fractional-order
-Duchon construction of mgcv's `bs="ds"` is not implemented, and `s(x, bs=:ds)`
-fits an ordinary TPRS.
+Resolve and validate the Duchon orders `(m, s)`, following mgcv's
+`smooth.construct.ds.smooth.spec` (R/smooth.r): `m` defaults to 2 and `s` to
+0; `m` is rounded to an integer and `s` to the nearest half-integer; then `s`
+is clamped to (−d/2, d/2) and, if `m + s <= d/2`, raised to the smallest value
+giving a continuous function.
+
+`m` is `SmoothSpec.m` (a scalar in GAM.jl). `s` is supplied through `xt`,
+because mgcv spells the pair as `m = c(m, s)` while GAM.jl's `m` is
+deliberately scalar (see `_normalize_m` in `smoothspec.jl`):
+
+```julia
+s(:x, bs = :ds, m = 2, xt = Dict(:s => 0.5))   # mgcv's m = c(2, 0.5)
+```
+"""
+function _duchon_orders(spec::SmoothSpec, d::Int)
+    m = spec.m === nothing ? 2 : round(Int, spec.m)
+    s_raw = Float64(get(spec.xt, :s, 0.0))
+    # mgcv: p.order[2] <- round(p.order[2]*2)/2 — s lives on a half-integer
+    # grid, because 2s must be an integer for the kernel exponent to be one.
+    s = round(s_raw * 2) / 2
+    m < 1 && (m = 1)
+    if s >= d / 2
+        s = (d - 1) / 2
+        @warn "bs=:ds: s reduced to $s (mgcv requires s < d/2 = $(d/2))" maxlog = 1
+    end
+    if s <= -d / 2
+        s = -(d - 1) / 2
+        @warn "bs=:ds: s increased to $s (mgcv requires s > -d/2)" maxlog = 1
+    end
+    if m + s <= d / 2
+        s = 1 / 2 + d / 2 - m
+        s >= d / 2 && throw(ArgumentError(
+            "bs=:ds: no suitable s for m=$m, d=$d — increase m " *
+            "(mgcv raises the same error)"))
+        @warn "bs=:ds: s modified to $s to give a continuous function" maxlog = 1
+    end
+    return m, s
+end
+
+"""
+    _duchon_kernel_exponent(m, s, d) -> (kint::Int, log_term::Bool, sign::Int)
+
+The Duchon kernel is `sign * r^k` (or `sign * r^k * log r` when `k` is even),
+with `k = 2m + 2s − d`. Ported from mgcv's `DuchonE` (R/smooth.r). `2s` is an
+integer by construction, so `k` always is too.
+"""
+function _duchon_kernel_exponent(m::Int, s::Float64, d::Int)
+    kk = 2m + 2s - d
+    kint = round(Int, kk)
+    isapprox(kk, kint; atol = 1e-9) || throw(ArgumentError(
+        "bs=:ds: kernel exponent 2m+2s-d = $kk is not an integer"))
+    # mgcv: signE <- 1 - 2*((floor(k/2)+1) %% 2)
+    sgn = 1 - 2 * mod(fld(kint, 2) + 1, 2)
+    return kint, iseven(kint), sgn
+end
+
+"""
+    _duchon_E!(E, X1, X2, m, s, d)
+
+Fill `E[i, j]` with the Duchon kernel evaluated at the distance between row
+`i` of `X1` and row `j` of `X2`. Port of mgcv's `DuchonE` (R/smooth.r).
+Note there is no normalizing constant here — unlike the thin-plate kernel,
+which carries `_eta_const`.
+"""
+function _duchon_E!(E::AbstractMatrix{Float64}, X1::AbstractMatrix{Float64},
+    X2::AbstractMatrix{Float64}, m::Int, s::Float64, d::Int)
+    kint, log_term, sgn = _duchon_kernel_exponent(m, s, d)
+    n1, n2 = size(X1, 1), size(X2, 1)
+    @inbounds for j in 1:n2, i in 1:n1
+        r2 = 0.0
+        for c in 1:d
+            δ = X1[i, c] - X2[j, c]
+            r2 += δ * δ
+        end
+        r = sqrt(r2)
+        val = if log_term
+            r == 0.0 ? 0.0 : r^kint * log(r)
+        else
+            r^kint
+        end
+        E[i, j] = sgn * val
+    end
+    return E
+end
+
+"""
+    _duchon_E(X1, X2, m, s, d) -> Matrix{Float64}
+
+Allocating form of [`_duchon_E!`](@ref).
+"""
+function _duchon_E(X1::AbstractMatrix{Float64}, X2::AbstractMatrix{Float64},
+    m::Int, s::Float64, d::Int)
+    return _duchon_E!(Matrix{Float64}(undef, size(X1, 1), size(X2, 1)),
+                      X1, X2, m, s, d)
+end
+
+"""
+    _duchon_T(X, m, d) -> Matrix{Float64}
+
+Polynomial null-space basis: all monomials of total degree `< m`, in mgcv's
+`poly.pow` column order. Port of mgcv's `DuchonT` (R/smooth.r); it is the same
+monomial enumeration the thin-plate null space uses, so this delegates to
+[`_tps_multi_null_basis`](@ref) rather than duplicating the odometer.
+"""
+_duchon_T(X::AbstractMatrix{Float64}, m::Int, d::Int) =
+    _tps_multi_null_basis(Matrix{Float64}(X), m)
+
+"""
+Cached quantities for predicting from a fitted Duchon smooth: the (shifted)
+knots, the `nk × (k−M)` matrix `UZ = U·Q₂` that maps kernel evaluations onto
+the penalized basis, the per-covariate `shift`, and the orders.
+"""
+struct DuchonPredictCache <: AbstractSmoothPredictCache
+    knots::Matrix{Float64}
+    UZ::Matrix{Float64}
+    shift::Vector{Float64}
+    m::Int
+    s::Float64
+    d::Int
+end
+
+"""
+Duchon spline basis (registered as `bs=:ds`), a port of mgcv's `bs="ds"`.
+
+Duchon (1977) splines generalize thin-plate regression splines. The kernel is
+`r^(2m+2s-d)` (times `log r` when that exponent is even), so a second order
+`s` shifts the kernel independently of the penalty order `m`; `m = 2, s = 0`
+is the default. `s` may be a half-integer and must satisfy `-d/2 < s < d/2`
+and `m + s > d/2`; values outside those ranges are adjusted as mgcv adjusts
+them, with a warning.
+
+Because `SmoothSpec.m` is a scalar in GAM.jl where mgcv writes `m = c(m, s)`,
+the second order is supplied through `xt`:
+
+```julia
+s(:x, bs = :ds)                              # mgcv's s(x, bs="ds")
+s(:x, bs = :ds, m = 2, xt = Dict(:s => 0.5)) # mgcv's s(x, bs="ds", m=c(2, 0.5))
+```
+
+The basis matches mgcv's up to the signs of individual basis columns, which
+are not observable: fitted values, EDF and smoothing parameters agree (see
+`test/test_duchon_rcall.jl`). Unlike `bs=:tp`, the Duchon basis is not
+column-RMS rescaled, matching mgcv.
 """
 struct DuchonSpline <: AbstractBasisType end
 
 BASIS_TYPES[:ds] = DuchonSpline()
 
+"""
+    _construct_duchon(spec, data, user_knots; absorb_cons = true)
+
+Build a Duchon spline smooth. Port of mgcv's
+`smooth.construct.ds.smooth.spec` (R/smooth.r) and
+`Predict.matrix.duchon.spline`.
+"""
+function _construct_duchon(spec::SmoothSpec, data, user_knots;
+    absorb_cons::Bool = true)
+    vars = spec.term_vars
+    d = length(vars)
+    m, s = _duchon_orders(spec, d)
+
+    Xd = d == 1 ?
+         reshape(Float64.(Tables.getcolumn(data, vars[1])), :, 1) :
+         hcat([Float64.(Tables.getcolumn(data, v)) for v in vars]...)
+    n = size(Xd, 1)
+    k = min(spec.k, n)
+
+    # Row multiplicities, as in `_construct_tprs`: `shift` and the sum-to-zero
+    # constraint `C` are the two quantities that depend on how often each row
+    # occurs. `:ds` is not on the reduced-construction whitelist, so `_rw` is
+    # normally `nothing`; handling it keeps the two constructors consistent.
+    _rw = _ROW_WEIGHTS[]
+    if _rw !== nothing && length(_rw) != n
+        throw(DimensionMismatch(
+            "row_weights has $(length(_rw)) entries but the Duchon basis is " *
+            "being built at $n covariate values"))
+    end
+    _wsum = _rw === nothing ? Float64(n) : sum(_rw)
+
+    # mgcv centres each covariate (ds constructor: object$shift <- colMeans(x)).
+    shift = _rw === nothing ? vec(mean(Xd; dims = 1)) : vec((_rw' * Xd) ./ _wsum)
+    Xd = Xd .- shift'
+
+    # Knots: mgcv uses the unique covariate combinations, subsampling to
+    # `max.knots` (default 2000) above that. As in `_construct_tprs`, the
+    # subsample is deterministic and evenly spaced rather than mgcv's seeded
+    # random draw — both are approximations in that regime.
+    max_knots = Int(get(spec.xt, :max_knots, 2000))::Int
+    max_knots > 0 || throw(ArgumentError("max_knots must be positive, got $max_knots"))
+    if user_knots !== nothing
+        d == 1 || throw(ArgumentError(
+            "user-supplied knots are not supported for multi-dimensional " *
+            "Duchon smooths"))
+        length(user_knots) >= k || throw(ArgumentError(
+            "user-supplied knots for a ds smooth must have length ≥ k=$k, " *
+            "got $(length(user_knots))"))
+        XK = reshape(Float64.(user_knots) .- shift[1], :, 1)
+    else
+        rows = d == 1 ? reshape(sort!(unique(vec(Xd))), :, 1) :
+               Matrix(reduce(hcat, unique(collect(eachrow(Xd))))')
+        nu = size(rows, 1)
+        if nu > max_knots
+            sel = unique(round.(Int, range(1, nu; length = max_knots)))
+            XK = rows[sel, :]
+        else
+            XK = rows
+        end
+    end
+    nk = size(XK, 1)
+
+    T_knot = _duchon_T(XK, m, d)
+    M = size(T_knot, 2)
+    k >= M + 1 || throw(ArgumentError(
+        "basis dimension k=$k too small for Duchon orders m=$m, s=$s with " *
+        "d=$d covariates (need k ≥ $(M + 1) = null_dim + 1)"))
+    k <= nk || throw(ArgumentError(
+        "basis dimension k=$k exceeds the $nk unique covariate " *
+        "combination(s) available for a ds smooth; reduce k"))
+
+    E = _duchon_E(XK, XK, m, s, d)
+
+    # mgcv: er <- slanczos(E, k, -1) — SELECT the k largest-magnitude
+    # eigenpairs, but RETURN them ordered by decreasing signed eigenvalue.
+    # Selecting and then sorting by |λ| instead gives a different Q₂ below and
+    # a basis that does not correspond to mgcv's at all (measured: relative
+    # difference ~1.0 in X, i.e. no agreement whatsoever).
+    F = eigen(Symmetric(E))
+    sel = sortperm(abs.(F.values); rev = true)[1:k]
+    sel = sel[sortperm(F.values[sel]; rev = true)]
+    v = F.values[sel]
+    U = F.vectors[:, sel]                       # nk × k
+
+    # mgcv: qru <- qr(U1) with U1 = t(t(T) %*% er$vectors) = U'T, then the
+    # null-space rotation is columns (M+1):k of Q. Note this is a plain QR,
+    # NOT the QT factorization `tprs.c` uses for thin-plate splines — the two
+    # give different orthonormal bases for the same subspace.
+    U1 = U' * T_knot                            # k × M
+    Qfull = Matrix(qr(U1).Q * Matrix{Float64}(I, k, k))
+    Q2 = Qfull[:, (M + 1):k]                    # k × (k−M)
+    UZ = U * Q2                                 # nk × (k−M)
+
+    n_basis = k - M
+    X_full = Matrix{Float64}(undef, n, k)
+    # mgcv: X <- cbind(DuchonE(x, knt) %*% UZ, DuchonT(x))
+    mul!(view(X_full, :, 1:n_basis), _duchon_E(Xd, XK, m, s, d), UZ)
+    copyto!(view(X_full, :, (n_basis + 1):k), _duchon_T(Xd, m, d))
+
+    # mgcv: S = Q₂' diag(λ) Q₂, padded with a zero null-space block.
+    S_full = zeros(k, k)
+    S_full[1:n_basis, 1:n_basis] .= Q2' * Diagonal(v) * Q2
+    penalties = Matrix{Float64}[S_full]
+
+    # NO column-RMS rescaling here: mgcv's ds constructor does not rescale,
+    # where its tp constructor does (in C). Adding it would put the smoothing
+    # parameter on a scale incompatible with mgcv's.
+
+    predict_cache = DuchonPredictCache(Matrix(XK), UZ, copy(shift), m, s, d)
+    knots_out = d == 1 ? (vec(copy(XK)) .+ shift[1]) : Float64[]
+
+    if !absorb_cons
+        return ConstructedSmooth(
+            spec, X_full, penalties, knots_out, M, n_basis,
+            nothing, nothing, 0, 0, nothing, nothing, nothing, Int[],
+            predict_cache = predict_cache)
+    end
+
+    # Generic smoothCon steps, shared with every other basis: penalty
+    # rescaling by maXX/‖S‖₁, then absorption of the sum-to-zero constraint.
+    maXX = opnorm(X_full, Inf)^2
+    if maXX > 0
+        for i in eachindex(penalties)
+            nS = opnorm(penalties[i], 1)
+            nS > 0 && (penalties[i] = penalties[i] * (maXX / nS))
+        end
+    end
+
+    C = _rw === nothing ? sum(X_full; dims = 1) : reshape(_rw' * X_full, 1, :)
+    C_mat = Matrix(C)
+    qr_C = qr(C_mat')
+    Z_cons = (qr_C.Q * Matrix(I, k, k))[:, 2:k]
+    X_cons = X_full * Z_cons
+    S_cons = [Z_cons' * Si * Z_cons for Si in penalties]
+
+    return ConstructedSmooth(
+        spec, X_cons, S_cons, knots_out, M, n_basis,
+        C_mat, nothing, 0, 0, nothing, nothing, nothing, Int[],
+        predict_cache = predict_cache)
+end
+
 function _smooth_construct(::DuchonSpline, spec::SmoothSpec, data, user_knots)
-    # Duchon splines with integer m reduce to TPRS, so we delegate. This is a
-    # genuine approximation, not an equivalence: mgcv's bs="ds" is a different
-    # basis (its S.scale is 0.427 against TPRS's 19.60 on the same data), so
-    # results are NOT comparable with R's. The docstring says so, but a
-    # docstring is not visible at the call site — warn once per session, since
-    # silently fitting a different model than the one asked for is the failure
-    # mode most likely to go unnoticed.
-    @warn "bs=:ds is not implemented as a Duchon spline; fitting an ordinary " *
-          "thin-plate regression spline (bs=:tp) instead. Results will NOT " *
-          "match mgcv's bs=\"ds\"." maxlog = 1
-    return _smooth_construct(ThinPlateSpline(), spec, data, user_knots)
+    return _construct_duchon(spec, data, user_knots)
 end
 
 function _predict_matrix(::DuchonSpline, smooth::ConstructedSmooth, newdata)
-    return _predict_matrix(ThinPlateSpline(), smooth, newdata)
+    cache = smooth.predict_cache::DuchonPredictCache
+    vars = smooth.spec.term_vars
+    d = cache.d
+    Xn = d == 1 ?
+         reshape(Float64.(Tables.getcolumn(newdata, vars[1])), :, 1) :
+         hcat([Float64.(Tables.getcolumn(newdata, v)) for v in vars]...)
+    Xn = Xn .- cache.shift'
+
+    n = size(Xn, 1)
+    n_basis = size(cache.UZ, 2)
+    T_new = _duchon_T(Xn, cache.m, d)
+    k = n_basis + size(T_new, 2)
+    X = Matrix{Float64}(undef, n, k)
+    mul!(view(X, :, 1:n_basis),
+         _duchon_E(Xn, cache.knots, cache.m, cache.s, d), cache.UZ)
+    copyto!(view(X, :, (n_basis + 1):k), T_new)
+
+    if smooth.constraint !== nothing
+        k_full = size(X, 2)
+        qr_C = qr(Matrix(smooth.constraint)')
+        Z_cons = (qr_C.Q * Matrix(I, k_full, k_full))[:, 2:k_full]
+        X = X * Z_cons
+    end
+    return X
 end
 
 # ─── Markov Random Field smooth — bs="mrf" ───────────────────────────────

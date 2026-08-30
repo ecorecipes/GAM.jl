@@ -5,17 +5,28 @@
 #
 # The construction, following `smooth.construct.gp.smooth.spec`:
 #
-#   1. knots = the unique covariate values, capped at `max.knots` (2000)
+#   1. knots = the unique covariate COMBINATIONS (`uniquecombs`, i.e. unique
+#      rows of the n x d covariate matrix), capped at `max.knots` (2000)
 #   2. covariates and knots are centred by `shift = colMeans(x)`
 #   3. `E = gpE(knt, knt, defn)` fixes the range `rho` (the largest pairwise
-#      knot distance, unless supplied) and the correlation type
+#      knot distance, unless supplied) and the correlation type. Distances are
+#      Euclidean: `sqrt(rowSums((x - xk)^2))`
 #   4. the leading `k - M` eigenpairs of `E` give `UZ`, and the penalty is
 #      `diag([eigenvalues; zeros(M)])`
 #   5. the model matrix is `[gpE(x, knt) * UZ | gpT(x)]`, where `gpT` is the
-#      UNPENALIZED null space: `[1, x]`, or `[1]` for the stationary variant
+#      UNPENALIZED null space: `cbind(1, x)` over all d covariates, or `[1]`
+#      for the stationary variant
 #
 # Step 5's null space is the substantive modelling point: mgcv shrinks a `gp`
-# smooth toward a straight line, not toward zero.
+# smooth toward a plane (a straight line when d == 1), not toward zero.
+#
+# Any number of covariates is supported, which is what makes `bs=:gp` usable
+# as a spatial smoother. Two consequences of step 3 are worth stating plainly,
+# because they surprise people: the kernel is ISOTROPIC (Euclidean distance
+# treats every covariate alike, so the term order cannot matter), and mgcv
+# centres but does NOT scale the covariates, so distances are in the
+# covariates' own units — put covariates on comparable scales yourself before
+# fitting a multi-dimensional GP, or one of them will dominate the metric.
 
 """Gaussian process smooth basis (mgcv `bs="gp"`)."""
 struct GPSmooth <: AbstractBasisType end
@@ -34,8 +45,8 @@ re-derive any of these from `spec.xt`, because a basis built with one
 correlation function and predicted with another disagrees silently.
 """
 struct GPPredictCache <: AbstractSmoothPredictCache
-    shift::Float64
-    knots::Vector{Float64}      # centred knot locations
+    shift::Vector{Float64}      # per-covariate colMeans (length d)
+    knots::Matrix{Float64}      # centred knot locations, nk × d
     UZ::Matrix{Float64}         # nk × (k - M) eigenvectors of E
     gptype::Int                 # mgcv `gpE` type, 1..5
     rho::Float64                # range parameter
@@ -125,40 +136,81 @@ end
 end
 
 """
-    _gp_E(xs, knots, rho, gptype, kappa, corfun, params) -> Matrix
+    _gp_dist(X, K) -> Matrix
 
-mgcv's `gpE` (`R/smooth.r:3410-3439`): the `length(xs) × length(knots)`
-matrix of correlations between evaluation points and knots, with distances
-divided by `rho`.
+Pairwise **Euclidean** distances between the rows of `X` (n × d) and the rows
+of `K` (nk × d), i.e. mgcv's
+
+    E <- sqrt(rowSums((x[ind\$x, ] - xk[ind\$xk, ])^2))
+
+from `gpE` (mgcv 1.9-4 `R/smooth.r`, `gpE`). The `d == 1` branch returns
+`abs(x - k)` directly rather than `sqrt((x - k)^2)`: the two are equal in
+exact arithmetic, but the squaring and square root each round, so the general
+path can differ in the last ulp — and the 1-D results are pinned against mgcv
+by `test/test_gp_parity.jl`.
 """
-function _gp_E(xs::AbstractVector{Float64}, knots::Vector{Float64},
-               rho::Float64, gptype::Int, kappa::Float64,
-               corfun::Symbol, params::Vector{Float64})
-    nk = length(knots)
-    E = Matrix{Float64}(undef, length(xs), nk)
-    @inbounds for j in 1:nk
-        kj = knots[j]
-        for i in eachindex(xs)
-            E[i, j] = _gp_eval(abs(xs[i] - kj) / rho, gptype, kappa, corfun, params)
+function _gp_dist(X::AbstractMatrix{Float64}, K::AbstractMatrix{Float64})
+    n, d = size(X)
+    nk = size(K, 1)
+    size(K, 2) == d || throw(DimensionMismatch(
+        "GP: evaluation points have $d columns but knots have $(size(K, 2))"))
+    D = Matrix{Float64}(undef, n, nk)
+    if d == 1
+        @inbounds for j in 1:nk
+            kj = K[j, 1]
+            for i in 1:n
+                D[i, j] = abs(X[i, 1] - kj)
+            end
+        end
+    else
+        @inbounds for j in 1:nk
+            for i in 1:n
+                acc = 0.0
+                for c in 1:d
+                    δ = X[i, c] - K[j, c]
+                    acc += δ * δ
+                end
+                D[i, j] = sqrt(acc)
+            end
         end
     end
-    return E
+    return D
 end
 
 """
-    _gp_T(xs, stationary) -> Matrix
+    _gp_E(X, knots, rho, gptype, kappa, corfun, params) -> Matrix
 
-mgcv's `gpT` (`R/smooth.r:3405-3408`): the UNPENALIZED null-space block,
-`[1, x]` in general and `[1]` for the stationary variant (`m < 0`). `xs` must
-already be centred.
+mgcv's `gpE` (`R/smooth.r`, `gpE`): the `size(X,1) × size(knots,1)` matrix of
+correlations between evaluation points and knots, with Euclidean distances
+divided by `rho`. `X` and `knots` are row-per-point matrices, so this works in
+any dimension.
 """
-function _gp_T(xs::AbstractVector{Float64}, stationary::Bool)
-    n = length(xs)
+function _gp_E(X::AbstractMatrix{Float64}, knots::AbstractMatrix{Float64},
+               rho::Float64, gptype::Int, kappa::Float64,
+               corfun::Symbol, params::Vector{Float64})
+    D = _gp_dist(X, knots)
+    @inbounds for i in eachindex(D)
+        D[i] = _gp_eval(D[i] / rho, gptype, kappa, corfun, params)
+    end
+    return D
+end
+
+"""
+    _gp_T(X, stationary) -> Matrix
+
+mgcv's `gpT` (mgcv 1.9-4 `R/smooth.r`, `gpT`): the UNPENALIZED null-space
+block, `cbind(1, x)` in general — so `1 + d` columns for `d` covariates — and
+`[1]` alone for the stationary variant (`m < 0`). `X` must already be centred.
+"""
+function _gp_T(X::AbstractMatrix{Float64}, stationary::Bool)
+    n, d = size(X)
     stationary && return ones(n, 1)
-    T = Matrix{Float64}(undef, n, 2)
+    T = Matrix{Float64}(undef, n, d + 1)
     @inbounds for i in 1:n
         T[i, 1] = 1.0
-        T[i, 2] = xs[i]
+        for c in 1:d
+            T[i, c + 1] = X[i, c]
+        end
     end
     return T
 end
@@ -166,23 +218,28 @@ end
 # Build [E(x, knt) * UZ | T(x)] in chunks of `nk` rows, as mgcv's
 # `Predict.matrix.gp.smooth` does (R/smooth.r:3565-3590), so peak memory is
 # O(nk²) rather than O(n·nk) for large n.
-function _gp_model_matrix(x_raw::Vector{Float64}, c::GPPredictCache)
+function _gp_model_matrix(x_raw::AbstractMatrix{Float64}, c::GPPredictCache)
     # mgcv centres the covariates by the fit-time `shift` before evaluating
-    # gpE/gpT, at both construction and prediction (R/smooth.r:3512, 3563).
-    # Doing it here rather than at the call sites means prediction cannot
-    # forget it.
-    xs = x_raw .- c.shift
-    n = length(xs)
-    nk = length(c.knots)
+    # gpE/gpT, at both construction and prediction (`sweep(x, 2, object$shift)`
+    # in smooth.construct.gp.smooth.spec and Predict.matrix.gp.smooth). Doing
+    # it here rather than at the call sites means prediction cannot forget it.
+    n, d = size(x_raw)
+    d == length(c.shift) || throw(DimensionMismatch(
+        "GP smooth was built on $(length(c.shift)) covariate(s) but $d supplied"))
+    xs = Matrix{Float64}(undef, n, d)
+    @inbounds for col in 1:d, i in 1:n
+        xs[i, col] = x_raw[i, col] - c.shift[col]
+    end
+    nk = size(c.knots, 1)
     kE = size(c.UZ, 2)
-    ncol = kE + (c.stationary ? 1 : 2)
+    ncol = kE + (c.stationary ? 1 : d + 1)
     X = Matrix{Float64}(undef, n, ncol)
     step = max(nk, 1)
     lo = 1
     while lo <= n
         hi = min(lo + step - 1, n)
         rows = lo:hi
-        xv = @view xs[rows]
+        xv = @view xs[rows, :]
         E = _gp_E(xv, c.knots, c.rho, c.gptype, c.kappa, c.corfun, c.params)
         @views mul!(X[rows, 1:kE], E, c.UZ)
         @views X[rows, (kE + 1):ncol] .= _gp_T(xv, c.stationary)
@@ -191,12 +248,32 @@ function _gp_model_matrix(x_raw::Vector{Float64}, c::GPPredictCache)
     return X
 end
 
+# Assemble the `n × d` covariate matrix for a GP smooth from a table, in the
+# term's declared variable order (mgcv builds the same matrix column by column
+# in `Predict.matrix.gp.smooth`).
+function _gp_covariate_matrix(vars::Vector{Symbol}, data)
+    d = length(vars)
+    col1 = Float64.(Tables.getcolumn(data, vars[1]))
+    n = length(col1)
+    X = Matrix{Float64}(undef, n, d)
+    X[:, 1] .= col1
+    @inbounds for c in 2:d
+        colc = Float64.(Tables.getcolumn(data, vars[c]))
+        length(colc) == n || throw(ArgumentError(
+            "arguments of GP smooth are not the same length"))
+        X[:, c] .= colc
+    end
+    return X
+end
+
 """
     _smooth_construct(::GPSmooth, spec, data, user_knots)
 
 Gaussian process / Kammann & Wand (2003) Matérn smooth — a port of mgcv's
-`bs="gp"` (`R/smooth.r:3441-3552`), matching it in correlation function,
-range parameter, knot selection and null space.
+`bs="gp"` (mgcv 1.9-4 `R/smooth.r`, `smooth.construct.gp.smooth.spec`),
+matching it in correlation function, range parameter, knot selection and null
+space. Supports **any number of covariates**: `s(:x, :z, bs=:gp)` is a
+two-dimensional (spatial) GP smooth.
 
 `m` selects mgcv's correlation type, defaulting to **3** as mgcv does:
 
@@ -215,8 +292,15 @@ the intercept alone rather than `[1, x]`.
 mgcv does), `:kappa` (κ for `m = 2`; default 1), and `:max_knots` (default
 2000, mirroring `xt = list(max.knots = )`).
 
-The unpenalized null space `[1, x]` means a `gp` smooth shrinks toward a
-straight line, not toward zero.
+The unpenalized null space `cbind(1, x)` — `d + 1` columns for `d`
+covariates — means a `gp` smooth shrinks toward a plane (a straight line when
+`d == 1`), not toward zero.
+
+For `d > 1` the kernel is **isotropic**: distances are Euclidean, so the order
+of the covariates is immaterial, and mgcv centres but does not *scale* them.
+Covariates measured in very different units should therefore be standardised
+before fitting, or whichever has the largest numeric spread will dominate the
+distance metric. User-supplied `knots` are accepted for 1-D terms only.
 
 Legacy correlation functions remain available through
 `xt = Dict(:corfun => :matern32)` — `:matern32`, `:matern52`, `:exponential`,
@@ -232,20 +316,45 @@ above.
     versions of GAM.jl; they now agree with mgcv.
 """
 function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
-    length(spec.term_vars) == 1 ||
-        throw(ArgumentError("GP smooths currently support 1d only"))
+    vars = spec.term_vars
+    d = length(vars)
+    d >= 1 || throw(ArgumentError("GP smooths require at least one covariate"))
+    var = vars[1]
+    label = length(vars) == 1 ? string(var) : join(string.(vars), ", ")
 
-    var = spec.term_vars[1]
-    x = Float64.(Tables.getcolumn(data, var))
-    n = length(x)
+    Xr = _gp_covariate_matrix(vars, data)
+    n = size(Xr, 1)
+    x = @view Xr[:, 1]   # convenience alias for the 1-D paths below
 
     # mgcv: "A term has fewer unique covariate combinations than specified
-    # maximum degrees of freedom" (R/smooth.r:3487-3488).
-    xu = sort(unique(x))
-    nu = length(xu)
+    # maximum degrees of freedom" — `uniquecombs` counts unique ROWS, i.e.
+    # covariate *combinations*, not unique values per column
+    # (mgcv 1.9-4 `R/smooth.r`, smooth.construct.gp.smooth.spec).
+    #
+    # d == 1 keeps `sort(unique(x))`, which is what the pinned 1-D parity
+    # suite was built against. Knot ORDER does not change the fitted model —
+    # permuting the knots permutes the columns of `E` and the rows of `UZ`
+    # together, leaving `E * UZ` invariant — so the two paths agree in
+    # substance; the 1-D branch exists to keep the pinned numbers bit-stable.
+    local xu::Matrix{Float64}
+    if d == 1
+        xu = reshape(sort(unique(x)), :, 1)
+    else
+        seen = Set{NTuple{d, Float64}}()
+        rows = Int[]
+        @inbounds for i in 1:n
+            t = ntuple(c -> Xr[i, c], d)
+            if !(t in seen)
+                push!(seen, t)
+                push!(rows, i)
+            end
+        end
+        xu = Xr[rows, :]
+    end
+    nu = size(xu, 1)
     if user_knots === nothing
         nu >= spec.k || throw(ArgumentError(
-            "s($var) has fewer unique covariate combinations ($nu) " *
+            "s($label) has fewer unique covariate combinations ($nu) " *
             "than the basis dimension k=$(spec.k); reduce k (mgcv raises the " *
             "same error)"))
     end
@@ -259,53 +368,69 @@ function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
     kappa = Float64(get(spec.xt, :kappa, 1.0))::Float64
     if corfun === :mgcv
         (1 <= gptype <= 5) || throw(ArgumentError(
-            "s($var, bs=:gp, m=$m_raw): |m| must be 1..5 (mgcv's gpE types); " *
+            "s($label, bs=:gp, m=$m_raw): |m| must be 1..5 (mgcv's gpE types); " *
             "a negative m selects the stationary variant"))
         (0 < kappa <= 2) || throw(ArgumentError(
-            "s($var, bs=:gp): xt[:kappa] must satisfy 0 < kappa <= 2 " *
+            "s($label, bs=:gp): xt[:kappa] must satisfy 0 < kappa <= 2 " *
             "(mgcv: \"incorrect arguments to GP smoother\")"))
     end
 
-    # --- knots: unique covariate values, capped at max.knots ---------------
+    # --- knots: unique covariate combinations, capped at max.knots ---------
     max_knots = Int(get(spec.xt, :max_knots, 2000))::Int
+    local knots::Matrix{Float64}
     if user_knots !== nothing
-        knots = sort(Float64.(user_knots))
+        d == 1 || throw(ArgumentError(
+            "s($label, bs=:gp): user-supplied knots are only supported for " *
+            "1-D GP smooths; omit `knots` for a $(d)-D term"))
+        knots = reshape(sort(Float64.(user_knots)), :, 1)
     elseif n > max_knots && nu > max_knots
-        # mgcv samples `max.knots` rows of the unique values under a fixed
+        # mgcv samples `max.knots` of the unique combinations under a fixed
         # seed. Reproducing R's RNG stream is impractical, so we take a
-        # deterministic evenly spaced subsample of the sorted unique values
-        # instead; this is the one place `bs=:gp` does not reproduce mgcv
-        # exactly, and it only engages above `max_knots` unique values.
-        idx = round.(Int, range(1, nu; length = max_knots))
-        knots = xu[unique(idx)]
+        # deterministic evenly spaced subsample instead; this is the one place
+        # `bs=:gp` does not reproduce mgcv exactly, and it only engages above
+        # `max_knots` unique combinations.
+        idx = unique(round.(Int, range(1, nu; length = max_knots)))
+        knots = xu[idx, :]
     else
         knots = xu
     end
-    nk = length(knots)
+    nk = size(knots, 1)
 
-    # --- centring (mgcv R/smooth.r:3511-3513) -------------------------------
-    shift = sum(x) / n
-    kc = knots .- shift   # `_gp_model_matrix` centres the covariates itself
+    # --- centring: `object$shift <- colMeans(x)` ---------------------------
+    shift = vec(sum(Xr; dims = 1)) ./ n
+    kc = knots .- reshape(shift, 1, :)  # `_gp_model_matrix` centres covariates itself
 
     # --- range parameter ----------------------------------------------------
-    # mgcv: `if (rho <= 0) rho <- max(E)` where E holds the knot-to-knot
-    # distances (R/smooth.r:3425-3426, 3516) — so the range is the largest
-    # pairwise distance among the KNOTS, not the span of the data.
+    # mgcv: `if (rho <= 0) rho <- max(E)` inside `gpE`, where E holds the
+    # knot-to-knot distances — so the range is the largest pairwise distance
+    # among the KNOTS, not the span of the data.
+    #
+    # For d == 1 that maximum is exactly `max(kc) - min(kc)`, computed here as
+    # a single subtraction to keep the pinned 1-D values bit-stable; for d > 1
+    # it is the maximum of the Euclidean distance matrix, as mgcv computes it.
     rho_opt = get(spec.xt, :rho, get(spec.xt, :scale, nothing))
     rho = if rho_opt === nothing
-        r = nk > 1 ? (maximum(kc) - minimum(kc)) : 0.0
+        r = if nk <= 1
+            0.0
+        elseif d == 1
+            maximum(kc) - minimum(kc)
+        else
+            maximum(_gp_dist(kc, kc))
+        end
         r > 0 ? r : 1.0
     else
         Float64(rho_opt)::Float64
     end
-    rho > 0 || throw(ArgumentError("s($var, bs=:gp): the range xt[:rho] must be positive"))
+    rho > 0 || throw(ArgumentError("s($label, bs=:gp): the range xt[:rho] must be positive"))
 
     # --- basis dimension and null space ------------------------------------
-    null_dim = stationary ? 1 : 2          # gpT gives [1] or [1, x]
+    # mgcv: `object$null.space.dim <- if (stationary) 1 else ncol(knt) + 1`,
+    # since gpT is `cbind(1, x)` over all d covariates.
+    null_dim = stationary ? 1 : d + 1
     bs_dim = spec.k
     if bs_dim < null_dim + 1
         throw(ArgumentError(
-            "s($var, bs=:gp): k=$bs_dim is below the minimum $(null_dim + 1) " *
+            "s($label, bs=:gp): k=$bs_dim is below the minimum $(null_dim + 1) " *
             "for this null space (mgcv resets to ncol(knt)+2 with a warning)"))
     end
     kE = bs_dim - null_dim                 # penalized (eigen) columns
@@ -330,7 +455,7 @@ function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
         # and the penalty is E itself. That is only dimensionally consistent
         # when the penalized block is exactly the knot count.
         kE == nk || throw(ArgumentError(
-            "s($var, bs=:gp): k=$bs_dim needs $kE penalized columns but only " *
+            "s($label, bs=:gp): k=$bs_dim needs $kE penalized columns but only " *
             "$nk knots are available; reduce k or supply more knots"))
         UZ = Matrix{Float64}(I, nk, nk)
         S[1:nk, 1:nk] .= Esym
@@ -338,16 +463,21 @@ function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
 
     cache = GPPredictCache(shift, kc, UZ, gptype, rho, kappa,
                            stationary, corfun, params)
-    X = _gp_model_matrix(x, cache)
+    X = _gp_model_matrix(Xr, cache)
 
     penalties = Matrix{Float64}[Matrix(Symmetric(S))]
     pen_rank = kE
 
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)
 
+    # `ConstructedSmooth.knots` is a vector; a 1-D term keeps exactly the
+    # vector it always had, and a d-D term stores the knot matrix flattened
+    # column-major (recover with `reshape(sm.knots, :, d)`).
+    knots_field = d == 1 ? vec(knots) : vec(knots)
+
     return ConstructedSmooth(
         spec, X_cons, S_cons,
-        knots,
+        knots_field,
         null_dim, pen_rank,
         C, nothing, 0, 0,
         nothing, nothing, nothing,
@@ -357,8 +487,7 @@ function _smooth_construct(::GPSmooth, spec::SmoothSpec, data, user_knots)
 end
 
 function _predict_matrix(::GPSmooth, smooth::ConstructedSmooth, newdata)
-    var = smooth.spec.term_vars[1]
-    x_new = Float64.(Tables.getcolumn(newdata, var))
+    x_new = _gp_covariate_matrix(smooth.spec.term_vars, newdata)
 
     cache = smooth.predict_cache
     cache isa GPPredictCache || throw(ArgumentError(
