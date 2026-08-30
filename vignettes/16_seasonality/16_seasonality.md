@@ -11,7 +11,10 @@ Simon Frost
   group](#factor-by-a-separate-curve-per-group)
   - [One smoothing parameter per
     level](#one-smoothing-parameter-per-level)
-  - [`by = factor` or `bs = :fs`?](#by--factor-or-bs--fs)
+  - [`by = factor`, `bs = :fs`, or
+    `bs = :sz`?](#by--factor-bs--fs-or-bs--sz)
+- [`bs = :sz`: deviations from a common
+  curve](#bs--sz-deviations-from-a-common-curve)
 - [Numeric `by`: varying-coefficient
   terms](#numeric-by-varying-coefficient-terms)
 - [`ti()`: is the seasonality itself
@@ -54,17 +57,13 @@ below; they are not real surveillance data.
 ``` julia
 using GAM
 using CSV
-using StatsAPI: predict, fitted, aic, coef
+using StatsAPI: predict, fitted, aic, coef, deviance
 using Statistics: mean, std, cor
 
 using DataFrames
 using Plots
 using Printf
 ```
-
-    Precompiling packages...
-      29201.8 ms  ✓ GAM → GAMPlotsExt
-      1 dependency successfully precompiled in 61 seconds. 239 already precompiled.
 
 ## The data
 
@@ -385,15 +384,16 @@ m_shared = gam(@formula(y ~ region + s(week, k = 12, bs = :cc)), df_region)
     by = region    : edf = 20.977   AIC =  1041.44
     ΔAIC = 466.08 in favour of per-region curves
 
-### `by = factor` or `bs = :fs`?
+### `by = factor`, `bs = :fs`, or `bs = :sz`?
 
-Both fit a curve per level, and they answer different questions:
+All three fit a curve per level, and they answer different questions:
 
 - **`s(x, by = f)`** — one penalty and one smoothing parameter *per
   level*. The levels are treated as distinct populations, each estimated
   on its own terms. Requires the factor main effect. Use it when the
   groups are few, named and individually interesting, as the regions are
   here.
+
 - **`s(x, bs = :fs)`** — a single shared smoothing parameter across
   levels, which are treated as exchangeable draws from a common
   distribution of curves, with the level means absorbed into the smooth.
@@ -401,7 +401,82 @@ Both fit a curve per level, and they answer different questions:
   cohort, say — and you want them to borrow strength from one another
   rather than each being fitted alone.
 
-Vignette 10 covers `bs = :fs` in a mixed-model setting.
+- **`s(x, f, bs = :sz)`** — a *constrained* factor interaction: one
+  common smooth plus per-level deviations from it, constrained to sum to
+  zero across levels. Use it when the question is “is there a shared
+  pattern, and how does each group depart from it?” rather than “what is
+  each group’s curve?”.
+
+Vignette 10 covers `bs = :fs` in a mixed-model setting; `bs = :sz` is
+below.
+
+## `bs = :sz`: deviations from a common curve
+
+A factor `by=` gives you three separate seasonal curves. Often the more
+useful decomposition is a **common** seasonal curve plus each region’s
+*departure* from it, which is what `bs = :sz` estimates. The deviations
+are constrained to sum to zero across levels at every point, so the
+common smooth really is the shared pattern rather than an arbitrary
+reference level.
+
+``` julia
+m_sz = gam(@formula(y ~ s(week, k = 12, bs = :cc) +
+                        s(week, region, k = 12, bs = :sz)), df_region)
+round.(edf(m_sz), digits = 3)
+```
+
+    2-element Vector{Float64}:
+      8.455
+     14.63
+
+The first smooth is the common seasonal curve, the second the pooled set
+of per-region deviations. At the same `k` as the factor-`by` model
+above, fit quality is essentially identical — this is a
+reparameterisation of similar model space, not a different amount of
+flexibility:
+
+``` julia
+@printf("sz  deviance = %.3f\n", deviance(m_sz))
+@printf("by  deviance = %.3f\n", deviance(m_by))
+```
+
+    sz  deviance = 157.999
+    by  deviance = 157.697
+
+The constraint is what makes the decomposition interpretable, and it
+holds exactly rather than approximately:
+
+``` julia
+gw_sz = collect(range(0, 52; length = 53))
+nd_sz = DataFrame(week = repeat(gw_sz, outer = length(regions)),
+                  region = repeat(regions, inner = length(gw_sz)))
+terms_sz = predict(m_sz, nd_sz; type = :terms)
+dev_sz = terms_sz[Symbol("s(week,region,bs=sz)")]
+M_sz = reshape(dev_sz, length(gw_sz), length(regions))
+@printf("max |sum of deviations over levels| = %.1e\n",
+        maximum(abs.(sum(M_sz, dims = 2))))
+```
+
+    max |sum of deviations over levels| = 6.1e-16
+
+Reading the deviations recovers the simulation directly:
+
+``` julia
+for (j, r) in enumerate(regions)
+    lo, hi = extrema(M_sz[:, j])
+    @printf("%-9s deviation range [%6.3f, %6.3f]\n", r, lo, hi)
+end
+```
+
+    coastal   deviation range [-0.199,  0.997]
+    highland  deviation range [-1.009,  0.168]
+    inland    deviation range [-0.045,  0.064]
+
+Coastal (true amplitude 1.40) sits above the common curve and highland
+(0.35) below it, while **inland is almost exactly the common curve** —
+its amplitude, 0.90, is close to the mean of the three, so it has almost
+nothing to deviate by. That is the reading `:sz` is for, and it is not
+visible at all in three separately-fitted `by` curves.
 
 ## Numeric `by`: varying-coefficient terms
 
@@ -453,7 +528,7 @@ pv
     β(week) recovery: correlation = 0.99854, RMSE = 0.0178
     fitted range = 0.888   true range = 0.900
 
-![](16_seasonality_files/figure-commonmark/cell-16-output-2.svg)
+![](16_seasonality_files/figure-commonmark/cell-20-output-2.svg)
 
 Against a model in which rainfall has a single constant slope:
 
@@ -577,7 +652,7 @@ pt
     fitted seasonal range: year 1 = 2.155, year 8 = 3.350  (ratio 1.55)
     true   seasonal range: year 1 = 1.879, year 8 = 3.523  (ratio 1.88)
 
-![](16_seasonality_files/figure-commonmark/cell-22-output-2.svg)
+![](16_seasonality_files/figure-commonmark/cell-26-output-2.svg)
 
 The direction and rough size of the change are recovered. The fitted
 ratio is smaller than the truth because the interaction is penalized

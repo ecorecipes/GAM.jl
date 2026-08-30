@@ -129,12 +129,60 @@ listed under Fixed below.
   quadrature-convergence table showing the default `nk=16` understates the
   posterior SD by ~1.7%.
 - **Vignette 14 gains its R companion**, the only vignette that lacked one.
-- **Seven data generators added to `vignettes/generate_data.jl`**, so every
-  dataset with a stated DGP is now reproducible; a full regeneration leaves
-  every checked-in CSV byte-identical.
+- **Nine data generators added to `vignettes/generate_data.jl`**, so every
+  dataset with a stated DGP is now reproducible. `data_gev.csv` was the last
+  holdout and its original seed proved unrecoverable, so it is regenerated
+  from the documented process (parameters still recover: location [2.75, 6.91]
+  against a true [3.00, 7.00], shape 0.121 against 0.100). That also resolved
+  a contradiction inside vignette 06, which said in one place that the GEV data
+  was *not* script-generated and in another that it was.
+- **`bs = :sz` gains a fitted example** (vignette 16, with an mgcv companion),
+  the last basis demonstrated nowhere. It completes the three-way comparison of
+  group-varying constructions: factor-`by` (a free curve and its own smoothing
+  parameter per level), `:fs` (exchangeable levels sharing a fixed set), and
+  `:sz` (a common curve plus per-level deviations constrained to sum to zero).
+  The constraint holds to 6.1e-16, and the deviations read directly: the region
+  whose seasonal amplitude sits at the average of the three deviates by
+  essentially nothing, which three separately-fitted `by` curves cannot show.
+  Deviance matches factor-`by` at equal `k` (157.999 vs 157.697). Noted for
+  comparison: the *common* smooth's edf agrees with mgcv (8.45 vs 8.456) while
+  the deviation term's does not (14.63 vs 10.241), so compare deviance and
+  fitted curves for `:sz`, not per-term edf.
+- **`ginla`'s `nk` accuracy is documented at the API**, not only in the
+  vignette. The default 16 matches mgcv's own `ginla` default, but it is a
+  quadrature resolution rather than an exact setting: measured against a model
+  whose posterior is Gaussian in closed form, the posterior SD is understated
+  ~1.7% at `nk=16`, halving with each doubling. The default stays at mgcv's
+  value; the docstring now says when to raise it.
 
 Added:
 
+- **Neighbourhood cross validation (`method = :NCV`)**, a port of mgcv's
+  `src/ncv.c` and the last outstanding item from the agreed backlog. GCV and
+  REML assume independent observations and under-smooth badly on correlated
+  data; NCV leaves out a *neighbourhood* of each point instead of the point
+  alone. On AR(1) data with rho = 0.9 and a true edf near 3, GCV selects
+  edf 27.2-27.7 across three seeds while NCV with a half-width-15 neighbourhood
+  selects 10.7-19.2 — and is more accurate, RMSE 0.295-0.505 against GCV's
+  0.359-0.531. Default `nei` is leave-one-out, which reproduces GCV-like
+  behaviour as expected; `loo_neighbourhoods` and `interval_neighbourhoods`
+  build the structures, in mgcv's own `k`/`m`/`ind`/`mi` encoding.
+  Correctness rests on two independent checks: the criterion matches mgcv to
+  every printed digit at fixed `sp`, and for a Gaussian identity model — where
+  the Newton step is exact — it reproduces a brute-force leave-one-out refit to
+  7.8e-16, which pins the algebra without reference to mgcv at all.
+  **Scoped down deliberately**: mgcv computes analytic derivatives of the NCV
+  score to drive a Newton optimizer; this port supplies the criterion and
+  selects with the existing derivative-free optimizer — same optimum, more
+  iterations, free-fit `sp` within ~0.03% on a flat optimum. Documented in the
+  file header rather than left implicit. Vignette 14 gains a worked section
+  with an mgcv companion, where the three-way comparison agrees closely across
+  packages: GCV selects edf 28.10 (RMSE 0.9999) in both, leave-one-out NCV
+  28.24 (1.0021) in both, and a half-width-15 neighbourhood recovers edf 4.47
+  in both against a truth of about 3. Worth knowing when porting: mgcv's `nei`
+  fields are `a`/`ma` (dropped) and `d`/`md` (predict), and mgcv **silently
+  falls back to leave-one-out** if `a` or `ma` is missing, so a mis-named list
+  looks like it worked.
 - **A docstring-attachment guard** (`test/test_docstrings.jl`). Julia binds a
   docstring to whatever expression immediately follows it, so inserting a
   helper — or even two blank lines — between a docstring and its definition

@@ -398,6 +398,12 @@ with its own smoothing parameter) and `bs = :fs` (all levels sharing a small
 fixed set of smoothing parameters, however many levels there are), are
 covered in the seasonality and mixed-model vignettes respectively.
 
+The [seasonality vignette](../16_seasonality/16_seasonality.md) fits all three
+side by side on the same data, where `:sz` recovers a common seasonal curve
+plus per-region deviations that sum to zero to machine precision, and the
+region whose amplitude happens to sit at the average deviates by almost
+nothing — a reading that three separately-fitted `by` curves do not give you.
+
 ## A note on `bam(...; discrete = true)`
 
 If you are choosing a basis for a large dataset, note that covariate

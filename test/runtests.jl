@@ -928,6 +928,7 @@ include("test_multiparameter.jl")
 @eval include("test_recovery.jl")
 include("test_vignette_bugs.jl")
 include("test_docstrings.jl")
+include("test_ncv.jl")
 
 # Derivative audit — hand-coded tables vs ForwardDiff vs Symbolics (heavy
 # Symbolics load; ~30 s). Opt-in: set GAM_DERIVATIVE_AUDIT=true to run.

@@ -143,7 +143,11 @@ the model is fit using the GAMLSS framework. You can also call
   Accepts `UnivariateDistribution`, `ExtendedFamily`, `MultiParameterFamily`,
   or `DistFamily`.
 - `link`: link function (default: canonical link for family)
-- `method`: smoothing parameter estimation method (`:REML`, `:ML`, `:GCV`, `:UBRE`)
+- `method`: smoothing parameter estimation method (`:REML`, `:ML`, `:GCV`,
+  `:UBRE`, `:NCV`). `:NCV` is neighbourhood cross validation; see `nei`.
+- `nei`: neighbourhood structure for `method = :NCV` (default leave-one-out).
+  Build one with [`interval_neighbourhoods`](@ref) for serially correlated
+  data, where ordinary CV under-smooths badly.
 - `weights`: optional observation weights
 - `control`: fitting control parameters (see [`gam_control`](@ref))
 
@@ -193,7 +197,8 @@ function gam(f::FormulaTerm, data;
     nsamples::Int = 2000,
     nchains::Int = 4,
     na_action::Symbol = :fail,
-    knots = nothing)
+    knots = nothing,
+    nei::Union{NeighbourhoodStructure, Nothing} = nothing)
 
     # Input validation. `_na_prepare` subsumes `_validate_data_lengths` and
     # validates weights/offset against the retained rows.
@@ -216,8 +221,12 @@ function gam(f::FormulaTerm, data;
             weights = weights)
     end
 
-    method in (:REML, :ML, :GCV, :UBRE) ||
-        throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
+    method in (:REML, :ML, :GCV, :UBRE, :NCV) ||
+        throw(ArgumentError(
+            "method must be :REML, :ML, :GCV, :UBRE or :NCV, got :$method"))
+    nei === nothing || method === :NCV || throw(ArgumentError(
+        "`nei` supplies neighbourhoods for method = :NCV, but method is " *
+        ":$method. Pass method = :NCV, or drop `nei`."))
     optimizer in (:pirls, :general) ||
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
@@ -263,7 +272,7 @@ function gam(f::FormulaTerm, data;
 
         return _fit_gam(y, X, smooths, n_parametric, f, data, family, link_eff,
             method, optimizer, weights, control;
-            offset = offset, select = select, start = start)
+            offset = offset, select = select, start = start, nei = nei)
     end
 end
 
@@ -303,7 +312,8 @@ function gam(gf::GamFormula, data;
     nsamples::Int = 2000,
     nchains::Int = 4,
     na_action::Symbol = :fail,
-    knots = nothing)
+    knots = nothing,
+    nei::Union{NeighbourhoodStructure, Nothing} = nothing)
 
     # Input validation. `_na_prepare` subsumes `_validate_data_lengths` and
     # validates weights/offset against the retained rows.
@@ -338,8 +348,12 @@ function gam(gf::GamFormula, data;
             weights = weights, gam_formula = gf)
     end
 
-    method in (:REML, :ML, :GCV, :UBRE) ||
-        throw(ArgumentError("method must be :REML, :ML, :GCV, or :UBRE, got :$method"))
+    method in (:REML, :ML, :GCV, :UBRE, :NCV) ||
+        throw(ArgumentError(
+            "method must be :REML, :ML, :GCV, :UBRE or :NCV, got :$method"))
+    nei === nothing || method === :NCV || throw(ArgumentError(
+        "`nei` supplies neighbourhoods for method = :NCV, but method is " *
+        ":$method. Pass method = :NCV, or drop `nei`."))
     optimizer in (:pirls, :general) ||
         throw(ArgumentError("optimizer must be :pirls or :general, got :$optimizer"))
 
@@ -376,7 +390,7 @@ function gam(gf::GamFormula, data;
 
         return _fit_gam(y, X, smooths, n_parametric, gf, data, family, link_eff,
             method, optimizer, weights, control;
-            offset = offset, select = select, start = start)
+            offset = offset, select = select, start = start, nei = nei)
     end
 end
 
@@ -417,8 +431,12 @@ end
 function _fit_gam(y, X, smooths, n_parametric, f, data,
     family, link, method, optimizer, weights, control;
     offset = nothing, select::Bool = false,
-    start::Union{AbstractVector{<:Real}, Nothing} = nothing)
+    start::Union{AbstractVector{<:Real}, Nothing} = nothing,
+    nei::Union{NeighbourhoodStructure, Nothing} = nothing)
     n, p = size(X)
+    if method === :NCV && nei !== nothing
+        validate_neighbourhoods(nei, n)
+    end
 
     # Weights. Validated here as well as at the `gam` front-end, because
     # `scam` calls this fitter directly; without it a negative weight
@@ -452,7 +470,7 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
         log_sp, result, outer_converged, outer_iters =
             outer_iteration(X, y, smooths, penalty, family, link;
                 method = method, weights = wts, offset = off,
-                start = start_f, control = control)
+                start = start_f, control = control, nei = nei)
     end
 
     if !result.converged
@@ -518,9 +536,19 @@ function _fit_gam(y, X, smooths, n_parametric, f, data,
     # Store it in the field that matches the criterion, as SCAM already does:
     # `reml` for the likelihood scores, `criterion` for GCV/UBRE. Splitting them
     # keeps `show`'s existing footer branches (src/show.jl:24-26) correct.
-    sel_score, _ = reml_score(X, y, penalty, log_sp, family, link,
-        wts, result; method = method, gamma = control.gamma,
-        compute_gradient = false)
+    sel_score = if method === :NCV
+        # NCV is not a function of the fit summaries `reml_score` works from:
+        # each fold is a Newton step away from the fitted coefficients, so the
+        # criterion needs X, the fit and the neighbourhoods (src/ncv.jl).
+        first(ncv_score(X, y, result.coefficients, result.linear_predictor,
+            family, link, S_total, wts, off,
+            nei === nothing ? loo_neighbourhoods(n) : nei;
+            gamma = control.gamma))
+    else
+        first(reml_score(X, y, penalty, log_sp, family, link,
+            wts, result; method = method, gamma = control.gamma,
+            compute_gradient = false))
+    end
     likelihood_score = method in (:REML, :ML)
     reml_val = likelihood_score ? sel_score : NaN
     criterion_val = likelihood_score ? NaN : sel_score

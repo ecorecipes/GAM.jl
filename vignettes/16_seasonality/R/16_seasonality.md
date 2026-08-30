@@ -8,7 +8,10 @@ Simon Frost
 - [Separating season from trend](#separating-season-from-trend)
 - [Factor `by`: a separate curve per
   group](#factor-by-a-separate-curve-per-group)
-  - [`by = factor` or `bs = "fs"`?](#by--factor-or-bs--fs)
+  - [`by = factor`, `bs = "fs"`, or
+    `bs = "sz"`?](#by--factor-bs--fs-or-bs--sz)
+- [`bs = "sz"`: deviations from a common
+  curve](#bs--sz-deviations-from-a-common-curve)
 - [Numeric `by`: varying-coefficient
   terms](#numeric-by-varying-coefficient-terms)
 - [`ti()`: is the seasonality itself
@@ -29,6 +32,7 @@ on the same simulated CSV data. It covers:
 | `s(x, bs = "cc") + s(t)` | separating a within-year cycle from a multi-year trend |
 | `s(x, by = factor)` | one curve per level, **each with its own smoothing parameter** |
 | `s(x, by = numeric)` | varying-coefficient term: a slope that changes smoothly with `x` |
+| `s(x, f, bs = "sz")` | a common curve plus per-level deviations summing to zero |
 | `ti(x, z)` | the *pure interaction*, with both main effects excluded |
 
 ## Setup
@@ -88,9 +92,9 @@ cat(sprintf("season(0) = %.3f    season(52) = %.3e\n", season(0), season(52)))
 
 `week` runs 0–52 rather than 1–52 so that the observed range equals the
 period. mgcv would also let you set the period explicitly with
-`knots = list(week = c(0, 52))`; coding the covariate this way gives the
-same result and is what the GAM.jl vignette must do, since `gam()` there
-has no `knots` argument.
+`knots = list(week = c(0, 52))`, and GAM.jl now accepts the same thing
+as `knots = Dict(:week => [0.0, 52.0])`; coding the covariate so its
+range is the period gives the same result in both.
 
 ## Cyclic smooths
 
@@ -333,13 +337,69 @@ cat(sprintf("dAIC = %.2f in favour of per-region curves\n",
 
     dAIC = 466.08 in favour of per-region curves
 
-### `by = factor` or `bs = "fs"`?
+### `by = factor`, `bs = "fs"`, or `bs = "sz"`?
 
 - **`s(x, by = f)`** — one smoothing parameter per level; levels treated
   as distinct populations. Requires the factor main effect.
 - **`s(x, bs = "fs")`** — a single shared smoothing parameter, levels
   treated as exchangeable, level means absorbed into the smooth. Better
   when levels are many and interchangeable.
+- **`s(x, f, bs = "sz")`** — a common smooth plus per-level deviations
+  constrained to sum to zero across levels.
+
+## `bs = "sz"`: deviations from a common curve
+
+mgcv’s `sz` basis decomposes a group-varying smooth into a shared curve
+and per-level departures from it, rather than fitting a free curve per
+level.
+
+``` r
+m_sz <- gam(y ~ s(week, k = 12, bs = "cc") + s(week, region, k = 12, bs = "sz"),
+            data = df_region, method = "REML")
+cat(sprintf("sz deviance = %.3f\n", deviance(m_sz)))
+```
+
+    sz deviance = 158.457
+
+``` r
+cat(sprintf("sz edf      = %s\n",
+            paste(round(summary(m_sz)$s.table[, "edf"], 3), collapse = ", ")))
+```
+
+    sz edf      = 8.456, 10.241
+
+The deviations sum to zero across levels at every point, which is what
+makes the common curve interpretable as the shared pattern:
+
+``` r
+gw <- seq(0, 52, length.out = 53)
+regs <- levels(df_region$region)
+nd <- data.frame(week = rep(gw, times = length(regs)),
+                 region = factor(rep(regs, each = length(gw)), levels = regs))
+tm <- predict(m_sz, newdata = nd, type = "terms")
+M <- matrix(tm[, "s(week,region)"], nrow = length(gw))
+cat(sprintf("max |sum of deviations over levels| = %.1e\n",
+            max(abs(rowSums(M)))))
+```
+
+    max |sum of deviations over levels| = 6.4e-16
+
+``` r
+for (j in seq_along(regs)) {
+  cat(sprintf("%-9s deviation range [%6.3f, %6.3f]\n",
+              regs[j], min(M[, j]), max(M[, j])))
+}
+```
+
+    coastal   deviation range [-0.210,  1.009]
+    highland  deviation range [-1.013,  0.189]
+    inland    deviation range [-0.002,  0.027]
+
+Note when comparing with the Julia side: the *common* smooth’s edf
+agrees closely between the two packages, but the deviation term’s does
+not, and the two implementations reach a similar deviance by different
+splits of the effective degrees of freedom. Compare deviance and the
+fitted curves here rather than the per-term edf.
 
 ## Numeric `by`: varying-coefficient terms
 
@@ -384,7 +444,7 @@ legend("bottomright", c("estimate", "truth"), col = c("steelblue", "red"),
        lty = c(1, 2), lwd = 2, cex = 0.8)
 ```
 
-![](16_seasonality_files/figure-commonmark/unnamed-chunk-15-1.png)
+![](16_seasonality_files/figure-commonmark/unnamed-chunk-17-1.png)
 
 ``` r
 m_const <- gam(y ~ region + rainfall + s(week, k = 12, bs = "cc", by = region),
@@ -514,7 +574,7 @@ legend("bottomright", c("year 1", "year 8"),
        col = c("steelblue", "darkorange"), lwd = 2, cex = 0.8)
 ```
 
-![](16_seasonality_files/figure-commonmark/unnamed-chunk-21-1.png)
+![](16_seasonality_files/figure-commonmark/unnamed-chunk-23-1.png)
 
 The interaction is penalized like any other smooth, so shrinkage pulls
 the two years’ curves towards a common shape and the fitted amplitude

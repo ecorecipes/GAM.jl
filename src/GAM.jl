@@ -146,6 +146,11 @@ export
     ML,
     GCV,
     UBRE,
+    NeighbourhoodStructure,
+    loo_neighbourhoods,
+    interval_neighbourhoods,
+    validate_neighbourhoods,
+    ncv_score,
 
     # Extended families
     ExtendedFamily,
@@ -329,6 +334,7 @@ include("extended_families.jl")
 include("pirls_extended.jl")
 include("reml.jl")
 include("general_fit.jl")
+include("ncv.jl")
 include("outer.jl")
 include("multiparameter.jl")
 include("evfamilies.jl")

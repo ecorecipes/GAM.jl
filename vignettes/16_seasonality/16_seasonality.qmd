@@ -43,7 +43,7 @@ are not real surveillance data.
 ```{julia}
 using GAM
 using CSV
-using StatsAPI: predict, fitted, aic, coef
+using StatsAPI: predict, fitted, aic, coef, deviance
 using Statistics: mean, std, cor
 
 using DataFrames
@@ -315,9 +315,9 @@ m_shared = gam(@formula(y ~ region + s(week, k = 12, bs = :cc)), df_region)
 @printf("ΔAIC = %.2f in favour of per-region curves\n", aic(m_shared) - aic(m_by))
 ```
 
-### `by = factor` or `bs = :fs`?
+### `by = factor`, `bs = :fs`, or `bs = :sz`?
 
-Both fit a curve per level, and they answer different questions:
+All three fit a curve per level, and they answer different questions:
 
 - **`s(x, by = f)`** — one penalty and one smoothing parameter *per level*.
   The levels are treated as distinct populations, each estimated on its own
@@ -329,7 +329,84 @@ Both fit a curve per level, and they answer different questions:
   many and interchangeable — subjects in a cohort, say — and you want them to
   borrow strength from one another rather than each being fitted alone.
 
-Vignette 10 covers `bs = :fs` in a mixed-model setting.
+- **`s(x, f, bs = :sz)`** — a *constrained* factor interaction: one common
+  smooth plus per-level deviations from it, constrained to sum to zero across
+  levels. Use it when the question is "is there a shared pattern, and how does
+  each group depart from it?" rather than "what is each group's curve?".
+
+Vignette 10 covers `bs = :fs` in a mixed-model setting; `bs = :sz` is below.
+
+## `bs = :sz`: deviations from a common curve
+
+A factor `by=` gives you three separate seasonal curves. Often the more useful
+decomposition is a **common** seasonal curve plus each region's *departure*
+from it, which is what `bs = :sz` estimates. The deviations are constrained to
+sum to zero across levels at every point, so the common smooth really is the
+shared pattern rather than an arbitrary reference level.
+
+```{julia}
+m_sz = gam(@formula(y ~ s(week, k = 12, bs = :cc) +
+                        s(week, region, k = 12, bs = :sz)), df_region)
+round.(edf(m_sz), digits = 3)
+```
+
+The first smooth is the common seasonal curve, the second the pooled set of
+per-region deviations. At the same `k` as the factor-`by` model above, fit quality
+is essentially identical — this is a reparameterisation of similar model
+space, not a different amount of flexibility:
+
+```{julia}
+@printf("sz  deviance = %.3f\n", deviance(m_sz))
+@printf("by  deviance = %.3f\n", deviance(m_by))
+```
+
+The constraint is what makes the decomposition interpretable, and it holds
+exactly rather than approximately:
+
+```{julia}
+gw_sz = collect(range(0, 52; length = 53))
+nd_sz = DataFrame(week = repeat(gw_sz, outer = length(regions)),
+                  region = repeat(regions, inner = length(gw_sz)))
+terms_sz = predict(m_sz, nd_sz; type = :terms)
+dev_sz = terms_sz[Symbol("s(week,region,bs=sz)")]
+M_sz = reshape(dev_sz, length(gw_sz), length(regions))
+@printf("max |sum of deviations over levels| = %.1e\n",
+        maximum(abs.(sum(M_sz, dims = 2))))
+```
+
+Reading the deviations recovers the simulation directly:
+
+```{julia}
+for (j, r) in enumerate(regions)
+    lo, hi = extrema(M_sz[:, j])
+    @printf("%-9s deviation range [%6.3f, %6.3f]\n", r, lo, hi)
+end
+```
+
+Coastal (true amplitude 1.40) sits above the common curve and highland (0.35)
+below it, while **inland is almost exactly the common curve** — its amplitude,
+0.90, is close to the mean of the three, so it has almost nothing to deviate
+by. That is the reading `:sz` is for, and it is not visible at all in three
+separately-fitted `by` curves.
+
+::: {.callout-warning}
+## A documented difference from mgcv
+
+GAM.jl builds the `:sz` deviation term with a **single** penalty; mgcv builds
+it with one penalty per level (three here). The bases are identical — 10
+columns for the common smooth and 24 for the deviations in both packages, 35
+coefficients in total — and the common smooth agrees closely (edf 8.455 here
+against mgcv's 8.457, smoothing parameter 17.21 against 17.18). But because
+mgcv can smooth each level's deviation independently, it shrinks the weakly
+deviating levels much harder than a single shared penalty can, and reports a
+smaller deviation edf: 10.24 against 14.63 on this model. Deviance is close
+either way (157.999 here, 158.457 in mgcv).
+
+The practical consequence: for `:sz`, compare deviance and the fitted
+deviation curves across the two packages, not the per-term edf, and expect
+GAM.jl's deviations to be somewhat less aggressively shrunk when levels differ
+a lot in how far they depart from the common curve.
+:::
 
 ## Numeric `by`: varying-coefficient terms
 
