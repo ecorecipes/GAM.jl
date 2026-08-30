@@ -367,6 +367,16 @@ function _smooth2random_disjoint(sm::ConstructedSmooth)
     nS = length(sm.S)
 
     # Per-sub-penalty eigendecompositions, in each penalty's own k_l space.
+    #
+    # Rank: for the uniform case — every sub-penalty the same size, and the
+    # stored total `sm.rank` dividing evenly — each copy's rank is
+    # `sm.rank ÷ nS`, EXACT from the stored bookkeeping (factor-`by` builds
+    # exactly this: L copies of one S_k with `rank *= L`). The eigenvalue
+    # threshold is kept only for non-uniform disjoint sets, where no stored
+    # per-sub-penalty rank exists; a fixed relative cutoff can misclassify at
+    # k ≳ 200/level, which is why the stored rank wins when available.
+    uniform = allequal(size(Si, 1) for Si in sm.S) && sm.rank % nS == 0
+    r_stored = uniform ? sm.rank ÷ nS : -1
     Us = Vector{Matrix{Float64}}(undef, nS)
     Ds = Vector{Vector{Float64}}(undef, nS)
     ranks = Vector{Int}(undef, nS)
@@ -383,7 +393,11 @@ function _smooth2random_disjoint(sm::ConstructedSmooth)
             vecs = -vecs
         end
         vmax = max(maximum(vals), 0.0)
-        r = vmax > 0 ? count(>(vmax * 1e-9), vals) : 0
+        r = if 0 <= r_stored <= ks
+            r_stored
+        else
+            vmax > 0 ? count(>(vmax * 1e-9), vals) : 0
+        end
         D = Vector{Float64}(undef, ks)
         for j in 1:r
             D[j] = 1.0 / sqrt(max(vals[j], eps()))

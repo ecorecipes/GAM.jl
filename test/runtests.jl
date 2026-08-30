@@ -924,6 +924,15 @@ include("test_ginla.jl")
 # Multi-parameter model tests (evgam)
 include("test_multiparameter.jl")
 
+# Parameter recovery from simulated data — failable bands (no R needed)
+@eval include("test_recovery.jl")
+
+# Derivative audit — hand-coded tables vs ForwardDiff vs Symbolics (heavy
+# Symbolics load; ~30 s). Opt-in: set GAM_DERIVATIVE_AUDIT=true to run.
+if parse(Bool, get(ENV, "GAM_DERIVATIVE_AUDIT", "false"))
+    @eval include("test_derivative_audit.jl")
+end
+
 # R integration tests — run when RCall and mgcv are available
 # Set GAM_SKIP_RCALL=true to skip these tests
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))

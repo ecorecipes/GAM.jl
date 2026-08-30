@@ -119,6 +119,19 @@ using GLM: LogLink
         # Coefficient means should be close to point estimates
         @test cor(mean_coef, m_jl.coefficients) > 0.99
 
+        # The draws' MOMENTS must match the distribution they claim to come
+        # from, N(β̂, Vp) — a wrong scale or a dropped Cholesky factor passes
+        # a correlation check but not these.
+        # Mean: SE of a 5000-draw mean is sqrt(diag(Vp)/5000) per coordinate;
+        # a 4-SE band across p≈15 coordinates has false-alarm rate ≈ 1e-3
+        # (measured max standardised deviation 2.41 on the equivalent
+        # Julia-data model).
+        mc_se = sqrt.(diag(m_jl.Vp) ./ size(ps, 1))
+        @test maximum(abs.(mean_coef .- m_jl.coefficients) ./ mc_se) < 4.0
+        # Covariance: sample-covariance Frobenius error scales like
+        # sqrt(2p/n) ≈ 0.077 at p=15, n=5000; measured 0.050. Bound 0.12.
+        @test norm(cov_coef .- m_jl.Vp) / norm(m_jl.Vp) < 0.12
+
         # Julia Vp should be close to R vcov
         # (Differences reflect slightly different smoothing parameter optima)
         @test cor(vec(m_jl.Vp), vec(vcov_r)) > 0.96

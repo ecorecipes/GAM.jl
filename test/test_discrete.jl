@@ -305,4 +305,71 @@
         _, Xd, _, _, _ = GAM.setup_gam(shared, df)
         @test Xf == Xd
     end
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Per-basis discrete-vs-dense parity, every registered 1-D basis.
+    #
+    # This testset exists because reduced construction silently mis-
+    # discretised FIVE bases (:ts fitted values 29% off dense, :gp 4.2%,
+    # :ad even changing the coefficient count 15→17, :fp, :lo) with no
+    # warning — the previous rule was default-allow, feeding `place_knots`
+    # quantile knots into constructors whose dense path uses
+    # `user_knots === nothing`. Reduction is now a WHITELIST
+    # (`_reduced_eligible`), and this loop forces every registered basis —
+    # including any added later — into one of two buckets:
+    #
+    #   faithful:  is_reduced == true  AND coefficients ≤ 1e-10 of dense
+    #   fallback:  is_reduced == false (dense construction, exact by design)
+    #
+    # and in BOTH buckets fitted values must match dense, because on
+    # exactly-binnable data at FIXED sp any difference is a bug, not an
+    # approximation. Measured after the fix: whitelisted ≤ 2.6e-13,
+    # fallbacks ≤ 2.6e-14.
+    # ──────────────────────────────────────────────────────────────────────
+    @testset "every 1-D basis is either faithfully reduced or falls back" begin
+        rng_pb = StableRNG(31)
+        n = 400
+        xpb = round.(rand(rng_pb, n) .* 30) ./ 30   # 31 unique values: lossless binning
+        dfpb = DataFrame(x = xpb,
+            y = sin.(2π .* xpb) .+ 0.25 .* randn(rng_pb, n))
+
+        # Bases needing special data/fitters, excluded with reasons:
+        #   multi-covariate or non-Real inputs: :re :fs :sz :mrf :sos :so :spde
+        #   SCAM shape-constrained (scam() only): :sc :scad :mpi :mpd :cv :cx
+        #                                         :micx :micv :mdcx :mdcv
+        excluded = Set([:re, :fs, :sz, :mrf, :sos, :so, :spde,
+            :sc, :scad, :mpi, :mpd, :cv, :cx, :micx, :micv, :mdcx, :mdcv])
+        # The whitelist as of this writing; a basis moving buckets without
+        # this test being updated is exactly the silent change to catch.
+        expect_reduced = Set([:tp, :ts, :cr, :cs, :cc, :ps, :cps, :bs])
+
+        probed = 0
+        for bsym in sort!(collect(keys(GAM.BASIS_TYPES)))
+            bsym in excluded && continue
+            gfb = GAM.GamFormula(:y, Symbol[], true,
+                GAM.SmoothSpec[GAM.s(:x; k = 10, bs = bsym, sp = 0.9)])
+            # (:ds prints its tp-alias warning here; expected and harmless.)
+            md = bam(gfb, dfpb; discrete = false)
+            mq = bam(gfb, dfpb; discrete = true)
+            probed += 1
+
+            # Same model in both modes: identical coefficient count …
+            @test length(coef(mq)) == length(coef(md))
+            # … and fitted parity regardless of bucket.
+            @test maximum(abs.(fitted(mq) .- fitted(md))) < 1e-8
+
+            red = any(GAM.is_reduced(s) for s in mq.smooths)
+            if bsym in expect_reduced
+                @test red                      # silent demotion caught here
+                @test maximum(abs.(coef(mq) .- coef(md))) < 1e-10
+            else
+                @test !red                     # silent promotion caught here
+            end
+        end
+        # Guard the guard: if registration changes, the loop must still have
+        # probed every non-excluded basis, and every whitelisted one.
+        @test probed == length(keys(GAM.BASIS_TYPES)) - length(intersect(
+            excluded, keys(GAM.BASIS_TYPES)))
+        @test issubset(expect_reduced, keys(GAM.BASIS_TYPES))
+    end
 end

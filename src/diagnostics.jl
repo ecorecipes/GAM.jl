@@ -47,7 +47,7 @@ function _k_index_and_p(m::GamModel, sm::ConstructedSmooth,
 end
 
 """
-    gam_check(m::GamModel; n_rep=200, seed=nothing)
+    gam_check(m::GamModel; n_rep=200, seed=11)
 
 Print diagnostic information about a fitted GAM, including basis dimension
 adequacy checks for each smooth term (text output only; use `appraise` for
@@ -55,6 +55,9 @@ residual plots).
 
 The k-index column is mgcv's residual-autocorrelation measure: values well
 BELOW 1 (with small p-value) suggest the basis dimension k is too small.
+The p-value comes from a randomization test seeded with `seed` (default 11,
+so repeated calls agree; pass `seed = nothing` for mgcv's unseeded
+behaviour).
 
 # Example
 ```julia

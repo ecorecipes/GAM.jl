@@ -3,7 +3,7 @@ using GAM
 using DataFrames
 using Random
 using StatsAPI: deviance
-using LinearAlgebra: diag
+using LinearAlgebra: diag, norm
 using GLM: LogLink
 using Statistics: var, mean, cor, cov
 using Distributions
@@ -69,6 +69,47 @@ using Distributions
         buf = IOBuffer()
         show(buf, se)
         @test occursin("SmoothEstimates", String(take!(buf)))
+    end
+
+    # smooth_estimates must equal the documented linear-algebra identity
+    # f̂ = X_pred β_s, se = sqrt(diag(X_pred Vp_s X_predᵀ)), recomputed here
+    # from the model's own blocks. The checks above only pin lengths and
+    # finiteness; this catches a misaligned coefficient range, a wrong Vp
+    # block, or scrambled row order in the concatenated output.
+    @testset "smooth_estimates linear-algebra identity" begin
+        se_id = smooth_estimates(m2; n = 25, overall_uncertainty = false)
+        row0 = 0
+        for (si, vsym) in ((1, :x1), (2, :x2))
+            sm = m2.smooths[si]
+            idx = sm.first_para:sm.last_para
+            # evaluate on the SAME grid the function used for this smooth
+            gvals = se_id.covariates[vsym][(row0 + 1):(row0 + 25)]
+            Xp = predict_matrix(sm, NamedTuple{(vsym,)}((gvals,)))
+            f_true = Xp * m2.coefficients[idx]
+            se_true = sqrt.(max.(diag(Xp * m2.Vp[idx, idx] * Xp'), 0.0))
+            @test maximum(abs.(se_id.estimate[(row0 + 1):(row0 + 25)] .- f_true)) < 1e-10
+            @test maximum(abs.(se_id.se[(row0 + 1):(row0 + 25)] .- se_true)) < 1e-10
+            row0 += 25
+        end
+
+        # overall_uncertainty=true must reproduce the intercept-inclusive
+        # formula: X_full has the smooth block plus a ones column at the
+        # intercept, se = sqrt(diag(X_full Vp X_fullᵀ)) over the FULL Vp.
+        gridc = (x = collect(range(0.1, 0.9; length = 20)),)
+        se_ou = smooth_estimates(m; data = gridc, overall_uncertainty = true)
+        sm = m.smooths[1]
+        idx = sm.first_para:sm.last_para
+        Xp = predict_matrix(sm, gridc)
+        p = length(m.coefficients)
+        Xf = zeros(20, p)
+        Xf[:, idx] .= Xp
+        Xf[:, 1] .= 1.0
+        se_true = sqrt.(max.(diag(Xf * m.Vp * Xf'), 0.0))
+        @test maximum(abs.(se_ou.se .- se_true)) < 1e-10
+        @test maximum(abs.(se_ou.estimate .- Xp * m.coefficients[idx])) < 1e-10
+        # and it must genuinely differ from the conditional se
+        se_cond = smooth_estimates(m; data = gridc, overall_uncertainty = false)
+        @test maximum(abs.(se_ou.se .- se_cond.se)) > 1e-6
     end
 
     # ─── partial_residuals ───────────────────────────────────────────────
@@ -175,6 +216,18 @@ using Distributions
         # Mean should be close to estimated coefficients
         mean_coef = vec(mean(ps; dims = 1))
         @test cor(mean_coef, m.coefficients) > 0.9
+
+        # Moment check against the claimed sampling distribution N(β̂, Vp):
+        # with 5000 draws the mean's SE is sqrt(diag(Vp)/5000) per coordinate
+        # (4-SE band, measured max standardised deviation 2.41), and the
+        # sample covariance's Frobenius error scales like sqrt(2p/n) ≈ 0.077
+        # at p=15 (measured 0.050; bound 0.12). A dropped Cholesky factor or
+        # a Vp/Vc mix-up fails here while passing the correlation test above.
+        psm = posterior_samples(m; n = 5000, seed = 42)
+        mc = vec(mean(psm; dims = 1))
+        mc_se = sqrt.(diag(m.Vp) ./ 5000)
+        @test maximum(abs.(mc .- m.coefficients) ./ mc_se) < 4.0
+        @test norm(cov(psm) .- m.Vp) / norm(m.Vp) < 0.12
     end
 
     # ─── fitted_samples ──────────────────────────────────────────────────

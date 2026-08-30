@@ -152,6 +152,7 @@ QuasiPoissonFamily
 QuasiBinomialFamily
 TweedieFamily
 BetaFamily
+ScatFamily
 ```
 
 ## Smoothing Methods

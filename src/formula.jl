@@ -681,18 +681,19 @@ end
 """
     setup_gam_discrete(gf, data, m_grid; family) -> (y, X, X_para, smooths, n_parametric)
 
-Same contract as [`setup_gam`](@ref), but 1-D smooths are constructed at the
-`m` unique covariate values and then scattered to `n` rows, rather than
-evaluated at all `n` rows directly.
+Same contract as [`setup_gam`](@ref), but supported smooths — 1-D and
+factor-`by` — are constructed at the `m` unique covariate values (via
+`_reduced_smooth`/`_reduced_by_smooth`, inside `with_row_weights` so
+multiplicity-dependent quantities match the full-data build) and KEPT
+reduced: `sm.X` holds the `m × k` basis with `sm.rowmap` giving each row's
+source, and `smooth_matrix(sm)` scatters on demand.
 
-This exists for memory, not speed. Measured at n = 10⁵ with 4 × `s(k=20)`, a
-thin-plate fit peaks at 4113 MB while retaining only 167 MB — roughly 3950 MB
-is a construction transient, because TPRS with `max_knots = 2000` forms an
-`n × 2000` dense matrix. Building at the grid makes that `m × 2000`.
-
-The returned objects are indistinguishable from `setup_gam`'s: `sm.X` and the
-model matrix both have `n` rows, since `ConstructedSmooth.X` and `GamModel.X`
-are concretely-typed dense matrices. Only the transient is avoided.
+This exists for memory. The construction transient falls (TPRS with
+`max_knots = 2000` forms an `m × 2000` matrix instead of `n × 2000`) and so
+does retention. With `build_X = false` (the default route under
+`bam(...; discrete=true)`) the `n × p` model matrix is never assembled at
+all — `X` comes back `0 × 0` and only the parametric block `X_para` has `n`
+rows.
 
 Falls back to `setup_gam` wholesale when smooths share a covariate, since side
 constraints need the `n`-row blocks.

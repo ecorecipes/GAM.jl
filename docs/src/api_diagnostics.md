@@ -71,5 +71,6 @@ They are not part of the public API and may change without notice.
 
 ```@docs
 GAM._smooth2random_tensor
+GAM._smooth2random_disjoint
 GAM.s2r_predict
 ```

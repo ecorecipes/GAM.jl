@@ -92,7 +92,8 @@ Diagnostic data from [`appraise`](@ref) for creating model checking plots.
 - `qq_theoretical`: reference quantiles for the QQ plot (simulated envelope
   midpoints under `method = :simulate`, the default; theoretical N(0,1)
   quantiles under `method = :normal`)
-- `qq_sample`: sorted standardized deviance residuals (divided by √scale)
+- `qq_sample`: sorted standardized residuals of the requested `type`
+  (deviance by default), divided by √scale
 """
 struct AppraiseData
     residuals_deviance::Vector{Float64}
@@ -325,17 +326,18 @@ end
 # ============================================================================
 
 """
-    data_slice(m::GamModel; var::Symbol, n=100, kwargs...)
+    data_slice(m::GamModel; var::Symbol, n=100)
 
-Create an evaluation grid for `var` with `n` points, holding all other
-covariates at their typical (median for numeric, mode for categorical) values.
-
-Additional keyword arguments fix specific covariate values.
+Create an evaluation grid over the smooth containing `var`, with `n` points.
+The returned table holds only that smooth's own variables (the grid for
+`var`, plus representative values for any co-variables of the same smooth) —
+covariates of *other* terms are not included, so pass the result to
+`smooth_estimates`-style per-term evaluation rather than whole-model
+`predict` on models with several terms.
 
 # Example
 ```julia
-ds = data_slice(m; var = :x, n = 100)    # grid over x, other vars at medians
-predict(m, ds)
+ds = data_slice(m; var = :x, n = 100)    # grid over x
 ```
 """
 function data_slice(m::GamModel; var::Symbol, n::Int = 100, kwargs...)
@@ -373,6 +375,12 @@ Compute derivatives of estimated smooth terms via finite differences.
 - `interval`: `:confidence` (pointwise) or `:simultaneous`
 - `n_sim`: number of simulations for simultaneous intervals
 - `seed`: random seed for simultaneous intervals
+- `unconditional`: use the smoothing-parameter-corrected covariance `Vc`
+  for the intervals when the fit provides it (see [`has_vc`](@ref))
+
+Only 1-D smooths are differentiated; smooths of more than one covariate
+(including tensor products) are skipped, and selecting one returns an empty
+result.
 
 # Returns
 A [`DerivativeEstimates`](@ref) struct.
@@ -468,15 +476,17 @@ end
 Draw `n` samples from the posterior distribution of model coefficients
 β̃ ~ MVN(β̂, Vp).
 
-`unconditional=true` is NOT supported (no smoothing-parameter-corrected
-covariance is available); it warns and uses `Vp`.
+`unconditional=true` draws from the smoothing-parameter-uncertainty
+corrected covariance `Vc` when the fit provides it (see [`has_vc`](@ref));
+on fits without `Vc` (fixed `sp`, GCV/UBRE, `bam`/`scam`/GAMM) it warns and
+uses `Vp`.
 
-Returns an `n × p` matrix where each row is a posterior draw.
+Returns an `n × p` matrix where each ROW is a posterior draw.
 
 # Example
 ```julia
 ps = posterior_samples(m; n = 1000, seed = 1)   # draws from N(β̂, Vp)
-size(ps)                                        # (n_coef, 1000)
+size(ps)                                        # (1000, n_coef)
 ```
 """
 function posterior_samples(m::GamModel;

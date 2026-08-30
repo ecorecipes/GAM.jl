@@ -1,6 +1,6 @@
 # [Smooth Term Reference](@id smooth-terms)
 
-GAM.jl provides 30 registered smooth basis types, covering all commonly used
+GAM.jl provides 31 registered smooth basis types, covering all commonly used
 options from R's mgcv, plus shape-constrained bases from scam and several
 additional types including loess, fractional polynomials, spherical splines,
 SPDE Matérn, and constrained factor smooths. Two bases (`:so`, `:ds`) are
@@ -246,6 +246,10 @@ with more rapid change.
 regions of slow change. The penalty adapts so you don't oversmooth or
 undersmooth locally.
 
+`m` sets the **number of adaptive sub-penalties** (mgcv's convention, default
+5), not a spline order — this changed in 0.2 with a one-time warning when `m`
+is passed; `xt = Dict(:n_penalties => n)` is an explicit alias.
+
 ```@example smooths
 s(:x, bs=:ad, k=20);
 nothing
@@ -429,29 +433,25 @@ The construction is verified against mgcv: for `t2(x, z, k=4)` both produce 15
 columns, 3 penalties of rank 4 with identical disjoint supports, and a
 null-space dimension of 3.
 
-!!! warning "`k` means something different here than in mgcv"
-    For tensor smooths, mgcv's `k` is the dimension of **each marginal** basis
-    (giving `k^d` columns), whereas GAM.jl's `k` is the **total** target
-    dimension, split as `round(Int, k^(1/d))` per margin and floored at 3.
-    So `te(x, z, k=5)` is a 24-column smooth in mgcv but an 8-column smooth
-    here.
+!!! warning "Scalar `k` is per-marginal, as in mgcv (changed in 0.2)"
+    For tensor smooths a scalar `k` is the dimension of **each marginal**
+    basis, recycled across margins — exactly mgcv's convention. So
+    `te(x, z, k=5)` builds a 5×5 (24-column, post-constraint) smooth in both
+    packages, and an mgcv model ports with its `k` unchanged.
 
-    | `k` | mgcv columns | GAM.jl columns |
-    |-----|--------------|----------------|
-    | 4   | 15           | 8              |
-    | 5   | 24           | 8              |
-    | 16  | 255          | 15             |
-    | 25  | 624          | 24             |
-
-    To reproduce an mgcv model use `k_julia = k_mgcv^d`, or pass the marginal
-    dimensions directly:
+    Before GAM.jl 0.2 a scalar `k` was a *total* dimension hint, split as
+    `round(Int, k^(1/d))` per margin — `te(x, z, k=25)` used to mean 5×5 and
+    now means 25×25. Models written against the old behaviour should switch
+    to the explicit vector form to keep their basis size:
 
     ```julia
-    te(:x, :z, k = 25)       # ≡ mgcv te(x, z, k = 5)
-    te(:x, :z, k = [4, 7])   # marginal dimensions given explicitly
+    te(:x, :z, k = 5)        # 5 per margin — same model as mgcv's te(x, z, k = 5)
+    te(:x, :z, k = [5, 5])   # identical, margins given explicitly
+    te(:x, :z, k = [4, 7])   # unequal marginal dimensions
     ```
 
-    Plain `s()` smooths are unaffected — `k` means the same thing in both.
+    Plain `s()` smooths are unaffected — `k` has always meant the same thing
+    in both packages there.
 
 ### Linear-Constraint Bases (`bs=:sc`, `bs=:scad`)
 
@@ -542,11 +542,11 @@ nothing
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `bs` | Symbol | Basis type (see table above) |
-| `k` | Int or Vector | Basis dimension. For `s()`, the number of basis functions. For `te`/`ti`/`t2`, the **total** dimension across margins (mgcv counts *per margin* — see the warning above); a vector gives the marginal dimensions directly |
+| `k` | Int or Vector | Basis dimension. For `s()`, the number of basis functions. For `te`/`ti`/`t2`, the **per-marginal** dimension recycled across margins (mgcv's convention — see the warning above); a vector gives unequal marginal dimensions |
 | `m` | Int/Tuple | Penalty order (basis-type specific) |
 | `fx` | Bool | If true, no penalty (fixed df) |
 | `by` | Symbol | Varying coefficient variable |
-| `sp` | Float64 | Fixed smoothing parameter |
+| `sp` | Float64 or Vector | Fixed smoothing parameter(s); a vector fixes each penalty of a multi-penalty smooth (`:ad`, `te`/`t2`, factor-`by`) individually |
 | `id` | Symbol | Link smoothing parameters across terms |
 | `xt` | Any | Extra information (e.g., neighbourhood list for `:mrf`, boundary for `:so`) |
 

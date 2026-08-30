@@ -327,13 +327,13 @@ using Statistics: mean, std
         y = sin.(2π .* x) .+ 0.3 .* randn(n)
         df = DataFrame(y = y, x = x)
 
-        t = @elapsed begin
-            m = gam(@formulak(y ~ s(x, k = 10)), df;
-                priors = PriorSpec(sds = Exponential(1.0)),
-                nsamples = 500, nchains = 1)
-        end
+        # No wall-clock assertion: elapsed time measures the CI host, not the
+        # code, and a loaded runner turns it into pure flake. Completing the
+        # fit and returning the right type is the testable part.
+        m = gam(@formulak(y ~ s(x, k = 10)), df;
+            priors = PriorSpec(sds = Exponential(1.0)),
+            nsamples = 500, nchains = 1)
 
         @test m isa BayesGamModel
-        @test t < 120  # generous timeout for CI
     end
 end

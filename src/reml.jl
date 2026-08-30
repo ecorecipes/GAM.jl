@@ -1571,9 +1571,12 @@ end
 #        Vb.corr down its `dH[[i]] <- H * 0` branch: the `dw.drho` argument is
 #        therefore ignored entirely and dH_i = λᵢSᵢ. Vb.corr then forms
 #            dR_i = −U⁻¹ · dchol(λᵢSᵢ, U) · U⁻¹ = d(U⁻¹)/dρᵢ,   A = UᵀU
-#        (the derivative of the "square root" of A⁻¹), and `vcorr` returns
-#            Vc2 = φ · Σᵢⱼ Vr[i,j] · dR_i · dR_jᵀ
-#        i.e. the extra variance from Vb itself moving with ρ̂.
+#        (the derivative of the "square root" of A⁻¹). mgcv's `vcorr` itself
+#        returns the UNSCALED sum ("NOTE: unscaled!!", gam.fit3.r) —
+#            Σᵢⱼ Vr[i,j] · dR_i · dR_jᵀ
+#        — and the caller multiplies by φ, giving Vc2 = φ·Σᵢⱼ(...): the extra
+#        variance from Vb itself moving with ρ̂. The code below scales by φ at
+#        the same point mgcv's caller does.
 #
 # hess — the Hessian of the *negative* REML/LAML score. mgcv optimizes over
 #        (ρ, log φ) jointly when the scale is estimated, so `hess` is

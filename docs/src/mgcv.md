@@ -33,41 +33,29 @@ equivalence is verified separately — see below).
 Both of these make *correct* code in each language fit a **different model**,
 which is the most common source of "GAM.jl doesn't match mgcv" reports.
 
-#### 1. `k` counts basis functions **per margin** in mgcv, **in total** in GAM.jl
+#### 1. Tensor `k` is per-marginal in both packages — but changed in GAM.jl 0.2
 
-For tensor smooths (`te`, `ti`, `t2`), mgcv's `k` is the dimension of *each*
-marginal basis, so the tensor has `k^d` columns. GAM.jl's `k` is the *total*
-target dimension, split as `round(Int, k^(1/d))` per margin (floored at 3).
-Measured, for `te(x, z)` after the identifiability constraint:
-
-| `k` | mgcv columns | GAM.jl columns |
-|-----|--------------|----------------|
-| 4   | 15           | 8              |
-| 5   | 24           | 8              |
-| 9   | 80           | 8              |
-| 16  | 255          | 15             |
-| 25  | 624          | 24             |
-
-So `te(x, z, k=5)` is a 24-column smooth in mgcv and an 8-column smooth in
-GAM.jl — a threefold difference in flexibility from identical source text.
-(Because of the floor at 3 per margin, `k=4`, `5` and `9` all give 8 columns.)
-
-**To match mgcv, raise `k` to the power of the number of covariates:**
+For tensor smooths (`te`, `ti`, `t2`) a scalar `k` is now the dimension of
+*each* marginal basis, recycled across margins — **exactly mgcv's
+convention** — so an mgcv model ports with its `k` unchanged:
 
 ```julia
-# mgcv:  te(x, z, k = 5)          → 5 per margin, 24 columns
-# GAM.jl equivalent:
-te(:x, :z, k = 25)                # 25^(1/2) = 5 per margin, 24 columns
+# mgcv:  te(x, z, k = 5)          → 5 per margin, 24 columns (post-constraint)
+te(:x, :z, k = 5)                 # identical model in GAM.jl
 
-# mgcv:  te(x, y, z, k = 4)       → 4 per margin, 63 columns
-te(:x, :y, :z, k = 64)            # 64^(1/3) = 4 per margin
+# mgcv:  te(x, y, z, k = 4)       → 4 per margin
+te(:x, :y, :z, k = 4)             # identical
+te(:x, :z, k = [4, 7])            # unequal margins, mgcv's k = c(4, 7)
 ```
 
-In general `k_julia = k_mgcv^d`. Per-margin dimensions can also be given
-directly as a vector, `te(:x, :z, k = [4, 7])`, which sidesteps the
-conversion entirely.
+**The convention changed in GAM.jl 0.2.** Before, a scalar `k` was a *total*
+dimension hint split as `round(Int, k^(1/d))` per margin, so `te(x, z, k=25)`
+meant 5×5; it now means 25×25. Code written against the old behaviour should
+switch to the explicit vector form (`k = [5, 5]`) to keep its basis size —
+old scalar values carried over unchanged now produce much larger bases.
 
-Plain `s()` smooths are unaffected: `k` means the same thing in both.
+Plain `s()` smooths are unaffected: `k` has always meant the same thing in
+both packages there.
 
 #### 2. The default smoothing-parameter method differs
 
@@ -97,12 +85,11 @@ The achieved score is available as `sp_criterion(m)`, the analogue of mgcv's
 `b$gcv.ubre`. Both are minimized, so REML/ML values are negative log marginal
 likelihoods and lower is better.
 
-One known gap: GAM.jl's **`:ML` score differs from mgcv's** by roughly 1–8%
-(e.g. `50.5654` vs `46.6654` on a Gaussian reference fit). mgcv's ML changes
-the determinant terms rather than only dropping the `Mp` correction
-(`R/gam.fit3.r:545-546` sets `REML <- -1` for ML, feeding a different
-determinant path). `:REML`, `:GCV` and `:UBRE` all agree with mgcv to
-between `4e-12` and `2e-4`.
+All four criteria agree with mgcv: `:ML` matches to ~4e-16 on the Gaussian
+reference (the range-space determinant `MLpenalty1` uses and the ML-profiled
+scale are both ported — an earlier 1–8% gap is fixed), and `:REML`, `:GCV`
+and `:UBRE` agree to between `4e-12` and `2e-4` depending on family and link
+(non-canonical links use mgcv's full-Newton working weights in the score).
 
 ### Architecture
 
@@ -145,13 +132,21 @@ ratio out to `e^24`, and the criterion shows no kinking.
 On the reference Gaussian cubic-spline model, GAM.jl matches mgcv
 **elementwise**: smoothing parameter to log-difference 0.0000, coefficients
 to 9e-8, and prediction standard errors to 5e-7 (Poisson: sp within 0.012,
-SEs within 0.2%). AIC agrees within ~0.5 (mgcv's corrected-edf convention).
+SEs within 0.2%). `aic(m)` follows mgcv's `AIC()` convention (`edf2`-based)
+and agrees to ~1e-4 on REML fits.
 Nested effects match gamFactory's index directions to |cosine| > 0.999.
-Two caveats: smooth-test F statistics use a simplification of mgcv's
-`testStat`, so the printed statistic can differ from `summary.gam`'s; and on
+Four caveats: smooth-test F statistics use a simplification of mgcv's
+`testStat`, so the printed statistic can differ from `summary.gam`'s; on
 numerically flat REML ridges the smoothing parameter is only weakly
 identified, so fitted values/EDF — not raw sp — are the meaningful
-comparison there.
+comparison there; the `tp`, `gp` and `sos` bases are **rotation-equivalent**
+to mgcv's, not elementwise — fits, EDF and predictions match at fixed `sp`
+(to ~1e-12 or better) but raw coefficient vectors differ, so never compare
+those elementwise; and `fs` smoothing parameters do **not** transfer from
+mgcv (feeding mgcv's `sp` in gives ~5% of fitted range difference — the
+penalty structure matches but the `nat.param(type=1)` parameterisation
+differs, so compare `fs` fits at freely selected `sp`). Smoothing parameters
+*do* transfer for `cr`/`ps`/`tp`/`sos`/`ad`/`t2` and factor-`by` smooths.
 
 !!! note "The `testStat` simplification does not cost test size"
     The differing statistic is a difference in the *statistic*, not in
@@ -183,7 +178,6 @@ comparison there.
 | Gaussian process (`:gp`) | ✅ | ✅ 1-D only; `m` selects mgcv's correlation type |
 | Duchon splines (`:ds`) | ✅ | ⚠️ alias for `:tp` — warns; not Duchon's fractional-order basis |
 | Markov random field (`:mrf`) | ✅ | ✅ |
-| Soap film (`:so`) | ✅ | ✅ |
 | Factor-smooth (`:fs`) | ✅ | ✅ |
 | Random effects (`:re`) | ✅ | ✅ |
 | Tensor products (`te`/`ti`) | ✅ | ✅ |
@@ -196,7 +190,7 @@ comparison there.
 | Soap film (`:so`) | ✅ | ⚠️ approximation |
 | `t2()` tensor construction (Wood–Scheipl–Faraway) | ✅ | ✅ (verified against mgcv: matching columns, penalty count, ranks, supports) |
 | Linear functional terms (matrix args) | ✅ | ❌ |
-| `bam(discrete=TRUE)` covariate discretization | ✅ | ✅ `bam(...; discrete=true)` — 1-D, `te` and `bs=:re` terms; `by=`, `ti`, `t2` stay dense. Approximate by covariate rounding, as in mgcv |
+| `bam(discrete=TRUE)` covariate discretization | ✅ | ✅ `bam(...; discrete=true)` — 1-D, `te`, `bs=:re` and factor-`by` terms; numeric-`by`, `ti` and `t2` stay dense. Approximate by covariate rounding, as in mgcv |
 | Smoothing-parameter-uncertainty `Vc` / `unconditional=TRUE` | ✅ | ✅ `vcov_corrected`, `edf2`, and `unconditional=true` in `predict`/`smooth_estimates`/`derivatives`/`posterior_samples` |
 
 ### Extended Models

@@ -111,12 +111,30 @@
         # Both reparameterize before the tensor product, so neither has the
         # single post-hoc Z the kernels rely on. They must fall back rather
         # than be silently mis-accumulated.
-        df = _mk(1500)
+        # n = 4000 so the 40×40 grid is well under n: on this data a plain
+        # te IS discretised (positive control below). Without that control
+        # the fallback assertion is vacuous — a discretiser broken into
+        # returning DenseDesign for everything would pass it.
+        df = _mk(4000)
+        gf_te = GAM.GamFormula(:y, Symbol[], true,
+            GAM.SmoothSpec[GAM.te(:x1, :x2; k = [4, 4])])
+        _, X_te, _, sms_te, _ = GAM.setup_gam(gf_te, df)
+        D_te = GAM.bam_design(X_te, sms_te, df, true)
+        @test D_te isa GAM.DiscreteDesign
+        @test length(D_te.tblocks) == 1
+
         for spec in (GAM.ti(:x1, :x2; k = [4, 4]), GAM.t2(:x1, :x2; k = [4, 4]))
             gf = GAM.GamFormula(:y, Symbol[], true, GAM.SmoothSpec[spec])
             _, X, _, sms, _ = GAM.setup_gam(gf, df)
             D = GAM.bam_design(X, sms, df, true)
-            @test D isa GAM.DenseDesign || isempty(D.tblocks)
+            # The intended fallback, stated positively: no tensor kernel may
+            # claim this smooth. Either the whole design stays dense, or a
+            # discrete design carries it outside tblocks (checked as empty).
+            if D isa GAM.DiscreteDesign
+                @test isempty(D.tblocks)
+            else
+                @test D isa GAM.DenseDesign
+            end
         end
     end
 

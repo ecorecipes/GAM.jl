@@ -35,6 +35,49 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         end
     end
 
+    # The working-parameter machinery of the SCAM Newton loop: β̃ = T(β) on
+    # the constrained indices, with Cdiag = T′(β) and C1diag = T″(β) feeding
+    # the chain-rule gradient/Hessian. A transform/derivative mismatch biases
+    # every constrained fit without necessarily failing the fit-level tests.
+    @testset "_apply_transform! round-trip and Cdiag consistency" begin
+        beta = [-2.0, 0.3, 0.0, 1.7, -0.4, 5.0]
+        iv = [2, 4, 5]  # constrained subset; 1, 3, 6 must pass through
+
+        for use_softplus in (false, true)
+            beta_t = similar(beta)
+            GAM._apply_transform!(beta_t, beta, iv, use_softplus)
+
+            # Untouched indices pass through exactly
+            @test beta_t[[1, 3, 6]] == beta[[1, 3, 6]]
+            # Constrained indices are positive (the point of the transform)
+            @test all(beta_t[iv] .> 0)
+
+            # Round-trip: invert the transform and recover β exactly.
+            # exp⁻¹ = log; softplus⁻¹(y) = log(expm1(y)).
+            inv_t = use_softplus ? (y -> log(expm1(y))) : log
+            @test maximum(abs.(inv_t.(beta_t[iv]) .- beta[iv])) < 1e-12
+
+            # Cdiag/C1diag must be the actual first/second derivatives of
+            # the scalar transform (the round-trip above has pinned
+            # _apply_transform! to exactly that scalar) — checked against
+            # ForwardDiff. atol 1e-12: both sides are analytic.
+            Cdiag = zeros(length(beta))
+            C1diag = zeros(length(beta))
+            GAM._update_Cdiag!(Cdiag, C1diag, beta, beta_t, iv, use_softplus)
+            T = use_softplus ? GAM.softplus : exp
+            for j in iv
+                @test abs(Cdiag[j] -
+                    GAM.ForwardDiff.derivative(T, beta[j])) < 1e-12
+                d2 = GAM.ForwardDiff.derivative(
+                    b -> GAM.ForwardDiff.derivative(T, b), beta[j])
+                @test abs(C1diag[j] - d2) < 1e-12
+            end
+            # Unconstrained entries: identity transform, zero curvature
+            @test Cdiag[[1, 3, 6]] == [1.0, 1.0, 1.0]
+            @test C1diag[[1, 3, 6]] == [0.0, 0.0, 0.0]
+        end
+    end
+
     @testset "Sigma matrix construction" begin
         # Monotone increasing: lower triangular of 1's
         Sig_mpi = GAM._sigma_matrix(GAM.MonoIncBasis(), 5)
@@ -172,6 +215,14 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         m = scam(@formulak(y ~ s(x, bs = :cx, k = 10)), df)
         @test m.deviance_val < 5.0
         @test cor(m.fitted_values, x .^ 2) > 0.98
+
+        # The constraint itself: convexity means non-decreasing first
+        # differences on any grid. SCAM enforces it exactly through the
+        # coefficient transform, so only float error (≪ 1e-8 on O(1) values)
+        # is tolerated.
+        xp = collect(0.01:0.01:0.99)
+        pred = StatsAPI.predict(m, DataFrame(x = xp))
+        @test all(diff(diff(pred)) .>= -1e-8)  # convex
     end
 
     @testset "SCAM fitting - concave" begin
@@ -183,6 +234,13 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
 
         m = scam(@formulak(y ~ s(x, bs = :cv, k = 10)), df)
         @test m.deviance_val < 10.0
+
+        # Concavity on a grid: non-increasing first differences. Until now
+        # only the deviance was checked, which any unconstrained fit of this
+        # smooth data would also pass — this asserts the actual constraint.
+        xp = collect(0.01:0.01:0.99)
+        pred = StatsAPI.predict(m, DataFrame(x = xp))
+        @test all(diff(diff(pred)) .<= 1e-8)  # concave
     end
 
     @testset "SCAM fitting - combined constraints" begin
@@ -190,20 +248,36 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         n = 200
         x = sort(rand(n))
 
+        # Each combined constraint is asserted directly via finite
+        # differences of predictions on a grid (first diff = monotonicity,
+        # second diff = curvature). The transform enforces the shape exactly,
+        # so 1e-8 covers only float error on O(1) values. The deviance bounds
+        # alone were satisfiable by an unconstrained fit.
+        xp = collect(0.01:0.01:0.99)
+
         # Monotone increasing + convex
         y = x .^ 2 .+ 0.1 .* randn(n)
         m_micx = scam(@formulak(y ~ s(x, bs = :micx, k = 10)), DataFrame(x = x, y = y))
         @test m_micx.deviance_val < 10.0
+        p_micx = StatsAPI.predict(m_micx, DataFrame(x = xp))
+        @test all(diff(p_micx) .>= -1e-8)        # increasing
+        @test all(diff(diff(p_micx)) .>= -1e-8)  # convex
 
         # Monotone increasing + concave
         y = sqrt.(x) .+ 0.1 .* randn(n)
         m_micv = scam(@formulak(y ~ s(x, bs = :micv, k = 10)), DataFrame(x = x, y = y))
         @test m_micv.deviance_val < 10.0
+        p_micv = StatsAPI.predict(m_micv, DataFrame(x = xp))
+        @test all(diff(p_micv) .>= -1e-8)        # increasing
+        @test all(diff(diff(p_micv)) .<= 1e-8)   # concave
 
         # Monotone decreasing + concave
         y = -x .^ 2 .+ 0.1 .* randn(n)
         m_mdcv = scam(@formulak(y ~ s(x, bs = :mdcv, k = 10)), DataFrame(x = x, y = y))
         @test m_mdcv.deviance_val < 10.0
+        p_mdcv = StatsAPI.predict(m_mdcv, DataFrame(x = xp))
+        @test all(diff(p_mdcv) .<= 1e-8)         # decreasing
+        @test all(diff(diff(p_mdcv)) .<= 1e-8)   # concave
     end
 
     @testset "SCAM supports parametric terms with constrained smooths" begin

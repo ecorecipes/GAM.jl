@@ -13,7 +13,7 @@ using Random
 using Statistics
 using StableRNGs
 using Distributions: Poisson, Bernoulli
-using StatsAPI: fitted, coef, deviance
+using StatsAPI: fitted, coef, deviance, residuals, predict
 using Tables
 using StatsModels
 
@@ -227,5 +227,70 @@ end
         fn = StatsModels.@formula(y ~ s(x, 8))
         @test_throws ArgumentError gamm(fn, dff)
         @test length(fitted(gamm(fn, dff; na_action = :omit))) == n - 1
+    end
+
+    # ------------------------------------------------------------------
+    # Row REALIGNMENT — the docstring's actual promise. This file's header
+    # claims to pin "the row bookkeeping that lets a caller realign results
+    # with the original table"; until now only result LENGTHS were asserted.
+    # A silent off-by-one in the kept-row set would misalign every downstream
+    # join a user does — exactly the failure class the feature exists to
+    # prevent — and would have passed the old tests.
+    # ------------------------------------------------------------------
+    @testset "na_omit_rows realignment round-trip" begin
+        rng2 = StableRNG(20260912)
+        dfm = DataFrame(
+            x = Vector{Union{Missing, Float64}}(rand(rng2, n)),
+            z = rand(rng2, n),
+            w = Vector{Union{Missing, Float64}}(ones(n)),
+            off = rand(rng2, n),
+        )
+        dfm.y = Vector{Union{Missing, Float64}}(
+            2 .* sin.(2π .* coalesce.(dfm.x, 0.0)) .+ 0.3 .* randn(rng2, n))
+        # incomplete rows scattered through the table, one per column kind
+        dfm.y[7] = missing
+        dfm.x[42] = missing
+        dfm.z[91] = NaN
+        dfm.w[120] = missing
+        dfm.off[155] = Inf
+
+        # Direct unit test of na_omit_rows, including the weights/offset
+        # keywords (previously never exercised anywhere).
+        keep = GAM.na_omit_rows(dfm, :y, [:x, :z];
+            weights = dfm.w, offset = dfm.off)
+        expected = setdiff(1:n, [7, 42, 91, 120, 155])
+        @test keep == expected
+        @test issorted(keep)                    # original-table order preserved
+        # Without weights/offset those rows are complete again:
+        @test GAM.na_omit_rows(dfm, :y, [:x, :z]) ==
+              setdiff(1:n, [7, 42, 91])
+
+        f = @formulak(y ~ s(x, k = 8) + s(z, k = 8))
+        m = bam(f, dfm; weights = dfm.w, offset = dfm.off, na_action = :omit)
+        clean = dfm[keep, :]
+        m_ref = bam(f, DataFrame(clean);
+            weights = Float64.(clean.w), offset = Float64.(clean.off))
+
+        # The realignment identity: scattering the :omit fit's results back
+        # through `keep` places each value at ITS original row. Verified by
+        # checking the scattered vector agrees, row by original row, with the
+        # hand-filtered fit indexed the same way — for fitted values and
+        # residuals both.
+        aligned_fit = fill(NaN, n)
+        aligned_fit[keep] .= fitted(m)
+        aligned_res = fill(NaN, n)
+        aligned_res[keep] .= residuals(m)
+        for (pos, orig_row) in enumerate(keep)
+            @test aligned_fit[orig_row] ≈ fitted(m_ref)[pos] atol = 1e-10
+            @test aligned_res[orig_row] ≈ residuals(m_ref)[pos] atol = 1e-10
+        end
+        # Dropped rows stay unfilled — nothing leaked into them.
+        @test all(isnan, aligned_fit[[7, 42, 91, 120, 155]])
+
+        # And prediction on the kept subtable reproduces the fit (predict on
+        # newdata excludes the training offset, so add it back), so a user
+        # can regenerate aligned predictions from the original data at will.
+        pred = predict(m, DataFrame(clean))
+        @test maximum(abs.(pred .+ Float64.(clean.off) .- fitted(m))) < 1e-8
     end
 end
