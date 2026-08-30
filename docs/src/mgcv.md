@@ -144,9 +144,14 @@ comparison there; the `tp`, `gp` and `sos` bases are **rotation-equivalent**
 to mgcv's, not elementwise — fits, EDF and predictions match at fixed `sp`
 (to ~1e-12 or better) but raw coefficient vectors differ, so never compare
 those elementwise; and `fs` smoothing parameters do **not** transfer from
-mgcv (feeding mgcv's `sp` in gives ~5% of fitted range difference — the
-penalty structure matches but the `nat.param(type=1)` parameterisation
-differs, so compare `fs` fits at freely selected `sp`). Smoothing parameters
+mgcv. The penalty structure matches, but mgcv's `nat.param(type=1)`
+parameterisation puts the null-space components on a different footing, so
+feeding mgcv's `sp` in makes agreement *worse* rather than better — on a
+random-slope trajectory model, 0.52% of fitted range against 0.16% for the
+same model fitted freely, and larger still on other data. The size is
+dataset-dependent; the direction is not. Compare `fs` fits at freely
+selected `sp`, where they agree closely (fitted correlation 0.9999971, edf
+89.69 vs 89.64 on that model), and compare edf rather than `sp`. Smoothing parameters
 *do* transfer for `cr`/`ps`/`tp`/`sos`/`ad`/`t2` and factor-`by` smooths.
 
 !!! note "The `testStat` simplification does not cost test size"
