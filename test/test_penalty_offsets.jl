@@ -510,42 +510,111 @@ end
                   for i in eachindex(smooths[2].S))
     end
 
-    @testset "smooth2random on narrow storage matches the widened form" begin
+    @testset "smooth2random: narrow storage yields L per-level components" begin
+        # This testset previously asserted narrow-vs-widened EQUIVALENCE,
+        # which was only true while BOTH forms were lumped into one variance
+        # component by the tensor path. That lumping was the correctness gap:
+        # mgcv replicates a factor-`by` smooth per level (R/smooth.r:3980),
+        # so each level gets its own component. Narrow storage carries the
+        # level structure in `S_offsets` and now uses it:
+        #   length(Zs): 1 -> L   (old -> new, by design)
+        # A manually WIDENED copy has erased the offsets, is indistinguishable
+        # from overlapping penalties, and legitimately stays on the lumped
+        # tensor path — asserted below so the information loss is explicit.
         gf = GAM.GamFormula(:y, Symbol[], true,
             GAM.SmoothSpec[GAM.s(:x; k = 6, bs = :ps, by = :f)])
         m = gam(gf, dfn)
         sm = m.smooths[1]
         @test !isempty(sm.S_offsets)                 # narrow going in
+        L = length(sm.S)
         mm = GAM.smooth2random(sm)
-        # Reference: identical smooth with penalties materialised up front.
+        @test length(mm.Zs) == L                     # mgcv's convention
+        @test sum(size(Z, 2) for Z in mm.Zs) == sm.rank
+
         smw = deepcopy(sm)
         smw.S = GAM.penalty_matrices(sm)
         smw.S_offsets = Int[]
         mw = GAM.smooth2random(smw)
-        # Entries are NOT bitwise equal, and the reason is worth recording:
-        # `sum_S` is the same set of values summed in a different association
-        # order (25 dense entries vs 400 mostly-zero ones under pairwise
-        # reduction), so it differs at the last ulp — measured 7.1e-15 — and a
-        # factor-`by` penalty has L-fold DEGENERATE eigenvalues (four
-        # identical blocks), so that ulp rotates the eigenvectors within each
-        # degenerate subspace by O(1) while the eigenvalues agree to 4e-14.
-        # The implied mixed model is invariant to that rotation (i.i.d.
-        # normal effects; the fixed part is span-identified), so assert the
-        # invariants, not the basis realisation.
-        @test length(mm.Zs) == length(mw.Zs)
-        for i in eachindex(mm.Zs)
-            # λ·Z·Zᵀ is the implied covariance contribution — rotation-invariant.
-            @test mm.Zs[i] * mm.Zs[i]' ≈ mw.Zs[i] * mw.Zs[i]' rtol = 1e-8
+        @test length(mw.Zs) == 1                     # offsets erased -> lumped
+
+        # Per-level Z_l * Z_l' is basis-independent and must equal the
+        # level's X_l * S_l^+ * X_l' — the quantity mgcv's replicated
+        # smooths' rand blocks reproduce (verified against live mgcv at
+        # ~6e-14 relative during development).
+        for (l, Z) in enumerate(mm.Zs)
+            off = sm.S_offsets[l]
+            ks = size(sm.S[l], 1)
+            Xl = sm.X[:, (off + 1):(off + ks)]
+            ref = Xl * pinv(sm.S[l]) * Xl'
+            @test maximum(abs.(Z * Z' .- ref)) < 1e-8 * max(maximum(abs.(ref)), 1.0)
         end
-        # Fixed part spans the same space: each column of one reproduces from
-        # the other by least squares.
-        if size(mm.Xf, 2) > 0
-            resid = mm.Xf .- mw.Xf * (mw.Xf \ mm.Xf)
-            @test maximum(abs, resid) < 1e-8
+
+        # The narrow form's fixed space is the direct sum of the per-level
+        # null spaces: exactly columns − rank. The widened arm is NOT a valid
+        # reference here — the tensor path splits at k − null_dim using the
+        # stored (pre-constraint, per-level) null_dim convention, which for
+        # this smooth marks 8 columns fixed against a rank-16 penalty in 20
+        # columns, i.e. it also mis-split factor-by. Another facet of the
+        # lumping defect, so the correct width is asserted directly instead.
+        @test size(mm.Xf, 2) == size(sm.X, 2) - sm.rank
+
+        # Reassembly: β_original = U * (D .* [b_1; …; b_L; β_f]).
+        k = size(sm.X, 2)
+        bc = randn(StableRNG(5), k)
+        lhs = sm.X * (mm.trans_U * (mm.trans_D .* bc))
+        nr = sum(size(Z, 2) for Z in mm.Zs)
+        rhs = mm.Xf * bc[(nr + 1):k]
+        off = 0
+        for Z in mm.Zs
+            rhs = rhs .+ Z * bc[(off + 1):(off + size(Z, 2))]
+            off += size(Z, 2)
         end
-        # trans_D carries eigenvalue-derived scalings of the ulp-perturbed
-        # sum_S: one-ulp difference measured (5.6e-17), so ≈ not ==.
-        @test mm.trans_D ≈ mw.trans_D atol = 1e-13
-        @test mm.pen_ind == mw.pen_ind
+        @test maximum(abs.(lhs .- rhs)) < 1e-10
     end
+end
+
+@testset "SCAM factor-by uses narrow storage" begin
+    # The gate that kept SCAM (p_ident) factor-`by` smooths on full-width
+    # storage existed solely for GAMTuringExt reading `sm.S[1]` at block
+    # width; that read now widens via `penalty_matrices`, and this pins the
+    # lifted gate so it cannot silently return. Fit-level equality against a
+    # 0d812c2 control was verified bitwise across 6 configurations (including
+    # this one) when the gate was lifted.
+    rng_sb = StableRNG(31)
+    n_sb = 300
+    df_sb = DataFrame(
+        x = rand(rng_sb, n_sb),
+        f = string.(rand(rng_sb, ["a", "b", "c"], n_sb)),
+    )
+    df_sb.y = 2.0 .* df_sb.x .+ 0.3 .* (df_sb.f .== "b") .+
+              0.15 .* randn(rng_sb, n_sb)
+
+    spec = GAM.s(:x; k = 8, bs = :mpi, by = :f)
+    sm = smooth_construct(spec, Tables.columntable(df_sb))
+    L = 3
+    k = size(sm.S[1], 1)
+
+    # Narrow storage engaged: L copies of the k x k penalty at offsets
+    # (l-1)k, with p_ident replicated across the full k*L block.
+    @test sm.p_ident !== nothing
+    @test length(sm.p_ident) == k * L
+    @test length(sm.S) == L
+    @test all(size(Si) == (k, k) for Si in sm.S)
+    @test sm.S_offsets == [(l - 1) * k for l in 1:L]
+
+    # The widened view is a pure placement: bitwise inside each block,
+    # nothing outside it. (No `sum` comparisons here: pairwise summation
+    # associates the same nonzeros differently across layouts.)
+    Sw = GAM.penalty_matrices(sm)
+    @test all(size(Si) == (k * L, k * L) for Si in Sw)
+    for (i, off) in enumerate(sm.S_offsets)
+        r = (off + 1):(off + k)
+        @test Sw[i][r, r] == sm.S[i]
+        @test count(!iszero, Sw[i]) == count(!iszero, sm.S[i])
+    end
+
+    # The scam fit runs on the narrow form end to end.
+    m = scam(GAM.GamFormula(:y, Symbol[], true, [spec]), df_sb)
+    @test m.converged
+    @test isfinite(m.edf_total) && m.edf_total > 1.0
 end

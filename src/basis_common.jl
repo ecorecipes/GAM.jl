@@ -72,10 +72,12 @@ function _apply_by_variable!(sm::ConstructedSmooth, t)
     # (R/smooth.r:3980). Consumers needing block width call
     # `penalty_matrices(sm)`.
     #
-    # SCAM smooths (p_ident !== nothing) keep the full-width form: the
-    # GAMTuringExt constrained-smooth path reads `sm.S[1]` at block width, and
-    # SCAM factor-`by` is not worth a narrow path of its own.
-    narrow = sm.p_ident === nothing && L > 1
+    # SCAM smooths included: the one block-width consumer that forced a SCAM
+    # gate here — GAMTuringExt's constrained-smooth path reading `sm.S[1]` —
+    # now routes through `penalty_matrices`, and an audit of ext/ and the SCAM
+    # files found no other direct `sm.S` reader (scam.jl's `.S[` hits are all
+    # SVD singular values). scam's EFS loop is offset-aware.
+    narrow = L > 1
     S_offs = Int[]
     for (l, lev) in enumerate(levels)
         mask = by_col .== lev

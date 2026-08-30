@@ -63,9 +63,14 @@ unpenalized components. The random effects have identity penalty.
 # Shrinkage smooths (ts, cs)
 All columns are penalized (null_dim = 0), so Xf is empty.
 
-# Multi-penalty smooths (te, ti, t2)
-Following mgcv: t2 smooths (diagonal, non-overlapping penalties) get one
-INDEPENDENT random-effect block per penalty, each with its own variance
+# Multi-penalty smooths (factor-`by`, te, ti, t2)
+Following mgcv: a factor-`by` smooth — whose narrow sub-penalties tile
+disjoint coefficient ranges, one per level — gets one independent
+random-effect block PER LEVEL, each with its own variance component, exactly
+as mgcv's replicated per-level smooths do (see
+[`_smooth2random_disjoint`](@ref)). t2 smooths (diagonal, non-overlapping
+penalties) likewise get one INDEPENDENT random-effect block per penalty,
+each with its own variance
 component — this is what makes t2 usable with lme4/gamm4. te/ti smooths have
 overlapping penalties that cannot be written as independent i.i.d. blocks
 (mgcv's `gamm` needs the `pdTens` class, and `mgcv:::smooth2random` refuses
@@ -190,12 +195,50 @@ function _smooth2random_multi(sm::ConstructedSmooth)
     k = size(sm.X, 2)
     n_pen = length(sm.S)
 
+    # Disjoint narrow sub-penalties first (factor-`by`): each sub-penalty is
+    # one level's k×k penalty at its own offset, and mgcv treats each level as
+    # a separate replicated smooth with its OWN variance component. This must
+    # precede the t2 check — the sub-penalties are generally NOT diagonal, so
+    # `_is_t2_style` would send them to the tensor path, which sums them into
+    # one component and forces all levels to share a smoothing variance.
+    if _smooth_penalties_disjoint(sm)
+        return _smooth2random_disjoint(sm)
+    end
+
     # Check if penalties have non-overlapping diagonal support (t2-style)
     if _is_t2_style(sm)
         return _smooth2random_t2(sm)
     else
         return _smooth2random_tensor(sm)
     end
+end
+
+"""
+    _smooth_penalties_disjoint(sm) -> Bool
+
+Whether `sm`'s sub-penalties occupy pairwise non-overlapping coefficient
+ranges, as a factor-`by` smooth's do (`I_L ⊗ S_k` stored as `L` narrow copies
+of `S_k` with `S_offsets = (l-1)k`). The smooth-level analogue of
+`_penalties_disjoint(::PenaltyBlock)`, and the same early-out applies: every
+block-width sub-penalty (`te`/`ti`/`t2`/adaptive/`fs`) makes overlap certain,
+so only genuinely narrow storage reaches the bitmap.
+"""
+function _smooth_penalties_disjoint(sm::ConstructedSmooth)
+    length(sm.S) > 1 || return false
+    isempty(sm.S_offsets) && return false
+    k = size(sm.X, 2)
+    for Si in sm.S
+        size(Si, 1) == k && return false
+    end
+    covered = falses(k)
+    for i in eachindex(sm.S)
+        off = sm.S_offsets[i]
+        for j in 1:size(sm.S[i], 1)
+            covered[off + j] && return false
+            covered[off + j] = true
+        end
+    end
+    return true
 end
 
 """Check if penalties are diagonal with non-overlapping supports (t2 pattern)."""
@@ -289,6 +332,123 @@ function _smooth2random_t2(sm::ConstructedSmooth)
 
     rind = collect(1:n_para)
     return SmoothMixedModel(Xf, Zs, U, scales, pen_ind, rind, sm.spec.label, false)
+end
+
+"""
+    _smooth2random_disjoint(sm) -> SmoothMixedModel
+
+Mixed-model form for a smooth whose sub-penalties occupy pairwise-disjoint
+coefficient ranges — a factor-`by` smooth, whose penalty is `I_L ⊗ S_k`
+stored as `L` narrow copies of `S_k` at offsets `(l-1)k`.
+
+mgcv never sees such a smooth as one object: `smoothCon` replicates a
+factor-`by` smooth per level (`R/smooth.r:3980`), each replicate keeping its
+own `k×k` S, and `smooth2random.mgcv.smooth` then gives every level its OWN
+random-effect block and its own variance component (verified live: three
+levels of `s(x, by=f, bs="cr")` yield three separate smooths, each with one
+`rand` block and its own `Xf`). Lumping the levels into a single component —
+what the tensor path does — forces all levels to share a smoothing variance:
+a genuinely smaller model class, the same defect the lumped `fs` null-space
+ridge had. Note mgcv links smoothing across levels only when `id=` is
+supplied; the default is independent per-level smoothing, which is what this
+reproduces.
+
+Each sub-penalty's range is therefore decomposed exactly as
+`_smooth2random_single` decomposes a whole smooth, in its own `k_l`-space:
+eigendecompose `S_l`, penalized eigenvectors → that level's random block
+(rescaled to identity covariance), null eigenvectors → fixed columns.
+
+Transformed column order is `[block-1 random; …; block-m random; all fixed]`
+so the reassembly contract shared by every path holds:
+`β_original = trans_U * (trans_D .* [b_1; …; b_m; β_f])`.
+"""
+function _smooth2random_disjoint(sm::ConstructedSmooth)
+    n, k = size(sm.X)
+    nS = length(sm.S)
+
+    # Per-sub-penalty eigendecompositions, in each penalty's own k_l space.
+    Us = Vector{Matrix{Float64}}(undef, nS)
+    Ds = Vector{Vector{Float64}}(undef, nS)
+    ranks = Vector{Int}(undef, nS)
+    for i in 1:nS
+        Si = sm.S[i]
+        ks = size(Si, 1)
+        eig = eigen(Symmetric(Si))
+        idx = ks:-1:1                       # descending, matching R convention
+        vals = eig.values[idx]
+        vecs = eig.vectors[:, idx]
+        # Deterministic sign (the same hack as the single-penalty path; each
+        # replicated smooth in mgcv applies it independently)
+        if vecs[1, 1] < 0
+            vecs = -vecs
+        end
+        vmax = max(maximum(vals), 0.0)
+        r = vmax > 0 ? count(>(vmax * 1e-9), vals) : 0
+        D = Vector{Float64}(undef, ks)
+        for j in 1:r
+            D[j] = 1.0 / sqrt(max(vals[j], eps()))
+        end
+        for j in (r + 1):ks
+            D[j] = 1.0
+        end
+        Us[i] = vecs
+        Ds[i] = D
+        ranks[i] = r
+    end
+
+    # Assemble trans_U (k×k) and trans_D in the transformed order
+    # [pen-1 random; …; pen-m random; pen-1 null; …; pen-m null; uncovered],
+    # embedding each level's eigenvectors at its offset. Uncovered columns
+    # (none for factor-`by`, whose levels tile the block) pass through as
+    # unpenalized identity columns.
+    covered = falses(k)
+    for i in 1:nS
+        covered[(sm.S_offsets[i] + 1):(sm.S_offsets[i] + size(sm.S[i], 1))] .= true
+    end
+    U = zeros(k, k)
+    Dv = Vector{Float64}(undef, k)
+    pen_ind = Vector{Int}(undef, k)
+    col = 0
+    for i in 1:nS                            # random sections, block by block
+        off = sm.S_offsets[i]
+        for j in 1:ranks[i]
+            col += 1
+            U[(off + 1):(off + size(sm.S[i], 1)), col] = Us[i][:, j]
+            Dv[col] = Ds[i][j]
+            pen_ind[col] = i
+        end
+    end
+    n_rand = col
+    for i in 1:nS                            # null sections
+        off = sm.S_offsets[i]
+        ks = size(sm.S[i], 1)
+        for j in (ranks[i] + 1):ks
+            col += 1
+            U[(off + 1):(off + ks), col] = Us[i][:, j]
+            Dv[col] = Ds[i][j]
+            pen_ind[col] = 0
+        end
+    end
+    for j in 1:k                             # uncovered → unpenalized identity
+        if !covered[j]
+            col += 1
+            U[j, col] = 1.0
+            Dv[col] = 1.0
+            pen_ind[col] = 0
+        end
+    end
+
+    X_trans = sm.X * (U * Diagonal(Dv))      # same product s2r_predict applies
+
+    Zs = Matrix{Float64}[]
+    for i in 1:nS
+        cols_i = findall(==(i), pen_ind)
+        push!(Zs, X_trans[:, cols_i])
+    end
+    Xf = n_rand < k ? X_trans[:, (n_rand + 1):k] : Matrix{Float64}(undef, n, 0)
+
+    rind = collect(1:n_rand)
+    return SmoothMixedModel(Xf, Zs, U, Dv, pen_ind, rind, sm.spec.label, false)
 end
 
 """

@@ -81,6 +81,14 @@ function _smooth_construct(::ConstrainedFactorSmooth, spec::SmoothSpec, data, us
     end
 
     # Penalties: (Q_L ⊗ I)' (I_L ⊗ S_j) (Q_L ⊗ I) = (Q_L'Q_L) ⊗ S_j = I_{L-1} ⊗ S_j
+    #
+    # Deliberately NOT stored narrow via `S_offsets`, unlike factor-`by`. That
+    # machinery gives each offset sub-penalty its OWN smoothing parameter;
+    # here the L-1 diagonal copies share ONE λ per marginal penalty — that
+    # sharing is sz's model. Narrowing would multiply the sp count, changing
+    # the model, not the storage. (The remaining waste is that this block-
+    # diagonal matrix is stored dense; fixing that needs Diagonal-capable
+    # `ConstructedSmooth.S` storage, a separate consumer-audit exercise.)
     penalties = Matrix{Float64}[]
     for S_j in marginal_sm.S
         S_sz = zeros(total_cols, total_cols)

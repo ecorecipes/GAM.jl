@@ -426,6 +426,12 @@ function _smooth_construct(::FactorSmooth, spec::SmoothSpec, data, user_knots)
     # variance component. GAM.jl previously lumped them into a single shared
     # ridge, which is a strictly smaller model class (the per-level constant
     # and per-level slope were forced to share one variance component).
+    # Like sz (and unlike factor-`by`), these penalties are deliberately NOT
+    # stored narrow via `S_offsets`: each spans all L levels under ONE shared
+    # smoothing parameter — that sharing is fs's model (mgcv's bs="fs" exists
+    # precisely so every level shares a smoothness). Offset sub-penalties each
+    # get their own λ, so narrowing would change the model. The dense storage
+    # of these diagonal matrices is a separate (Diagonal-storage) question.
     penalties = Matrix{Float64}[]
 
     S_range = zeros(total_cols, total_cols)
