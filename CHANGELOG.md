@@ -2,9 +2,30 @@
 
 ## Unreleased
 
-### mgcv-parity, discretization and inference round (August 2026)
+## 0.3.0 (2026-08-31)
 
-Breaking changes:
+The release that closes the largest remaining gaps against mgcv: `bam`'s
+covariate discretization, the Wood, Pya & Säfken smoothing-parameter-uncertainty
+correction, REML/ML criteria evaluated the way mgcv evaluates them, a basis
+that was a stub made real (Duchon splines, which had silently delegated
+to a thin-plate spline) and one that was one-dimensional made spatial (`:gp`),
+and two new vignettes.
+
+Three review rounds fed into it. The first found the engines matching mgcv more
+closely than earlier rounds had assumed, and relocated the real risks: a fix
+applied to only one of five P-IRLS loops, an identifiability constraint correct
+on training data but not off it, and two undocumented conventions that made
+correct side-by-side code compare different models. The second was a
+documentation round — writing a tutorial exercises feature *combinations* that
+unit tests do not, and it surfaced five source bugs the suite had missed. The
+third was the first exhaustive single-process run of the whole test suite,
+which found three more that segmented runs had hidden.
+
+**Upgrading from 0.2.0: read the breaking changes first.** The tensor `k`
+convention changed, and a model written against the old one builds a different
+basis size without raising an error.
+
+### Breaking changes
 
 - **Tensor scalar `k` is now per-marginal, matching mgcv.** `te(:x, :z, k=8)`
   builds an 8×8 tensor product; previously a scalar was a *total* dimension
@@ -30,7 +51,201 @@ Breaking changes:
   (InverseGaussian+log at high dispersion: deviance 427.7 against mgcv's
   299.6). `scam`/`scasm` gained the analogous `step_ok` guard.
 
-Added:
+- **`k_check` is now reproducible by default.** Its p-value comes from a
+  randomization test, and the shuffles previously drew from the global RNG, so
+  ten calls on one fitted model returned sixteen distinct p-values spanning
+  0.41–0.70. `seed` now defaults to `11`. Note mgcv is *not* reproducible
+  here: `k.check` calls bare `sample()` on R's global RNG (`R/plots.r:220`),
+  so repeated mgcv calls differ unless the user sets `set.seed()` first. Pass
+  `seed = nothing` for that behaviour, or any integer for a different fixed
+  stream.
+- **`discretize_covariates` now bins by mgcv's rule** — exact unique values
+  where there are few enough, otherwise an equally spaced grid over the
+  observed range — replacing quantile midpoints. The exported utility and what
+  `bam(...; discrete=true)` actually fits against now share one implementation
+  and agree by construction.
+- **`bs=:sos` now reads latitude and longitude in DEGREES, matching mgcv.**
+  Previously GAM.jl required radians while `mgcv::s(..., bs="sos")` takes
+  degrees, so porting a model between the two silently rescaled the
+  coordinates by 57×. mgcv converts inside `makeR`
+  (`R/smooth.r`: `pi180 <- pi/180; la <- la*pi180; lo <- lo*pi180`), which is
+  called from both its constructor and its `Predict.matrix` method; GAM.jl now
+  converts at a single point too, and stores the resolved unit in the
+  prediction cache so a fit and its predictions cannot disagree.
+
+  **This will silently change results for existing code that passes radians.**
+  To keep the old behaviour, pass `xt = Dict(:units => :radians)`:
+
+  ```julia
+  s(:lat, :lon, bs = :sos, k = 50)                              # degrees (new default)
+  s(:lat, :lon, bs = :sos, k = 50, xt = Dict(:units => :radians))  # previous behaviour
+  ```
+
+  As a guard, a fit whose coordinates all fall within `|lat| ≤ π/2` and
+  `|lon| ≤ π` — the range radian data occupies — warns that it is reading them
+  as degrees and names the opt-out. An invalid `xt[:units]` is rejected in
+  `s()` itself rather than being silently ignored. Note also that both
+  packages expect **latitude first**; a `s(:lon, :lat, bs=:sos)` example in
+  the smooth documentation had the arguments the wrong way round and has been
+  corrected.
+- **`bs=:sos` now uses mgcv's exact spherical-spline kernel.** The basis was
+  previously an approximation: the planar thin-plate kernel
+  `d^(2m-2)log(d)` applied to great-circle distance, keeping only positive
+  eigenpairs and extending to the data by Nystrom. It is now a direct port of
+  mgcv's construction — Wahba (1981) reproducing kernels via `makeR`
+  (`R/smooth.r:2882-2988`), including the `m = 0` Wendelberger dilogarithm
+  series from `src/misc.c:39-73`, the truncated eigendecomposition keeping the
+  largest-*magnitude* eigenpairs (mgcv's `slanczos(R, k, -1)`, so negative
+  eigenvalues are retained rather than discarded), the constraint absorption
+  through `QR(U'Tc)`, and the `1/sd` column rescaling.
+
+  Penalty orders `m = -2, -1, 0, 1, 2, 3, 4` are all supported, and the
+  **default `m` is now 0** (mgcv's), where it was previously 2.
+
+  Verification: `rksos` reproduces mgcv's C routine bit-for-bit (max relative
+  error exactly 0 across `[-1, 1]`, including the branch discontinuity and the
+  antipodal and coincident cases); `makeR` agrees to ≤2e-13 for every `m`; the
+  generalized eigenvalues of `(S, X'X)` — which determine EDF as a function of
+  the smoothing parameter — agree with mgcv's to 5e-8; and fitting at mgcv's
+  selected `sp` reproduces mgcv's fit to 5e-9 (EDF 13.217991 in both). On the
+  vignette's global dataset both packages now agree on **every printed digit**
+  (EDF 45.955, AIC 358.802, scale 0.0865, RMSE 0.0642), where GAM.jl
+  previously gave EDF 45.354 and RMSE 0.0756.
+
+  A practical consequence: unlike `bs=:tp`, **`sp` values are portable between
+  the packages** for `sos`. Freely-selected fits can still differ where the two
+  smoothing-parameter optimizers (EFS here, outer Newton in mgcv) land
+  differently — a difference in the optimizer, not the basis.
+
+  The basis now yields `k-1` columns after the centering constraint (matching
+  `smoothCon(..., absorb.cons=TRUE)`), where the old construction gave `k`.
+- **The thin-plate (`bs=:tp`, `bs=:ts`) knot rule now follows mgcv's
+  `max.knots`.** GAM.jl previously dropped to a rank-`k` Nyström approximation
+  as soon as `n > max(3k, 200)`; mgcv subsamples only above `max.knots`
+  (default 2000) and then keeps 2000 knots. Every thin-plate fit with more
+  than 200 observations was therefore a different — and measurably worse —
+  model than mgcv's. The effect is largest for multi-dimensional smooths: for
+  `s(u, v, k=30)` at n = 300 the edf error against mgcv falls from 5.4e-2 to
+  9.2e-8 and the maximum fitted-value error from 2.5e-2 to 1.0e-9. In 1-D at
+  n = 500, k = 20 the edf was 11.35 against mgcv's 11.44 and is now 11.4386.
+  The cap is settable per smooth via `s(x, ...)` with `xt[:max_knots]`,
+  mirroring `s(..., xt = list(max.knots = ))`.
+
+  Fits with `n > 200` will change. They are closer to mgcv than before, but
+  pinned values derived from the old approximation will move. The eigenproblem
+  is now solved at full size, so cost rises with `n`: a k = 10 fit at n = 5000
+  goes from 0.003 s / 6 MiB to 0.09 s / 122 MiB. To keep that affordable the
+  top-`k` eigenpairs are now extracted by Lanczos iteration with full
+  reorthogonalization rather than a dense `eigen`, which is the same strategy
+  mgcv uses (`slanczos`); GAM.jl remains 2.7–3.8× faster than mgcv across
+  n = 200…5000.
+
+- **Thin-plate smooths are now translation invariant.** Each covariate is
+  mean-centred before the semi-kernel and polynomial null space are built, and
+  the shift is stored and re-applied when predicting — matching mgcv's
+  `shift`. Previously, adding a constant to a covariate changed the basis
+  parameterization and the reported smoothing parameter (shifting `x` by 100
+  moved `sp` from 0.010121 to 0.011088) while leaving the fit itself alone.
+
+- **`bs=:gp` gains `xt[:corfun]` and `xt[:params]`**, and a new `:mgcv_m32`
+  correlation function reproducing mgcv's `gp` default (`gpE` type 3),
+  `(1 + E)·exp(-E)` — Matérn 3/2 with length-scale `rho/√3`, i.e. without the
+  `√3` the standard parameterization carries. (This entry is superseded: `bs=:gp` has since become a direct port
+  of mgcv's construction — default correlation, range, knots and null space
+  all match, and edf agrees with mgcv to ~3e-12 at fixed `sp`; see the
+  round above. The legacy named correlations remain available via
+  `xt[:corfun]` for backward compatibility.)
+
+- **`loglikelihood` now uses the maximum-likelihood dispersion `deviance/n`**
+  for Normal, Gamma and InverseGaussian, matching R's `family$aic` convention
+  (shared by `stats::glm` and mgcv) instead of the model's Pearson/Fletcher
+  `scale`. `aic`, `bic` and `aicc` shift accordingly for those families; the
+  Pearson/Fletcher estimate remains the scale used for inference (standard
+  errors and intervals), which is what it is for. The previous docstring
+  claimed the old behaviour matched mgcv — it did not.
+
+- **`scam` now enforces the family mean domain** (mgcv's `validmu`) during
+  step halving, as `gam` has since 0.2.0. Previously a Gamma model with its
+  canonical inverse link could report convergence while a fraction of the
+  fitted means lay outside the family's support, with a nonsensical scale and
+  no warning (and, on some data, a hard LAPACK failure). Such a fit now warns,
+  naming the violation and suggesting a log link, and reports
+  `converged = false` rather than claiming success. `scasm` was affected by
+  the same omission and is fixed with it.
+- **`t2()` penalty-block ordering** now matches mgcv's (blocks ordered by
+  descending range-mask), so `pen_ind` and the random-effect block order from
+  `smooth2random` line up with `mgcv:::smooth2random` for unequal block sizes
+  as well as equal ones. Investigation of a suspected constraint defect found
+  none: our fitting-basis constraint is byte-for-byte mgcv's `C`. (mgcv builds
+  a *second* constraint, `Cp`, used only for its separate prediction
+  parameterization — comparing against that basis is what made the two look
+  different. Documented in `_construct_t2`.)
+- **`MultiParameterModel.Vc` renamed to `Ve`**, matching `GamModel` and
+  avoiding a name collision with mgcv's `Vc` (which means the
+  smoothing-parameter-uncertainty correction, something different).
+
+- **`bs=:ad`: `m` now sets the number of adaptive sub-penalties, not a spline
+  order.** This follows mgcv, where `m` is `p.order` (default 5) and the
+  smoothing basis is always a cubic P-spline with a second-order difference
+  penalty. Previously `m` was read as a spline order, so the same `m` built a
+  different model in each package. Passing `m` to an adaptive smooth now emits
+  a one-time warning; `xt = Dict(:n_penalties => n)` is the explicit spelling.
+
+  Note that mgcv's default `k` for `bs="ad"` is **40** where GAM.jl's generic
+  default is 10, so an out-of-the-box `s(x, bs=:ad)` still differs between the
+  two packages — pass `k` explicitly when porting.
+
+### Added
+
+- **`bam(...; discrete=true)` — covariate discretization, as in
+  `mgcv::bam(discrete=TRUE)`.** Each supported smooth is stored as its basis
+  at the *unique* covariate values plus an integer index vector, instead of an
+  `n × p` block. Discretized: 1-D smooths, `te` tensor smooths, `bs=:re`
+  random effects (factor and random slope) and — since the follow-up round —
+  factor-`by` smooths. Still dense: numeric-`by` terms and `ti`/`t2`, which
+  carry per-marginal reparameterizations the discrete path does not
+  implement; unsupported terms fall back silently, changing the
+  representation and not the fit.
+
+  **It is an approximation, by construction.** Covariates with at most
+  `discrete` distinct values (default 1000; pass an integer to change it) are
+  represented exactly; beyond that they are rounded onto an equally spaced
+  grid. The rounding is the only source of error — the accumulation arithmetic
+  is exact to 1e-15. Fitted values agree with the dense fit to ~1e-3 of their
+  range and total EDF to ~1e-4 relative, but **individual smoothing parameters
+  can move substantially** (Δlog λ up to 2.37 observed), so compare fitted
+  values and EDF rather than `sp` elementwise. GAM.jl's discrete fit agrees
+  with *mgcv's* discrete fit to 4.25e-4 of the fitted range — closer than
+  either package agrees with its own dense fit (1.39e-3 and 2.32e-3).
+
+  The `X'WX` kernel is ~60× faster at `k=20` and ~450× at `k=100` (n = 10⁶),
+  but end-to-end gains are Amdahl-bounded and can be negative: a Normal fit
+  with 4 × `s(k=20)` at n = 2·10⁵ measures **0.95×, slightly slower**, because
+  Gaussian accumulates `X'WX` once so binning is pure overhead. The same shape
+  with `Poisson()` is 1.71×, and 6.09× at `k=100`. Peak memory now falls too
+  (superseding an earlier note here): the dense block is no longer built
+  under `discrete=true` and smooths keep their reduced `m × k` bases, so a
+  4 × `s(k=20)` cr fit at n = 10⁶ peaks at 1554 MB against 3053 dense, with
+  retained design storage down ~50× (a tensor block is 8.13 MB against a
+  1716.61 MB dense block; a 200-level random effect 766.75 → 6.03 MiB).
+
+- **`bam(...; retain_X = false)` drops the model matrix after fitting**, from
+  587.5 MiB to 7.6 MiB at n = 10⁶. `GamModel.X` duplicates data already held
+  per smooth — every smooth block is bitwise identical to the corresponding
+  `ConstructedSmooth.X` — so `model_matrix(m)` reassembles it bitwise on
+  demand, with no basis re-evaluation. Default: `true` for dense fits,
+  `false` under `discrete=true` (see the breaking-changes list above).
+
+- **Per-marginal `k` for tensor smooths**: `te(:x, :z, k = [4, 7])` sets the
+  marginal basis dimensions directly. (A scalar `k` is also per-marginal now
+  — see the breaking-changes list above; it previously specified a total.)
+
+- **`summary(m)` now prints an mgcv-style model summary.** It previously fell
+  through to `Base.summary`'s type-name fallback (`"GamModel"`), which is the
+  first thing an mgcv user types. The parametric and smooth tables now also
+  carry R's significance-code column (`***`/`**`/`*`/`.`) with its legend, and
+  the footer reports the selection criterion (`-REML`/`-ML`/`GCV`/`UBRE`)
+  alongside the scale estimate and `n`, matching `summary.gam`'s layout.
 
 - **`ScatFamily`** — mgcv's `scat()` scaled-t family for outlier-robust
   regression, with `ν` and `σ` estimated alongside the smooths. Derivatives
@@ -64,98 +279,6 @@ Added:
   the range-space determinant of `MLpenalty1` (was 1–8% off, now ~4e-16);
   and `log|S|₊` uses mgcv's `gam.reparam` similarity transform, stable to
   within-block smoothing-parameter ratios of 1e24 (previously NaN by 1e16).
-
-Fixed:
-
-- `bs=:gp` is now a direct port of mgcv's Kammann & Wand Matérn spline
-  (correlation types via `m`, fixed range, `[1, x]` null space); at mgcv's
-  own `sp`, edf agrees to ~3e-12 (was 0.37 off).
-- `fs` factor smooths use one penalty per null-space dimension and receive
-  mgcv's `scale.penalty` rescale (edf gaps vs mgcv fell from 0.14–0.33 to
-  ~1e-4). Note `fs` smoothing parameters still do not transfer from mgcv —
-  the `nat.param(type=1)` parameterisation differs; compare fits, not `sp`.
-- `k_check` p-values are reproducible (`seed = 11` by default) and
-  `gam_check` forwards the same default.
-
-Round-5 review follow-up. The review found the engines match mgcv more closely
-than earlier rounds assumed, and relocated the real risks: a fix that had been
-applied to only one of five P-IRLS loops, an identifiability constraint correct
-on training data but not off it, and two undocumented conventions that make
-correct side-by-side code compare different models.
-
-### Vignette buildout (August 2026)
-
-Documentation round covering the features that had no worked example. Writing
-these surfaced five source bugs that the test suite had missed, because a
-tutorial exercises feature *combinations* that unit tests do not; those are
-listed under Fixed below.
-
-- **New vignette 16, "Seasonal and Group-Varying Smooths"** — the first fitted
-  examples anywhere of cyclic smooths (`bs=:cc`), factor-`by`, numeric-`by`
-  (varying-coefficient) terms, and `ti()`. The cyclic wrap is verified exact
-  (`|f(0) - f(52)| = 0` against `1.9e-2` for a non-cyclic `:cr` fit), per-level
-  smoothing parameters come out monotone in signal strength (amplitude 1.40 →
-  sp 1.93; 0.35 → 3.89, which a single shared λ cannot do), and fitted values
-  agree with mgcv to `2.4e-6` on the factor-`by` model.
-- **Vignette 04 gains a disease-counts arc** — `offset=` for log-exposure rate
-  models (fitted nowhere previously, despite being the standard construction
-  for incidence data), the naive alternatives shown failing, then
-  `NegBinFamily` / `QuasiPoissonFamily` / `TweedieFamily` for overdispersion,
-  with `rootogram` diagnostics. On the worked example a Poisson fit understates
-  the smooth's standard errors by 2.2-2.6× and expects 1.4 zeros where 15 occur.
-- **Vignette 02 gains eight previously-undemonstrated bases** — `:ts`/`:cs`
-  (shrinkage, with the null-space penalty shown shrinking an irrelevant term to
-  edf 0.0016 where `:tp` leaves 1.68, and the relationship to `select=true`
-  spelled out), `:ad` (adaptive: 2.85× lower RMSE on the flat half of an
-  inhomogeneous function while using 9 fewer effective df), `:bs`, `:cps`,
-  `:fp`, `:lo`, and `:sz` conceptually.
-- **Vignette 10 gains `bs=:fs`** — per-subject trajectories recovering the
-  truth 2.5× better than a random intercept (RMSE 0.167 vs 0.425). Documents
-  that `fs` shares a small *fixed set* of smoothing parameters (three:
-  wiggliness, intercept, slope — verified invariant at 5/10/15/25 levels)
-  rather than one, which is the real contrast with factor-`by`, and that `fs`
-  smoothing parameters do not transfer from mgcv.
-- **Vignette 05 gains the smoothing-parameter-uncertainty surface** —
-  `vcov_corrected`, `edf1`/`edf2`, `conditional_aic`, `sp_criterion`,
-  `data_slice`, `vis_gam`/`gamcontour`, with a *measured* coverage experiment
-  rather than an assertion: paired over shared replicates, `Vc` improves
-  coverage by `+0.005` (n=200) to `+0.043` (n=80), every difference 6-11 Monte
-  Carlo standard errors from zero. It also states plainly that `Vc` is a
-  partial fix — at n=80 it lifts coverage 0.85 → 0.89, short of nominal,
-  because it corrects for estimating λ, not for smoothing bias.
-- **Vignette 11 gains `ginla`** — compared directly against the MCMC posterior
-  already in that vignette (22× faster; captures the posterior skewness the
-  Gaussian approximation reports as exactly zero by construction), with a
-  quadrature-convergence table showing the default `nk=16` understates the
-  posterior SD by ~1.7%.
-- **Vignette 14 gains its R companion**, the only vignette that lacked one.
-- **Nine data generators added to `vignettes/generate_data.jl`**, so every
-  dataset with a stated DGP is now reproducible. `data_gev.csv` was the last
-  holdout and its original seed proved unrecoverable, so it is regenerated
-  from the documented process (parameters still recover: location [2.75, 6.91]
-  against a true [3.00, 7.00], shape 0.121 against 0.100). That also resolved
-  a contradiction inside vignette 06, which said in one place that the GEV data
-  was *not* script-generated and in another that it was.
-- **`bs = :sz` gains a fitted example** (vignette 16, with an mgcv companion),
-  the last basis demonstrated nowhere. It completes the three-way comparison of
-  group-varying constructions: factor-`by` (a free curve and its own smoothing
-  parameter per level), `:fs` (exchangeable levels sharing a fixed set), and
-  `:sz` (a common curve plus per-level deviations constrained to sum to zero).
-  The constraint holds to 6.1e-16, and the deviations read directly: the region
-  whose seasonal amplitude sits at the average of the three deviates by
-  essentially nothing, which three separately-fitted `by` curves cannot show.
-  Deviance matches factor-`by` at equal `k` (157.999 vs 157.697). Noted for
-  comparison: the *common* smooth's edf agrees with mgcv (8.45 vs 8.456) while
-  the deviation term's does not (14.63 vs 10.241), so compare deviance and
-  fitted curves for `:sz`, not per-term edf.
-- **`ginla`'s `nk` accuracy is documented at the API**, not only in the
-  vignette. The default 16 matches mgcv's own `ginla` default, but it is a
-  quadrature resolution rather than an exact setting: measured against a model
-  whose posterior is Gaussian in closed form, the posterior SD is understated
-  ~1.7% at `nk=16`, halving with each doubling. The default stays at mgcv's
-  value; the docstring now says when to raise it.
-
-Added:
 
 - **`bs=:sz` accepts a configurable marginal basis**, matching mgcv, which
   takes it through `xt` (`smooth.construct.sz.smooth.spec`). GAM.jl's `xt` is
@@ -250,7 +373,7 @@ Added:
   StatsModels/GLM/Distributions are excluded as upstream's to maintain. Verified
   to fail by re-injecting the `s` orphan, which it reports by name.
 
-Fixed:
+### Fixed
 
 - **The `:so` soap-film "approximation" caveat was wrong, and is removed.**
   The README, `index.md`, `smooths.md` and `mgcv.md` all described `:so` as a
@@ -297,17 +420,6 @@ Fixed:
   asserts the values agree too, since two consistent mistakes would otherwise
   produce matching gradients. No Hessian: BFGS already removes ~9× of the
   iterations, so a full Newton step was judged not worth the validation burden.
-- **`bam` performance: the default BLAS thread count can be over 5× slower
-  than the best setting.** `bam`'s chunks are tall and thin, so BLAS threads
-  beyond about four get too little work to cover synchronisation. Measured idle,
-  `n = 100,000` Poisson with four `s(k=20)` smooths: 2.18 s at 1 thread, 1.75 s
-  at 4, and **9.41 s at 8** (the default here). Now documented in `bam.md` and
-  the `bam_control` docstring with the `BLAS.set_num_threads(4)` remedy. GAM.jl
-  does not set this itself — it is global process state and a library should not
-  silently change it. Julia-level threading of the accumulation was implemented
-  and measured, then rejected: serial at 4 BLAS threads is fastest, Julia threads
-  on top made it ~20% slower, and serial-vs-threaded results differed by 2.2e-13,
-  uncomfortably close to this package's ~1e-12 mgcv parity tolerances.
 - **`sp_optimizer = :newton` no longer throws on a third of model classes.**
   It errored with a `MethodError` on `te`/`ti`/`t2`, `bs=:ad`, `bs=:fs` and
   `select = true` — 14 of 42 model-by-method combinations — because the Newton
@@ -428,210 +540,15 @@ Fixed (all five found by writing the vignettes above):
   m=[3,2])` — mgcv's documented form — now raises an `ArgumentError` naming the
   scalar convention and the mgcv mapping, on `s`/`te`/`ti`/`t2`.
 
-### Breaking / behavior changes
-- **`k_check` is now reproducible by default.** Its p-value comes from a
-  randomization test, and the shuffles previously drew from the global RNG, so
-  ten calls on one fitted model returned sixteen distinct p-values spanning
-  0.41–0.70. `seed` now defaults to `11`. Note mgcv is *not* reproducible
-  here: `k.check` calls bare `sample()` on R's global RNG (`R/plots.r:220`),
-  so repeated mgcv calls differ unless the user sets `set.seed()` first. Pass
-  `seed = nothing` for that behaviour, or any integer for a different fixed
-  stream.
-- **`discretize_covariates` now bins by mgcv's rule** — exact unique values
-  where there are few enough, otherwise an equally spaced grid over the
-  observed range — replacing quantile midpoints. The exported utility and what
-  `bam(...; discrete=true)` actually fits against now share one implementation
-  and agree by construction.
-- **`bs=:sos` now reads latitude and longitude in DEGREES, matching mgcv.**
-  Previously GAM.jl required radians while `mgcv::s(..., bs="sos")` takes
-  degrees, so porting a model between the two silently rescaled the
-  coordinates by 57×. mgcv converts inside `makeR`
-  (`R/smooth.r`: `pi180 <- pi/180; la <- la*pi180; lo <- lo*pi180`), which is
-  called from both its constructor and its `Predict.matrix` method; GAM.jl now
-  converts at a single point too, and stores the resolved unit in the
-  prediction cache so a fit and its predictions cannot disagree.
-
-  **This will silently change results for existing code that passes radians.**
-  To keep the old behaviour, pass `xt = Dict(:units => :radians)`:
-
-  ```julia
-  s(:lat, :lon, bs = :sos, k = 50)                              # degrees (new default)
-  s(:lat, :lon, bs = :sos, k = 50, xt = Dict(:units => :radians))  # previous behaviour
-  ```
-
-  As a guard, a fit whose coordinates all fall within `|lat| ≤ π/2` and
-  `|lon| ≤ π` — the range radian data occupies — warns that it is reading them
-  as degrees and names the opt-out. An invalid `xt[:units]` is rejected in
-  `s()` itself rather than being silently ignored. Note also that both
-  packages expect **latitude first**; a `s(:lon, :lat, bs=:sos)` example in
-  the smooth documentation had the arguments the wrong way round and has been
-  corrected.
-- **`bs=:sos` now uses mgcv's exact spherical-spline kernel.** The basis was
-  previously an approximation: the planar thin-plate kernel
-  `d^(2m-2)log(d)` applied to great-circle distance, keeping only positive
-  eigenpairs and extending to the data by Nystrom. It is now a direct port of
-  mgcv's construction — Wahba (1981) reproducing kernels via `makeR`
-  (`R/smooth.r:2882-2988`), including the `m = 0` Wendelberger dilogarithm
-  series from `src/misc.c:39-73`, the truncated eigendecomposition keeping the
-  largest-*magnitude* eigenpairs (mgcv's `slanczos(R, k, -1)`, so negative
-  eigenvalues are retained rather than discarded), the constraint absorption
-  through `QR(U'Tc)`, and the `1/sd` column rescaling.
-
-  Penalty orders `m = -2, -1, 0, 1, 2, 3, 4` are all supported, and the
-  **default `m` is now 0** (mgcv's), where it was previously 2.
-
-  Verification: `rksos` reproduces mgcv's C routine bit-for-bit (max relative
-  error exactly 0 across `[-1, 1]`, including the branch discontinuity and the
-  antipodal and coincident cases); `makeR` agrees to ≤2e-13 for every `m`; the
-  generalized eigenvalues of `(S, X'X)` — which determine EDF as a function of
-  the smoothing parameter — agree with mgcv's to 5e-8; and fitting at mgcv's
-  selected `sp` reproduces mgcv's fit to 5e-9 (EDF 13.217991 in both). On the
-  vignette's global dataset both packages now agree on **every printed digit**
-  (EDF 45.955, AIC 358.802, scale 0.0865, RMSE 0.0642), where GAM.jl
-  previously gave EDF 45.354 and RMSE 0.0756.
-
-  A practical consequence: unlike `bs=:tp`, **`sp` values are portable between
-  the packages** for `sos`. Freely-selected fits can still differ where the two
-  smoothing-parameter optimizers (EFS here, outer Newton in mgcv) land
-  differently — a difference in the optimizer, not the basis.
-
-  The basis now yields `k-1` columns after the centering constraint (matching
-  `smoothCon(..., absorb.cons=TRUE)`), where the old construction gave `k`.
-- **The thin-plate (`bs=:tp`, `bs=:ts`) knot rule now follows mgcv's
-  `max.knots`.** GAM.jl previously dropped to a rank-`k` Nyström approximation
-  as soon as `n > max(3k, 200)`; mgcv subsamples only above `max.knots`
-  (default 2000) and then keeps 2000 knots. Every thin-plate fit with more
-  than 200 observations was therefore a different — and measurably worse —
-  model than mgcv's. The effect is largest for multi-dimensional smooths: for
-  `s(u, v, k=30)` at n = 300 the edf error against mgcv falls from 5.4e-2 to
-  9.2e-8 and the maximum fitted-value error from 2.5e-2 to 1.0e-9. In 1-D at
-  n = 500, k = 20 the edf was 11.35 against mgcv's 11.44 and is now 11.4386.
-  The cap is settable per smooth via `s(x, ...)` with `xt[:max_knots]`,
-  mirroring `s(..., xt = list(max.knots = ))`.
-
-  Fits with `n > 200` will change. They are closer to mgcv than before, but
-  pinned values derived from the old approximation will move. The eigenproblem
-  is now solved at full size, so cost rises with `n`: a k = 10 fit at n = 5000
-  goes from 0.003 s / 6 MiB to 0.09 s / 122 MiB. To keep that affordable the
-  top-`k` eigenpairs are now extracted by Lanczos iteration with full
-  reorthogonalization rather than a dense `eigen`, which is the same strategy
-  mgcv uses (`slanczos`); GAM.jl remains 2.7–3.8× faster than mgcv across
-  n = 200…5000.
-
-- **Thin-plate smooths are now translation invariant.** Each covariate is
-  mean-centred before the semi-kernel and polynomial null space are built, and
-  the shift is stored and re-applied when predicting — matching mgcv's
-  `shift`. Previously, adding a constant to a covariate changed the basis
-  parameterization and the reported smoothing parameter (shifting `x` by 100
-  moved `sp` from 0.010121 to 0.011088) while leaving the fit itself alone.
-
-- **`bs=:gp` gains `xt[:corfun]` and `xt[:params]`**, and a new `:mgcv_m32`
-  correlation function reproducing mgcv's `gp` default (`gpE` type 3),
-  `(1 + E)·exp(-E)` — Matérn 3/2 with length-scale `rho/√3`, i.e. without the
-  `√3` the standard parameterization carries. (This entry is superseded: `bs=:gp` has since become a direct port
-  of mgcv's construction — default correlation, range, knots and null space
-  all match, and edf agrees with mgcv to ~3e-12 at fixed `sp`; see the
-  round above. The legacy named correlations remain available via
-  `xt[:corfun]` for backward compatibility.)
-
-- **`bs=:ds` now warns** that it is not a Duchon spline. It delegates to
-  `bs=:tp`, which is a genuinely different basis from mgcv's `bs="ds"` (on the
-  same data their `S.scale` values are 19.60 and 0.427), so results are not
-  comparable with R's. This was documented in the docstring but produced no
-  signal at the call site.
-
-- **`loglikelihood` now uses the maximum-likelihood dispersion `deviance/n`**
-  for Normal, Gamma and InverseGaussian, matching R's `family$aic` convention
-  (shared by `stats::glm` and mgcv) instead of the model's Pearson/Fletcher
-  `scale`. `aic`, `bic` and `aicc` shift accordingly for those families; the
-  Pearson/Fletcher estimate remains the scale used for inference (standard
-  errors and intervals), which is what it is for. The previous docstring
-  claimed the old behaviour matched mgcv — it did not.
-
-- **`scam` now enforces the family mean domain** (mgcv's `validmu`) during
-  step halving, as `gam` has since 0.2.0. Previously a Gamma model with its
-  canonical inverse link could report convergence while a fraction of the
-  fitted means lay outside the family's support, with a nonsensical scale and
-  no warning (and, on some data, a hard LAPACK failure). Such a fit now warns,
-  naming the violation and suggesting a log link, and reports
-  `converged = false` rather than claiming success. `scasm` was affected by
-  the same omission and is fixed with it.
-- **`t2()` penalty-block ordering** now matches mgcv's (blocks ordered by
-  descending range-mask), so `pen_ind` and the random-effect block order from
-  `smooth2random` line up with `mgcv:::smooth2random` for unequal block sizes
-  as well as equal ones. Investigation of a suspected constraint defect found
-  none: our fitting-basis constraint is byte-for-byte mgcv's `C`. (mgcv builds
-  a *second* constraint, `Cp`, used only for its separate prediction
-  parameterization — comparing against that basis is what made the two look
-  different. Documented in `_construct_t2`.)
-- **`MultiParameterModel.Vc` renamed to `Ve`**, matching `GamModel` and
-  avoiding a name collision with mgcv's `Vc` (which means the
-  smoothing-parameter-uncertainty correction, something different).
-
-- **`bs=:ad`: `m` now sets the number of adaptive sub-penalties, not a spline
-  order.** This follows mgcv, where `m` is `p.order` (default 5) and the
-  smoothing basis is always a cubic P-spline with a second-order difference
-  penalty. Previously `m` was read as a spline order, so the same `m` built a
-  different model in each package. Passing `m` to an adaptive smooth now emits
-  a one-time warning; `xt = Dict(:n_penalties => n)` is the explicit spelling.
-
-  Note that mgcv's default `k` for `bs="ad"` is **40** where GAM.jl's generic
-  default is 10, so an out-of-the-box `s(x, bs=:ad)` still differs between the
-  two packages — pass `k` explicitly when porting.
-
-### Added
-
-- **`bam(...; discrete=true)` — covariate discretization, as in
-  `mgcv::bam(discrete=TRUE)`.** Each supported smooth is stored as its basis
-  at the *unique* covariate values plus an integer index vector, instead of an
-  `n × p` block. Discretized: 1-D smooths, `te` tensor smooths, `bs=:re`
-  random effects (factor and random slope) and — since the follow-up round —
-  factor-`by` smooths. Still dense: numeric-`by` terms and `ti`/`t2`, which
-  carry per-marginal reparameterizations the discrete path does not
-  implement; unsupported terms fall back silently, changing the
-  representation and not the fit.
-
-  **It is an approximation, by construction.** Covariates with at most
-  `discrete` distinct values (default 1000; pass an integer to change it) are
-  represented exactly; beyond that they are rounded onto an equally spaced
-  grid. The rounding is the only source of error — the accumulation arithmetic
-  is exact to 1e-15. Fitted values agree with the dense fit to ~1e-3 of their
-  range and total EDF to ~1e-4 relative, but **individual smoothing parameters
-  can move substantially** (Δlog λ up to 2.37 observed), so compare fitted
-  values and EDF rather than `sp` elementwise. GAM.jl's discrete fit agrees
-  with *mgcv's* discrete fit to 4.25e-4 of the fitted range — closer than
-  either package agrees with its own dense fit (1.39e-3 and 2.32e-3).
-
-  The `X'WX` kernel is ~60× faster at `k=20` and ~450× at `k=100` (n = 10⁶),
-  but end-to-end gains are Amdahl-bounded and can be negative: a Normal fit
-  with 4 × `s(k=20)` at n = 2·10⁵ measures **0.95×, slightly slower**, because
-  Gaussian accumulates `X'WX` once so binning is pure overhead. The same shape
-  with `Poisson()` is 1.71×, and 6.09× at `k=100`. Peak memory now falls too
-  (superseding an earlier note here): the dense block is no longer built
-  under `discrete=true` and smooths keep their reduced `m × k` bases, so a
-  4 × `s(k=20)` cr fit at n = 10⁶ peaks at 1554 MB against 3053 dense, with
-  retained design storage down ~50× (a tensor block is 8.13 MB against a
-  1716.61 MB dense block; a 200-level random effect 766.75 → 6.03 MiB).
-
-- **`bam(...; retain_X = false)` drops the model matrix after fitting**, from
-  587.5 MiB to 7.6 MiB at n = 10⁶. `GamModel.X` duplicates data already held
-  per smooth — every smooth block is bitwise identical to the corresponding
-  `ConstructedSmooth.X` — so `model_matrix(m)` reassembles it bitwise on
-  demand, with no basis re-evaluation. Default: `true` for dense fits,
-  `false` under `discrete=true` (see the breaking-changes list above).
-
-- **Per-marginal `k` for tensor smooths**: `te(:x, :z, k = [4, 7])` sets the
-  marginal basis dimensions directly. (A scalar `k` is also per-marginal now
-  — see the breaking-changes list above; it previously specified a total.)
-
-- **`summary(m)` now prints an mgcv-style model summary.** It previously fell
-  through to `Base.summary`'s type-name fallback (`"GamModel"`), which is the
-  first thing an mgcv user types. The parametric and smooth tables now also
-  carry R's significance-code column (`***`/`**`/`*`/`.`) with its legend, and
-  the footer reports the selection criterion (`-REML`/`-ML`/`GCV`/`UBRE`)
-  alongside the scale estimate and `n`, matching `summary.gam`'s layout.
-
-### Fixed
+- `bs=:gp` is now a direct port of mgcv's Kammann & Wand Matérn spline
+  (correlation types via `m`, fixed range, `[1, x]` null space); at mgcv's
+  own `sp`, edf agrees to ~3e-12 (was 0.37 off).
+- `fs` factor smooths use one penalty per null-space dimension and receive
+  mgcv's `scale.penalty` rescale (edf gaps vs mgcv fell from 0.14–0.33 to
+  ~1e-4). Note `fs` smoothing parameters still do not transfer from mgcv —
+  the `nat.param(type=1)` parameterisation differs; compare fits, not `sp`.
+- `k_check` p-values are reproducible (`seed = 11` by default) and
+  `gam_check` forwards the same default.
 
 - **Adaptive smooths (`bs=:ad`, `bs=:scad`) now build mgcv's penalty.** The
   weight basis used order-3 splines where mgcv uses order-4, and normalized
@@ -656,6 +573,20 @@ Fixed (all five found by writing the vignettes above):
 
   Note this changes `m.reml` for `:GCV`/`:UBRE` fits from the GCV/UBRE value
   to `NaN`; read it via `sp_criterion(m)`, or `m.criterion` directly.
+
+### Performance
+
+- **`bam` performance: the default BLAS thread count can be over 5× slower
+  than the best setting.** `bam`'s chunks are tall and thin, so BLAS threads
+  beyond about four get too little work to cover synchronisation. Measured idle,
+  `n = 100,000` Poisson with four `s(k=20)` smooths: 2.18 s at 1 thread, 1.75 s
+  at 4, and **9.41 s at 8** (the default here). Now documented in `bam.md` and
+  the `bam_control` docstring with the `BLAS.set_num_threads(4)` remedy. GAM.jl
+  does not set this itself — it is global process state and a library should not
+  silently change it. Julia-level threading of the accumulation was implemented
+  and measured, then rejected: serial at 4 BLAS threads is fastest, Julia threads
+  on top made it ~20% slower, and serial-vs-threaded results differed by 2.2e-13,
+  uncomfortably close to this package's ~1e-12 mgcv parity tolerances.
 - Smoothing-parameter selection no longer walks to the clamp along a flat
   criterion in `scam` and the `:general` optimizer path (the fix `bam`
   received in 0.2.0).
@@ -670,6 +601,72 @@ Fixed (all five found by writing the vignettes above):
   assertions still hold).
 
 ### Documentation
+
+- **New vignette 16, "Seasonal and Group-Varying Smooths"** — the first fitted
+  examples anywhere of cyclic smooths (`bs=:cc`), factor-`by`, numeric-`by`
+  (varying-coefficient) terms, and `ti()`. The cyclic wrap is verified exact
+  (`|f(0) - f(52)| = 0` against `1.9e-2` for a non-cyclic `:cr` fit), per-level
+  smoothing parameters come out monotone in signal strength (amplitude 1.40 →
+  sp 1.93; 0.35 → 3.89, which a single shared λ cannot do), and fitted values
+  agree with mgcv to `2.4e-6` on the factor-`by` model.
+- **Vignette 04 gains a disease-counts arc** — `offset=` for log-exposure rate
+  models (fitted nowhere previously, despite being the standard construction
+  for incidence data), the naive alternatives shown failing, then
+  `NegBinFamily` / `QuasiPoissonFamily` / `TweedieFamily` for overdispersion,
+  with `rootogram` diagnostics. On the worked example a Poisson fit understates
+  the smooth's standard errors by 2.2-2.6× and expects 1.4 zeros where 15 occur.
+- **Vignette 02 gains eight previously-undemonstrated bases** — `:ts`/`:cs`
+  (shrinkage, with the null-space penalty shown shrinking an irrelevant term to
+  edf 0.0016 where `:tp` leaves 1.68, and the relationship to `select=true`
+  spelled out), `:ad` (adaptive: 2.85× lower RMSE on the flat half of an
+  inhomogeneous function while using 9 fewer effective df), `:bs`, `:cps`,
+  `:fp`, `:lo`, and `:sz` conceptually.
+- **Vignette 10 gains `bs=:fs`** — per-subject trajectories recovering the
+  truth 2.5× better than a random intercept (RMSE 0.167 vs 0.425). Documents
+  that `fs` shares a small *fixed set* of smoothing parameters (three:
+  wiggliness, intercept, slope — verified invariant at 5/10/15/25 levels)
+  rather than one, which is the real contrast with factor-`by`, and that `fs`
+  smoothing parameters do not transfer from mgcv.
+- **Vignette 05 gains the smoothing-parameter-uncertainty surface** —
+  `vcov_corrected`, `edf1`/`edf2`, `conditional_aic`, `sp_criterion`,
+  `data_slice`, `vis_gam`/`gamcontour`, with a *measured* coverage experiment
+  rather than an assertion: paired over shared replicates, `Vc` improves
+  coverage by `+0.005` (n=200) to `+0.043` (n=80), every difference 6-11 Monte
+  Carlo standard errors from zero. It also states plainly that `Vc` is a
+  partial fix — at n=80 it lifts coverage 0.85 → 0.89, short of nominal,
+  because it corrects for estimating λ, not for smoothing bias.
+- **Vignette 11 gains `ginla`** — compared directly against the MCMC posterior
+  already in that vignette (22× faster; captures the posterior skewness the
+  Gaussian approximation reports as exactly zero by construction), with a
+  quadrature-convergence table showing the default `nk=16` understates the
+  posterior SD by ~1.7%.
+- **Vignette 14 gains its R companion**, the only vignette that lacked one.
+- **Nine data generators added to `vignettes/generate_data.jl`**, so every
+  dataset with a stated DGP is now reproducible. `data_gev.csv` was the last
+  holdout and its original seed proved unrecoverable, so it is regenerated
+  from the documented process (parameters still recover: location [2.75, 6.91]
+  against a true [3.00, 7.00], shape 0.121 against 0.100). That also resolved
+  a contradiction inside vignette 06, which said in one place that the GEV data
+  was *not* script-generated and in another that it was.
+- **`bs = :sz` gains a fitted example** (vignette 16, with an mgcv companion),
+  the last basis demonstrated nowhere. It completes the three-way comparison of
+  group-varying constructions: factor-`by` (a free curve and its own smoothing
+  parameter per level), `:fs` (exchangeable levels sharing a fixed set), and
+  `:sz` (a common curve plus per-level deviations constrained to sum to zero).
+  The constraint holds to 6.1e-16, and the deviations read directly: the region
+  whose seasonal amplitude sits at the average of the three deviates by
+  essentially nothing, which three separately-fitted `by` curves cannot show.
+  Deviance matches factor-`by` at equal `k` (157.999 vs 157.697). Noted for
+  comparison: the *common* smooth's edf agrees with mgcv (8.45 vs 8.456) while
+  the deviation term's does not (14.63 vs 10.241), so compare deviance and
+  fitted curves for `:sz`, not per-term edf.
+- **`ginla`'s `nk` accuracy is documented at the API**, not only in the
+  vignette. The default 16 matches mgcv's own `ginla` default, but it is a
+  quadrature resolution rather than an exact setting: measured against a model
+  whose posterior is Gaussian in closed form, the posterior SD is understated
+  ~1.7% at `nk=16`, halving with each doubling. The default stays at mgcv's
+  value; the docstring now says when to raise it.
+
 - **New vignette 15, "Large Data and Spatial Models"**, covering the two
   largest surfaces that previously had no vignette at all: `bam()` and the
   spatial bases. It measures the `gam`/`bam` crossover in time *and*
@@ -691,6 +688,24 @@ Fixed (all five found by writing the vignettes above):
   different CSV after a Distributions.jl upgrade. `gen_poisson_gamm()` has that
   shape and no longer reproduces the checked-in
   `10_gamm/data_poisson_gamm.csv` byte-for-byte.
+- **Two vignette figures were irreproducible by construction, and now are
+  not.** `appraise`'s QQ panel plots *simulated* reference quantiles
+  (`method = :simulate`, matching gratia's default), and its `seed` defaults to
+  `nothing` — the global RNG — so the diagnostics and model-selection QQ plots
+  were redrawn differently on every render, ~850 changed path elements at a
+  time, with no visible signal that anything was random. Both call sites now
+  pass `seed = 11`, verified by rendering twice and diffing the panel. Note the
+  API default is unchanged and still unseeded, which is now inconsistent with
+  `k_check`'s new default of `seed = 11`; `smooth_estimates`' simultaneous
+  intervals have the same unseeded default. Worth reconciling in one pass.
+- **Re-rendered all sixteen vignettes against the release.** Ten came back
+  byte-identical. Of the rest, vignette 01's `gam_check` p-value moved
+  0.895 → 0.890 because its checked-in render predated the `k_check` seeding
+  fix and was therefore an unreproducible draw; two vignettes had Julia's
+  `Precompiling packages...` progress captured into their checked-in `.md` by
+  a render that followed a source change, now removed and the warm-up step
+  documented in `vignettes/README.md`; and vignette 11's MCMC output drifts in
+  the third decimal because that vignette seeds nothing at all.
 
 - **`aic`'s exact relationship to mgcv is now documented and asserted.**
   GAM.jl's `aic(m)` is mgcv's `m$aic` field (`family$aic(...) + 2*sum(edf)`,
@@ -714,8 +729,18 @@ Fixed (all five found by writing the vignettes above):
   Gauss-Newton with automatic differentiation vs gamFactory's hand-coded
   blocks). Corrected the claim that mgcv also defaults to EFS — it defaults
   to outer Newton.
-- Quantified `bam`'s crossover: about 21x slower than `gam` at n = 1,000,
-  break-even near n ≈ 5,000-10,000, about 4x faster at n = 100,000.
+- **Re-measured `bam`'s crossover, and corrected it.** The earlier figures
+  (about 21x slower than `gam` at n = 1,000, break-even near n ≈ 5,000-10,000,
+  about 4x faster at n = 100,000) predated the thin-plate allocation fix and do
+  not reproduce: the worst case now measured is 1.18x slower, and on a
+  single-smooth model `bam` is within 4% of `gam` at every n from 1,000 to
+  100,000. The table in `bam.md` was also unqualified, which was the deeper
+  problem — a crossover depends on the basis and on `p`, not on `n` alone. The
+  same three smooths at `bs=:cr` instead of thin-plate cross over between
+  n = 1,000 and 2,000 and reach 3.1x by n = 20,000, where at thin-plate they
+  are still 1.18x *slower* at n = 10,000. Now stated per model, with the BLAS
+  thread count named, and pointing at memory (and `discrete = true`) as the
+  dependable reasons to reach for `bam`.
 - Marked the benchmark snapshot provisional: it predates several correctness
   fixes, and the SCAM and QGAM rows are now slower by design.
 - Disclosed further gaps against mgcv: `NCV`, `mvn`, gamlss
@@ -754,7 +779,7 @@ Fixed (all five found by writing the vignettes above):
   docstrings sit on the types rather than the constructors -- so that the
   entry can be dropped once `src/nested.jl` gains those three docstrings.
 
-- **Vignette reading order.** The fourteen vignettes are no longer presented as
+- **Vignette reading order.** The sixteen vignettes are no longer presented as
   a flat list: the README gives a suggested order, and the diagnostics vignette
   now says it is a tour of the tools and points to the model-selection vignette
   for the decision workflow.

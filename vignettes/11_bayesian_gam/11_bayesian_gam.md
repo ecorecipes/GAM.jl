@@ -135,8 +135,8 @@ m_bayes = gam(@formula(y ~ s(x, k = 10)), dat;
     ──────────────────────────────────────────────────────────
                     Estimate  Est.Error   l-95% CI    u-95% CI
     ──────────────────────────────────────────────────────────
-    (Intercept)    -0.112242  0.0221635  -0.155779  -0.0677805
-    s(x,bs=tp)_f1   1.33843   0.332884    0.684782   2.00003
+    (Intercept)    -0.112143  0.0218392  -0.154781  -0.0700362
+    s(x,bs=tp)_f1   1.32367   0.344861    0.642047   1.98796
     ──────────────────────────────────────────────────────────
 
     Smooth terms: s(x,bs=tp)
@@ -170,26 +170,26 @@ intervals:
     ──────────────────────────────────────────────────────────
                     Estimate  Est.Error   l-95% CI    u-95% CI
     ──────────────────────────────────────────────────────────
-    (Intercept)    -0.112242  0.0221635  -0.155779  -0.0677805
-    s(x,bs=tp)_f1   1.33843   0.332884    0.684782   2.00003
+    (Intercept)    -0.112143  0.0218392  -0.154781  -0.0700362
+    s(x,bs=tp)_f1   1.32367   0.344861    0.642047   1.98796
     ──────────────────────────────────────────────────────────
 
 Credible intervals at different levels:
 
 
     Intercept CIs:
-      90%: [-0.1482, -0.0756]
-      95%: [-0.1558, -0.0678]
+      90%: [-0.1475, -0.0770]
+      95%: [-0.1548, -0.0700]
 
 ### Accessing posterior samples
 
 The full MCMC chains are accessible via `m_bayes.chains`:
 
-    σ_obs posterior: mean = 0.3154, sd = 0.0164, median = 0.3146
-      95% CI: [0.2853, 0.3502]
+    σ_obs posterior: mean = 0.3158, sd = 0.0165, median = 0.3150
+      95% CI: [0.2856, 0.3502]
       Frequentist σ: 0.3134
 
-    σ_s[1] posterior: mean = 2.5238, sd = 0.6042
+    σ_s[1] posterior: mean = 2.5145, sd = 0.6020
       Larger σ_s → more flexible smooth; smaller → smoother
 
 ### Posterior density of σ_obs
@@ -205,8 +205,8 @@ vline!([freq_σ]; color=:red, linewidth=2, label="frequentist σ")
 
 ### Comparing posteriors: frequentist vs Bayesian
 
-    Intercept: frequentist = -0.1129, Bayesian posterior mean = -0.1122
-    σ: frequentist = 0.3134, Bayesian posterior mean = 0.3154
+    Intercept: frequentist = -0.1129, Bayesian posterior mean = -0.1121
+    σ: frequentist = 0.3134, Bayesian posterior mean = 0.3158
 
 ### Posterior density of intercept β\[1\]
 
@@ -225,12 +225,12 @@ vline!([freq_int]; color=:red, linewidth=2, label="frequentist")
 We compare the posterior distribution of $\sigma_{obs}$ against the
 frequentist point estimate using the empirical CDF:
 
-    Frequentist σ = 0.3134 sits at 47.3% of the posterior ECDF
+    Frequentist σ = 0.3134 sits at 45.9% of the posterior ECDF
       (values near 50% indicate good agreement)
-      ECDF 2.5%: σ_obs = 0.2853
-      ECDF 25.0%: σ_obs = 0.3040
-      ECDF 50.0%: σ_obs = 0.3146
-      ECDF 75.0%: σ_obs = 0.3259
+      ECDF 2.5%: σ_obs = 0.2855
+      ECDF 25.0%: σ_obs = 0.3041
+      ECDF 50.0%: σ_obs = 0.3150
+      ECDF 75.0%: σ_obs = 0.3266
       ECDF 97.5%: σ_obs = 0.3502
 
 ### Posterior predictive check
@@ -309,17 +309,17 @@ t_mcmc2 = @elapsed m_bayes2 = gam(@formula(y ~ s(x, k = 10)), dat2;
     ──────────────────────────────────────────────────────
                    Estimate  Est.Error  l-95% CI  u-95% CI
     ──────────────────────────────────────────────────────
-    (Intercept)    0.905507  0.0525777  0.801559   1.00682
-    s(x,bs=tp)_f1  1.96723   0.556294   0.903334   3.07533
+    (Intercept)     0.90388  0.0525691  0.800642   1.00543
+    s(x,bs=tp)_f1   1.96675  0.592773   0.752792   3.11491
     ──────────────────────────────────────────────────────
 
-    Intercept (log-scale): frequentist = 0.9094, Bayesian = 0.9055 (true = 1.0)
-    σ_s[1]: mean = 3.4528, sd = 0.8319
+    Intercept (log-scale): frequentist = 0.9094, Bayesian = 0.9039 (true = 1.0)
+    σ_s[1]: mean = 3.4735, sd = 0.8459
 
 ### ECDF comparison for intercept
 
-    Frequentist intercept = 0.9094 sits at 53.1% of Bayesian posterior
-    True intercept = 1.0 sits at 96.7% of posterior
+    Frequentist intercept = 0.9094 sits at 54.1% of Bayesian posterior
+    True intercept = 1.0 sits at 96.8% of posterior
 
 ### Poisson fit with credible intervals
 
@@ -404,17 +404,17 @@ end
 
     Parameter         | GAM.jl (Turing)   | brms (Stan)       | mgcv (approx)
     ------------------|-------------------|-------------------|--------------
-    sigma  mean       | 0.3154             | 0.3151             | 0.3145
-    sigma  sd         | 0.0164             | 0.0161             | 0.0160
-    Intercept mean    | -0.1122            | -0.1131            | -0.1123
-    Intercept sd      | 0.0222             | 0.0223             | 0.0221
+    sigma  mean       | 0.3158             | 0.3151             | 0.3145
+    sigma  sd         | 0.0165             | 0.0161             | 0.0160
+    Intercept mean    | -0.1121            | -0.1131            | -0.1123
+    Intercept sd      | 0.0218             | 0.0223             | 0.0221
 
 
     KS statistic (0 = indistinguishable) and ECDF correlation (Gaussian model):
     Comparison             | sigma KS | intercept KS | sigma ECDF cor | intercept ECDF cor
     -----------------------|----------|--------------|----------------|-------------------
-    GAM.jl vs brms         | 0.0160   | 0.0255       | 0.999955       | 0.999883
-    GAM.jl vs mgcv (approx)| 0.0270   | 0.0148       | 0.999863       | 0.999973
+    GAM.jl vs brms         | 0.0305   | 0.0250       | 0.999770       | 0.999889
+    GAM.jl vs mgcv (approx)| 0.0415   | 0.0150       | 0.999541       | 0.999977
     brms vs mgcv (approx)  | 0.0215   | 0.0220       | 0.999921       | 0.999904
 
 ### ECDF comparison plots (Gaussian)
@@ -446,8 +446,8 @@ plot(p1, p2; layout=(1, 2), size=(900, 400), legend=:bottomright)
 ### Poisson model
 
     KS statistic / ECDF correlation (Poisson intercept):
-    GAM.jl vs brms:          KS = 0.0310, ECDF cor = 0.999724
-    GAM.jl vs mgcv (approx): KS = 0.0348, ECDF cor = 0.999712
+    GAM.jl vs brms:          KS = 0.0425, ECDF cor = 0.999423
+    GAM.jl vs mgcv (approx): KS = 0.0453, ECDF cor = 0.999438
     brms vs mgcv (approx):   KS = 0.0172, ECDF cor = 0.999957
 
 ## Example 3: Custom priors — effect on smoothing
@@ -467,9 +467,9 @@ m_wide = gam(@formula(y ~ s(x, k = 10)), dat;
     nsamples = 1000, nchains = 1)
 ```
 
-    Tight prior (Exp(0.1)): posterior mean σ_s = 1.4503
-    Wide prior  (Exp(5.0)): posterior mean σ_s = 2.9671
-    Ratio: 2.0x
+    Tight prior (Exp(0.1)): posterior mean σ_s = 1.4495
+    Wide prior  (Exp(5.0)): posterior mean σ_s = 2.9893
+    Ratio: 2.1x
 
 ### Prior sensitivity: σ_s posterior
 
@@ -528,22 +528,22 @@ custom_chains = sample(my_gam(dat.y, sm), NUTS(), MCMCThreads(), 2000, 2; progre
     ┌ Info: Found initial step size
     └   ϵ = 0.00625
     ┌ Info: Found initial step size
-    └   ϵ = 0.0125
+    └   ϵ = 0.025
 
     Chains MCMC chain (2000×26×2 Array{Float64, 3}):
 
     Iterations        = 1001:1:3000
     Number of chains  = 2
     Samples per chain = 2000
-    Wall duration     = 20.41 seconds
-    Compute duration  = 18.4 seconds
+    Wall duration     = 17.57 seconds
+    Compute duration  = 16.08 seconds
     parameters        = β0, σ, f.s_x.β_f[1], f.s_x.σ_s[1], f.s_x.z[1], f.s_x.z[2], f.s_x.z[3], f.s_x.z[4], f.s_x.z[5], f.s_x.z[6], f.s_x.z[7], f.s_x.z[8]
     internals         = n_steps, is_accept, acceptance_rate, log_density, hamiltonian_energy, hamiltonian_energy_error, max_hamiltonian_energy_error, tree_depth, numerical_error, step_size, nom_step_size, logprior, loglikelihood, logjoint
 
     Use `describe(chains)` for summary statistics and quantiles.
 
-    Custom model σ posterior mean: 0.3157 (compare to 0.3154 from gam())
-    Custom model σ_s: 2.5758 (compare to 2.5238 from gam())
+    Custom model σ posterior mean: 0.3151 (compare to 0.3158 from gam())
+    Custom model σ_s: 2.5417 (compare to 2.5145 from gam())
 
 ### Comparing `smooth_prior` to the brms-like `gam()` interface
 
@@ -632,13 +632,13 @@ plot(p1, p2, p3, p4; layout=(2, 2), size=(900, 700))
 
 ![](11_bayesian_gam_files/figure-commonmark/cell-35-output-1.svg)
 
-    Posterior mean correlation:  r = 0.9897
-    Max |mean difference|:      0.368802
-    Mean CI width (smooth_prior): 0.2363
-    Mean CI width (gam()):        0.7125
+    Posterior mean correlation:  r = 0.9903
+    Max |mean difference|:      0.358815
+    Mean CI width (smooth_prior): 0.2397
+    Mean CI width (gam()):        0.7168
 
-    σ posterior:  gam() mean=0.3154 sd=0.0164  |  smooth_prior mean=0.3157 sd=0.0162
-    σ_s posterior: gam() mean=2.5238 sd=0.6042  |  smooth_prior mean=2.5758 sd=0.6122
+    σ posterior:  gam() mean=0.3158 sd=0.0165  |  smooth_prior mean=0.3151 sd=0.0164
+    σ_s posterior: gam() mean=2.5145 sd=0.6020  |  smooth_prior mean=2.5417 sd=0.6089
 
 This is much cleaner than manually extracting matrices. For multiple
 smooths, give each a unique prefix:
@@ -740,7 +740,7 @@ is directly comparable across parameterizations:
     Method            mean       sd        skewness   95% interval
     Gaussian (Vp)    0.90943   0.05362    +0.0000   [0.80434, 1.01452]
     GINLA            0.90738   0.05324    -0.0725   [0.79933, 1.00755]
-    MCMC             0.90551   0.05258    -0.0131   [0.80156, 1.00682]
+    MCMC             0.90388   0.05257    -0.0332   [0.80064, 1.00543]
 
 The Gaussian approximation reports a skewness of exactly zero because it
 *cannot* report anything else. GINLA and MCMC both recover a negative
@@ -800,9 +800,9 @@ plot(plots_g...; layout = (2, 2), size = (900, 600))
 
 ### Cost
 
-    MCMC (2000 draws × 2 chains)   :  30.51 s
-    GINLA (1 linear target, nk=32) :   2.20 s   → 14× faster
-    GINLA (all 10 coefficients)     :   1.72 s   → 18× faster
+    MCMC (2000 draws × 2 chains)   :  24.51 s
+    GINLA (1 linear target, nk=32) :   1.55 s   → 16× faster
+    GINLA (all 10 coefficients)     :   1.11 s   → 22× faster
 
 GINLA is more than an order of magnitude faster than MCMC on a model of
 this size, and being deterministic it needs no convergence diagnostics —

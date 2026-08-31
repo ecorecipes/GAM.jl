@@ -152,11 +152,11 @@ end
 
     n       gam (s)   bam (s)   speedup   gam (MB)   bam (MB)   mem ratio
     ──────────────────────────────────────────────────────────────────────
-    1000    0.0121    0.0123    0.99×     20.5       26.1       0.78×
-    2000    0.0197    0.0151    1.31×     26.1       30.0       0.87×
-    5000    0.0575    0.0187    3.08×     43.7       40.7       1.07×
-    10000   0.0759    0.0278    2.73×     69.3       65.1       1.06×
-    20000   0.1478    0.0673    2.2×      122.9      83.4       1.47×
+    1000    0.0094    0.0105    0.9×      20.5       26.1       0.78×
+    2000    0.0152    0.0118    1.29×     26.1       30.0       0.87×
+    5000    0.0331    0.0154    2.15×     43.7       40.7       1.07×
+    10000   0.0569    0.0226    2.52×     74.8       66.2       1.13×
+    20000   0.1036    0.0331    3.13×     122.9      83.4       1.47×
 
 There are two separate crossovers in that table — one in time, one in
 memory — and they need not coincide:
@@ -177,7 +177,7 @@ println("at the largest n tried (", rows[end].n, "): ",
 
     bam() first beats gam() on time   at n = 2000
     bam() first beats gam() on memory at n = 5000
-    at the largest n tried (20000): 2.2× faster, 1.47× lighter
+    at the largest n tried (20000): 3.13× faster, 1.47× lighter
 
 `bam()`’s overhead is the $p \times p$ accumulator and the chunk
 buffers, which are pure cost when the design matrix is small — that is
@@ -264,11 +264,11 @@ end
 
     n       mgcv gam   GAM.jl gam   mgcv bam   GAM.jl bam   GAM.jl gam vs mgcv gam
     ────────────────────────────────────────────────────────────────────────────
-    1000    0.472 s    0.0121 s     0.041 s    0.0123 s     38.9× faster
-    2000    0.835 s    0.0197 s     0.045 s    0.0151 s     42.4× faster
-    5000    2.108 s    0.0575 s     0.079 s    0.0187 s     36.6× faster
-    10000   3.667 s    0.0759 s     0.136 s    0.0278 s     48.3× faster
-    20000   7.325 s    0.1478 s     0.276 s    0.0673 s     49.6× faster
+    1000    0.472 s    0.0094 s     0.041 s    0.0105 s     50.0× faster
+    2000    0.835 s    0.0152 s     0.045 s    0.0118 s     54.9× faster
+    5000    2.108 s    0.0331 s     0.079 s    0.0154 s     63.8× faster
+    10000   3.667 s    0.0569 s     0.136 s    0.0226 s     64.4× faster
+    20000   7.325 s    0.1036 s     0.276 s    0.0331 s     70.7× faster
 
 GAM.jl’s `gam()` is the fast one in absolute terms; mgcv’s `bam()` has a
 large ratio to report mainly because mgcv’s `gam()` re-forms a QR at
@@ -307,10 +307,10 @@ end
 
     k     p     gam (s)    bam (s)    speedup
     ─────────────────────────────────────────────
-    10    30    0.014      0.0071     1.97×
-    20    60    0.0474     0.0192     2.47×
-    40    120   0.1922     0.0442     4.34×
-    60    180   0.2817     0.1167     2.41×
+    10    30    0.0108     0.0056     1.94×
+    20    60    0.0302     0.0124     2.44×
+    40    120   0.1011     0.0378     2.67×
+    60    180   0.2184     0.0874     2.5×
 
 Both fitters slow down steeply in `k`, as the $O(np^2)$ cost predicts —
 compare the growth here against the near-linear growth in the $n$ table
@@ -335,9 +335,9 @@ for cs in (1_000, 10_000, 20_000)
 end
 ```
 
-    chunk_size = 1000     time = 0.073      EDF = 33.5785
-    chunk_size = 10000    time = 0.0439     EDF = 33.5785
-    chunk_size = 20000    time = 0.0426     EDF = 33.5785
+    chunk_size = 1000     time = 0.0327     EDF = 33.5785
+    chunk_size = 10000    time = 0.0345     EDF = 33.5785
+    chunk_size = 20000    time = 0.0371     EDF = 33.5785
 
 ### Discretization
 
@@ -405,7 +405,7 @@ println("Gaussian, n = ", nrow(df), ":  dense ", round(t_dense; digits = 3),
         " s   speedup ", round(t_dense / t_disc; digits = 2), "x")
 ```
 
-    Gaussian, n = 20000:  dense 0.036 s   discrete 0.028 s   speedup 1.27x
+    Gaussian, n = 20000:  dense 0.033 s   discrete 0.027 s   speedup 1.24x
 
 Peak memory falls too: under `discrete = true` the dense `n × p` model
 matrix is never built (`retain_X` defaults to `false` here, and

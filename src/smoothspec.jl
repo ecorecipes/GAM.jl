@@ -414,7 +414,7 @@ A vector gives the marginal dimensions directly (`k = [4, 7]` ≙ mgcv's
 (mgcv's `k <- 5^d` with `d = 1` per basis).
 
 !!! warning "Breaking change"
-    Before GAM.jl 0.2.0 a scalar `k` was a *total* dimension hint, split as
+    Before GAM.jl 0.3.0 a scalar `k` was a *total* dimension hint, split as
     `k^(1/d)` per margin, so `te(x, z, k = 25)` meant 5×5. It now means
     25×25. Models ported from mgcv were silently getting a basis roughly
     `d`-th-root smaller; models written against the old GAM.jl behaviour

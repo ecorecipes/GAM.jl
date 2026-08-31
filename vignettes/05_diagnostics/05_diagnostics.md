@@ -317,7 +317,7 @@ observed vs fitted values. By default the QQ reference quantiles are a
 `qq.gam`); pass `method=:normal` for normal-theory quantiles.
 
 ``` julia
-diag_data = appraise(m)
+diag_data = appraise(m; seed = 11)   # QQ reference quantiles are simulated; seed so the figure is reproducible
 ```
 
     AppraiseData: 400 observations

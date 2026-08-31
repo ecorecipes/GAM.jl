@@ -51,10 +51,6 @@ using Statistics
 using Plots
 ```
 
-    Precompiling packages...
-      10192.6 ms  ✓ GAM → GAMPlotsExt
-      1 dependency successfully precompiled in 20 seconds. 239 already precompiled.
-
 ## GEV model
 
 ### Simulate GEV data

@@ -65,13 +65,6 @@ using Plots
 using Printf
 ```
 
-    Precompiling packages...
-      10202.4 ms  ✓ GAM
-      1 dependency successfully precompiled in 14 seconds. 118 already precompiled.
-    Precompiling packages...
-       6856.7 ms  ✓ GAM → GAMPlotsExt
-      1 dependency successfully precompiled in 12 seconds. 239 already precompiled.
-
 ## The data
 
 ``` julia
