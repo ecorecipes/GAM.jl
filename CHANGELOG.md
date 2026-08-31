@@ -232,6 +232,34 @@ Added:
 
 Fixed:
 
+- **Three defects found by the first exhaustive suite run.** Segmented runs
+  (forced by this machine stopping any whole-suite attempt) had left gaps, so
+  the suite was verified file-by-file against an enumerated, diff-checked
+  partition of all 91 test files. That surfaced:
+  - **A widened smoothing-parameter bound degraded SCAM.** `LOG_SP_BOUND` was
+    raised 15 → 30 so the shrinkage bases could drop a term, but SCAM's coarse
+    scan built its grid as `range(-BOUND, BOUND; length = 13)` — a fixed COUNT,
+    so the resolution silently halved from 2.5 to 5.0 log units. Worse, the
+    wider search let SCAM's golden-section bracket a poorer local minimum on a
+    multimodal constrained GCV surface (0.10114 against mgcv's 0.10080, where
+    GAM.jl had matched or beaten it). The grid is now specified by STEP, and
+    SCAM has its own documented `SCAM_LOG_SP_BOUND = 15`: the wide bound exists
+    for null-space-penalised shrinkage bases, which shape-constrained bases are
+    not, so the search range and the representable range are kept separate.
+  - **Constrained GAMLSS fits reported `converged = false` while being
+    correct.** Convergence used an ABSOLUTE deviance tolerance; `c_crit = 1e-4`
+    on a deviance of order 1 is reasonable but on a larger one is far stricter
+    than intended, and shape-constrained fits jitter the deviance as the active
+    constraint set flips. It is now relative to the deviance. One case remains
+    (`:efs` on exactly-linear data under a monotone constraint, where the
+    optimum is at λ → ∞) and is marked `@test_broken` with its diagnosis rather
+    than hidden: the fit is right (correlation 1.0 with the truth), only the
+    flag is wrong. It previously "passed" only because the old bound clamped
+    the iteration and froze the deviance — convergence by clamping.
+  - **A type-stability guard broke when GP smooths went multi-dimensional**
+    (`_gp_E` and `GPPredictCache` take matrices and a per-covariate shift now).
+    Updated, and extended to guard the multi-dimensional inner loop too, which
+    is where a boxed accumulator would now appear.
 - **A GP correlation-function test asserted on the wrong quantity.**
   `test_tprs_parity.jl` checked that the default `:gp` correlation (mgcv's
   √3-free type 3) differs from the √3-carrying `:matern32` by comparing

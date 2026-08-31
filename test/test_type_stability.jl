@@ -35,8 +35,10 @@
         # cost O(1) allocations however many elements it fills. Before `scale`
         # was annotated this was ~40,000 at n=1000 — one per element of the
         # n x k loop — so flatness in the element count is the sharp test.
-        knots_small = collect(range(-0.5, 0.5; length = 100))
-        knots_large = collect(range(-0.5, 0.5; length = 1000))
+        # `_gp_E` takes n x d covariate MATRICES since multi-dimensional GP
+        # smooths landed; a 1-D smooth is the d = 1 column case.
+        knots_small = reshape(collect(range(-0.5, 0.5; length = 100)), :, 1)
+        knots_large = reshape(collect(range(-0.5, 0.5; length = 1000)), :, 1)
         GAM._gp_E(knots_small, knots_small, 1.0, 3, 1.0, :mgcv, Float64[])
         GAM._gp_E(knots_large, knots_large, 1.0, 3, 1.0, :mgcv, Float64[])
         aE_small = @allocations GAM._gp_E(
@@ -47,11 +49,28 @@
         @test aE_large < 20                # 100x the elements, same cost
         @test aE_large <= aE_small + 5
 
+        # The multi-dimensional path sums over d inside the same inner loop,
+        # which is exactly where a boxed accumulator would reappear, so guard
+        # it too rather than only the d = 1 case the original bug was found in.
+        k2_small = hcat(knots_small, reverse(knots_small; dims = 1))
+        k2_large = hcat(knots_large, reverse(knots_large; dims = 1))
+        GAM._gp_E(k2_small, k2_small, 1.0, 3, 1.0, :mgcv, Float64[])
+        GAM._gp_E(k2_large, k2_large, 1.0, 3, 1.0, :mgcv, Float64[])
+        a2_small = @allocations GAM._gp_E(
+            k2_small, k2_small, 1.0, 3, 1.0, :mgcv, Float64[])
+        a2_large = @allocations GAM._gp_E(
+            k2_large, k2_large, 1.0, 3, 1.0, :mgcv, Float64[])
+        @test a2_small < 20
+        @test a2_large < 20
+        @test a2_large <= a2_small + 5
+
         # [E(x,knt)*UZ | T(x)] is built in chunks, so it is O(1) too.
-        UZ = Matrix{Float64}(I, length(knots_large), 18)
-        cache = GAM.GPPredictCache(0.0, knots_large, UZ, 3, 1.0, 1.0,
+        # `shift` is a per-covariate vector and `knots` an nk x d matrix since
+        # multi-dimensional GP smooths landed; d = 1 here.
+        UZ = Matrix{Float64}(I, size(knots_large, 1), 18)
+        cache = GAM.GPPredictCache([0.0], knots_large, UZ, 3, 1.0, 1.0,
                                    false, :mgcv, Float64[])
-        xr = collect(range(-0.5, 0.5; length = length(knots_large)))
+        xr = reshape(collect(range(-0.5, 0.5; length = size(knots_large, 1))), :, 1)
         GAM._gp_model_matrix(xr, cache)                # compile
         @test (@allocations GAM._gp_model_matrix(xr, cache)) < 40
 
