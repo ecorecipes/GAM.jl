@@ -8,7 +8,7 @@ It covers a large fraction of mgcv's day-to-day functionality (smooths, families
 
 ## Features
 
-- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 31 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (one, `:so`, is a documented approximation of its mgcv namesake — see the table below)
+- **Smooth term specification** — `s()`, `te()`, `ti()`, `t2()` with 31 registered basis types including thin-plate regression splines, cubic regression splines, P-splines, tensor products, random effects, soap films, Markov random fields, and Gaussian processes (every basis is a direct port or, for `:so`, an equivalent construction — see the table below)
 - **Automatic smoothness estimation** — REML/ML via Extended Fellner-Schall (EFS, default) or Newton optimization; GCV/UBRE via direct criterion optimization
 - **Neighbourhood cross validation (NCV)** — `gam(...; method=:NCV)`, a port of mgcv's `ncv.c`. Leaves out a *neighbourhood* of each point rather than the point alone, which is what you want when observations are correlated and GCV/REML under-smooth; supply neighbourhoods with `nei=` (`loo_neighbourhoods`, `interval_neighbourhoods`)
 - **GLM families** — Gaussian, Poisson, Binomial, Gamma, InverseGaussian, NegativeBinomial, Tweedie, Beta, and the scaled-t `ScatFamily` for outlier-robust regression (mgcv's `scat()`)
@@ -443,13 +443,30 @@ the `Normal`, `Poisson`, `Bernoulli`/`Binomial`, and `Gamma` families with
 identity/log/logit links. The optional MixedModels.jl GAMM backend is disabled
 (the pure-Julia backend is the supported path).
 
-One basis type is a documented approximation rather than an exact port of its
-mgcv namesake: `:so` (grid-PDE soap film). Fits with it will differ from mgcv's.
-`:sos` is a direct port of mgcv's spherical-spline kernel, and `:ds` is now a
-real Duchon spline (previously an aliased `:tp` that warned) — its penalty
-scaling matches mgcv to 9-10 digits and smoothing parameters transfer both
-ways. Pass the second Duchon order via `xt`: `s(:x, :z, bs=:ds, m=2,
-xt=Dict(:s => 0.5))` is mgcv's `m = c(2, 0.5)`.
+No basis type is a degraded port of its mgcv namesake. `:sos` is a direct port
+of mgcv's spherical-spline kernel, and `:ds` is a real Duchon spline
+(previously an aliased `:tp` that warned) — its penalty scaling matches mgcv to
+9-10 digits and smoothing parameters transfer both ways. Pass the second Duchon
+order via `xt`: `s(:x, :z, bs=:ds, m=2, xt=Dict(:s => 0.5))` is mgcv's
+`m = c(2, 0.5)`.
+
+`:so` (soap film) is a **different construction of the same model class**,
+not an approximation of mgcv's. Both packages solve the soap-film PDE on a
+square-celled grid with a sparse LU (mgcv's `setup.soap`, `R/soap.r:171-268`),
+and GAM.jl matches mgcv on the grid rule, the 5-point Laplacian, the cyclic
+boundary basis on arc length, the delta-forced interior knots and the bilinear
+grid-to-point interpolation. They differ in how boundary cells enter the solve,
+in stencil scaling, in `k` semantics, and in interior knots — mgcv **requires**
+you to supply them (`soap.r:419` errors without `knots=`) where GAM.jl places
+them automatically. So fits are not elementwise comparable, and `k` does not
+carry over.
+
+On Ramsay's horseshoe, mgcv's own canonical soap-film benchmark, GAM.jl was
+more accurate on all five seeds tested — mean RMSE 0.0801 against 0.1037, a 23%
+reduction, using about 43% of the effective degrees of freedom. That is one
+benchmark with REML-selected smoothing parameters and not a matched-edf
+comparison, so read it as "competitive to better on the standard test case"
+rather than as a general claim.
 
 Some algorithms differ from their R counterparts while targeting the same
 criterion, with measured consequences: smoothing parameters are selected by

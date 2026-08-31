@@ -230,7 +230,7 @@ selected `sp`, where they agree closely (fitted correlation 0.9999971, edf
 | `gam.check` diagnostics | ✅ | ✅ |
 | Adaptive smooths (`:ad`) | ✅ | ✅ |
 | Spherical splines (`:sos`) | ✅ | Port of mgcv's kernel (`m = -2…4`, default 0); degrees like mgcv (`xt=Dict(:units=>:radians)` to opt out). `sp` values are portable between the packages |
-| Soap film (`:so`) | ✅ | ⚠️ approximation |
+| Soap film (`:so`) | ✅ | ✅ equivalent grid-PDE construction, not an elementwise port — mgcv requires user-supplied interior knots where GAM.jl places them; more accurate than mgcv on the horseshoe benchmark (RMSE 0.0801 vs 0.1037) |
 | `t2()` tensor construction (Wood–Scheipl–Faraway) | ✅ | ✅ (verified against mgcv: matching columns, penalty count, ranks, supports) |
 | Linear functional terms (matrix args) | ✅ | ❌ |
 | `bam(discrete=TRUE)` covariate discretization | ✅ | ✅ `bam(...; discrete=true)` — 1-D smooths (any basis), `te`, `bs=:re` and factor-`by` terms are binned; numeric-`by`, `ti` and `t2` stay dense. Within the binned smooths, `:tp`/`:ts`/`:cr`/`:cs`/`:cc`/`:ps`/`:cps`/`:bs` are also *constructed* at the unique values (the `n`-row basis is never formed); `:ad`/`:gp`/`:fp`/`:lo`/`:ds` are built densely then binned — same answer, higher one-off cost. Approximate by covariate rounding, as in mgcv |

@@ -252,6 +252,33 @@ Added:
 
 Fixed:
 
+- **The `:so` soap-film "approximation" caveat was wrong, and is removed.**
+  The README, `index.md`, `smooths.md` and `mgcv.md` all described `:so` as a
+  grid-PDE *approximation* of mgcv's exact method, whose "fits will differ".
+  But mgcv's soap film **is itself a grid-PDE method** — `setup.soap`
+  (`R/soap.r:171-268`) builds a square-celled grid, assembles a sparse PDE
+  matrix and takes a sparse LU — and GAM.jl matches it on the grid rule, the
+  5-point Laplacian, the cyclic boundary basis on arc length, the delta-forced
+  interior knots and the bilinear grid-to-point interpolation. The two are
+  different constructions of the same model class, not a port and a degradation
+  of it. They genuinely differ in how boundary cells enter the solve, stencil
+  scaling, `k` semantics, and interior knots — mgcv **errors** without
+  user-supplied `knots=` (`soap.r:419`) where GAM.jl places them automatically
+  — so fits are not elementwise comparable and `k` does not carry over.
+  On Ramsay's horseshoe, mgcv's own canonical soap-film benchmark, GAM.jl was
+  more accurate on all five seeds tested: mean RMSE 0.0801 against 0.1037 (23%
+  lower) using about 43% of the effective degrees of freedom. That is one
+  benchmark with REML-selected smoothing parameters and not a matched-edf
+  comparison, so it supports "competitive to better on the standard test case",
+  not a general claim. A port was assessed as feasible (mgcv's `soap.c` is 386
+  self-contained lines) and **rejected**: it would trade a measurably better
+  smoother for elementwise agreement and require breaking the interface to
+  demand user knots.
+  `test/test_soap_benchmark.jl` (19 assertions, no R needed — `fs.test` and
+  `fs.boundary` are closed forms, ported with `soap.r` citations) pins RMSE at
+  **mgcv's own level of 0.10**, so it fails if this basis ever regresses to
+  merely matching mgcv. With this, **no basis in the package is a degraded
+  port**.
 - **NCV now selects smoothing parameters with analytic derivatives**, closing
   the divergence recorded when it landed. `ncv_score_grad` ports the `deriv > 0`
   branch of mgcv's `Rncv` (`ncv.c:311-320`, `368-397`, `389`), reconstructing
