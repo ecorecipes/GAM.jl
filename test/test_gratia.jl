@@ -312,6 +312,19 @@ using Distributions
         ad_n = appraise(m; method = :normal)
         @test issorted(ad_n.qq_theoretical)
         @test_throws ArgumentError appraise(m; method = :bogus)
+
+        # Randomness that is an implementation detail of a reported quantity is
+        # seeded by default, so a checked-in diagnostic figure does not change
+        # on every re-render; randomness the caller explicitly asked for is not.
+        # (Two unseeded vignette QQ panels were being redrawn every render.)
+        @test appraise(m).qq_theoretical == appraise(m).qq_theoretical
+        @test appraise(m; seed = nothing).qq_theoretical !=
+              appraise(m; seed = nothing).qq_theoretical
+        @test derivatives(m; n = 20, interval = :simultaneous, n_sim = 200).lower ==
+              derivatives(m; n = 20, interval = :simultaneous, n_sim = 200).lower
+        # ... while the sampling functions must keep drawing fresh values
+        @test posterior_samples(m; n = 20) != posterior_samples(m; n = 20)
+        @test fitted_samples(m; n = 10) != fitted_samples(m; n = 10)
     end
 
     # ─── rootogram ───────────────────────────────────────────────────────

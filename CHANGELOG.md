@@ -59,6 +59,19 @@ basis size without raising an error.
   so repeated mgcv calls differ unless the user sets `set.seed()` first. Pass
   `seed = nothing` for that behaviour, or any integer for a different fixed
   stream.
+- **`appraise` and `derivatives` are reproducible by default too, on a stated
+  rule.** `appraise`'s default `method = :simulate` draws its QQ reference
+  quantiles from the global RNG, so two vignette figures were being redrawn
+  differently on every render — ~850 changed path elements — with nothing in
+  the printed output hinting anything was random. `derivatives` had the same
+  unseeded default for its simultaneous-interval critical value. Both now
+  default to `seed = 11`, matching `k_check`; pass `seed = nothing` for the old
+  behaviour. The rule, now applied consistently: **randomness that is an
+  implementation detail of a reported quantity is seeded by default; randomness
+  the caller explicitly asked for is not.** So `posterior_samples`,
+  `fitted_samples`, `smooth_samples` and `predicted_samples` keep drawing fresh
+  values — seeding those would silently break every Monte Carlo workflow that
+  calls them twice. A test now pins both halves of that split.
 - **`discretize_covariates` now bins by mgcv's rule** — exact unique values
   where there are few enough, otherwise an equally spaced grid over the
   observed range — replacing quantile midpoints. The exported utility and what
@@ -689,15 +702,16 @@ Fixed (all five found by writing the vignettes above):
   shape and no longer reproduces the checked-in
   `10_gamm/data_poisson_gamm.csv` byte-for-byte.
 - **Two vignette figures were irreproducible by construction, and now are
-  not.** `appraise`'s QQ panel plots *simulated* reference quantiles
-  (`method = :simulate`, matching gratia's default), and its `seed` defaults to
-  `nothing` — the global RNG — so the diagnostics and model-selection QQ plots
-  were redrawn differently on every render, ~850 changed path elements at a
-  time, with no visible signal that anything was random. Both call sites now
-  pass `seed = 11`, verified by rendering twice and diffing the panel. Note the
-  API default is unchanged and still unseeded, which is now inconsistent with
-  `k_check`'s new default of `seed = 11`; `smooth_estimates`' simultaneous
-  intervals have the same unseeded default. Worth reconciling in one pass.
+  not.** The diagnostics and model-selection QQ panels were redrawn differently
+  on every render. Fixed at the API rather than the call sites (see
+  `appraise`/`derivatives` under Breaking changes), so the vignettes just call
+  `appraise(m)` and inherit the reproducible default. Verified by rendering
+  twice and diffing the panel.
+- **Vignette 11 seeds the document.** The Turing extension samples with the
+  global RNG and takes no `rng` argument, so every posterior summary on the
+  page moved a little on each render. `Random.seed!` in the setup cell fixes
+  the page; giving the extension an `rng` parameter is the better long-term
+  fix and is not done here.
 - **Re-rendered all sixteen vignettes against the release.** Ten came back
   byte-identical. Of the rest, vignette 01's `gam_check` p-value moved
   0.895 → 0.890 because its checked-in render predated the `k_check` seeding

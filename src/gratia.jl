@@ -392,7 +392,7 @@ end
 """
     derivatives(m::GamModel; select=nothing, order=1, type=:central,
                 n=200, eps=1e-7, level=0.95, interval=:confidence,
-                n_sim=10000, seed=nothing)
+                n_sim=10000, seed=11)
 
 Compute derivatives of estimated smooth terms via finite differences.
 
@@ -405,7 +405,9 @@ Compute derivatives of estimated smooth terms via finite differences.
 - `level`: confidence level for intervals
 - `interval`: `:confidence` (pointwise) or `:simultaneous`
 - `n_sim`: number of simulations for simultaneous intervals
-- `seed`: random seed for simultaneous intervals
+- `seed`: random seed for the simultaneous-interval simulation (default 11,
+  so repeated calls agree; pass `seed = nothing` to draw from the global RNG).
+  Only consulted when `interval = :simultaneous`
 - `unconditional`: use the smoothing-parameter-corrected covariance `Vc`
   for the intervals when the fit provides it (see [`has_vc`](@ref))
 
@@ -431,7 +433,7 @@ function derivatives(m::GamModel;
     level::Float64 = 0.95,
     interval::Symbol = :confidence,
     n_sim::Int = 10000,
-    seed = nothing,
+    seed = 11,
     unconditional::Bool = false,
 )
     type in (:forward, :backward, :central) ||
@@ -668,7 +670,7 @@ end
 # ============================================================================
 
 """
-    appraise(m::GamModel; type=:deviance, method=:simulate, n_sim=50, seed=nothing)
+    appraise(m::GamModel; type=:deviance, method=:simulate, n_sim=50, seed=11)
 
 Compute model diagnostic data for standard residual checking plots:
 QQ plot, residuals vs linear predictor, histogram of residuals,
@@ -682,6 +684,14 @@ reference; `:normal` uses normal-theory quantiles. Simulation is available
 for Normal, Poisson, Bernoulli/Binomial, Gamma, NegBin, and the quasi
 families; other families require `method=:normal`.
 
+The `:simulate` reference quantiles are drawn with `seed` (default 11), so
+repeated calls on one fit give the same QQ panel and a checked-in figure does
+not change on every re-render. Pass `seed = nothing` to draw from the global
+RNG instead. The randomness here is an implementation detail of the diagnostic
+rather than a sample the caller asked for, which is why it is seeded by
+default — unlike [`posterior_samples`](@ref) and the other `*_samples`
+functions, where fresh draws are the point and the default stays unseeded.
+
 Returns an [`AppraiseData`](@ref) struct.
 
 # Example
@@ -692,7 +702,7 @@ plot(ad)                               # with Plots.jl loaded
 ```
 """
 function appraise(m::GamModel; type::Symbol = :deviance,
-    method::Symbol = :simulate, n_sim::Int = 50, seed = nothing)
+    method::Symbol = :simulate, n_sim::Int = 50, seed = 11)
     type in (:deviance, :pearson, :response) || throw(ArgumentError(
         "type must be :deviance, :pearson, or :response, got :$type"))
     method in (:simulate, :normal) || throw(ArgumentError(

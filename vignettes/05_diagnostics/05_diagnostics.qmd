@@ -213,7 +213,7 @@ plot(d2.x, d2.derivative;
 `appraise` returns diagnostic data for the four standard residual plots: QQ plot, residuals vs linear predictor, histogram of residuals, and observed vs fitted values. By default the QQ reference quantiles are a **simulated envelope** (`method=:simulate`, matching gratia and mgcv's `qq.gam`); pass `method=:normal` for normal-theory quantiles.
 
 ```{julia}
-diag_data = appraise(m; seed = 11)   # QQ reference quantiles are simulated; seed so the figure is reproducible
+diag_data = appraise(m)
 ```
 
 ```{julia}
