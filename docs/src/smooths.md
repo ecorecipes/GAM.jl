@@ -3,9 +3,10 @@
 GAM.jl provides 31 registered smooth basis types, covering all commonly used
 options from R's mgcv, plus shape-constrained bases from scam and several
 additional types including loess, fractional polynomials, spherical splines,
-SPDE Matérn, and constrained factor smooths. Two bases (`:so`, `:ds`) are
-documented **approximations** of their mgcv namesakes — see the per-basis
-notes below. For smooths of
+SPDE Matérn, and constrained factor smooths. Every basis is a direct port of
+its mgcv namesake except `:so` (soap film), which is an equivalent
+construction rather than an elementwise port — see the per-basis notes below.
+For smooths of
 *estimated* covariate transformations (single-index effects and friends),
 see [Nested Effects](@ref nested-effects).
 
@@ -371,9 +372,23 @@ s(:region, bs=:mrf, xt=nb, k=20)
 
 ### Soap Film Smooth (`bs=:so`)
 
-!!! warning "Approximation"
-    The soap-film construction uses a grid-PDE approximation of mgcv's
-    exact method; fits will differ from mgcv's `bs="so"`.
+!!! note "An equivalent construction, not an approximation"
+    Both GAM.jl and mgcv solve the soap-film PDE on a square-celled grid with a
+    sparse LU (mgcv's `setup.soap`, `R/soap.r:171-268`), and GAM.jl matches
+    mgcv on the grid rule, the 5-point Laplacian, the cyclic boundary basis on
+    arc length, the delta-forced interior knots and the bilinear grid-to-point
+    interpolation. They differ in how boundary cells enter the solve, in
+    stencil scaling, in `k` semantics, and in interior knots: **mgcv requires
+    you to supply them** (`soap.r:419` errors without `knots=`) where GAM.jl
+    places them automatically. Fits are therefore not elementwise comparable
+    with `bs="so"`, and `k` does not carry over.
+
+    On Ramsay's horseshoe — mgcv's own canonical soap-film benchmark — GAM.jl
+    was more accurate on all five seeds tested (mean RMSE 0.0801 against
+    0.1037, using about 43% of the effective degrees of freedom). That is one
+    benchmark with REML-selected smoothing parameters, not a matched-edf
+    comparison, so treat it as "competitive to better on the standard test
+    case" rather than a general claim.
 
 
 For smoothing over complex domains with boundaries (e.g., an estuary, a lake).

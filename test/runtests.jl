@@ -933,6 +933,7 @@ include("test_ncv_derivatives.jl")
 include("test_gp_multid.jl")
 include("test_sz_penalties.jl")
 include("test_sz_base.jl")
+include("test_soap_benchmark.jl")
 include("test_sp_optimizer.jl")
 include("test_duchon.jl")
 
