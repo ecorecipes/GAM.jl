@@ -931,6 +931,7 @@ include("test_docstrings.jl")
 include("test_ncv.jl")
 include("test_gp_multid.jl")
 include("test_sz_penalties.jl")
+include("test_sp_optimizer.jl")
 include("test_duchon.jl")
 
 # Derivative audit — hand-coded tables vs ForwardDiff vs Symbolics (heavy

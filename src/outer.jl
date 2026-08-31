@@ -5,7 +5,13 @@
 #             Fast, monotonically convergent, 1 PIRLS per outer iteration.
 #   :newton — Newton's method with autodiff Hessian via ForwardDiff.
 #             Computes exact Hessian of conditional REML w.r.t. log(sp).
-#             More expensive per step but fewer iterations for difficult problems.
+#             More expensive per step but fewer iterations for difficult
+#             problems, and reaches a better optimum on the shrinkage bases.
+#             SINGLE-PENALTY SMOOTHS ONLY: multi-penalty blocks (te/ti/t2,
+#             bs=:ad, bs=:fs, anything under select=true) take a Float64-only
+#             penalty reparameterization that ForwardDiff cannot traverse, so
+#             they fall back to :efs with a warning. See `gam_control`.
+#   Only REML/ML use these; GCV/UBRE/NCV are optimized directly below.
 
 using ForwardDiff
 
@@ -96,6 +102,16 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     S_total = zeros(p, p)
     XtWX_cur_buf = zeros(p, p)
     efs_mult = 1.0  # Step multiplier for EFS (reduced on failed steps)
+    # Newton is not available for every model. Its Hessian comes from
+    # ForwardDiff, and the stable penalty reparameterization that multi-penalty
+    # blocks (te/ti/t2, adaptive, fs, and any smooth under `select=true`) go
+    # through is Float64-only (`_stable_penalty_factor`, a port of mgcv's
+    # gam.reparam), so differentiating it raises a MethodError on Dual numbers.
+    # Separately, the Hessian can come back non-finite on some models. Rather
+    # than predict which, try Newton and degrade to the EFS step on any
+    # failure, warning once. mgcv avoids this by computing the REML derivatives
+    # analytically instead of by AD.
+    newton_unavailable = false
 
     for outer_iter in 1:(control.outer_maxit)
         # Inner: P-IRLS for current smoothing parameters
@@ -152,13 +168,34 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         log_sp_new = copy(log_sp)
         max_change = 0.0
 
-        if control.sp_optimizer == :newton
+        newton_ok = false
+        if control.sp_optimizer == :newton && !newton_unavailable
             # Newton with autodiff Hessian on conditional REML.
             # Differentiates REML score w.r.t. log_sp, holding β and w fixed.
-            log_sp_new, max_change = _newton_sp_update(
-                log_sp, X, beta, w, dev, penalty, family, method,
-                scale_est, n, p, edf_total, y, weights, control)
-        else
+            try
+                nsp, nmc = _newton_sp_update(
+                    log_sp, X, beta, w, dev, penalty, family, method,
+                    scale_est, n, p, edf_total, y, weights, control)
+                if all(isfinite, nsp) && isfinite(nmc)
+                    log_sp_new, max_change = nsp, nmc
+                    newton_ok = true
+                else
+                    newton_unavailable = true
+                    @warn "sp_optimizer = :newton produced a non-finite step " *
+                          "for this model; falling back to :efs (Extended " *
+                          "Fellner-Schall) for the remaining iterations." maxlog = 1
+                end
+            catch err
+                newton_unavailable = true
+                @warn "sp_optimizer = :newton is unavailable for this model " *
+                      "($(typeof(err))); falling back to :efs (Extended " *
+                      "Fellner-Schall). Multi-penalty smooths (te/ti/t2, " *
+                      "bs=:ad, bs=:fs) and `select=true` take a penalty " *
+                      "reparameterization that the autodiff Hessian cannot " *
+                      "differentiate." maxlog = 1
+            end
+        end
+        if !newton_ok
             # EFS update (default) — Wood & Fasiolo (2017)
             log_sp_new = _efs_sp_update(log_sp, beta, Ainv, penalty,
                 scale_est, efs_mult)
