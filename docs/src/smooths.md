@@ -505,7 +505,7 @@ null-space dimension of 3.
     `te(x, z, k=5)` builds a 5×5 (24-column, post-constraint) smooth in both
     packages, and an mgcv model ports with its `k` unchanged.
 
-    Before GAM.jl 0.2 a scalar `k` was a *total* dimension hint, split as
+    Before GAM.jl 0.3 a scalar `k` was a *total* dimension hint, split as
     `round(Int, k^(1/d))` per margin — `te(x, z, k=25)` used to mean 5×5 and
     now means 25×25. Models written against the old behaviour should switch
     to the explicit vector form to keep their basis size:

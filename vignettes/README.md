@@ -16,8 +16,15 @@ Julia environment):
 
 ```bash
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
+julia --project=. -e 'using GAM, Plots'   # warm the cache; see below
 quarto render 01_introduction/01_introduction.qmd
 ```
+
+Warm the precompilation cache before rendering. Quarto captures whatever the
+first cell prints, so a `using GAM` that triggers a rebuild writes Julia's
+`Precompiling packages...` progress into the checked-in `.md` — which is why
+the warm-up line is there. It only bites the first vignette rendered after the
+package changes, which makes it easy to miss in a batch.
 
 The R companions are rendered the same way from each `R/` subdirectory and
 require the relevant R packages to be installed.

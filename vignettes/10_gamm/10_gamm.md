@@ -539,7 +539,7 @@ pred_unseen = predict(m_fs, newdat)
     │   unseen_levels =
     │    1-element Vector{String}:
     │     "new-subject"
-    └ @ GAM ~/Projects/gam/GAM.jl/src/basis_extra.jl:537
+    └ @ GAM ~/Projects/gam/GAM.jl/src/basis_extra.jl:840
     Prediction for an unseen subject: [4.636, 4.636, 4.636]
 
 Because this model contains *only* the `fs` term, zeroing the subject

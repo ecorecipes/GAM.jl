@@ -34,7 +34,7 @@ equivalence is verified separately — see below).
 Both of these make *correct* code in each language fit a **different model**,
 which is the most common source of "GAM.jl doesn't match mgcv" reports.
 
-#### 1. Tensor `k` is per-marginal in both packages — but changed in GAM.jl 0.2
+#### 1. Tensor `k` is per-marginal in both packages — but changed in GAM.jl 0.3
 
 For tensor smooths (`te`, `ti`, `t2`) a scalar `k` is now the dimension of
 *each* marginal basis, recycled across margins — **exactly mgcv's
@@ -49,7 +49,7 @@ te(:x, :y, :z, k = 4)             # identical
 te(:x, :z, k = [4, 7])            # unequal margins, mgcv's k = c(4, 7)
 ```
 
-**The convention changed in GAM.jl 0.2.** Before, a scalar `k` was a *total*
+**The convention changed in GAM.jl 0.3.** Before, a scalar `k` was a *total*
 dimension hint split as `round(Int, k^(1/d))` per margin, so `te(x, z, k=25)`
 meant 5×5; it now means 25×25. Code written against the old behaviour should
 switch to the explicit vector form (`k = [5, 5]`) to keep its basis size —

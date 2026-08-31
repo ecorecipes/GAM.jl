@@ -31,16 +31,29 @@ df_pois = DataFrame(x=x_pois, y=y_pois)
 ## When to Use BAM
 
 `bam()` carries fixed setup overhead that only pays for itself once there are
-enough rows. Measured against `gam()` on the same model:
+enough rows — but *how much* it pays depends on the model as much as on `n`,
+because the basis construction and the accumulation scale differently. Measured
+against `gam()`, Gaussian, wall-clock minima over repeated fits, with BLAS at
+this machine's default of 8 threads (see
+[Performance: set the BLAS thread count](@ref) — four threads is often faster):
 
-| n | `bam` vs `gam` | Recommended |
-|---|----------------|-------------|
-| 1,000 | ~21x **slower** | `gam()` |
-| 10,000 | ~1.9x faster | either |
-| 100,000 | ~3.9x faster | `bam()` |
+| model | n = 1,000 | n = 10,000 | n = 100,000 |
+|-------|-----------|------------|-------------|
+| `y ~ s(x)`, thin-plate, `k = 10` | 1.04x slower | 1.01x slower | 1.01x slower |
+| `y ~ s(x1) + s(x2) + s(x3)`, thin-plate, `k = 30` | 1.02x slower | 1.18x slower | **1.39x faster** |
 
-The crossover is around **n ≈ 5,000–10,000**. Below it, prefer `gam()`;
-`bam()` is not simply a drop-in speedup.
+On time alone, then, `bam()` is close to a wash for a small basis and pulls
+ahead only once both `n` and `p` are large — it is **not** a drop-in speedup.
+The basis matters as much as either: swapping those three smooths to `bs=:cr`,
+which is far cheaper to construct so that the chunked accumulation dominates,
+puts the time crossover between n = 1,000 and n = 2,000 and reaches 3.1x by
+n = 20,000. The `vignettes/15_large_and_spatial` vignette measures that case,
+allocations included, while it renders.
+
+**Memory is the more dependable reason to reach for `bam()`**, and it crosses
+over sooner than time does: in that same vignette `bam()` first wins on
+allocations at n = 5,000, and the gap widens from there. For large-`n` *speed*,
+reach for `discrete = true` (below) rather than plain `bam()`.
 
 BAM produces results equivalent to `gam()` (fitted-value agreement is asserted
 in the test suite) with reduced peak memory on large datasets.

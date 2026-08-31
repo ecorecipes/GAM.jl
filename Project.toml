@@ -1,6 +1,6 @@
 name = "GAM"
 uuid = "f5b95e24-6450-466f-92b1-fee0c65c0d6b"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Simon Frost <sdwfrost@gmail.com>"]
 
 [deps]
