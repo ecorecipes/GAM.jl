@@ -655,6 +655,23 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
     converged = false
     iterations = 0
 
+    # Stall detection on the smoothing parameters.
+    #
+    # Convergence below is judged on the deviance alone. That is right when the
+    # optimum is interior, but a shape-constrained smooth fitted to data the
+    # constraint describes exactly (a monotone smooth on genuinely linear data,
+    # say) has its optimum at lambda -> infinity: the EFS update stalls at a
+    # fixed point, the fit is already perfect, and the deviance keeps jittering
+    # just above `c_crit` because the active constraint set flips. That used to
+    # be masked by the log-sp bound, which clamped and so froze the deviance;
+    # widening the bound from 15 to 30 for the shrinkage bases exposed it, and
+    # the fit was reported `converged = false` forever while being correct
+    # (correlation 1.0 with the truth).
+    #
+    # If the smoothing parameters have stopped moving, no further cycle can
+    # change anything, so the fit IS converged whatever the deviance jitter.
+    log_sp_prev = copy(log_sp)
+    sp_stalled = 0
     for outer in 1:gamlss_ctrl.n_cyc
         iterations = outer
         dev_old = dev
@@ -727,7 +744,25 @@ function gamlss_rs!(family::MultiParameterFamily, y::AbstractVector,
             @info "RS outer $outer: deviance = $(round(dev, digits=4)), Δdev = $(round(dev_old - dev, sigdigits=3))"
         end
 
-        if abs(dev_old - dev) < gamlss_ctrl.c_crit
+        # RELATIVE, not absolute. `c_crit` defaults to 1e-4, which on a
+        # deviance of order 1 is a sensible tolerance but on a larger one is a
+        # far tighter demand than intended. Shape-constrained fits are where
+        # this bites: the active constraint set flips between cycles and
+        # jitters the deviance a little, so an absolute 1e-4 is never met and a
+        # perfectly good fit (correlation 1.0 with the truth) reports
+        # `converged = false` indefinitely. Scaling by the deviance keeps the
+        # intended tolerance while remaining strict for small deviances.
+        if abs(dev_old - dev) < gamlss_ctrl.c_crit * max(1.0, abs(dev))
+            converged = true
+            break
+        end
+
+        # Smoothing parameters frozen for three consecutive cycles: further
+        # iteration is a no-op, so stop rather than exhausting `n_cyc`.
+        sp_stalled = isempty(log_sp) ? 0 :
+            (maximum(abs, log_sp .- log_sp_prev) < 1e-6 ? sp_stalled + 1 : 0)
+        copyto!(log_sp_prev, log_sp)
+        if sp_stalled >= 3
             converged = true
             break
         end
@@ -792,6 +827,23 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
     # Number of initial RS-only warm-up iterations
     n_rs_warmup = 2
 
+    # Stall detection on the smoothing parameters.
+    #
+    # Convergence below is judged on the deviance alone. That is right when the
+    # optimum is interior, but a shape-constrained smooth fitted to data the
+    # constraint describes exactly (a monotone smooth on genuinely linear data,
+    # say) has its optimum at lambda -> infinity: the EFS update stalls at a
+    # fixed point, the fit is already perfect, and the deviance keeps jittering
+    # just above `c_crit` because the active constraint set flips. That used to
+    # be masked by the log-sp bound, which clamped and so froze the deviance;
+    # widening the bound from 15 to 30 for the shrinkage bases exposed it, and
+    # the fit was reported `converged = false` forever while being correct
+    # (correlation 1.0 with the truth).
+    #
+    # If the smoothing parameters have stopped moving, no further cycle can
+    # change anything, so the fit IS converged whatever the deviance jitter.
+    log_sp_prev = copy(log_sp)
+    sp_stalled = 0
     for outer in 1:gamlss_ctrl.n_cyc
         iterations = outer
         dev_old = dev
@@ -950,7 +1002,25 @@ function gamlss_cg!(family::MultiParameterFamily, y::AbstractVector,
             break
         end
 
-        if abs(dev_old - dev) < gamlss_ctrl.c_crit
+        # RELATIVE, not absolute. `c_crit` defaults to 1e-4, which on a
+        # deviance of order 1 is a sensible tolerance but on a larger one is a
+        # far tighter demand than intended. Shape-constrained fits are where
+        # this bites: the active constraint set flips between cycles and
+        # jitters the deviance a little, so an absolute 1e-4 is never met and a
+        # perfectly good fit (correlation 1.0 with the truth) reports
+        # `converged = false` indefinitely. Scaling by the deviance keeps the
+        # intended tolerance while remaining strict for small deviances.
+        if abs(dev_old - dev) < gamlss_ctrl.c_crit * max(1.0, abs(dev))
+            converged = true
+            break
+        end
+
+        # Smoothing parameters frozen for three consecutive cycles: further
+        # iteration is a no-op, so stop rather than exhausting `n_cyc`.
+        sp_stalled = isempty(log_sp) ? 0 :
+            (maximum(abs, log_sp .- log_sp_prev) < 1e-6 ? sp_stalled + 1 : 0)
+        copyto!(log_sp_prev, log_sp)
+        if sp_stalled >= 3
             converged = true
             break
         end

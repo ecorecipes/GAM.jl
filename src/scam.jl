@@ -6,6 +6,24 @@
 # to ensure positivity, with chain-rule corrections in the gradient/Hessian.
 # Matches R scam's default (not.exp=FALSE).
 
+"""
+Smoothing-parameter search range for shape-constrained (SCAM) fits, in log
+units.
+
+Deliberately narrower than the global `LOG_SP_BOUND` of 30. That wider
+bound exists so the SHRINKAGE bases (`:ts`, `:cs`) can penalise their null
+space hard enough to drop a term entirely, which needs log-lambda around 22.6.
+Shape-constrained bases have no null-space penalty and no such requirement, and
+SCAM selects by a coarse grid scan followed by golden-section refinement on a
+GCV surface that is often multimodal for constrained fits: widening the search
+made the bracketing land on a WORSE local minimum (GCV 0.10114 against mgcv's
+0.10080, where GAM.jl had previously matched or beaten it).
+
+So the range is a property of the search, not of the representable
+smoothing parameters, and the two are kept separate.
+"""
+const SCAM_LOG_SP_BOUND = 15.0
+
 # ============================================================================
 # Softplus (notExp) and derivatives — alternative positivity transform
 # ============================================================================
@@ -17,6 +35,7 @@ Softplus function: `(1/b) * log(1 + exp(b*x))`.
 Reverts to identity for `b*x > threshold` for numerical stability.
 Alternative to `exp()` for positivity constraints (R's `not.exp=TRUE` mode).
 """
+
 function softplus(x::Real; b::Float64 = 1.0, threshold::Float64 = 20.0)
     bx = b * x
     return bx < threshold ? log1p(exp(bx)) / b : x
@@ -741,7 +760,8 @@ function scam_outer_iteration(
                 if a > 0 && bSb > eps() * max(sum(abs2, beta_block), eps())
                     r = scale_est * a / bSb
                     log_sp_new[sp_idx] = clamp(
-                        log_sp[sp_idx] + log(max(r, 1e-15)), -LOG_SP_BOUND, LOG_SP_BOUND)
+                        log_sp[sp_idx] + log(max(r, 1e-15)),
+                        -SCAM_LOG_SP_BOUND, SCAM_LOG_SP_BOUND)
                 end
 
                 max_change = max(max_change,
@@ -840,7 +860,14 @@ function _scam_criterion_outer(
 
     invphi = (sqrt(5.0) - 1.0) / 2.0
     n_cycles = 0
-    grid = collect(range(-LOG_SP_BOUND, LOG_SP_BOUND; length = 13))
+    # Fixed STEP, not fixed count: this is a coarse global scan that brackets
+    # the optimum for the golden-section refinement below, so its usefulness
+    # depends on resolution. Tying `length` to `LOG_SP_BOUND` silently halved
+    # that resolution (2.5 -> 5.0 log units) when the bound was widened from 15
+    # to 30 for the shrinkage bases, coarsening every SCAM fit for a reason
+    # that has nothing to do with SCAM.
+    const_step = 2.5
+    grid = collect(-SCAM_LOG_SP_BOUND:const_step:SCAM_LOG_SP_BOUND)
     for cycle in 1:min(control.outer_maxit, 6)
         n_cycles = cycle
         max_change = 0.0
