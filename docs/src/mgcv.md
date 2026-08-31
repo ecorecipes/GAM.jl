@@ -128,6 +128,28 @@ there. The omitted stable reparameterization was measured not to degrade the
 surface: disagreement with mgcv does not grow with the smoothing-parameter
 ratio out to `e^24`, and the criterion shows no kinking.
 
+GAM.jl also offers `gam_control(sp_optimizer = :newton)`, a Newton iteration
+using an automatic-differentiation Hessian. **EFS remains the default, on
+measured grounds rather than inertia.** Across 42 model-by-method
+combinations the two agree to within `4e-5` of criterion almost everywhere;
+Newton is materially better only on the shrinkage bases (`:ts`, `:cs`), by
+`3.3e-2`, which is where theory predicts it — those need very large log-λ to
+drop a term, and the EFS fixed point stops short. EFS is never materially
+better.
+
+The reason Newton is not the default is structural. GAM.jl's Newton step
+differentiates the criterion by autodiff, and the penalty reparameterization
+(`_stable_penalty_factor`, a port of mgcv's `gam.reparam`) is `Float64`-only,
+so the Hessian cannot be taken through a multi-penalty block. That covers
+`te`/`ti`/`t2`, `bs=:ad`, `bs=:fs` and `select = true`. mgcv does not hit this
+because it uses **analytic** REML derivatives rather than autodiff. Requesting
+`:newton` on such a model therefore falls back to EFS with a warning rather
+than failing, so the option is safe to set globally — but a Newton default
+would silently optimize `s(x)` by Newton and `te(x, z)` by EFS inside one
+model, which is worse than a consistent default for a gain confined to two
+basis types. Making the reparameterization AD-compatible, or porting mgcv's
+analytic derivatives, is the prerequisite for revisiting this.
+
 ### Other algorithmic differences (measured)
 
 | Component | mgcv / R package | GAM.jl | Measured consequence |

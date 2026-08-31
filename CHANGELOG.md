@@ -232,6 +232,27 @@ Added:
 
 Fixed:
 
+- **`sp_optimizer = :newton` no longer throws on a third of model classes.**
+  It errored with a `MethodError` on `te`/`ti`/`t2`, `bs=:ad`, `bs=:fs` and
+  `select = true` — 14 of 42 model-by-method combinations — because the Newton
+  step takes an autodiff Hessian and the penalty reparameterization
+  (`_stable_penalty_factor`, mgcv's `gam.reparam`) is `Float64`-only, so
+  ForwardDiff cannot pass through a multi-penalty block. It now attempts Newton
+  and degrades to the EFS step on any failure, warning once and naming the
+  affected constructions. The option had **no test coverage at all**, which is
+  why this went unnoticed; `test/test_sp_optimizer.jl` (32 assertions) now pins
+  the default, EFS/Newton agreement, the fallback on every previously-throwing
+  class, and the shrinkage-basis case, and was verified to fail without the fix.
+  The default is unchanged, so no existing fit moves.
+
+  **EFS stays the default, on measured grounds.** Across those 42 combinations
+  the two agree to within `4e-5` of criterion almost everywhere; Newton is
+  materially better only on the shrinkage bases (`3.3e-2`), and EFS is never
+  materially better. A Newton default would optimize `s(x)` by Newton and
+  `te(x, z)` by EFS within one model — worse than a consistent default for a
+  gain confined to two basis types. Making the reparameterization AD-compatible
+  or porting mgcv's analytic REML derivatives is the prerequisite for
+  revisiting it, and is recorded as the actual blocker.
 - **Three defects found by the first exhaustive suite run.** Segmented runs
   (forced by this machine stopping any whole-suite attempt) had left gaps, so
   the suite was verified file-by-file against an enumerated, diff-checked

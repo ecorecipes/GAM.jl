@@ -441,6 +441,25 @@ Construct a [`GamControl`](@ref) with the given parameters.
   exact REML optimum. More expensive per step but may converge in fewer
   iterations for difficult problems.
 
+  **`:newton` applies to single-penalty smooths only.** Multi-penalty blocks —
+  `te`/`ti`/`t2` tensors, `bs=:ad`, `bs=:fs`, and every smooth under
+  `select=true` — go through a stable penalty reparameterization
+  (`_stable_penalty_factor`, a port of mgcv's `gam.reparam`) that is
+  `Float64`-only, so the ForwardDiff Hessian cannot be taken through it. Those
+  models silently *fall back to `:efs`*, warning once; the fit is still
+  correct, it is simply an EFS fit. mgcv avoids this by computing the REML
+  derivatives analytically rather than by autodiff. Because that fallback would
+  mean a single model optimizing `s(x)` by Newton and `te(x,z)` by EFS, `:efs`
+  remains the default.
+
+  Where Newton does run it reaches an equal or slightly better criterion than
+  EFS. The gap is negligible (≤4e-5) on ordinary bases but material on the
+  **shrinkage bases**, which need very large log-λ to drop a term and are
+  exactly where the EFS fixed point stops short: on a `bs=:ts` fit the REML
+  score is 126.2084 (Newton) against 126.2417 (EFS). Prefer `:newton` there.
+  Only REML and ML are affected — GCV, UBRE and NCV are optimized directly and
+  ignore `sp_optimizer` entirely.
+
 Note: `gamma` inflates the effective degrees of freedom in the GCV/UBRE
 criteria and enters the EFS step-acceptance test; unlike mgcv it does not
 reshape the EFS update itself. Under the EFS optimizer, `method=:ML` differs
