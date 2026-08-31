@@ -157,6 +157,26 @@ listed under Fixed below.
 
 Added:
 
+- **`bs=:sz` accepts a configurable marginal basis**, matching mgcv, which
+  takes it through `xt` (`smooth.construct.sz.smooth.spec`). GAM.jl's `xt` is
+  always a `Dict`, so mgcv's list form is the one that maps:
+  `xt = Dict(:bs => :cr)`; other `xt` keys are forwarded to the base as mgcv
+  does. Supported: `:tp`, `:ts`, `:cr`, `:cs`, `:cc`, `:ps`, `:cps`, `:bs`,
+  `:ds` — the singly-penalized bases. Multiply-penalized ones (`:ad`, `:fs`,
+  tensors) are rejected with mgcv's own "wrong basis in xt" wording, as mgcv
+  rejects them too; `:gp` is rejected for a different reason (it is singly
+  penalized but has no unconstrained construction path yet). Parity with mgcv
+  at free `sp`: `:cr` edf 8.2761 vs 8.2770, `:ps` 7.9197 vs 7.9199, `:cc`
+  6.7406 vs 6.7386, deviances agreeing to ~1e-3. **The default is unchanged**,
+  asserted three ways and verified to discriminate — moving the default to
+  `:cr` produces six failures.
+
+  This needed an `absorb_cons = true` keyword on the `cr` and P-spline
+  constructors: `sz` needs the RAW marginal so per-level constants stay in the
+  span (in mgcv, identifiability constraints are `smoothCon`'s job, not
+  `smooth.construct`'s), and only TPRS and Duchon previously exposed an
+  unconstrained path. The keyword is strictly additive and default-preserving,
+  so every existing caller is unaffected.
 - **Duchon splines (`bs=:ds`) are now real.** Previously `:ds` warned once per
   session and fitted an ordinary thin-plate spline — the only registered basis
   that did not do what its name said, and the reason the README carried a
@@ -232,6 +252,35 @@ Added:
 
 Fixed:
 
+- **NCV now selects smoothing parameters with analytic derivatives**, closing
+  the divergence recorded when it landed. `ncv_score_grad` ports the `deriv > 0`
+  branch of mgcv's `Rncv` (`ncv.c:311-320`, `368-397`, `389`), reconstructing
+  `dbeta/drho` and `dw2/drho` from GAM.jl's own variance helpers where mgcv
+  passes them in from `gam.fit3.r`, and reusing the Woodbury identity against a
+  single Cholesky rather than mgcv's preconditioned CG. Selection moved from a
+  derivative-free simplex to BFGS: **8.96× faster** (1.210 s to 0.135 s), and
+  closer to mgcv on every axis — `log_sp` error 9.99e-4 to 7.7e-5, edf error
+  1.54e-3 to 1.2e-4, and the criterion now agrees with mgcv at all 8 printed
+  digits. The free-fit `sp` gap noted in the file header falls from ~0.03% to
+  ~0.0018%. Still ~4× slower than mgcv's compiled C.
+  The gradient is checked against central finite differences across Gaussian,
+  Poisson and Binomial, single and multiple smoothing parameters, and interval
+  neighbourhoods (worst relative error 1.7e-8), and against ForwardDiff of an
+  INDEPENDENT reimplementation that shares no code with the analytic path — and
+  asserts the values agree too, since two consistent mistakes would otherwise
+  produce matching gradients. No Hessian: BFGS already removes ~9× of the
+  iterations, so a full Newton step was judged not worth the validation burden.
+- **`bam` performance: the default BLAS thread count can be over 5× slower
+  than the best setting.** `bam`'s chunks are tall and thin, so BLAS threads
+  beyond about four get too little work to cover synchronisation. Measured idle,
+  `n = 100,000` Poisson with four `s(k=20)` smooths: 2.18 s at 1 thread, 1.75 s
+  at 4, and **9.41 s at 8** (the default here). Now documented in `bam.md` and
+  the `bam_control` docstring with the `BLAS.set_num_threads(4)` remedy. GAM.jl
+  does not set this itself — it is global process state and a library should not
+  silently change it. Julia-level threading of the accumulation was implemented
+  and measured, then rejected: serial at 4 BLAS threads is fastest, Julia threads
+  on top made it ~20% slower, and serial-vs-threaded results differed by 2.2e-13,
+  uncomfortably close to this package's ~1e-12 mgcv parity tolerances.
 - **`sp_optimizer = :newton` no longer throws on a third of model classes.**
   It errored with a `MethodError` on `te`/`ti`/`t2`, `bs=:ad`, `bs=:fs` and
   `select = true` — 14 of 42 model-by-method combinations — because the Newton

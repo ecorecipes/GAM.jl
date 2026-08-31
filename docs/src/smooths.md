@@ -415,10 +415,30 @@ value, ensuring identifiability with a population-level smooth.
 and want to ensure the deviations are identifiable (sum to zero). Equivalent
 to R's `s(x, group, bs="sz")`.
 
+Each level's deviation gets **its own smoothing parameter**, as in mgcv, so a
+weakly-deviating group can be shrunk hard while a strongly-deviating one is
+left alone.
+
+The marginal basis for the continuous covariate is configurable through `xt`,
+matching mgcv (which spells it `xt = list(bs = "cr")`):
+
 ```@example smooths
-s(:x, :group, bs=:sz, k=10);
+s(:x, :group, bs=:sz, k=10);                       # thin-plate marginal (default)
+s(:x, :group, bs=:sz, k=10, xt=Dict(:bs => :cr));  # cubic-regression marginal
 nothing
 ```
+
+Any singly-penalized basis is allowed — `:tp`, `:ts`, `:cr`, `:cs`, `:cc`,
+`:ps`, `:cps`, `:bs`, `:ds`. Multiply-penalized bases (`:ad`, `:fs`, tensors)
+are rejected, as they are in mgcv.
+
+!!! note "Compare edf and deviance, not smoothing parameters"
+    `:sz` fits agree closely with mgcv — deviation edf 10.244 against 10.2412
+    and deviance 158.456 against 158.457 on a three-region seasonal model — but
+    the smoothing parameters are on different scales, because GAM.jl absorbs an
+    orthonormal level contrast at construction where mgcv applies its own
+    non-orthonormal contrast afterwards. The difference is not a constant
+    factor, so do not transfer or compare `:sz` `sp` values between packages.
 
 ### Random Effects (`bs=:re`)
 

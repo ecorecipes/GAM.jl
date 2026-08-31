@@ -100,7 +100,8 @@ so `m = 2` gives a cubic spline with a second-order difference penalty.
 mgcv's `bs="ps"` accepts a two-element `m` to decouple them; that is not
 currently supported here.
 """
-function _smooth_construct(::PSpline, spec::SmoothSpec, data, user_knots)
+function _smooth_construct(::PSpline, spec::SmoothSpec, data, user_knots;
+    absorb_cons::Bool = true)
     length(spec.term_vars) == 1 ||
         throw(ArgumentError("P-splines only support 1d smooths"))
     var = spec.term_vars[1]
@@ -128,6 +129,18 @@ function _smooth_construct(::PSpline, spec::SmoothSpec, data, user_knots)
     null_dim = m_order  # polynomials of degree < m_order are in null space
     pen_rank = actual_k - null_dim
 
+    # `absorb_cons = false` returns the RAW basis, as mgcv's `smooth.construct`
+    # does before `smoothCon` applies identifiability constraints. Used only by
+    # `bs=:sz`, whose marginal must keep per-level constants in its span.
+    if !absorb_cons
+        return ConstructedSmooth(
+            spec, X, penalties, knot_vec, null_dim, pen_rank,
+            nothing, nothing, 0, 0,
+            nothing, nothing, nothing,
+            Int[],
+        )
+    end
+
     # Absorb constraints
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)
 
@@ -141,7 +154,8 @@ function _smooth_construct(::PSpline, spec::SmoothSpec, data, user_knots)
     )
 end
 
-function _smooth_construct(::BSplineBasis, spec::SmoothSpec, data, user_knots)
+function _smooth_construct(::BSplineBasis, spec::SmoothSpec, data, user_knots;
+    absorb_cons::Bool = true)
     # B-spline basis with integrated squared derivative penalty
     length(spec.term_vars) == 1 ||
         throw(ArgumentError("B-splines only support 1d smooths"))
@@ -165,6 +179,16 @@ function _smooth_construct(::BSplineBasis, spec::SmoothSpec, data, user_knots)
 
     null_dim = m_order
     pen_rank = actual_k - null_dim
+
+    # Raw basis for `bs=:sz` marginals; see the note in the PSpline path.
+    if !absorb_cons
+        return ConstructedSmooth(
+            spec, X, penalties, knot_vec, null_dim, pen_rank,
+            nothing, nothing, 0, 0,
+            nothing, nothing, nothing,
+            Int[],
+        )
+    end
 
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)
 
@@ -328,7 +352,8 @@ function _cyclic_diff_penalty(k::Int, d::Int)
     return D' * D
 end
 
-function _smooth_construct(::CyclicPSpline, spec::SmoothSpec, data, user_knots)
+function _smooth_construct(::CyclicPSpline, spec::SmoothSpec, data, user_knots;
+    absorb_cons::Bool = true)
     length(spec.term_vars) == 1 ||
         throw(ArgumentError("Cyclic P-splines only support 1d smooths"))
     var = spec.term_vars[1]
@@ -380,6 +405,16 @@ function _smooth_construct(::CyclicPSpline, spec::SmoothSpec, data, user_knots)
     # For cyclic d-th order differences, only constants are in the null space
     null_dim = 1
     pen_rank = ndx - null_dim
+
+    # Raw basis for `bs=:sz` marginals; see the note in the PSpline path.
+    if !absorb_cons
+        return ConstructedSmooth(
+            spec, X, penalties, knot_vec, null_dim, pen_rank,
+            nothing, nothing, 0, 0,
+            nothing, nothing, nothing,
+            Int[],
+        )
+    end
 
     # Absorb constraints
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)

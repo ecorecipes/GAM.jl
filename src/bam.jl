@@ -94,10 +94,43 @@ end
 
 Construct a [`BamControl`](@ref) with the given parameters.
 
-The former `discrete`, `max_unique`, and `nthreads` keywords are deprecated
-and have no effect here. Discretization is now a keyword on [`bam`](@ref)
-itself (`bam(...; discrete=true)`), matching mgcv; threading the accumulation
-is still not implemented. Passing them warns.
+The former `discrete`, `max_unique` and `nthreads` keywords are deprecated and
+have no effect. Discretization is now a keyword on [`bam`](@ref) itself
+(`bam(...; discrete=true)`), matching mgcv. Passing them warns.
+
+## Why there is no `nthreads`, and what to set instead
+
+`bam` accumulates `X'WX` in chunks, which looks like the obvious thing to
+thread — but the accumulation is *already* parallel: each chunk's `syrk` is a
+BLAS call, and BLAS threads it. Adding Julia threads on top requires pinning
+BLAS to one thread inside the parallel region, and measurement says that is a
+worse way to spend the cores. On a Poisson fit with `n = 1e5` and four
+`s(k=20)` smooths:
+
+| ambient BLAS threads | serial | 2 Julia threads | 4 Julia threads |
+|---|---|---|---|
+| 8 (the Julia default here) | 10.55 s | 5.50 s | 4.77 s |
+| 4 | **1.70 s** | 2.30 s | 2.05 s |
+
+Threading only appears to help in the top row, and only because it sidesteps
+the real problem. **The dominant effect is the BLAS thread count**, and more is
+emphatically not better: at the default of 8 the same fit takes 10.55 s against
+1.70 s at 4, because `bam`'s chunks are tall and thin (`chunk_size x p` with
+`p` in the tens) and give eight BLAS threads too little work each to cover the
+synchronisation. A prototype Julia-threaded accumulator was measured and
+discarded: at a sensible BLAS setting it was ~20% *slower* than serial, while
+costing ~26 MiB of per-thread chunk scratch and shifting results by ~2e-13.
+
+So if `bam` is slower than you expect, set the BLAS thread count rather than
+looking for a threading knob:
+
+```julia
+using LinearAlgebra
+BLAS.set_num_threads(4)     # not Sys.CPU_THREADS
+```
+
+The best value is machine- and shape-dependent; 4 was best here, and the wrong
+end of the range costs a factor of six.
 """
 function bam_control(;
     chunk_size::Int = 10000,
