@@ -79,9 +79,17 @@
     # conditioning. For `re factor` that design is numerically singular —
     # cond(X) = 2.2e15, since a 10-level random effect is perfectly confounded
     # with the intercept (its concurvity IS 1.0) — so the ONE-ULP difference
-    # between the dense and compact model matrices (2.2e-16) is amplified to
-    # 3.8e-3. That is condition-number arithmetic, not a discretisation error:
-    # the two matrices agree to 2.2e-16 and concurvity is deterministic.
+    # between the dense and compact model matrices (2.2e-16) is amplified
+    # without a usable bound. `ctol` is `nothing` there, meaning "do not
+    # assert cross-fit agreement", because no finite value is defensible:
+    # cond(X)*eps is ~0.48, and the same ulp amplifies to 3.8e-3 here,
+    # 1.0e-2 under `Pkg.test()`'s --check-bounds=yes, and 7.4e-2 on CI. A
+    # tolerance picked from one machine's 3.8e-3 is what turned CI red. Note
+    # the divergence is entirely in the *smooth's* concurvity (0.0598 vs
+    # 0.0635); the random effect reads exactly 1.0 in both fits, which is the
+    # stable fact worth asserting, and is what the branch below checks. The
+    # discretisation itself is sound: the model matrices agree to 2.2e-16 and
+    # ~40 other assertions in this case compare them at 1e-12.
     _dc_cfgs = [
         ("1-D",       _dcf([GAM.s(:x1; k = 8, bs = :cr)]),
                       1e-12, [:se, :pr, :dv], 1e-10),
@@ -91,7 +99,7 @@
         ("te",        _dcf([GAM.te(:x1, :x2; k = 4, bs = [:cr, :cr])]),
                       1e-7,  [:se, :pr, :dv], 1e-10),
         ("re factor", _dcf([GAM.s(:x1; k = 8, bs = :cr), GAM.s(:g; bs = :re)]),
-                      1e-12, Symbol[],        1e-2),
+                      1e-12, Symbol[],        nothing),
         ("re slope",  _dcf([GAM.s(:x1; k = 8, bs = :cr),
                             GAM.s(:sl, :g; bs = :re)]),
                       1e-12, [:pr, :dv],      1e-10),
@@ -175,12 +183,24 @@
             @test _dcrel(leverage(mq), leverage(md)) < tol
             @test _dcrel(cooksdistance(mq), cooksdistance(md)) < tol
             let cq = concurvity(mq; full = true), cd = concurvity(md; full = true)
-                @test maximum(abs, cq.worst .- cd.worst) < ctol
-                @test maximum(abs, cq.observed .- cd.observed) < ctol
-                @test maximum(abs, cq.estimate .- cd.estimate) < ctol
+                if ctol === nothing
+                    # Singular design: cross-fit agreement is not assertable
+                    # at any useful tolerance (see the `_dc_cfgs` note). Assert
+                    # the part that IS well defined and IS a representation
+                    # check — both fits must still see the random effect as
+                    # fully confounded with the intercept.
+                    @test cq.worst[2] ≈ 1.0 atol = 1e-10
+                    @test cd.worst[2] ≈ 1.0 atol = 1e-10
+                else
+                    @test maximum(abs, cq.worst .- cd.worst) < ctol
+                    @test maximum(abs, cq.observed .- cd.observed) < ctol
+                    @test maximum(abs, cq.estimate .- cd.estimate) < ctol
+                end
             end
-            @test maximum(abs, concurvity(mq; full = false) .-
-                concurvity(md; full = false)) < ctol
+            if ctol !== nothing
+                @test maximum(abs, concurvity(mq; full = false) .-
+                    concurvity(md; full = false)) < ctol
+            end
 
             # k_check seeds by default, so it is reproducible across fits.
             let kq = k_check(mq), kd = k_check(md)
