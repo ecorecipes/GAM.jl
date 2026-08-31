@@ -143,7 +143,7 @@ function _smooth_construct(::CyclicCubic, spec::SmoothSpec, data, user_knots)
 end
 
 function _construct_cr(spec::SmoothSpec, data, user_knots;
-    shrink::Bool = false, cyclic::Bool = false)
+    shrink::Bool = false, cyclic::Bool = false, absorb_cons::Bool = true)
     length(spec.term_vars) == 1 ||
         throw(ArgumentError("Cubic splines only support 1d smooths"))
     var = spec.term_vars[1]
@@ -236,6 +236,20 @@ function _construct_cr(spec::SmoothSpec, data, user_knots;
     # (k for the full-rank shrinkage variant).
     n_col = cyclic ? k - 1 : k
     pen_rank = n_col - null_dim
+
+    # `absorb_cons = false` returns the RAW basis, matching what mgcv's
+    # `smooth.construct` hands back before `smoothCon` applies identifiability
+    # constraints. Only `bs=:sz` uses it (as a marginal, where the per-level
+    # constants must stay in the span); the default leaves this path exactly
+    # as it was.
+    if !absorb_cons
+        return ConstructedSmooth(
+            spec, X, penalties, knots, null_dim, pen_rank,
+            nothing, nothing, 0, 0,
+            nothing, nothing, nothing,
+            Int[],
+        )
+    end
 
     # Absorb identifiability constraints
     X_cons, S_cons, C, _ = absorb_constraints!(X, penalties)

@@ -929,8 +929,10 @@ include("test_multiparameter.jl")
 include("test_vignette_bugs.jl")
 include("test_docstrings.jl")
 include("test_ncv.jl")
+include("test_ncv_derivatives.jl")
 include("test_gp_multid.jl")
 include("test_sz_penalties.jl")
+include("test_sz_base.jl")
 include("test_sp_optimizer.jl")
 include("test_duchon.jl")
 
@@ -955,6 +957,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     if _rcall_available
         @eval include("test_rcall.jl")
         @eval include("test_sz_rcall.jl")
+        @eval include("test_sz_base_rcall.jl")
         @eval include("test_duchon_rcall.jl")
 
         # evgam R comparison tests — need evgam and evd packages

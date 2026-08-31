@@ -148,6 +148,39 @@ m_ctrl = bam(@formula(y ~ s(x, k=20, bs=:cr)), df; bam_ctrl=ctrl);
 nothing
 ```
 
+## Performance: set the BLAS thread count
+
+`bam` accumulates `X'WX` chunk by chunk, and each chunk's contribution is a
+BLAS rank-`k` update on a **tall, thin** matrix (`chunk_size × p`, with `p`
+typically in the tens). That shape gives each BLAS thread too little work to
+cover synchronisation, and beyond about four threads the overhead dominates
+badly. Measured on an idle 8-core machine, a Poisson fit with `n = 100,000`
+and four `s(k=20)` smooths:
+
+| BLAS threads | time |
+|---|---|
+| 1 | 2.18 s |
+| 2 | 1.90 s |
+| **4** | **1.75 s** |
+| 8 (the default here) | **9.41 s** |
+
+So the default can be **over 5× slower** than the best setting. If `bam` seems
+slow, this is the first thing to check:
+
+```julia
+using LinearAlgebra
+BLAS.set_num_threads(4)
+```
+
+GAM.jl deliberately does **not** set this for you: `BLAS.set_num_threads` is
+global process state, and a library silently changing it would affect every
+other computation in the session.
+
+Threading the accumulation at the Julia level was implemented and measured,
+then rejected: the fastest configuration is serial at four BLAS threads, and
+adding Julia threads on top made it ~20% slower while costing per-thread
+scratch memory. The accumulation is already parallel — through BLAS.
+
 ## Examples
 
 ### Basic Large Dataset

@@ -366,8 +366,39 @@ function _outer_iteration_criterion(X::Matrix{Float64}, y::Vector{Float64},
         return score
     end
 
-    _nelder_mead!(crit, clamp.(penalty.sp[free_idx], -12.0, 12.0);
-        maxit = 200 * n_sp, ftol = 1e-9)
+    # NCV supplies an analytic gradient (see `ncv_score_grad`), so it is
+    # optimized by BFGS rather than by the simplex. GCV/UBRE have no gradient
+    # here and stay derivative-free.
+    function crit_grad(log_sp_free)
+        lsp = copy(penalty.sp)
+        lsp[free_idx] .= clamp.(log_sp_free, -LOG_SP_BOUND, LOG_SP_BOUND)
+        total_penalty!(S_total, penalty, lsp, p)
+        result = if is_gaussian_identity
+            pirls_gaussian(X, y, S_total, XtWX_cached, Xty_cached;
+                weights = weights)
+        else
+            pirls(X, y, S_total, family, link;
+                weights = weights, offset = offset, start = prev_coef[],
+                control = control)
+        end
+        score, grad_all, _ = ncv_score_grad(X, y, result.coefficients,
+            result.linear_predictor, family, link, penalty, lsp, S_total,
+            weights, offset, nei_use; gamma = gamma)
+        if score < best_score[]
+            best_score[] = score
+            best_sp[] = copy(lsp)
+        end
+        prev_coef[] = result.coefficients
+        return (score, grad_all[free_idx])
+    end
+
+    if method == :NCV
+        _bfgs_sp!(crit_grad, clamp.(penalty.sp[free_idx], -12.0, 12.0);
+            maxit = 100, gtol = 1e-7)
+    else
+        _nelder_mead!(crit, clamp.(penalty.sp[free_idx], -12.0, 12.0);
+            maxit = 200 * n_sp, ftol = 1e-9)
+    end
 
     penalty.sp .= best_sp[]
     total_penalty!(S_total, penalty, penalty.sp, p)
@@ -925,4 +956,104 @@ function _newton_sp_update(log_sp::Vector{Float64},
 
     max_change = maximum(abs.(log_sp_new .- log_sp))
     return log_sp_new, max_change
+end
+
+
+"""
+    _bfgs_sp!(fg, x0; maxit = 100, gtol = 1e-7, ftol = 1e-10) -> (x, fval, ok)
+
+BFGS with backtracking line search, for smoothness-parameter criteria that
+supply an analytic gradient (currently `:NCV`).
+
+`fg(x)` returns `(value, gradient)`. Falls back gracefully: a non-finite value
+or gradient, or a line search that cannot find descent, stops the iteration and
+returns the best point seen rather than throwing — the caller then keeps
+whatever `sp` gave the lowest criterion, exactly as the derivative-free path
+does.
+
+This exists because NCV's criterion is expensive (a P-IRLS refit plus an
+`O(p²)` solve per fold per evaluation), so halving the number of evaluations
+is worth more here than the simplicity of a simplex method.
+"""
+function _bfgs_sp!(fg, x0::Vector{Float64};
+    maxit::Int = 100, gtol::Float64 = 1e-7, ftol::Float64 = 1e-10)
+
+    n = length(x0)
+    n == 0 && return (x0, first(fg(x0)), true)
+    x = copy(x0)
+    f, g = fg(x)
+    (isfinite(f) && all(isfinite, g)) || return (x, f, false)
+    Hinv = Matrix{Float64}(I, n, n)
+    best_x = copy(x)
+    best_f = f
+    ok = false
+
+    for _ in 1:maxit
+        if maximum(abs, g) < gtol
+            ok = true
+            break
+        end
+        pdir = -(Hinv * g)
+        # Guard against a bad inverse-Hessian estimate: fall back to steepest
+        # descent if the quasi-Newton direction is not a descent direction.
+        gp = dot(g, pdir)
+        if !(gp < 0) || !all(isfinite, pdir)
+            pdir = -g
+            gp = dot(g, pdir)
+            fill!(Hinv, 0.0)
+            for i in 1:n
+                Hinv[i, i] = 1.0
+            end
+        end
+        # Cap the step so a single iteration cannot leap across the whole
+        # smoothing-parameter range; log-sp moves of more than a few units are
+        # never productive and often land outside the fitted region.
+        nrm = sqrt(sum(abs2, pdir))
+        if nrm > 5.0
+            pdir .*= 5.0 / nrm
+            gp = dot(g, pdir)
+        end
+
+        step = 1.0
+        fnew = f
+        gnew = g
+        found = false
+        for _ in 1:25
+            xt = x .+ step .* pdir
+            ft, gt = fg(xt)
+            if isfinite(ft) && ft <= f + 1e-4 * step * gp && all(isfinite, gt)
+                fnew, gnew = ft, gt
+                x .= xt
+                found = true
+                break
+            end
+            step *= 0.5
+        end
+        found || break
+
+        s = step .* pdir
+        yv = gnew .- g
+        sy = dot(s, yv)
+        if sy > 1e-12
+            rho = 1.0 / sy
+            Hy = Hinv * yv
+            yHy = dot(yv, Hy)
+            for i in 1:n, j in 1:n
+                Hinv[i, j] += rho * ((1.0 + rho * yHy) * s[i] * s[j] -
+                                     (Hy[i] * s[j] + s[i] * Hy[j]))
+            end
+        end
+
+        df = abs(f - fnew)
+        f, g = fnew, gnew
+        if f < best_f
+            best_f = f
+            copyto!(best_x, x)
+        end
+        if df < ftol * max(abs(f), 1.0)
+            ok = true
+            break
+        end
+    end
+    return (best_x, best_f, ok)
 end

@@ -26,6 +26,62 @@ struct SZContrastPredictCache <: AbstractSmoothPredictCache
     Q_L::Matrix{Float64}
 end
 
+"""
+Marginal bases `bs=:sz` accepts, and the raw (unconstrained) constructor each
+one needs.
+
+mgcv's contract (`smooth.construct.sz.smooth.spec`, mgcv 1.9-4):
+
+    if (is.null(object\$xt)) object\$base.bs <- "tp"
+    else if (is.list(object\$xt)) {
+      if (is.null(object\$xt\$bs)) object\$base.bs <- "tp" else object\$base.bs <- object\$xt\$bs
+    } else { object\$base.bs <- object\$xt; object\$xt <- NULL }
+
+so `xt` is either a bare basis name or a list carrying `bs`, defaulting to
+`"tp"`. GAM.jl's `xt` is always a `Dict`, so the list form is the one that
+maps: `xt = Dict(:bs => :cr)`. **The default is `:tp` in both packages**, so
+this is an added option rather than a behaviour change.
+
+The marginal must be the RAW basis — mgcv's `smooth.construct` returns a basis
+before `smoothCon` applies identifiability constraints, and `sz` needs the
+per-level constants to stay in the span so each level's deviation can shift as
+well as bend. The sum-to-zero-across-levels constraint supplies identifiability
+instead.
+"""
+const _SZ_BASE_BASES = (:tp, :ts, :cr, :cs, :cc, :ps, :cps, :bs, :ds)
+
+"""
+    _sz_raw_marginal(base, mspec, data, user_knots) -> ConstructedSmooth
+
+Build the unconstrained marginal smooth for a `bs=:sz` term.
+"""
+function _sz_raw_marginal(base::Symbol, mspec::SmoothSpec, data, user_knots)
+    base === :tp && return _construct_tprs(mspec, data, user_knots;
+        shrink = false, absorb_cons = false)
+    base === :ts && return _construct_tprs(mspec, data, user_knots;
+        shrink = true, absorb_cons = false)
+    base === :cr && return _construct_cr(mspec, data, user_knots;
+        shrink = false, cyclic = false, absorb_cons = false)
+    base === :cs && return _construct_cr(mspec, data, user_knots;
+        shrink = true, cyclic = false, absorb_cons = false)
+    base === :cc && return _construct_cr(mspec, data, user_knots;
+        shrink = false, cyclic = true, absorb_cons = false)
+    base === :ps && return _smooth_construct(PSpline(), mspec, data, user_knots;
+        absorb_cons = false)
+    base === :bs && return _smooth_construct(BSplineBasis(), mspec, data, user_knots;
+        absorb_cons = false)
+    base === :cps && return _smooth_construct(CyclicPSpline(), mspec, data, user_knots;
+        absorb_cons = false)
+    base === :ds && return _construct_duchon(mspec, data, user_knots;
+        absorb_cons = false)
+    throw(ArgumentError(
+        "sz smooth: unsupported base basis xt[:bs] = :$base. Supported: " *
+        join((":" * String(b) for b in _SZ_BASE_BASES), ", ") *
+        ". A base must be singly penalized and expose an unconstrained " *
+        "construction; multiply-penalized bases (:ad, :fs, tensors) cannot be " *
+        "used, matching mgcv."))
+end
+
 function _smooth_construct(::ConstrainedFactorSmooth, spec::SmoothSpec, data, user_knots)
     length(spec.term_vars) >= 2 ||
         throw(ArgumentError("Constrained factor smooth (sz) requires at least 2 variables: " *
@@ -48,13 +104,29 @@ function _smooth_construct(::ConstrainedFactorSmooth, spec::SmoothSpec, data, us
     # per-level constants stay in the span, so each level's deviation smooth
     # can shift as well as bend. Identifiability comes from the
     # sum-over-levels constraint absorbed below.
+    #
+    # The marginal basis is `xt[:bs]`, defaulting to `:tp` exactly as mgcv
+    # does — see `_SZ_BASE_BASES` above for the ported contract.
+    base = get(spec.xt, :bs, :tp)
+    base isa Symbol || throw(ArgumentError(
+        "sz smooth: xt[:bs] must be a Symbol naming the marginal basis " *
+        "(e.g. :cr), got $(typeof(base))"))
+    base in _SZ_BASE_BASES || throw(ArgumentError(
+        "sz smooth: unsupported base basis xt[:bs] = :$base. Supported: " *
+        join((":" * String(b) for b in _SZ_BASE_BASES), ", ") * "."))
+
+    # Forward any remaining `xt` to the base, as mgcv does in its list form,
+    # so base-specific options still reach it. `:bs` and `:factor` are this
+    # smooth's own keys and are dropped.
+    marginal_xt = Dict{Symbol, Any}(
+        k => v for (k, v) in spec.xt if k !== :bs && k !== :factor)
+
     marginal_spec = SmoothSpec(
-        cont_vars, ThinPlateSpline(), spec.k,
+        cont_vars, BASIS_TYPES[base], spec.k,
         nothing, spec.id, spec.sp, spec.fx, spec.m,
-        "s($(join(cont_vars, ",")),bs=tp)",
+        "s($(join(cont_vars, ",")),bs=$(base))", marginal_xt,
     )
-    marginal_sm = _construct_tprs(marginal_spec, data, user_knots;
-        absorb_cons = false)
+    marginal_sm = _sz_raw_marginal(base, marginal_spec, data, user_knots)
     X_marginal = marginal_sm.X    # n × k_eff (raw)
     k_eff = size(X_marginal, 2)
 
@@ -82,14 +154,19 @@ function _smooth_construct(::ConstrainedFactorSmooth, spec::SmoothSpec, data, us
 
     # Penalties: (Q_L ⊗ I)' (I_L ⊗ S_j) (Q_L ⊗ I) = (Q_L'Q_L) ⊗ S_j = I_{L-1} ⊗ S_j
     #
-    # mgcv requires the base smooth to be singly penalized (`smooth.r:2240`:
-    # `if (length(object$S)>1) stop("\"sz\" smooth cannot use a multiply
-    # penalized basis")`). The marginal here is always TPRS, so this holds by
-    # construction; assert it rather than silently producing L*n_marg
-    # penalties if the marginal ever becomes configurable.
+    # mgcv requires the base smooth to be singly penalized:
+    #
+    #   if (length(object$S) > 1)
+    #     stop("\"sz\" smooth cannot use a multiply penalized basis (wrong basis in xt)")
+    #
+    # Now that the base IS configurable this guard is load-bearing rather than
+    # a formality: a multiply-penalized marginal would silently produce
+    # L × n_marginal penalties instead of one per level. Every member of
+    # `_SZ_BASE_BASES` is singly penalized, so this fires only if that list and
+    # a basis's penalty count ever drift apart.
     length(marginal_sm.S) == 1 || throw(ArgumentError(
-        "sz smooth cannot use a multiply penalized base basis (got " *
-        "$(length(marginal_sm.S)) marginal penalties)"))
+        "sz smooth cannot use a multiply penalized base basis (wrong basis in " *
+        "xt[:bs] = :$base; it yields $(length(marginal_sm.S)) marginal penalties)"))
     S_marg = marginal_sm.S[1]
 
     # ONE PENALTY PER FACTOR LEVEL, matching mgcv (`smooth.r:2281-2286`):
