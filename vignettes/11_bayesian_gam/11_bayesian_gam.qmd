@@ -38,6 +38,12 @@ using StatsAPI: coef, coeftable, confint, fitted, nobs
 using Plots
 using Printf
 using LinearAlgebra: I
+using Random
+
+# The Turing extension samples with the global RNG, so seed the document: every
+# posterior summary below is then reproducible from one render to the next.
+# Without this the whole page redraws slightly differently every time.
+Random.seed!(20260831)
 ```
 
 ## Example 1: Gaussian GAM

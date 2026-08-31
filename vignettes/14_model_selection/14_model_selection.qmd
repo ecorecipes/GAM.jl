@@ -173,7 +173,7 @@ reference is a **simulated envelope** by default (`method=:simulate`, matching
 gratia and mgcv's `qq.gam`); pass `method=:normal` for normal theory.
 
 ```{julia}
-ap = appraise(m; seed = 11)   # QQ reference quantiles are simulated; seed so the figure is reproducible
+ap = appraise(m)
 @printf("residual sd = %.3f,  fitted range = [%.2f, %.2f]\n",
         std(ap.residuals_deviance), minimum(ap.fitted), maximum(ap.fitted))
 ```

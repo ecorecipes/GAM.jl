@@ -4,6 +4,11 @@ using GAM: @formula
 using DataFrames
 using Distributions
 using StableRNGs
+# CSV is imported here rather than at its first guarded use further down: that
+# guard sits below the include of test_sz_penalties.jl, which reads a vignette
+# CSV at load time and errored with `UndefVarError: CSV` in a single-process
+# run (CI, and any plain `Pkg.test()`).
+using CSV
 using LinearAlgebra
 using Statistics
 using StatsAPI: fitted, nobs, deviance, dof, dof_residual, loglikelihood, aic, bic,
