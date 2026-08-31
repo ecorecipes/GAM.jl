@@ -117,8 +117,17 @@ using Statistics, LinearAlgebra
         # 12.699804013947), which is the expected trade: shrinking onto the
         # exact linear null space costs a hair of deviance and buys the right
         # model. Monotonicity still holds (asserted below).
-        @test msa.deviance_val ≈ 12.699804013947 rtol = 1e-7
-        @test msa.edf_total ≈ 2.0 atol = 1e-6
+        # `sp` runs to the bound here (log sp 24.53), so the optimiser stops
+        # on an essentially flat surface and its landing point moves with the
+        # floating-point path: deviance is 1.2e-5 relative away locally and
+        # 8.3e-5 on CI. The deviance pin is therefore a COARSE anchor only —
+        # it cannot separate the pre-fix fit from the post-fix one, which
+        # differ by just 9.3e-6 relative. `edf` is the assertion that
+        # discriminates: |edf - 2| is 4.1e-4 pre-fix against 1.2e-6 locally
+        # and 1.1e-5 on CI, so an atol of 1e-4 passes the fixed fit on either
+        # machine and still fails the bug it was written to catch.
+        @test msa.deviance_val ≈ 12.699804013947 rtol = 1e-3
+        @test msa.edf_total ≈ 2.0 atol = 1e-4
         # The constrained solution must satisfy its shape constraint
         @test all(diff(fitted(msa)) .>= -1e-8)
     end

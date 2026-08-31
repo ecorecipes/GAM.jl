@@ -287,7 +287,14 @@
 
             # Knots are elementwise identical, not merely close.
             @test full.knots == red.knots
-            @test full.predict_cache.shift == red.predict_cache.shift
+            # `shift` is a mean over a different number of rows in each path,
+            # so it is equal only up to summation order: measured 3 ulp apart
+            # (0.5003560746332429 vs ...32), identically on macOS and on CI, so
+            # this is deterministic over-strictness rather than flakiness. An
+            # `==` here failed under `Pkg.test()`'s --check-bounds=yes, which
+            # changes the reduction order. 1e-12 is still ~4000x tighter than
+            # any difference that could matter downstream.
+            @test full.predict_cache.shift ≈ red.predict_cache.shift rtol = 1e-12
 
             # The reduced basis, row-selected back to the full data, is the
             # full basis. The residual ~1e-12 is the Nystrom-vs-data-as-knots
