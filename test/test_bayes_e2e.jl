@@ -302,9 +302,15 @@ using Statistics: mean, std
         y = y_true .+ 0.3 .* randn(n)
         df = DataFrame(y = y, x = x)
 
+        # `Random.seed!` above is NOT enough: with nchains > 1 the chains are
+        # sampled on threads and their RNGs are not derived from the global
+        # one, so R-hat/ESS varied run to run. This testset failed on Windows
+        # at 4bc1de4 and passed at 2449bfa with no code change between them.
+        # `seed` passes an explicit rng down to AbstractMCMC, which derives
+        # each chain's seed from it.
         m = gam(@formulak(y ~ s(x, k = 10)), df;
             priors = PriorSpec(sds = Exponential(1.0)),
-            nsamples = 1000, nchains = 2)
+            nsamples = 1000, nchains = 2, seed = 20260901)
 
         @test m isa BayesGamModel
 
@@ -318,6 +324,25 @@ using Statistics: mean, std
 
         # ESS > 100 for all parameters (sufficient effective samples)
         @test all(ess_vals .> 100)
+    end
+
+    @testset "Seeded sampling is reproducible under threading" begin
+        Random.seed!(7)
+        n = 120
+        x = sort(rand(n))
+        df = DataFrame(y = sin.(2π .* x) .+ 0.3 .* randn(n), x = x)
+        f(sd) = gam(@formulak(y ~ s(x, k = 8)), df;
+            priors = PriorSpec(sds = Exponential(1.0)),
+            nsamples = 200, nchains = 2, seed = sd)
+        v(m) = vec(Array(m.chains))
+        # Same seed reproduces exactly -- this is what `Random.seed!` alone
+        # cannot do once nchains > 1 puts the chains on threads.
+        @test v(f(777)) == v(f(777))
+        # ... the seed is actually used, not merely accepted ...
+        @test v(f(777)) != v(f(778))
+        # ... and the unseeded default still draws fresh values, because MCMC
+        # draws are randomness the caller asked for.
+        @test v(f(nothing)) != v(f(nothing))
     end
 
     @testset "Bayesian performance" begin

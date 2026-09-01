@@ -800,7 +800,8 @@ function gamlss(formulas, data, family::UnivariateDistribution;
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
-    nchains::Int = 4)
+    nchains::Int = 4,
+    seed::Union{Integer, Nothing} = nothing)
 
     _validate_data_lengths(data)
     _validate_gamlss_family(family)
@@ -816,7 +817,8 @@ function gamlss(formulas, data, family::UnivariateDistribution;
         offset === nothing || throw(ArgumentError(
             "offsets are not supported for Bayesian gamlss fits"))
         return _fit_gamlss_bayes(formulas, data, df, priors;
-            sampler = sampler, nsamples = nsamples, nchains = nchains)
+            sampler = sampler, nsamples = nsamples, nchains = nchains,
+            seed = seed)
     end
     return gamlss(formulas, data, df; method = method, control = control,
                   gamlss_ctrl = gamlss_ctrl, sp = sp, trace = trace,
@@ -833,7 +835,8 @@ function gamlss(formulas, data, family::MultiParameterFamily;
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
-    nchains::Int = 4)
+    nchains::Int = 4,
+    seed::Union{Integer, Nothing} = nothing)
 
     _validate_data_lengths(data)
     _validate_gamlss_formulas(formulas, family)
@@ -842,7 +845,8 @@ function gamlss(formulas, data, family::MultiParameterFamily;
         offset === nothing || throw(ArgumentError(
             "offsets are not supported for Bayesian gamlss fits"))
         return _fit_gamlss_bayes(formulas, data, family, priors;
-            sampler = sampler, nsamples = nsamples, nchains = nchains)
+            sampler = sampler, nsamples = nsamples, nchains = nchains,
+            seed = seed)
     end
 
     ctrl = MPFitControl(control.inner_maxit, control.inner_tol,
