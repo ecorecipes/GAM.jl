@@ -91,3 +91,10 @@ functions — `posterior_samples`, `fitted_samples`, `smooth_samples`,
 `predicted_samples` — stay unseeded, because a fixed default would silently
 break any Monte Carlo workflow that calls one twice. `test/test_gratia.jl`
 pins both halves of that split; do not "fix" one half without the other.
+
+MCMC follows the same rule: `gam`/`gamlss`/`scam`/`gamm` with `priors=` take a
+`seed`, defaulting to unseeded. Note `Random.seed!` is **not** sufficient there
+— with `nchains > 1` the chains sample on threads and AbstractMCMC does not
+derive their RNGs from the global one, so only passing `seed` is reproducible.
+Verify threaded reproducibility with `JULIA_NUM_THREADS=2`; a single-threaded
+run cannot see the difference.
