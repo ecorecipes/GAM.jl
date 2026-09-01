@@ -153,6 +153,21 @@ _inner_penalty(::TransExpSmooth, na::Int) = Matrix{Float64}(I, na, na)
 _inner_penalty(::TransMGKS, na::Int) = Matrix{Float64}(I, na, na)
 
 _default_inner_start(::TransLinear, na::Int) = fill(1.0 / sqrt(na), na)
+
+"""Alternative inner starts for restart `k` (k >= 1), used by `gam_nl`'s
+multi-start. Deterministic and platform-independent by construction: the whole
+point is that the fit must not depend on the floating-point path. `gam_nl`'s
+joint (index direction, smoothing parameter) problem is non-convex and its EFS
+step can halve until `max_change` falls under the convergence threshold, so a
+single start can stop early and still report `converged = true`. Observed on
+Windows for a single-index fit: cor(fitted, y) 0.808 against 0.983 on macOS
+from identical data, with log sp[1] -0.74 against -6.51 — a factor of ~320 in
+lambda. A 1e-8 nudge to one covariate reached the better optimum there, so the
+minimum is reachable; only the path to it is fragile."""
+_alt_inner_start(::TransLinear, na::Int, k::Int) =
+    normalize(k == 1 ? collect(1.0:na) : collect(Float64(na):-1.0:1.0))
+_alt_inner_start(::TransExpSmooth, na::Int, k::Int) = fill(k == 1 ? 0.5 : -0.5, na)
+_alt_inner_start(::TransMGKS, na::Int, k::Int) = fill(k == 1 ? 0.5 : -0.5, na)
 _default_inner_start(::TransExpSmooth, na::Int) = zeros(na)
 _default_inner_start(::TransMGKS, na::Int) = zeros(na)
 
@@ -532,6 +547,8 @@ struct NestedGamModel
     Vp::Matrix{Float64}
     converged::Bool
     iterations::Int
+    criterion::Float64                    # LAML score at the returned fit;
+                                          # the comparator across restarts
 end
 
 # ============================================================================
@@ -558,6 +575,7 @@ struct NestedControl
     newton_maxit::Int
     tol::Float64
     trace::Bool
+    n_starts::Int
 end
 
 """
@@ -566,11 +584,12 @@ end
 Construct a [`NestedControl`](@ref) for [`gam_nl`](@ref).
 """
 function nested_control(; outer_maxit::Int = 100, newton_maxit::Int = 200,
-    tol::Real = 1e-7, trace::Bool = false)
+    tol::Real = 1e-7, trace::Bool = false, n_starts::Int = 3)
     outer_maxit >= 1 || throw(ArgumentError("outer_maxit must be >= 1, got $outer_maxit"))
     newton_maxit >= 1 || throw(ArgumentError("newton_maxit must be >= 1, got $newton_maxit"))
     tol > 0 || throw(ArgumentError("tol must be positive, got $tol"))
-    return NestedControl(outer_maxit, newton_maxit, Float64(tol), trace)
+    n_starts >= 1 || throw(ArgumentError("n_starts must be >= 1, got $n_starts"))
+    return NestedControl(outer_maxit, newton_maxit, Float64(tol), trace, n_starts)
 end
 
 """
@@ -636,6 +655,7 @@ function gam_nl(gf::GamFormula, data;
     offset::Union{AbstractVector{<:Union{Real, Missing}}, Nothing} = nothing,
     na_action::Symbol = :fail,
     control::NestedControl = nested_control(),
+    inner_start::Union{Nothing, Vector{Vector{Float64}}} = nothing,
     outer_maxit::Union{Int, Nothing} = nothing,
     newton_maxit::Union{Int, Nothing} = nothing,
     tol::Union{Float64, Nothing} = nothing)
@@ -648,7 +668,8 @@ function gam_nl(gf::GamFormula, data;
             something(outer_maxit, control.outer_maxit),
             something(newton_maxit, control.newton_maxit),
             something(tol, control.tol),
-            control.trace)
+            control.trace,
+            control.n_starts)
     end
 
     family isa Union{Normal, Poisson, Bernoulli, Binomial, Gamma} ||
@@ -981,12 +1002,14 @@ function gam_nl(gf::GamFormula, data;
         ζ[1] = _nested_null_intercept(family, link_eff, y, wt, off)
     end
     for j in 1:n_eff
-        ζ[inner_ranges[j]] .= _default_inner_start(trans_list[j],
-            length(inner_ranges[j]))
+        ζ[inner_ranges[j]] .= inner_start === nothing ?
+            _default_inner_start(trans_list[j], length(inner_ranges[j])) :
+            inner_start[j]
     end
 
     # ── EFS outer loop with penalized Gauss–Newton inner loop ──────────────
     S_λ = zeros(p_tot, p_tot)
+    final_score = Inf
     converged = false
     iterations = 0
     efs_mult = 1.0
@@ -1064,6 +1087,7 @@ function gam_nl(gf::GamFormula, data;
         max_change = maximum(abs.(log_sp_new .- log_sp))
 
         score_cur = _cond_score(log_sp, JtWJ, φ)
+        final_score = score_cur
         if max_change > 1e-10
             score_new = _cond_score(log_sp_new, JtWJ, φ)
             if score_new > score_cur + 1e-7 * abs(score_cur)
@@ -1202,11 +1226,46 @@ function gam_nl(gf::GamFormula, data;
     coef_ranges = Dict{Symbol, UnitRange{Int}}(
         :parametric => 1:p_para, :smooth => (p_para + 1):(p_para + p_std))
 
-    return NestedGamModel(gf, family, link_eff, y, wt, off, ζ, coef_ranges,
+    model = NestedGamModel(gf, family, link_eff, y, wt, off, ζ, coef_ranges,
         para_terms, smooths, X_fixed, nested_specs, nested_data, nested_aux,
         outer_bases, inner_ranges, outer_ranges, standardize, log_sp,
         penalties, edf_total, φ, dev_final, null_dev, Vp, converged,
-        iterations)
+        iterations, final_score)
+
+    # ── Multi-start ────────────────────────────────────────────────────────
+    # The joint (index direction, smoothing parameter) problem is non-convex,
+    # and a single start can stop early while still reporting convergence: the
+    # EFS step halves when the score does not improve, which shrinks
+    # `max_change` until it passes the convergence test. That is not a
+    # theoretical worry — see `_alt_inner_start` for the measured case where
+    # one platform returned cor(fitted, y) = 0.808 and another 0.983 from
+    # identical data, both `converged = true`. Refit from fixed alternative
+    # starts and keep the best LAML score, so the answer depends on the data
+    # rather than on the arithmetic path. `data`/`weights`/`offset` are the
+    # NA-filtered values from above, so re-entering is consistent and
+    # idempotent; `n_starts = 1` on the recursive calls stops the recursion.
+    if inner_start === nothing && control.n_starts > 1 && n_eff > 0
+        ctl1 = NestedControl(control.outer_maxit, control.newton_maxit,
+            control.tol, control.trace, 1)
+        best = model
+        for k in 1:(control.n_starts - 1)
+            st = [_alt_inner_start(trans_list[j], length(inner_ranges[j]), k)
+                  for j in 1:n_eff]
+            cand = try
+                gam_nl(gf, data; family = family, link = link_eff,
+                    weights = weights, offset = offset, na_action = na_action,
+                    control = ctl1, inner_start = st)
+            catch
+                nothing   # a restart that fails must never lose the fit we have
+            end
+            if cand !== nothing && isfinite(cand.criterion) &&
+               cand.criterion < best.criterion
+                best = cand
+            end
+        end
+        return best
+    end
+    return model
 end
 
 """Parametric design matrix from schema-applied terms (intercept first)."""
