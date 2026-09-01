@@ -502,9 +502,18 @@ end
 # Main Bayesian fitting entry point
 # ============================================================================
 
+"""RNG for a sampling run. `Random.seed!` alone does NOT make `nchains > 1`
+reproducible: AbstractMCMC samples the chains on threads and does not derive
+the per-chain RNGs from the global one, so a seeded script still varies run to
+run. Passing an explicit rng is what makes threaded sampling deterministic --
+AbstractMCMC derives each chain's seed from it. `nothing` keeps the default
+unseeded behaviour, since MCMC draws are randomness the caller asked for."""
+_mcmc_rng(seed) = seed === nothing ? Random.default_rng() : Random.Xoshiro(seed)
+
 function GAM._fit_gam_bayes(formula, data, family, link, priors::GAM.PriorSpec;
     sampler = nothing, nsamples::Int = 2000, nchains::Int = 4,
-    weights = nothing, gam_formula = nothing)
+    weights = nothing, gam_formula = nothing,
+    seed::Union{Integer, Nothing} = nothing)
 
     # Build design matrices using GAM.jl infrastructure
     # Support both GamFormula and FormulaTerm (from @formula with FunctionTerm smooths)
@@ -541,9 +550,9 @@ function GAM._fit_gam_bayes(formula, data, family, link, priors::GAM.PriorSpec;
 
     # Run MCMC
     chains = if nchains > 1
-        sample(model, turing_sampler, MCMCThreads(), nsamples, nchains)
+        sample(_mcmc_rng(seed), model, turing_sampler, MCMCThreads(), nsamples, nchains)
     else
-        sample(model, turing_sampler, nsamples)
+        sample(_mcmc_rng(seed), model, turing_sampler, nsamples)
     end
 
     loglik_obs = _gam_loglik_matrix(chains, y, family, link, X_fixed, Zs_flat; weights = weights)
@@ -966,7 +975,8 @@ end
 # ── GAMLSS fitting entry point ──────────────────────────────────────────
 
 function GAM._fit_gamlss_bayes(formulas, data, family, priors::GAM.PriorSpec;
-    sampler = nothing, nsamples::Int = 2000, nchains::Int = 4)
+    sampler = nothing, nsamples::Int = 2000, nchains::Int = 4,
+    seed::Union{Integer, Nothing} = nothing)
 
     # Determine number of parameters
     K = if family isa GAM.DistFamily
@@ -1017,9 +1027,9 @@ function GAM._fit_gamlss_bayes(formulas, data, family, priors::GAM.PriorSpec;
     # Run MCMC
     turing_sampler = sampler === nothing ? NUTS() : sampler
     chains = if nchains > 1
-        sample(model, turing_sampler, MCMCThreads(), nsamples, nchains)
+        sample(_mcmc_rng(seed), model, turing_sampler, MCMCThreads(), nsamples, nchains)
     else
-        sample(model, turing_sampler, nsamples)
+        sample(_mcmc_rng(seed), model, turing_sampler, nsamples)
     end
 
     loglik_obs = _gamlss_loglik_matrix(chains, y, fam, param_X, param_smooths, param_block_dims)

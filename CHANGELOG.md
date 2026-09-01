@@ -388,6 +388,18 @@ basis size without raising an error.
 
 ### Fixed
 
+- **Bayesian sampling is reproducible on request; `Random.seed!` alone was not
+  enough.** With `nchains > 1` the chains are sampled on threads, and
+  AbstractMCMC does not derive the per-chain RNGs from the global one — so a
+  script that called `Random.seed!` still got different posteriors run to run,
+  and a convergence-diagnostics test failed on Windows at one commit and
+  passed at the next with no code change between them. `gam(...; priors=...)`
+  and `gamlss(...; priors=...)` now take `seed`, which passes an explicit rng
+  to AbstractMCMC so each chain's seed is derived from it. Verified with two
+  threads: the same seed reproduces the chains bit-for-bit, a different seed
+  changes them, and the unseeded default still varies — MCMC draws are
+  randomness the caller asked for, so `seed = nothing` remains the default.
+  The `scam` and `gamm` Bayesian paths do not take `seed` yet.
 - **`gam_nl` could return a much worse fit and report success.** The joint
   (index direction, smoothing parameter) problem is non-convex, and the EFS
   step halves when the score does not improve — which shrinks `max_change`

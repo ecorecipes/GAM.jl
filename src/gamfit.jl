@@ -196,6 +196,7 @@ function gam(f::FormulaTerm, data;
     sampler::Any = nothing,
     nsamples::Int = 2000,
     nchains::Int = 4,
+    seed::Union{Integer, Nothing} = nothing,
     na_action::Symbol = :fail,
     knots = nothing,
     nei::Union{NeighbourhoodStructure, Nothing} = nothing)
@@ -218,7 +219,7 @@ function gam(f::FormulaTerm, data;
     if priors !== nothing
         return _fit_gam_bayes(f, data, family, link_eff, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains,
-            weights = weights)
+            weights = weights, seed = seed)
     end
 
     method in (:REML, :ML, :GCV, :UBRE, :NCV) ||
@@ -311,6 +312,7 @@ function gam(gf::GamFormula, data;
     sampler::Any = nothing,
     nsamples::Int = 2000,
     nchains::Int = 4,
+    seed::Union{Integer, Nothing} = nothing,
     na_action::Symbol = :fail,
     knots = nothing,
     nei::Union{NeighbourhoodStructure, Nothing} = nothing)
@@ -345,7 +347,7 @@ function gam(gf::GamFormula, data;
         f = term(gf.response) ~ term(1)
         return _fit_gam_bayes(f, data, family, link_eff, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains,
-            weights = weights, gam_formula = gf)
+            weights = weights, gam_formula = gf, seed = seed)
     end
 
     method in (:REML, :ML, :GCV, :UBRE, :NCV) ||
