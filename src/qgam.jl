@@ -687,7 +687,13 @@ function _tune_learn_fast(formula, data, qu::Real, co::Real, var_hat::Real, gaus
     lsig_lo = lsig_center - 3.0
     lsig_hi = lsig_center + 3.0
 
-    # Generate K bootstrap weight vectors with reproducible RNG
+    # Generate K bootstrap weight vectors with reproducible RNG.
+    # Reproducible by construction rather than by a seed argument: the stream
+    # is derived from the data. One residual caveat, left as-is because any
+    # change to the derivation changes every calibration result: `var_hat` is
+    # computed, so on the rare occasion it straddles a 6th-decimal rounding
+    # boundary two platforms can hash to different streams. Rounding is what
+    # keeps that rare; it does not make it impossible.
     boot_rng = MersenneTwister(hash((n, qu, round(var_hat, digits=6))))
     boot_weights = Vector{Vector{Float64}}(undef, K)
     for b in 1:K

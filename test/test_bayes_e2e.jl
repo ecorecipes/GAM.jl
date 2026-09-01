@@ -345,6 +345,28 @@ using Statistics: mean, std
         @test v(f(nothing)) != v(f(nothing))
     end
 
+    @testset "scam and gamm honour seed too" begin
+        Random.seed!(9)
+        n = 100
+        x = sort(rand(n))
+        v(m) = vec(Array(m.chains))
+
+        dfs = DataFrame(x = x, y = 2 .* x .+ 0.5 .* x .^ 2 .+ 0.1 .* randn(n))
+        sc(sd) = scam(@formulak(y ~ s(x, bs = :mpi, k = 8)), dfs;
+            priors = PriorSpec(), nsamples = 200, nchains = 2, seed = sd)
+        @test v(sc(11)) == v(sc(11))
+        @test v(sc(11)) != v(sc(12))
+        @test v(sc(nothing)) != v(sc(nothing))
+
+        dfg = DataFrame(x = x, g = repeat(string.(1:5), inner = 20),
+            y = sin.(2π .* x) .+ 0.2 .* randn(n))
+        gm(sd) = gamm(@gamm_formula(y ~ s(x, k = 6) + re(g)), dfg;
+            priors = PriorSpec(), nsamples = 200, nchains = 2, seed = sd)
+        @test v(gm(11)) == v(gm(11))
+        @test v(gm(11)) != v(gm(12))
+        @test v(gm(nothing)) != v(gm(nothing))
+    end
+
     @testset "Bayesian performance" begin
         Random.seed!(42)
         n = 200

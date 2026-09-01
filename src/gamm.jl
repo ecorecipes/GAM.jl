@@ -1171,7 +1171,8 @@ function gamm(gf::GammFormula, data;
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
-    nchains::Int = 4)
+    nchains::Int = 4,
+    seed::Union{Integer, Nothing} = nothing)
 
     # Input validation (na_action first — it also length-checks and validates
     # weights/offset, and everything below must see the surviving rows)
@@ -1190,7 +1191,7 @@ function gamm(gf::GammFormula, data;
             "offset= is not supported for Bayesian GAMM fitting"))
         return _fit_gamm_bayes(gf, data, family, link_eff, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains,
-            weights = weights)
+            weights = weights, seed = seed)
     end
 
     # Setup GAM part (smooths + parametric)
@@ -1244,7 +1245,8 @@ function gamm(f::FormulaTerm, data;
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
-    nchains::Int = 4)
+    nchains::Int = 4,
+    seed::Union{Integer, Nothing} = nothing)
 
     # Input validation
     resp_sym = f.lhs isa Term ? f.lhs.sym : nothing
@@ -1329,7 +1331,8 @@ function gamm(f::FormulaTerm, data;
             "offset= is not supported for Bayesian GAMM fitting"))
         return _fit_gamm_bayes_from_parts(y, X, smooths, n_parametric, random_effects,
             f, data, family, link_eff, priors;
-            sampler = sampler, nsamples = nsamples, nchains = nchains, weights = weights)
+            sampler = sampler, nsamples = nsamples, nchains = nchains,
+            weights = weights, seed = seed)
     end
 
     _gamm_check_backend(backend)

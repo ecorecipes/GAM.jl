@@ -1087,7 +1087,7 @@ end
 
 function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
     sampler = nothing, nsamples::Int = 2000, nchains::Int = 4,
-    weights = nothing)
+    weights = nothing, seed::Union{Integer, Nothing} = nothing)
 
     # Build design matrices via standard setup_gam
     y, X, X_para, smooths, n_parametric = GAM.setup_gam(gf, data; family = family)
@@ -1253,9 +1253,9 @@ function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
     # Run MCMC
     turing_sampler = sampler === nothing ? NUTS() : sampler
     chains = if nchains > 1
-        sample(model, turing_sampler, MCMCThreads(), nsamples, nchains)
+        sample(_mcmc_rng(seed), model, turing_sampler, MCMCThreads(), nsamples, nchains)
     else
-        sample(model, turing_sampler, nsamples)
+        sample(_mcmc_rng(seed), model, turing_sampler, nsamples)
     end
 
     loglik_obs = _scam_loglik_matrix(
@@ -1518,7 +1518,8 @@ end
 Bayesian GAMM from GammFormula: parse formula, build matrices, fit with Turing.
 """
 function GAM._fit_gamm_bayes(gf::GAM.GammFormula, data, family, link, priors::GAM.PriorSpec;
-    sampler = nothing, nsamples::Int = 2000, nchains::Int = 4, weights = nothing)
+    sampler = nothing, nsamples::Int = 2000, nchains::Int = 4, weights = nothing,
+    seed::Union{Integer, Nothing} = nothing)
 
     # Build GAM part
     X_para, smooths, labels = GAM.gam_matrices(gf.gam_formula, data)
@@ -1529,7 +1530,8 @@ function GAM._fit_gamm_bayes(gf::GAM.GammFormula, data, family, link, priors::GA
 
     return _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
         gf, data, family, link, priors;
-        sampler = sampler, nsamples = nsamples, nchains = nchains, weights = weights)
+        sampler = sampler, nsamples = nsamples, nchains = nchains,
+        weights = weights, seed = seed)
 end
 
 """
@@ -1537,7 +1539,8 @@ Bayesian GAMM from pre-built matrices: used by the FormulaTerm dispatch path.
 """
 function GAM._fit_gamm_bayes_from_parts(y, X, smooths, n_parametric, random_effects,
     formula, data, family, link, priors::GAM.PriorSpec;
-    sampler = nothing, nsamples::Int = 2000, nchains::Int = 4, weights = nothing)
+    sampler = nothing, nsamples::Int = 2000, nchains::Int = 4, weights = nothing,
+    seed::Union{Integer, Nothing} = nothing)
 
     # Build smooth2random representations
     sm_mixed = [GAM.smooth2random(sm) for sm in smooths]
@@ -1548,7 +1551,8 @@ function GAM._fit_gamm_bayes_from_parts(y, X, smooths, n_parametric, random_effe
 
     return _fit_gamm_bayes_impl(y, X_para, sm_mixed, random_effects, labels,
         formula, data, family, link, priors;
-        sampler = sampler, nsamples = nsamples, nchains = nchains, weights = weights)
+        sampler = sampler, nsamples = nsamples, nchains = nchains,
+        weights = weights, seed = seed)
 end
 
 """
@@ -1556,7 +1560,8 @@ Common implementation for Bayesian GAMM fitting.
 """
 function _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
     formula, data, family, link, priors;
-    sampler = nothing, nsamples = 2000, nchains = 4, weights = nothing)
+    sampler = nothing, nsamples = 2000, nchains = 4, weights = nothing,
+    seed::Union{Integer, Nothing} = nothing)
 
     # Build and sample Turing model
     model, X_fixed, Zs_smooth, smooth_labels, re_labels = _build_gamm_turing_model(
@@ -1568,9 +1573,9 @@ function _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
 
     # Run MCMC
     chains = if nchains > 1
-        sample(model, turing_sampler, MCMCThreads(), nsamples, nchains)
+        sample(_mcmc_rng(seed), model, turing_sampler, MCMCThreads(), nsamples, nchains)
     else
-        sample(model, turing_sampler, nsamples)
+        sample(_mcmc_rng(seed), model, turing_sampler, nsamples)
     end
 
     Z_smooth = isempty(Zs_smooth) ? zeros(length(y), 0) : hcat(Zs_smooth...)

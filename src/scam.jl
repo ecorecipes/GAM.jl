@@ -1118,7 +1118,8 @@ function scam(gf::GamFormula, data;
     priors::Union{PriorSpec, Nothing} = nothing,
     sampler::Any = nothing,
     nsamples::Int = 2000,
-    nchains::Int = 4)
+    nchains::Int = 4,
+    seed::Union{Integer, Nothing} = nothing)
 
     # Input validation
     _validate_data_lengths(data)
@@ -1134,7 +1135,7 @@ function scam(gf::GamFormula, data;
     if priors !== nothing
         return _fit_scam_bayes(gf, gf, data, family, link_eff, priors;
             sampler = sampler, nsamples = nsamples, nchains = nchains,
-            weights = weights)
+            weights = weights, seed = seed)
     end
 
     method in (:GCV, :UBRE, :REML) ||

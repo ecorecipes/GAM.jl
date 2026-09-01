@@ -399,7 +399,16 @@ basis size without raising an error.
   threads: the same seed reproduces the chains bit-for-bit, a different seed
   changes them, and the unseeded default still varies — MCMC draws are
   randomness the caller asked for, so `seed = nothing` remains the default.
-  The `scam` and `gamm` Bayesian paths do not take `seed` yet.
+  `scam(...; priors=...)` and `gamm(...; priors=...)` take it too: all eight
+  sampling sites across the four Bayesian entry points are now seeded, and an
+  audit found no other unseeded randomness — no library code mutates the
+  global RNG, `bs=:sos`'s knot subsample seeds from `xt[:seed]`, and the
+  `gratia`/`diagnostics` simulations are already behind `seed` parameters.
+  One residual is documented rather than changed: `qgam`'s bootstrap stream is
+  derived from the data via `hash((n, qu, round(var_hat, digits=6)))`, so on
+  the rare occasion `var_hat` straddles that rounding boundary two platforms
+  can differ. Any change to the derivation changes every calibration result,
+  so it is noted at the call site instead.
 - **`gam_nl` could return a much worse fit and report success.** The joint
   (index direction, smoothing parameter) problem is non-convex, and the EFS
   step halves when the score does not improve — which shrinks `max_change`
