@@ -269,6 +269,21 @@ using StableRNGs
         @test coef(m)[3] ≈ -0.5 atol = 0.2
         # prediction reuses the training schema
         @test predict(m, df; type = :response) ≈ fitted(m) atol = 1e-8
+
+        # Multi-start. This fit is why it exists: with a single start it
+        # returned cor = 0.808 on Windows and 0.983 on macOS from identical
+        # data, both reporting `converged = true`, because the EFS step halves
+        # until `max_change` passes the convergence test. Restarting from
+        # fixed alternative directions and keeping the best LAML score makes
+        # the answer depend on the data rather than the arithmetic path.
+        m1 = gam_nl(GAM.@formulak(y ~ g + s_nest(l1, l2, l3,
+            trans = trans_linear(), k = 8)), df;
+            control = nested_control(n_starts = 1))
+        @test isfinite(m.criterion)
+        # the multi-start fit is never worse on the criterion it selects on
+        @test m.criterion <= m1.criterion + 1e-8
+        @test cor(fitted(m1), y) > 0.95
+        @test_throws ArgumentError nested_control(n_starts = 0)
     end
 
     @testset "te() + nested effect: overlapping-group EFS converges" begin

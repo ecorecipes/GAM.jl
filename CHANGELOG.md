@@ -388,6 +388,21 @@ basis size without raising an error.
 
 ### Fixed
 
+- **`gam_nl` could return a much worse fit and report success.** The joint
+  (index direction, smoothing parameter) problem is non-convex, and the EFS
+  step halves when the score does not improve — which shrinks `max_change`
+  until it passes the convergence test, so a single start can stop early with
+  `converged = true`. Measured on the same data and the same seed: Windows
+  returned `cor(fitted, y) = 0.808` where macOS returned `0.983`, with
+  `log sp[1]` of −0.74 against −6.51, a factor of ~320 in λ. Nudging one
+  covariate by 1 part in 10⁸ reached the better optimum on Windows, so the
+  minimum was reachable and only the path to it was fragile. `gam_nl` now
+  refits from fixed alternative starting directions and keeps the best LAML
+  score (`nested_control(n_starts = 3)`, `n_starts = 1` restores the old
+  behaviour), so the answer depends on the data rather than the arithmetic
+  path. `NestedGamModel` gained a `criterion` field holding that score. Note
+  this makes a nested fit ~`n_starts`× more expensive, which is the price of
+  not silently returning the wrong answer.
 - **The `:so` soap-film "approximation" caveat was wrong, and is removed.**
   The README, `index.md`, `smooths.md` and `mgcv.md` all described `:so` as a
   grid-PDE *approximation* of mgcv's exact method, whose "fits will differ".
