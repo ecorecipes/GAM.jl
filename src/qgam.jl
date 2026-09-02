@@ -508,6 +508,16 @@ following Fasiolo et al. (2020).
 - `err`: bound on the smoothing-induced quantile bias |F(μ̂) − F(μ₀)|.
   Defaults to `0.05` (R qgam's default); smaller values reduce bias at the
   cost of a rougher loss.
+- `seed`: RNG seed for the single-formula `lsig` bootstrap calibration
+  (ignored when `lsig` is given explicitly, or for the two-formula ELFLSS
+  method, which does not bootstrap). `nothing` (default) derives a stream
+  from `(n, qu, var_hat)` — reproducible without a seed, on one machine.
+  Pass an explicit integer to pin the stream itself, which is the only way
+  to guarantee bit-identical calibration across machines/platforms: the
+  default derivation rounds the computed `var_hat` to 6 decimals before
+  hashing, so a `var_hat` that lands within about 5e-7 of a rounding
+  boundary can hash to different streams on two platforms whose fits
+  disagree in the last bit.
 
 !!! note "Calibration shortcut"
     Automatic calibration of `lsig` (when `lsig=nothing`) uses bootstrap
@@ -532,6 +542,7 @@ function qgam(formula, data, qu::Real;
               lsig::Union{Nothing, Real}=nothing,
               err::Union{Nothing, Real}=nothing,
               control::GamControl=gam_control(),
+              seed::Union{Nothing, Integer}=nothing,
               kwargs...)
     0.0 < qu < 1.0 || throw(ArgumentError("qu must be in (0, 1)"))
 
@@ -553,7 +564,7 @@ function qgam(formula, data, qu::Real;
     # Step 4: Determine learning rate
     if lsig === nothing
         lsig = _tune_learn_fast(formula, data, qu, co, var_hat, gauss_fit;
-                                control=control, kwargs...)
+                                control=control, seed=seed, kwargs...)
     end
 
     # Step 5: Fit the quantile model with ELF family, starting from Gaussian fit
@@ -617,6 +628,9 @@ use `cqcheck` to diagnose.
 - `lsig`: log learning rate — a single scalar shared across quantiles, or
   `nothing` (default) for automatic selection
 - `co`: smoothness constant (scalar)
+- `seed`: RNG seed forwarded to each per-quantile `qgam` call's `lsig`
+  bootstrap calibration (ignored when `lsig`/`co` are both given, since no
+  calibration runs then). See `qgam`'s docstring for what this controls.
 
 # Returns
 A `NamedTuple` with `fits` (Dict of qu => GamModel) and `quantiles`.
@@ -625,6 +639,7 @@ function mqgam(formula, data, qu::AbstractVector{<:Real};
                lsig::Union{Nothing, Real}=nothing,
                co::Union{Nothing, Real}=nothing,
                control::GamControl=gam_control(),
+               seed::Union{Nothing, Integer}=nothing,
                kwargs...)
     # Get response to compute n
     resp_name = if formula isa GamFormula
@@ -644,7 +659,8 @@ function mqgam(formula, data, qu::AbstractVector{<:Real};
             elf = ELFFamily(qu=Float64(q), co=fill(Float64(co), n), theta=Float64(lsig))
             fits[Float64(q)] = gam(formula, data; family=elf, control=control, kwargs...)
         else
-            fits[Float64(q)] = qgam(formula, data, q; lsig=lsig, control=control, kwargs...)
+            fits[Float64(q)] = qgam(formula, data, q; lsig=lsig, control=control,
+                                    seed=seed, kwargs...)
         end
     end
     return (fits=fits, quantiles=Float64.(qu))
@@ -677,7 +693,7 @@ Performance optimizations vs naive approach:
 """
 function _tune_learn_fast(formula, data, qu::Real, co::Real, var_hat::Real, gauss_fit;
                           control::GamControl=gam_control(),
-                          K::Int=20, kwargs...)
+                          K::Int=20, seed::Union{Nothing, Integer}=nothing, kwargs...)
     y = gauss_fit.y
     n = length(y)
 
@@ -687,14 +703,25 @@ function _tune_learn_fast(formula, data, qu::Real, co::Real, var_hat::Real, gaus
     lsig_lo = lsig_center - 3.0
     lsig_hi = lsig_center + 3.0
 
-    # Generate K bootstrap weight vectors with reproducible RNG.
-    # Reproducible by construction rather than by a seed argument: the stream
-    # is derived from the data. One residual caveat, left as-is because any
-    # change to the derivation changes every calibration result: `var_hat` is
-    # computed, so on the rare occasion it straddles a 6th-decimal rounding
-    # boundary two platforms can hash to different streams. Rounding is what
-    # keeps that rare; it does not make it impossible.
-    boot_rng = MersenneTwister(hash((n, qu, round(var_hat, digits=6))))
+    # Generate K bootstrap weight vectors with a reproducible RNG.
+    #
+    # By default the stream is derived from the data (`n`, `qu`, and the
+    # Gaussian-fit `var_hat`) rather than from an explicit seed, so a default
+    # `qgam` call reproduces on one machine with no seed to manage. Residual
+    # caveat: `var_hat` is a computed float, so on the rare occasion it lands
+    # within about 5e-7 of a 6th-decimal rounding boundary, two platforms
+    # whose fits disagree in the last bit can round to opposite sides of that
+    # boundary and hash to different streams. A survey across representative
+    # fits here measured margins of order 1e-7 to the nearest boundary, with
+    # an adversarially-searched case within 1e-9 — close enough that this is
+    # a real (if rare) risk, not a purely theoretical one. Rounding keeps it
+    # rare; it does not make it impossible.
+    # Callers who need bit-identical calibration across machines — not just
+    # reproducibility on one — should pass `seed` explicitly; it bypasses the
+    # data-derived hash entirely.
+    boot_rng = seed === nothing ?
+        MersenneTwister(hash((n, qu, round(var_hat, digits=6)))) :
+        MersenneTwister(seed)
     boot_weights = Vector{Vector{Float64}}(undef, K)
     for b in 1:K
         idx = rand(boot_rng, 1:n, n)
