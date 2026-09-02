@@ -20,9 +20,10 @@
 #      tautology. It is restricted to Gaussian+identity because there beta has
 #      the closed form (X'X + S)^-1 X'y and needs no P-IRLS iteration; the
 #      production criterion is `Float64`-annotated throughout and cannot be
-#      differentiated directly, and `_stable_penalty_factor` blocks autodiff
-#      for multi-penalty blocks in any case (the same limitation that makes
-#      `sp_optimizer = :newton` fall back to EFS).
+#      differentiated directly. (The penalty log-determinant itself is no
+#      longer a barrier — it carries analytic first and second derivatives for
+#      ForwardDiff, which is what lets `sp_optimizer = :newton` run on
+#      multi-penalty blocks — but nothing else on the NCV path is generic.)
 
 @testset "NCV analytic derivatives" begin
 

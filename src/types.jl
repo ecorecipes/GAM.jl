@@ -441,18 +441,22 @@ Construct a [`GamControl`](@ref) with the given parameters.
   exact REML optimum. More expensive per step but may converge in fewer
   iterations for difficult problems.
 
-  **`:newton` applies to single-penalty smooths only.** Multi-penalty blocks —
-  `te`/`ti`/`t2` tensors, `bs=:ad`, `bs=:fs`, and every smooth under
-  `select=true` — go through a stable penalty reparameterization
-  (`_stable_penalty_factor`, a port of mgcv's `gam.reparam`) that is
-  `Float64`-only, so the ForwardDiff Hessian cannot be taken through it. Those
-  models silently *fall back to `:efs`*, warning once; the fit is still
-  correct, it is simply an EFS fit. mgcv avoids this by computing the REML
-  derivatives analytically rather than by autodiff. Because that fallback would
-  mean a single model optimizing `s(x)` by Newton and `te(x,z)` by EFS, `:efs`
-  remains the default.
+  `:newton` covers multi-penalty blocks too — `te`/`ti`/`t2` tensors, `bs=:ad`,
+  `bs=:fs`, and every smooth under `select=true`. Those go through a stable
+  penalty reparameterization (`_stable_penalty_factor`, a port of mgcv's
+  `gam.reparam`) whose eigen-decompositions cannot be differentiated at all
+  (they are taken exactly where the matrix is rank deficient, so the
+  eigenvectors are not a differentiable function of λ). The reparameterised
+  `log|S_λ|₊` is nevertheless smooth, and its first two derivatives are
+  supplied analytically — as mgcv does — for `ForwardDiff` to chain through;
+  see `_stable_penalty_derivs2` in `reml.jl`.
 
-  Where Newton does run it reaches an equal or slightly better criterion than
+  Newton still degrades to `:efs`, warning once, if the Hessian comes back
+  non-finite; some `bs=:re` fits do that. The result is then an ordinary EFS
+  fit, not a wrong one. `:efs` remains the default because a Newton default
+  would still mean the optimizer changes with model structure on those.
+
+  Where Newton runs it reaches an equal or slightly better criterion than
   EFS. The gap is negligible (≤4e-5) on ordinary bases but material on the
   **shrinkage bases**, which need very large log-λ to drop a term and are
   exactly where the EFS fixed point stops short: on a `bs=:ts` fit the REML
