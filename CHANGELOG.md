@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **`sp_optimizer = :newton` now works on multi-penalty smooths** — `te`/`ti`/
+  `t2`, `bs=:ad`, `bs=:fs` and anything under `select = true`. It previously
+  threw inside the stable penalty reparameterization and fell back to `:efs`
+  with a warning.
+
+  The reparameterization is *not* differentiable and was not made so: it
+  eigen-decomposes the dominant penalty sum exactly where that sum is rank
+  deficient, so the eigenvectors are not a differentiable function of `λ` (a
+  `Dual`-valued `eigen` returns `NaN` partials at a repeated eigenvalue), and
+  the dominant/sub-dominant split and numerical rank are piecewise constant.
+  Its log-determinant is smooth regardless, so `log|S_λ|₊` now supplies
+  analytic first and second derivatives — `∂ρᵢ = λᵢtr(S⁺Sᵢ)` and
+  `∂ρᵢ∂ρⱼ = δᵢⱼλᵢtr(S⁺Sᵢ) − λᵢλⱼtr(S⁺SᵢS⁺Sⱼ)`, both read off the existing
+  factorisation — for `ForwardDiff` to chain through, which is the route mgcv
+  takes. Verified against an exact independent oracle to ~1e-15.
+
+  `:efs` **remains the default**, and fits at fixed smoothing parameters are
+  bit-identical: the `Float64` path through `_log_penalty_det` is unchanged.
+  Newton still degrades to `:efs` where the Hessian comes back non-finite,
+  which some `bs=:re` fits still do.
+
 ## 0.3.0 (2026-08-31)
 
 The release that closes the largest remaining gaps against mgcv: `bam`'s
