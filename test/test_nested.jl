@@ -282,7 +282,12 @@ using StableRNGs
         @test isfinite(m.criterion)
         # the multi-start fit is never worse on the criterion it selects on
         @test m.criterion <= m1.criterion + 1e-8
-        @test cor(fitted(m1), y) > 0.95
+        # Deliberately NOT asserted: `cor(fitted(m1), y) > 0.95`. The
+        # single-start fit's quality is exactly what varies by platform --
+        # 0.983 on macOS, 0.808 on Windows -- which is the defect multi-start
+        # exists to fix. Asserting it re-creates the original failure under a
+        # new line number, which is what this test did when first written.
+        # The quality assertion belongs on `m` (above), not on `m1`.
         @test_throws ArgumentError nested_control(n_starts = 0)
     end
 
