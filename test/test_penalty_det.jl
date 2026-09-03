@@ -23,6 +23,8 @@
 # the algorithm is exact (ratios up to ~1e8), and check finiteness, rank
 # consistency and gradient agreement everywhere.
 
+using ForwardDiff
+
 @testset "Penalty log-determinant stability" begin
     _rng = StableRNG(20240824)
     _n = 250
@@ -166,6 +168,101 @@
         Ss = [zeros(4, 4), zeros(4, 4)]
         @test GAM._total_range_basis(Ss) == zeros(4, 0)
         @test GAM._stable_penalty_factor(Ss, [0.0, 0.0]) === nothing
+    end
+
+    # The transform itself cannot be differentiated — it eigen-decomposes the
+    # dominant sum precisely when that sum is rank deficient, so the eigenvector
+    # matrix carries a repeated zero eigenvalue and the perturbation series
+    # divides by a zero gap. `log|S_λ|₊` is smooth anyway, so its first two
+    # derivatives are supplied analytically for ForwardDiff to chain through.
+    # That is what makes `sp_optimizer = :newton` work on te/ti/t2/ad/fs/select.
+    @testset "analytic first and second derivatives of log|S_λ|₊" begin
+        rng = StableRNG(20_260_902)
+
+        # An INDEPENDENT oracle, sharing no code with the transform: when
+        # Σⱼ λⱼSⱼ is full rank in its own range space the pseudo-determinant is
+        # an ordinary `logdet`, which ForwardDiff differentiates exactly.
+        @testset "against an exact full-rank oracle" begin
+            for _ in 1:5
+                d, M = 6, 3
+                Ss = [(A = randn(rng, d, d); Matrix(Symmetric(A * A' + 0.5I)))
+                      for _ in 1:M]
+                lsp = 2 .* randn(rng, M)
+                truth = l -> logdet(Symmetric(sum(exp(l[i]) .* Ss[i]
+                                                  for i in 1:M)))
+                st = GAM._stable_penalty_factor(Ss, lsp)
+                g, H = GAM._stable_penalty_derivs2(st, lsp)
+                # The gradient must not drift from the one the score already
+                # uses; `_stable_penalty_derivs2` recomputes it to share work.
+                @test g == GAM._stable_penalty_derivs(st, lsp)
+                @test GAM._stable_penalty_logdet(st) ≈ truth(lsp) atol = 1e-12
+                @test g ≈ ForwardDiff.gradient(truth, lsp) atol = 1e-11
+                @test H ≈ ForwardDiff.hessian(truth, lsp) atol = 1e-11
+            end
+        end
+
+        # The rank-deficient case is the one the transform exists for: the
+        # components share a null space, so the oracle is a `logdet` on the
+        # common range. A pseudo-inverse derivative that forgot the range space
+        # would pass the test above and fail this one.
+        @testset "against a rank-deficient oracle" begin
+            for _ in 1:3
+                d, r, M = 7, 5, 3
+                Zb = Matrix(qr(randn(rng, d, r)).Q)[:, 1:r]
+                Ss = [(A = randn(rng, r, r);
+                       Matrix(Symmetric(Zb * (A * A' + 0.5I) * Zb')))
+                      for _ in 1:M]
+                lsp = 3 .* randn(rng, M)
+                truth = l -> logdet(Symmetric(Zb' *
+                    sum(exp(l[i]) .* Ss[i] for i in 1:M) * Zb))
+                st = GAM._stable_penalty_factor(Ss, lsp)
+                g, H = GAM._stable_penalty_derivs2(st, lsp)
+                @test GAM._stable_penalty_logdet(st) ≈ truth(lsp) atol = 1e-11
+                @test g ≈ ForwardDiff.gradient(truth, lsp) atol = 1e-10
+                @test H ≈ ForwardDiff.hessian(truth, lsp) atol = 1e-10
+            end
+        end
+
+        # End to end: ForwardDiff straight through `_log_penalty_det` on real
+        # multi-penalty blocks, against central differences of the same
+        # function. This is the call `_newton_sp_update` makes.
+        @testset "ForwardDiff through _log_penalty_det" begin
+            specs = ["te" => [GAM.te(:x, :z; k = 5)],
+                     "t2" => [GAM.t2(:x, :z; k = 5)],
+                     "ad" => [GAM.s(:x; k = 20, bs = :ad)]]
+            for (label, sm) in specs
+                pen = _setup(sm)
+                M = length(pen.sp)
+                for lsp in ([0.0 for _ in 1:M],
+                            [1.7 * (-1)^i for i in 1:M])
+                    f = l -> GAM._log_penalty_det(pen, l)
+                    g_ad = ForwardDiff.gradient(f, lsp)
+                    H_ad = ForwardDiff.hessian(f, lsp)
+                    @test all(isfinite, g_ad)
+                    @test all(isfinite, H_ad)
+                    @test H_ad ≈ H_ad' atol = 1e-9
+                    # Central differences of the value, and of the gradient.
+                    h = 1e-4
+                    for j in 1:M
+                        lp = copy(lsp); lp[j] += h
+                        lm = copy(lsp); lm[j] -= h
+                        @test g_ad[j] ≈ (f(lp) - f(lm)) / (2h) rtol = 1e-4 atol = 1e-5
+                        gp = ForwardDiff.gradient(f, lp)
+                        gm = ForwardDiff.gradient(f, lm)
+                        @test H_ad[:, j] ≈ (gp .- gm) ./ (2h) rtol = 1e-4 atol = 1e-5
+                    end
+                end
+            end
+        end
+
+        # Nothing asks for a third derivative; refusing beats answering wrong.
+        @testset "third derivatives are refused, not faked" begin
+            Ss = [Matrix(Symmetric(diagm([1.0, 2.0, 0.0]))),
+                  Matrix(Symmetric(diagm([0.0, 1.0, 3.0])))]
+            f = l -> GAM._stable_block_logdet(Ss, l, nothing)
+            @test_throws ArgumentError ForwardDiff.derivative(
+                a -> ForwardDiff.hessian(f, [a, 0.3])[1, 1], 0.2)
+        end
     end
 
     # The λ-independent half of the factorisation (range basis, projections,

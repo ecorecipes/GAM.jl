@@ -4,6 +4,8 @@
 # to log smoothing parameters. The key innovation from Wood (2011) is that
 # derivatives come at negligible extra cost via the implicit function theorem.
 
+using ForwardDiff: ForwardDiff
+
 """
     reml_score(X, y, S_penalty, log_sp, family, link, weights, pirls_result;
                method=:REML, gamma=1.0, scale=-1.0, compute_gradient=true)
@@ -666,6 +668,173 @@ function _stable_penalty_derivs(st, lsp::AbstractVector{Float64})
 end
 
 """
+    _stable_penalty_derivs2(st, lsp) -> (grad, hess)
+
+First **and second** derivatives of `log|S_λ|₊` with respect to `log λ`, both
+read off the one `_stable_penalty_factor` result.
+
+    ∂f/∂ρᵢ      =  λᵢ·tr(S⁺Sᵢ)
+    ∂²f/∂ρᵢ∂ρⱼ  =  δᵢⱼ·λᵢ·tr(S⁺Sᵢ)  −  λᵢλⱼ·tr(S⁺SᵢS⁺Sⱼ)
+
+The second line is `d/dρⱼ` of the first with `dS⁺/dρⱼ = −S⁺(λⱼSⱼ)S⁺`, which is
+the derivative of the pseudo-inverse wherever the range space of `S_λ` is
+locally constant — the same proviso under which the first derivative itself is
+valid, and the one mgcv works under (`ldetS` returns `det1`/`det2` from exactly
+these two formulae).
+
+In the pre-conditioned coordinates of `_stable_penalty_derivs` — `Sⱼ = rSⱼrSⱼ'`,
+`St = P·Stp·P`, `Rpⱼ = P⁻¹rSⱼ` — cyclicity gives
+
+    tr(S⁺SᵢS⁺Sⱼ) = ‖Rpᵢ' Stp⁻¹ Rpⱼ‖²_F
+
+so the cross term costs one extra triangular solve per component and no new
+factorisation. `grad` is computed here rather than delegated so that the two
+share `Stp⁻¹Rpⱼ`; it is asserted equal to `_stable_penalty_derivs` in
+`test/test_penalty_det.jl`.
+"""
+function _stable_penalty_derivs2(st, lsp::AbstractVector{Float64})
+    M = length(st.R)
+    ok = issuccess(st.chol)
+    Sinv = ok ? nothing : pinv(Symmetric(st.Stp))
+    Rp = Vector{Matrix{Float64}}(undef, M)
+    W = Vector{Matrix{Float64}}(undef, M)   # Stp⁻¹·Rpⱼ
+    grad = zeros(Float64, M)
+    for j in 1:M
+        Rj = st.R[j]
+        Rp[j] = Rj ./ st.p
+        if size(Rj, 2) == 0
+            W[j] = Rp[j]
+            continue
+        end
+        W[j] = ok ? (st.chol \ Rp[j]) : (Sinv * Rp[j])
+        grad[j] = exp(lsp[j]) * sum(Rp[j] .* W[j])
+    end
+    hess = zeros(Float64, M, M)
+    for i in 1:M
+        size(Rp[i], 2) == 0 && continue
+        for j in i:M
+            size(Rp[j], 2) == 0 && continue
+            Mij = transpose(Rp[i]) * W[j]
+            v = -exp(lsp[i] + lsp[j]) * sum(abs2, Mij)
+            hess[i, j] = v
+            hess[j, i] = v
+        end
+    end
+    @inbounds for i in 1:M
+        hess[i, i] += grad[i]
+    end
+    return grad, hess
+end
+
+# ----------------------------------------------------------------------------
+# Autodiff entry point for the stable log-determinant
+# ----------------------------------------------------------------------------
+#
+# `_stable_penalty_factor` cannot itself be differentiated, and loosening its
+# `Float64` annotations would not make it so. Its inner loop eigen-decomposes
+# the dominant sum `Σ_α λᵢSᵢ` precisely when that sum is rank deficient
+# (`Q > r` is the condition for entering the branch), so the eigenvector matrix
+# `U` it differentiates through always carries a repeated zero eigenvalue. The
+# eigenvector perturbation series divides by eigenvalue gaps, so a `Dual`-valued
+# `eigen` returns `NaN` partials there (verified directly: a 3×3 with a doubled
+# eigenvalue gives `NaN` through `ForwardDiff`). The partition into dominant and
+# sub-dominant sets, and the numerical rank `r`, are additionally piecewise
+# constant in `λ`.
+#
+# The composite `log|S_λ|₊` *is* smooth — it is invariant to the null-space
+# basis that `U` picks arbitrarily — so the fix is to supply its derivatives
+# analytically and let `ForwardDiff` chain through those, exactly as mgcv does.
+# `_stable_penalty_derivs2` provides the first two, which is all that
+# `ForwardDiff.gradient` (nesting depth 1) and `ForwardDiff.hessian` (depth 2)
+# require of this factor.
+#
+# The three entry points below each re-run `_stable_penalty_factor`, so a
+# Hessian evaluation factorises four times rather than once. That is deliberate:
+# the λ-independent prologue is 98.4% of the cost and is cached per penalty
+# block, leaving the repeats at ~1.6% each, and a memo keyed on `lsp` would add
+# mutable state for a fraction of a percent.
+
+"""
+    _stable_block_logdet(Ss, lsp, key) -> value or nothing
+
+`log|Σⱼ λⱼSⱼ|₊` for one multi-penalty block, via `_stable_penalty_factor`.
+Returns `nothing` when the block has no range space, so the caller can fall
+through to its generic path.
+
+`lsp` may be `Dual`-valued: see the note above. The value and its derivatives
+are then all evaluated at the `Float64` centre of `lsp` and recombined by hand.
+"""
+function _stable_block_logdet(Ss::AbstractVector{<:AbstractMatrix{Float64}},
+                              lsp::AbstractVector{<:Real}, key)
+    st = _stable_penalty_factor(Ss, Float64[Float64(x) for x in lsp]; key = key)
+    st === nothing && return nothing
+    return _stable_penalty_logdet(st)
+end
+
+"""
+    _stable_block_logdet_grad(Ss, lsp, key) -> Vector or nothing
+
+Gradient of [`_stable_block_logdet`](@ref) w.r.t. `lsp`, in the element type of
+`lsp` (so a `Dual` `lsp` yields a `Dual` gradient carrying the second
+derivative).
+"""
+function _stable_block_logdet_grad(Ss::AbstractVector{<:AbstractMatrix{Float64}},
+                                   lsp::AbstractVector{<:Real}, key)
+    st = _stable_penalty_factor(Ss, Float64[Float64(x) for x in lsp]; key = key)
+    st === nothing && return nothing
+    return _stable_penalty_derivs(st, Float64[Float64(x) for x in lsp])
+end
+
+function _stable_block_logdet_hess(Ss::AbstractVector{<:AbstractMatrix{Float64}},
+                                   lsp::AbstractVector{<:Real}, key)
+    st = _stable_penalty_factor(Ss, Float64[Float64(x) for x in lsp]; key = key)
+    st === nothing && return nothing
+    return last(_stable_penalty_derivs2(st, Float64[Float64(x) for x in lsp]))
+end
+
+# Combine a real-valued gradient with the partials of `lsp`: the directional
+# derivative that a first-order `Dual` result carries.
+function _seed_partials(g::AbstractVector, lsp::AbstractVector{<:ForwardDiff.Dual})
+    acc = ForwardDiff.partials(lsp[1]) * g[1]
+    @inbounds for i in 2:length(lsp)
+        acc += ForwardDiff.partials(lsp[i]) * g[i]
+    end
+    return acc
+end
+
+function _stable_block_logdet(Ss::AbstractVector{<:AbstractMatrix{Float64}},
+                              lsp::AbstractVector{<:ForwardDiff.Dual{T}},
+                              key) where {T}
+    v = [ForwardDiff.value(x) for x in lsp]
+    val = _stable_block_logdet(Ss, v, key)
+    val === nothing && return nothing
+    g = _stable_block_logdet_grad(Ss, v, key)
+    return ForwardDiff.Dual{T}(val, _seed_partials(g, lsp))
+end
+
+function _stable_block_logdet_grad(Ss::AbstractVector{<:AbstractMatrix{Float64}},
+                                   lsp::AbstractVector{<:ForwardDiff.Dual{T}},
+                                   key) where {T}
+    v = [ForwardDiff.value(x) for x in lsp]
+    g = _stable_block_logdet_grad(Ss, v, key)
+    g === nothing && return nothing
+    H = _stable_block_logdet_hess(Ss, v, key)
+    return [ForwardDiff.Dual{T}(g[i], _seed_partials(view(H, i, :), lsp))
+            for i in eachindex(g)]
+end
+
+# Third and higher derivatives of the reparameterised determinant are not
+# available. Nothing in GAM.jl asks for them — `ForwardDiff.hessian` nests two
+# deep — and a silently wrong answer would be worse than this.
+function _stable_block_logdet_hess(::AbstractVector{<:AbstractMatrix{Float64}},
+                                   ::AbstractVector{<:ForwardDiff.Dual}, _)
+    throw(ArgumentError(
+        "third derivatives of the stable penalty log-determinant are not " *
+        "implemented; ForwardDiff nesting deeper than a Hessian is " *
+        "unsupported for multi-penalty blocks"))
+end
+
+"""
     _stable_block_logdet_derivs(block, log_sp_block) -> Vector{Float64}
 
 Stable replacement for `_block_logdet_derivs` on multi-penalty blocks. The
@@ -744,14 +913,19 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
             # fall below the eigen threshold and their contribution is silently
             # lost. Use mgcv's similarity transform instead — see
             # `_stable_penalty_factor`.
-            lsp_block = Float64[Float64(log_sp[sp_idx + j - 1]) for j in 1:nS]
+            #
+            # `lsp_block` keeps `log_sp`'s element type: under `ForwardDiff` the
+            # derivatives come from `_stable_block_logdet`'s analytic path
+            # (see the note above it), because the transform itself cannot be
+            # differentiated.
+            lsp_block = [log_sp[sp_idx + j - 1] for j in 1:nS]
             # `convert` rather than the `Matrix{Float64}` constructor, which
             # always copies — see `_stable_block_logdet_derivs` above.
             Ss = [convert(Matrix{Float64}, Si)
                   for Si in _block_width_penalties(block)]
-            st = _stable_penalty_factor(Ss, lsp_block; key = block.S)
-            if st !== nothing
-                ldet += _stable_penalty_logdet(st)
+            bl = _stable_block_logdet(Ss, lsp_block, block.S)
+            if bl !== nothing
+                ldet += bl
                 sp_idx += nS
                 continue
             end
