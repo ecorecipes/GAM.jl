@@ -36,6 +36,70 @@
   random-effect model now converges without a warning. Same trap that makes
   `_stable_penalty_factor` non-differentiable, reached by a different route.
 
+- **`gamlss`/`evgam` smoothness selection could fail to certify a converged
+  fit, and its REML score was wrong at large λ.** Two defects in
+  `mp_efs_outer`, found by investigating a `@test_broken` that had been
+  written off as a cosmetic flag. First, `_logdet_penalty` filtered penalty
+  eigenvalues with a *fixed* absolute cutoff (`e > 1e-10`) applied to the
+  eigenvalues of `λ·Sⱼ` — scale-dependent by construction, so at λ ≈ e²⁰
+  floating-point residue in the nominal null space crossed the threshold at
+  some λ and not others, flipping the counted rank between iterations and
+  injecting double-digit jumps into `log|S|` (measured: rank 10 → 11 with
+  `log|S|` *falling* as λ *rose*). It now scales with the largest eigenvalue,
+  the convention already used elsewhere in the file. Second, the score paired
+  `logdetH` at the pre-update λ with `logdetS` at the post-update λ, injecting
+  a spurious `rankⱼ·Δlog sp` swing every iteration — the same "convergence
+  test keys on step size, not optimality" failure fixed in `gam_nl`, seen from
+  the other side. With both corrected the score converges monotonically and
+  certifies at iteration 20 where it previously ran out at 100. Affects
+  `gamlss`, `evgam`, and `qgam`'s multi-parameter path; single-parameter
+  `gam` uses a separate loop and is unaffected.
+- **`qgam`/`mqgam` accept a `seed`.** Their `lsig` bootstrap calibration derives
+  its stream from the data — `hash((n, qu, round(var_hat, digits=6)))` — which
+  needs no seed but keys on a *computed* float. Measured: in the round-4
+  regression scenario `var_hat` sits 1.19e-7 from a 6th-decimal rounding
+  boundary (max margin 5e-7), and across 200 synthetic fits the closest
+  approach was 2.2e-9 — so a last-bit disagreement between platforms really
+  can select a different stream. `seed = nothing` remains the default and
+  every existing calibration result is byte-identical; an explicit seed
+  bypasses the hash.
+- **Bayesian sampling is reproducible on request; `Random.seed!` alone was not
+  enough.** With `nchains > 1` the chains are sampled on threads, and
+  AbstractMCMC does not derive the per-chain RNGs from the global one — so a
+  script that called `Random.seed!` still got different posteriors run to run,
+  and a convergence-diagnostics test failed on Windows at one commit and
+  passed at the next with no code change between them. `gam(...; priors=...)`
+  and `gamlss(...; priors=...)` now take `seed`, which passes an explicit rng
+  to AbstractMCMC so each chain's seed is derived from it. Verified with two
+  threads: the same seed reproduces the chains bit-for-bit, a different seed
+  changes them, and the unseeded default still varies — MCMC draws are
+  randomness the caller asked for, so `seed = nothing` remains the default.
+  `scam(...; priors=...)` and `gamm(...; priors=...)` take it too: all eight
+  sampling sites across the four Bayesian entry points are now seeded, and an
+  audit found no other unseeded randomness — no library code mutates the
+  global RNG, `bs=:sos`'s knot subsample seeds from `xt[:seed]`, and the
+  `gratia`/`diagnostics` simulations are already behind `seed` parameters.
+  One residual is documented rather than changed: `qgam`'s bootstrap stream is
+  derived from the data via `hash((n, qu, round(var_hat, digits=6)))`, so on
+  the rare occasion `var_hat` straddles that rounding boundary two platforms
+  can differ. Any change to the derivation changes every calibration result,
+  so it is noted at the call site instead.
+- **`gam_nl` could return a much worse fit and report success.** The joint
+  (index direction, smoothing parameter) problem is non-convex, and the EFS
+  step halves when the score does not improve — which shrinks `max_change`
+  until it passes the convergence test, so a single start can stop early with
+  `converged = true`. Measured on the same data and the same seed: Windows
+  returned `cor(fitted, y) = 0.808` where macOS returned `0.983`, with
+  `log sp[1]` of −0.74 against −6.51, a factor of ~320 in λ. Nudging one
+  covariate by 1 part in 10⁸ reached the better optimum on Windows, so the
+  minimum was reachable and only the path to it was fragile. `gam_nl` now
+  refits from fixed alternative starting directions and keeps the best LAML
+  score (`nested_control(n_starts = 3)`, `n_starts = 1` restores the old
+  behaviour), so the answer depends on the data rather than the arithmetic
+  path. `NestedGamModel` gained a `criterion` field holding that score. Note
+  this makes a nested fit ~`n_starts`× more expensive, which is the price of
+  not silently returning the wrong answer.
+
 ## 0.3.0 (2026-08-31)
 
 The release that closes the largest remaining gaps against mgcv: `bam`'s
@@ -422,69 +486,6 @@ basis size without raising an error.
 
 ### Fixed
 
-- **`gamlss`/`evgam` smoothness selection could fail to certify a converged
-  fit, and its REML score was wrong at large λ.** Two defects in
-  `mp_efs_outer`, found by investigating a `@test_broken` that had been
-  written off as a cosmetic flag. First, `_logdet_penalty` filtered penalty
-  eigenvalues with a *fixed* absolute cutoff (`e > 1e-10`) applied to the
-  eigenvalues of `λ·Sⱼ` — scale-dependent by construction, so at λ ≈ e²⁰
-  floating-point residue in the nominal null space crossed the threshold at
-  some λ and not others, flipping the counted rank between iterations and
-  injecting double-digit jumps into `log|S|` (measured: rank 10 → 11 with
-  `log|S|` *falling* as λ *rose*). It now scales with the largest eigenvalue,
-  the convention already used elsewhere in the file. Second, the score paired
-  `logdetH` at the pre-update λ with `logdetS` at the post-update λ, injecting
-  a spurious `rankⱼ·Δlog sp` swing every iteration — the same "convergence
-  test keys on step size, not optimality" failure fixed in `gam_nl`, seen from
-  the other side. With both corrected the score converges monotonically and
-  certifies at iteration 20 where it previously ran out at 100. Affects
-  `gamlss`, `evgam`, and `qgam`'s multi-parameter path; single-parameter
-  `gam` uses a separate loop and is unaffected.
-- **`qgam`/`mqgam` accept a `seed`.** Their `lsig` bootstrap calibration derives
-  its stream from the data — `hash((n, qu, round(var_hat, digits=6)))` — which
-  needs no seed but keys on a *computed* float. Measured: in the round-4
-  regression scenario `var_hat` sits 1.19e-7 from a 6th-decimal rounding
-  boundary (max margin 5e-7), and across 200 synthetic fits the closest
-  approach was 2.2e-9 — so a last-bit disagreement between platforms really
-  can select a different stream. `seed = nothing` remains the default and
-  every existing calibration result is byte-identical; an explicit seed
-  bypasses the hash.
-- **Bayesian sampling is reproducible on request; `Random.seed!` alone was not
-  enough.** With `nchains > 1` the chains are sampled on threads, and
-  AbstractMCMC does not derive the per-chain RNGs from the global one — so a
-  script that called `Random.seed!` still got different posteriors run to run,
-  and a convergence-diagnostics test failed on Windows at one commit and
-  passed at the next with no code change between them. `gam(...; priors=...)`
-  and `gamlss(...; priors=...)` now take `seed`, which passes an explicit rng
-  to AbstractMCMC so each chain's seed is derived from it. Verified with two
-  threads: the same seed reproduces the chains bit-for-bit, a different seed
-  changes them, and the unseeded default still varies — MCMC draws are
-  randomness the caller asked for, so `seed = nothing` remains the default.
-  `scam(...; priors=...)` and `gamm(...; priors=...)` take it too: all eight
-  sampling sites across the four Bayesian entry points are now seeded, and an
-  audit found no other unseeded randomness — no library code mutates the
-  global RNG, `bs=:sos`'s knot subsample seeds from `xt[:seed]`, and the
-  `gratia`/`diagnostics` simulations are already behind `seed` parameters.
-  One residual is documented rather than changed: `qgam`'s bootstrap stream is
-  derived from the data via `hash((n, qu, round(var_hat, digits=6)))`, so on
-  the rare occasion `var_hat` straddles that rounding boundary two platforms
-  can differ. Any change to the derivation changes every calibration result,
-  so it is noted at the call site instead.
-- **`gam_nl` could return a much worse fit and report success.** The joint
-  (index direction, smoothing parameter) problem is non-convex, and the EFS
-  step halves when the score does not improve — which shrinks `max_change`
-  until it passes the convergence test, so a single start can stop early with
-  `converged = true`. Measured on the same data and the same seed: Windows
-  returned `cor(fitted, y) = 0.808` where macOS returned `0.983`, with
-  `log sp[1]` of −0.74 against −6.51, a factor of ~320 in λ. Nudging one
-  covariate by 1 part in 10⁸ reached the better optimum on Windows, so the
-  minimum was reachable and only the path to it was fragile. `gam_nl` now
-  refits from fixed alternative starting directions and keeps the best LAML
-  score (`nested_control(n_starts = 3)`, `n_starts = 1` restores the old
-  behaviour), so the answer depends on the data rather than the arithmetic
-  path. `NestedGamModel` gained a `criterion` field holding that score. Note
-  this makes a nested fit ~`n_starts`× more expensive, which is the price of
-  not silently returning the wrong answer.
 - **The `:so` soap-film "approximation" caveat was wrong, and is removed.**
   The README, `index.md`, `smooths.md` and `mgcv.md` all described `:so` as a
   grid-PDE *approximation* of mgcv's exact method, whose "fits will differ".
