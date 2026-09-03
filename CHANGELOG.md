@@ -20,8 +20,21 @@
 
   `:efs` **remains the default**, and fits at fixed smoothing parameters are
   bit-identical: the `Float64` path through `_log_penalty_det` is unchanged.
-  Newton still degrades to `:efs` where the Hessian comes back non-finite,
-  which some `bs=:re` fits still do.
+  Newton still degrades to `:efs` if the Hessian ever comes back non-finite,
+  but no model class is currently known to trigger that.
+- **`sp_optimizer = :newton` works on `bs=:re` too.** Random-effect models fell
+  back to EFS because the autodiff Hessian came back all-`NaN` while the value
+  and gradient were finite. The cause was in the single-penalty branch of
+  `_log_penalty_det`, which built the penalty in the `Dual` element type and
+  called `eigvals` on it: eigenvalue *second* derivatives divide by eigenvalue
+  gaps, and a random effect's penalty is the identity, so every gap is zero.
+  For one penalty the determinant is analytic anyway — `log|λS|₊ =
+  rank·log λ + log|S|₊`, with `log|S|₊` independent of `log_sp` — so the
+  eigen-decomposition now happens once in `Float64` and the term is exactly
+  linear in `log_sp`. Float64 results are bit-identical (verified to 17
+  significant figures on criteria, deviances and `sp` vectors); `:newton` on a
+  random-effect model now converges without a warning. Same trap that makes
+  `_stable_penalty_factor` non-differentiable, reached by a different route.
 
 ## 0.3.0 (2026-08-31)
 

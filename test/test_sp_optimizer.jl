@@ -73,7 +73,7 @@
         f = GAM.@formulak(y ~ s(x, k = 15, bs = :ts))
         c_e = sp_criterion(fit_with(f, :efs))
         c_n = sp_criterion(fit_with(f, :newton))
-        @test c_n <= c_e + 1e-8          # never worse
+        @test c_n <= c_e + 1e-8          # not worse on this fixture
         @test c_e - c_n > 1e-3           # and materially better here
     end
 
@@ -81,7 +81,10 @@
         # Each of these took the reparameterization path that used to throw
         # `MethodError(Float64, ::ForwardDiff.Dual)`. The contract now is that
         # Newton actually optimizes them — no warning, no EFS step — and lands
-        # on a criterion no worse than EFS's.
+        # on a criterion no worse than EFS's ON THESE FIXTURES. That is a
+        # per-model observation, not a general guarantee: both are local
+        # optimizers on a non-convex criterion, so neither dominates the other
+        # in general, and these cases are one dataset.
         cases = Any[
             ("te",     GAM.@formulak(y ~ te(x, z, k = 5, bs = [:cr, :cr])), NamedTuple()),
             ("ti",     GAM.@formulak(y ~ s(x) + s(z) + ti(x, z, k = 5)),    NamedTuple()),
@@ -97,22 +100,38 @@
             @test all(isfinite, coef(m_n))
             m_e = fit_with(f, :efs; kw...)
             # Newton is a genuine optimizer here, not a relabelled EFS step:
-            # it must never do worse, and on these it does slightly better
-            # (measured 1e-4 to 3e-3 in the criterion).
+            # on these fixtures it lands slightly better (measured 1e-4 to
+            # 3e-3 in the criterion). Scope: this pins the observed behaviour
+            # on this dataset, and is not a claim that Newton dominates EFS in
+            # general — on a non-convex criterion two local optimizers can each
+            # win somewhere.
             @test sp_criterion(m_n) <= sp_criterion(m_e) + 1e-8
         end
     end
 
-    @testset "Newton still falls back instead of throwing" begin
-        # Not every model is safe: a `bs=:re` term can drive a smoothing
-        # parameter far enough that the ForwardDiff Hessian comes back
-        # non-finite. The fit must still succeed, as an EFS fit.
+    @testset "Newton optimizes bs=:re rather than falling back" begin
+        # This used to assert the OPPOSITE — that `bs=:re` fell back to EFS —
+        # because the autodiff Hessian came back all-`NaN` while the value and
+        # gradient were finite. The single-penalty branch of `_log_penalty_det`
+        # was calling `eigvals` on a `Dual` penalty, and eigenvalue second
+        # derivatives divide by eigenvalue gaps: a random effect's penalty is
+        # the identity, so every gap is zero. Newton now runs it directly.
+        #
+        # The `:efs` fallback still exists as a defensive path, but no model
+        # class is currently known to trigger it, so nothing exercises it here
+        # rather than contriving a trigger that proves nothing.
         f = GAM.@formulak(y ~ s(x, k = 10) + s(g, bs = :re))
         m_n = fit_with(f, :newton)
         @test m_n isa GamModel
         @test all(isfinite, coef(m_n))
-        @test isapprox(sp_criterion(m_n), sp_criterion(fit_with(f, :efs));
-                       rtol = 1e-6)
+        @test m_n.converged
+        # NOT an equality against EFS. That assertion is a relic of the
+        # fallback era: while `:re` fell back, the two WERE the same fit, so
+        # they matched to `rtol = 1e-6`. Now that Newton actually optimizes
+        # this model it lands materially better — measured 103.26466 against
+        # EFS's 103.26846, a 3.7e-5 relative gap that the old equality
+        # rejected. What is worth pinning is the direction, on this fixture.
+        @test sp_criterion(m_n) <= sp_criterion(fit_with(f, :efs)) + 1e-8
     end
 
     @testset "Newton respects fixed smoothing parameters" begin

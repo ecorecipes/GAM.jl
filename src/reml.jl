@@ -931,9 +931,41 @@ function _log_penalty_det(penalty::PenaltySetup, log_sp::AbstractVector)
             end
             # No range space at all: fall through to the generic path below.
         end
-        # Single-penalty blocks (the common case) keep the original arithmetic
-        # untouched: with one term λmax factoring is exact, and this path is
-        # bit-identical to what it computed before.
+        if nS == 1
+            # Single penalty: log|λS|₊ = rank·log λ + log|S|₊, and log|S|₊ is a
+            # CONSTANT — S does not depend on log_sp — so the term is exactly
+            # linear in log_sp and contributes nothing to the Hessian.
+            #
+            # Building S in the Dual element type and calling `eigvals` on it
+            # (what this path did before) gets the value and the gradient right
+            # but returns NaN for the SECOND derivative whenever the penalty has
+            # repeated eigenvalues: the eigenvalue second-derivative rule divides
+            # by eigenvalue gaps. `bs=:re`'s penalty is the identity, so every
+            # gap is zero, and `sp_optimizer = :newton` fell back to EFS on every
+            # model containing a random effect. Same trap as the one that makes
+            # `_stable_penalty_factor` non-differentiable, reached by a different
+            # route.
+            #
+            # The accumulation order below is deliberately identical to the
+            # generic path it replaces (λ factored out is exactly 1 when nS == 1,
+            # and `lsp_max` is exactly `log_sp[sp_idx]`), so Float64 results are
+            # bit-identical.
+            Sf = zeros(Float64, k, k)
+            Si1 = block.S[1]
+            off1 = block.offsets[1]
+            m1 = size(Si1, 1)
+            @inbounds for j in 1:m1, m in 1:m1
+                Sf[off1 + j, off1 + m] += Si1[j, m]
+            end
+            eig = eigvals(Symmetric(Sf))
+            thresh = eps(Float64) * maximum(abs.(eig))
+            for ev in eig
+                ev > thresh && (ldet += log(ev) + log_sp[sp_idx])
+            end
+            sp_idx += 1
+            continue
+        end
+        # Multi-penalty blocks that fell through the branches above.
         lsp_max = log_sp[sp_idx]
         for j in 1:nS
             lsp_max = max(lsp_max, log_sp[sp_idx + j - 1])
