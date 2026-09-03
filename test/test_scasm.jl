@@ -147,24 +147,39 @@ using Test, GAM, DataFrames, Random, Statistics, Distributions
             m, stderr_text = capture_stderr_text() do
                 gamlss(formulas, df, GaussianLS(); method = :efs, gamlss_ctrl = ctrl)
             end
-            # KNOWN DEFECT (not a wrong answer). The fit itself is right —
-            # correlation 1.0 with the truth, monotone, finite, asserted below.
-            # Only the `converged` FLAG is wrong.
-            #
             # The data here is exactly linear under a monotone constraint, so
             # the true optimum is lambda -> infinity. The EFS smoothing-parameter
-            # iteration reaches a stable fixed point (log sp 19.94, unchanged at
-            # 50, 120 or 400 cycles) that the deviance criterion cannot certify,
-            # because the active constraint set keeps flipping and jitters the
-            # deviance. This used to "pass" only because the log-sp bound of 15
-            # clamped the iteration, freezing the deviance — convergence by
-            # clamping, not by finding an optimum. Widening the bound to 30 for
-            # the shrinkage bases (mgcv's is ~e^30) removed that accident.
+            # iteration reaches a stable fixed point (log sp 19.93, unchanged at
+            # 50, 120 or 400 cycles); the fit is right — correlation 1.0 with the
+            # truth, monotone, finite, asserted below.
             #
-            # Making the deviance criterion relative rather than absolute fixed
-            # the `:rs` and `:cg` solvers; `:efs` still stalls. Marked broken so
-            # it stays visible and flips loudly when properly fixed.
-            @test_broken m.converged
+            # `converged` used to come back false here even so, from two bugs in
+            # `mp_efs_outer`'s convergence check (src/mpfit.jl), not from the fit:
+            #
+            #   1. `_logdet_penalty` counted nonzero penalty eigenvalues against a
+            #      fixed absolute cutoff (1e-10). At lambda ~ e^20 the true
+            #      near-zero (floating-point-noise) eigenvalues of S = lambda*Sj
+            #      get amplified past that cutoff on some iterations and not
+            #      others, flipping the counted rank by one and injecting a
+            #      double-digit jump into log|S| — and so into the REML score —
+            #      unrelated to the fit. Fixed to a threshold relative to the
+            #      largest eigenvalue, matching the rank convention used
+            #      everywhere else in that file.
+            #   2. The score was computed by mixing logdetH from the OLD
+            #      (pre-update) smoothing parameters with logdetS from the just
+            #      -updated NEW ones. Near this fixed point the EFS step keeps
+            #      moving log_sp by a large, non-decaying amount every iteration
+            #      (bouncing between two values, from a rank_j/lambda -
+            #      tr(A^-1 S) cancellation at extreme lambda), so the old/new
+            #      mismatch injected a spurious swing into the score every
+            #      iteration and it could never settle — a convergence test
+            #      keying on step size rather than on optimality. Fixed to score
+            #      both terms at the same (old) lambda.
+            #
+            # With both fixed the score converges cleanly (REML plateaus at
+            # -73.64, |delta| shrinking below the 1e-6-relative tolerance) at
+            # iteration 20, well inside the 50-cycle budget.
+            @test m.converged
             @test all(isfinite, m.fitted_eta[1])
             @test all(diff(m.fitted_eta[1]) .>= -1e-8)
             @test !occursin("non-convex", lowercase(stderr_text))
