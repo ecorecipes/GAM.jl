@@ -409,6 +409,33 @@ basis size without raising an error.
 
 ### Fixed
 
+- **`gamlss`/`evgam` smoothness selection could fail to certify a converged
+  fit, and its REML score was wrong at large λ.** Two defects in
+  `mp_efs_outer`, found by investigating a `@test_broken` that had been
+  written off as a cosmetic flag. First, `_logdet_penalty` filtered penalty
+  eigenvalues with a *fixed* absolute cutoff (`e > 1e-10`) applied to the
+  eigenvalues of `λ·Sⱼ` — scale-dependent by construction, so at λ ≈ e²⁰
+  floating-point residue in the nominal null space crossed the threshold at
+  some λ and not others, flipping the counted rank between iterations and
+  injecting double-digit jumps into `log|S|` (measured: rank 10 → 11 with
+  `log|S|` *falling* as λ *rose*). It now scales with the largest eigenvalue,
+  the convention already used elsewhere in the file. Second, the score paired
+  `logdetH` at the pre-update λ with `logdetS` at the post-update λ, injecting
+  a spurious `rankⱼ·Δlog sp` swing every iteration — the same "convergence
+  test keys on step size, not optimality" failure fixed in `gam_nl`, seen from
+  the other side. With both corrected the score converges monotonically and
+  certifies at iteration 20 where it previously ran out at 100. Affects
+  `gamlss`, `evgam`, and `qgam`'s multi-parameter path; single-parameter
+  `gam` uses a separate loop and is unaffected.
+- **`qgam`/`mqgam` accept a `seed`.** Their `lsig` bootstrap calibration derives
+  its stream from the data — `hash((n, qu, round(var_hat, digits=6)))` — which
+  needs no seed but keys on a *computed* float. Measured: in the round-4
+  regression scenario `var_hat` sits 1.19e-7 from a 6th-decimal rounding
+  boundary (max margin 5e-7), and across 200 synthetic fits the closest
+  approach was 2.2e-9 — so a last-bit disagreement between platforms really
+  can select a different stream. `seed = nothing` remains the default and
+  every existing calibration result is byte-identical; an explicit seed
+  bypasses the hash.
 - **Bayesian sampling is reproducible on request; `Random.seed!` alone was not
   enough.** With `nchains > 1` the chains are sampled on threads, and
   AbstractMCMC does not derive the per-chain RNGs from the global one — so a
