@@ -7,10 +7,12 @@
 #             Computes exact Hessian of conditional REML w.r.t. log(sp).
 #             More expensive per step but fewer iterations for difficult
 #             problems, and reaches a better optimum on the shrinkage bases.
-#             SINGLE-PENALTY SMOOTHS ONLY: multi-penalty blocks (te/ti/t2,
-#             bs=:ad, bs=:fs, anything under select=true) take a Float64-only
-#             penalty reparameterization that ForwardDiff cannot traverse, so
-#             they fall back to :efs with a warning. See `gam_control`.
+#             Multi-penalty blocks (te/ti/t2, bs=:ad, bs=:fs, select=true) are
+#             covered: the penalty reparameterization itself is not
+#             differentiable, so its log-determinant supplies analytic first
+#             and second derivatives for ForwardDiff to chain through
+#             (`_stable_penalty_derivs2`, reml.jl). A non-finite Hessian still
+#             falls back to :efs with a warning. See `gam_control`.
 #   Only REML/ML use these; GCV/UBRE/NCV are optimized directly below.
 
 using ForwardDiff
@@ -103,14 +105,17 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     XtWX_cur_buf = zeros(p, p)
     efs_mult = 1.0  # Step multiplier for EFS (reduced on failed steps)
     # Newton is not available for every model. Its Hessian comes from
-    # ForwardDiff, and the stable penalty reparameterization that multi-penalty
-    # blocks (te/ti/t2, adaptive, fs, and any smooth under `select=true`) go
-    # through is Float64-only (`_stable_penalty_factor`, a port of mgcv's
-    # gam.reparam), so differentiating it raises a MethodError on Dual numbers.
-    # Separately, the Hessian can come back non-finite on some models. Rather
-    # than predict which, try Newton and degrade to the EFS step on any
-    # failure, warning once. mgcv avoids this by computing the REML derivatives
-    # analytically instead of by AD.
+    # ForwardDiff, and that Hessian can come back non-finite — some `bs=:re`
+    # fits drive a smoothing parameter far enough that the conditional score
+    # overflows. Rather than predict which, try Newton and degrade to the EFS
+    # step on any failure, warning once.
+    #
+    # Multi-penalty blocks (te/ti/t2, adaptive, fs, and any smooth under
+    # `select=true`) used to land here unconditionally: their stable penalty
+    # reparameterization (`_stable_penalty_factor`) is not differentiable, and
+    # loosening its type annotations would not have made it so. Its
+    # log-determinant now carries analytic first and second derivatives that
+    # ForwardDiff chains through instead — the same route mgcv takes.
     newton_unavailable = false
 
     for outer_iter in 1:(control.outer_maxit)
@@ -173,11 +178,21 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             # Newton with autodiff Hessian on conditional REML.
             # Differentiates REML score w.r.t. log_sp, holding β and w fixed.
             try
-                nsp, nmc = _newton_sp_update(
+                nsp, nmc, nsc = _newton_sp_update(
                     log_sp, X, beta, w, dev, penalty, family, method,
                     scale_est, n, p, edf_total, y, weights, control)
                 if all(isfinite, nsp) && isfinite(nmc)
                     log_sp_new, max_change = nsp, nmc
+                    # Score-based convergence, the same backstop the EFS branch
+                    # applies below. Without it a `t2`/`ad`/`fs` fit runs to
+                    # `outer_maxit` and reports non-convergence while sitting
+                    # at a better criterion than EFS reached: those models have
+                    # a smoothing parameter on a flat ridge at λ ~ 1e7, where
+                    # log λ keeps moving and the objective does not.
+                    if outer_iter > 1 && isfinite(nsc) &&
+                       nsc < control.epsilon
+                        max_change = 0.0
+                    end
                     newton_ok = true
                 else
                     newton_unavailable = true
@@ -189,10 +204,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
                 newton_unavailable = true
                 @warn "sp_optimizer = :newton is unavailable for this model " *
                       "($(typeof(err))); falling back to :efs (Extended " *
-                      "Fellner-Schall). Multi-penalty smooths (te/ti/t2, " *
-                      "bs=:ad, bs=:fs) and `select=true` take a penalty " *
-                      "reparameterization that the autodiff Hessian cannot " *
-                      "differentiate." maxlog = 1
+                      "Fellner-Schall) for the remaining iterations." maxlog = 1
             end
         end
         if !newton_ok
@@ -897,7 +909,9 @@ end
                       scale_est, n, p, edf_total, weights, control)
 
 Newton step on log smoothing parameters using ForwardDiff for the Hessian.
-Returns `(log_sp_new, max_change)`.
+Returns `(log_sp_new, max_change, score_change)`, where `score_change` is how
+much the *conditional* score moved over the accepted step — the caller needs it
+to recognise a flat ridge, see `outer_iteration`.
 """
 function _newton_sp_update(log_sp::Vector{Float64},
     X::Matrix{Float64}, beta::Vector{Float64},
@@ -955,7 +969,12 @@ function _newton_sp_update(log_sp::Vector{Float64},
     end
 
     max_change = maximum(abs.(log_sp_new .- log_sp))
-    return log_sp_new, max_change
+    # Relative movement of the objective over the accepted step. `cur_score` is
+    # the same conditional score the EFS branch compares, so the two optimizers
+    # apply the identical convergence rule.
+    score_change = abs(trial_score - cur_score) /
+                   (abs(cur_score) + 0.1)
+    return log_sp_new, max_change, score_change
 end
 
 

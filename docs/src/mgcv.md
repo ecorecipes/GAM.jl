@@ -137,18 +137,25 @@ Newton is materially better only on the shrinkage bases (`:ts`, `:cs`), by
 drop a term, and the EFS fixed point stops short. EFS is never materially
 better.
 
-The reason Newton is not the default is structural. GAM.jl's Newton step
-differentiates the criterion by autodiff, and the penalty reparameterization
-(`_stable_penalty_factor`, a port of mgcv's `gam.reparam`) is `Float64`-only,
-so the Hessian cannot be taken through a multi-penalty block. That covers
-`te`/`ti`/`t2`, `bs=:ad`, `bs=:fs` and `select = true`. mgcv does not hit this
-because it uses **analytic** REML derivatives rather than autodiff. Requesting
-`:newton` on such a model therefore falls back to EFS with a warning rather
-than failing, so the option is safe to set globally — but a Newton default
-would silently optimize `s(x)` by Newton and `te(x, z)` by EFS inside one
-model, which is worse than a consistent default for a gain confined to two
-basis types. Making the reparameterization AD-compatible, or porting mgcv's
-analytic derivatives, is the prerequisite for revisiting this.
+Newton does cover multi-penalty blocks — `te`/`ti`/`t2`, `bs=:ad`, `bs=:fs`
+and `select = true`. It did not until the penalty log-determinant was given
+analytic derivatives. The reparameterization itself (`_stable_penalty_factor`,
+a port of mgcv's `gam.reparam`) cannot be differentiated at all, and this was
+*not* a matter of narrow type annotations: it eigen-decomposes the dominant
+penalty sum precisely where that sum is rank deficient, so the eigenvectors are
+not a differentiable function of λ, and its dominant/sub-dominant split and
+numerical rank are piecewise-constant decisions. `log|S_λ|₊` is nonetheless
+smooth in λ — it does not depend on which null-space basis the eigensolver
+happens to return — so its first two derivatives are supplied analytically for
+ForwardDiff to chain through, which is the same route mgcv takes with its
+**analytic** REML derivatives. Measured against an exact independent oracle the
+gradient and Hessian agree to `~1e-15`.
+
+Newton is still not the default. It degrades to EFS, with a warning, where the
+autodiff Hessian comes back non-finite — some `bs=:re` fits do — so a Newton
+default would still mean the optimizer changing strategy with model structure,
+for a gain confined to the shrinkage bases. Requesting `:newton` is safe to set
+globally.
 
 ### Other algorithmic differences (measured)
 
