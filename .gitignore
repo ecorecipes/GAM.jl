@@ -9,3 +9,6 @@ Manifest.toml
 # checked in for browsing on GitHub; html/pdf renders are local-only.
 vignettes/**/*.html
 vignettes/**/*.pdf
+
+# Agent worktrees (harness scratch)
+.claude/
