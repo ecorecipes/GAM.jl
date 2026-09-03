@@ -87,12 +87,19 @@ jobs:
         # fine locally under the same --check-bounds=yes --code-coverage flags,
         # so the difference is this job's resources, not the code.
         run: julia --project=. -e 'using Pkg; Pkg.precompile()'
-      - uses: julia-actions/julia-runtest@v1
-        with:
-          # Coverage instrumentation on top of the Turing-sized dependency
-          # graph is what pushes this job over. Coverage is collected from the
-          # gating jobs; this one exists to run the mgcv comparisons.
-          coverage: false
+      - name: Run tests
+        # Deliberately NOT julia-actions/julia-runtest here. Evidence: with the
+        # action, `RCall -> RCallAxisArraysExt` fails to precompile with no
+        # error body; the standalone `Precompile` step above, on the same
+        # runner and the same environment, succeeds. So plain precompilation
+        # works and the action's extra flags are what break it — it adds
+        # --warn-overwrite=yes --depwarn=yes --inline=yes --track-allocation=none
+        # on top of the --check-bounds=yes that `Pkg.test()` already uses.
+        # That extension is third-party glue GAM.jl never calls.
+        #
+        # `Pkg.test()` is also exactly what CLAUDE.md declares authoritative,
+        # so this job now runs the same command a developer runs locally.
+        run: julia --project=. -e 'using Pkg; Pkg.test()'
   docs:
     name: Documentation
     runs-on: ubuntu-latest
