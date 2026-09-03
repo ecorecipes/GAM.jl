@@ -505,4 +505,51 @@ using Test, GAM, GLM, Random, Statistics, StatsBase
         m_upper = qgam(fmls, (y = ym, x = xm), 0.5; co = 0.2, method = :EFS)
         @test fitted(m_lower) ≈ fitted(m_upper) atol = 1e-10
     end
+
+    @testset "qgam seed kwarg for lsig calibration" begin
+        # The default `lsig` calibration derives its bootstrap RNG stream
+        # from (n, qu, round(var_hat, digits=6)) rather than from an
+        # explicit seed, so a bare `qgam` call reproduces without the
+        # caller managing a seed. That default is data-derived, not
+        # platform-derived: a `var_hat` that happens to land within
+        # ~5e-7 of a 6th-decimal rounding boundary could hash to
+        # different bootstrap streams on two platforms whose Gaussian
+        # fits disagree in the last bit — see the long comment in
+        # `_tune_learn_fast` (src/qgam.jl). `seed` is the escape hatch:
+        # pin it explicitly for guaranteed cross-platform reproducibility.
+        rng_c = StableRNG(44)
+        n = 250
+        x = sort(rand(rng_c, n)) .* 2π
+        y = sin.(x) .+ 0.3 .* randn(rng_c, n)
+        df = (y=y, x=x)
+        fmla = GAM.@formula(y ~ s(x, k=12, bs=:cr))
+
+        # 1. Default (no seed) calibration is still reproducible run-to-run
+        #    on this machine — the pre-existing data-derived behaviour is
+        #    unchanged.
+        m_def1 = qgam(fmla, df, 0.5)
+        m_def2 = qgam(fmla, df, 0.5)
+        @test m_def1.coefficients == m_def2.coefficients
+
+        # 2. An explicit seed is reproducible across repeated calls.
+        m_seed1 = qgam(fmla, df, 0.5; seed=123)
+        m_seed2 = qgam(fmla, df, 0.5; seed=123)
+        @test m_seed1.coefficients == m_seed2.coefficients
+
+        # 3. A different seed generally calibrates a different lsig (and
+        #    thus a different fit) than the default derivation — seed is
+        #    not silently ignored.
+        @test m_seed1.coefficients != m_def1.coefficients
+
+        # 4. mqgam forwards `seed` to each per-quantile qgam call, and
+        #    passing it through the `lsig`+`co`-fixed branch (which skips
+        #    calibration entirely) does not error.
+        mq1 = mqgam(fmla, df, [0.25, 0.75]; seed=7)
+        mq2 = mqgam(fmla, df, [0.25, 0.75]; seed=7)
+        @test mq1.fits[0.25].coefficients == mq2.fits[0.25].coefficients
+        @test mq1.fits[0.75].coefficients == mq2.fits[0.75].coefficients
+
+        mq_fixed = mqgam(fmla, df, [0.25, 0.75]; lsig=-0.5, co=0.15, seed=7)
+        @test haskey(mq_fixed.fits, 0.25)
+    end
 end
