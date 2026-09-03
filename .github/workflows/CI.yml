@@ -48,6 +48,9 @@ jobs:
     continue-on-error: true
     env:
       JULIA_NUM_THREADS: 2
+      # Cap concurrent precompile workers: the default scales with cores and
+      # each worker holds its own image, which is the peak-memory driver here.
+      JULIA_NUM_PRECOMPILE_TASKS: 2
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,9 +62,13 @@ jobs:
           use-public-rspm: true
       - name: Install R packages
         run: |
-          Rscript -e 'install.packages(c("mgcv", "scam", "qgam", "gamlss", "evd", "evgam", "gratia", "nlme", "remotes"))'
-          Rscript -e 'remotes::install_github("mfasiolo/gamFactory")' || echo "gamFactory install failed (comparison tests will be skipped)"
-          Rscript -e 'install.packages("egpd")' || echo "egpd install failed (comparison tests will be skipped)"
+          # Never fail the job on a package that the Julia side already skips
+          # per-package: the point of this job is to run whatever comparisons
+          # ARE available, and report what is missing.
+          Rscript -e 'install.packages(c("mgcv", "scam", "qgam", "gamlss", "evd", "evgam", "gratia", "nlme", "remotes"), Ncpus = 2)' || true
+          Rscript -e 'remotes::install_github("mfasiolo/gamFactory")' || echo "gamFactory install failed (its comparison tests will skip)"
+          Rscript -e 'install.packages("egpd")' || echo "egpd install failed (its comparison tests will skip)"
+          Rscript -e 'for (p in c("mgcv","scam","qgam","gamlss","evd","evgam","gratia","gamFactory","egpd")) cat(sprintf("%-12s %s\n", p, if (requireNamespace(p, quietly = TRUE)) "OK" else "MISSING"))'
       - uses: actions/cache@v4
         env:
           cache-name: cache-artifacts
@@ -71,7 +78,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rcall-${{ env.cache-name }}-
       - uses: julia-actions/julia-buildpkg@v1
+      - name: Precompile
+        # Separate from the test step so a precompile failure shows its actual
+        # error. `julia-runtest` reported only "Failed to precompile
+        # RCall → RCallAxisArraysExt" with no error body, which is the
+        # signature of the precompile worker being killed rather than erroring.
+        # That extension is third-party glue GAM.jl never calls; it precompiles
+        # fine locally under the same --check-bounds=yes --code-coverage flags,
+        # so the difference is this job's resources, not the code.
+        run: julia --project=. -e 'using Pkg; Pkg.precompile()'
       - uses: julia-actions/julia-runtest@v1
+        with:
+          # Coverage instrumentation on top of the Turing-sized dependency
+          # graph is what pushes this job over. Coverage is collected from the
+          # gating jobs; this one exists to run the mgcv comparisons.
+          coverage: false
   docs:
     name: Documentation
     runs-on: ubuntu-latest
