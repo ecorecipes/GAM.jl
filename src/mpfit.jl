@@ -441,7 +441,21 @@ function _logdet_penalty(Sl::Vector{Matrix{Float64}}, log_sp::Vector{Float64}, p
         return 0.0
     end
     eigs = eigvals(Symmetric(S))
-    pos = filter(e -> e > 1e-10, eigs)
+    # Relative threshold, matching the rank convention used elsewhere in this
+    # file (_penalty_null_dim, the pen_ranks computed in mp_efs_outer) rather
+    # than a fixed absolute 1e-10. At extreme lambda (a smoothing parameter
+    # running to the bound, as happens on data that is exactly linear under a
+    # monotone constraint) S = lambda*Sj amplifies floating-point residue in
+    # Sj's nominal null space — an eigenvalue that is ~0 for Sj alone becomes
+    # ~lambda*eps, and a FIXED absolute cutoff lets it cross 1e-10 at some
+    # lambda values and not others, one iteration apart. That flips the
+    # counted rank by one and injects a large, erratic jump into log|S| (and
+    # so into the REML/score used for convergence) with no relation to the
+    # actual fit. Scaling the threshold by the largest eigenvalue keeps the
+    # counted rank constant as lambda grows, which is what should happen.
+    mx = maximum(abs, eigs)
+    mx <= 0 && return 0.0
+    pos = filter(e -> e > 1e-10 * mx, eigs)
     return isempty(pos) ? 0.0 : sum(log, pos)
 end
 
@@ -604,17 +618,30 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
             @info "Outer iteration $outer_iter: sp=[$sp_str], max_change=$(round(max_change, sigdigits=3))"
         end
 
-        log_sp .= log_sp_new
-        β_current .= β_opt
-
         # Score-based convergence (as in the core EFS loops): the criterion
         # value is nearly free from the factor already computed above, and the
         # smoothing parameters may wander along a numerically flat ridge.
+        #
+        # Evaluate the score at the SAME smoothing parameters used to build H
+        # and nll_pen above (the pre-update `log_sp`), not the just-updated
+        # `log_sp_new`. Scoring logdetH at the old lambda against logdetS at
+        # the new one mixes two different penalties into one number; on a
+        # smooth that has already reached its optimum (lambda -> infinity
+        # along a flat ridge, e.g. a monotone fit to exactly-linear data) the
+        # EFS step still moves log_sp by a large, non-decaying amount every
+        # iteration (bouncing between two values a fixed rank_j/lambda -
+        # tr(A^-1 S) cancellation permits), so the old/new mismatch injected a
+        # spurious swing of about rank_j * Delta(log_sp) into the score every
+        # iteration and it could never settle. Scoring both terms at the same
+        # lambda lets the true, nearly-static, REML value show through.
         logdetH = 2.0 * sum(log, diag(F.U))
         score = nll_pen + 0.5 * logdetH - 0.5 * _logdet_penalty(Sl, log_sp, p)
         score_converged = outer_iter > 1 && isfinite(score_prev) &&
                           abs(score - score_prev) < 1e-6 * (abs(score_prev) + 0.1)
         score_prev = score
+
+        log_sp .= log_sp_new
+        β_current .= β_opt
 
         if max_change < 1e-4 || score_converged
             sp_converged = true
