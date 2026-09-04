@@ -976,6 +976,8 @@ end
 
 # R integration tests — run when RCall and mgcv are available
 # Set GAM_SKIP_RCALL=true to skip these tests
+# Default false so the later R blocks are safe even when this one is skipped.
+_rcall_probe_ok = false
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     # Probe RCall in a SUBPROCESS before loading it here. `using RCall` maps
     # libR into this process; where that combination is broken on the machine
@@ -986,7 +988,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     # testsets above. Probing out of process turns an uncatchable crash into
     # an ordinary skip, and reports it.
     TEST_PROGRESS && (println(stderr, "▶ probing RCall out-of-process"); flush(stderr))
-    _rcall_probe_ok = try
+    global _rcall_probe_ok = try
         success(pipeline(`$(Base.julia_cmd()) --startup-file=no
                           --project=$(Base.active_project())
                           -e 'using RCall; RCall.reval("library(mgcv)")'`;
@@ -1208,7 +1210,10 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     # Check availability separately so genuine test failures are NOT swallowed:
     # only the load/availability check is wrapped in try/catch; the include
     # (which runs the @testsets) is not.
-    _gamm_rcall_ok = try
+    # Gated on the out-of-process probe above for the same reason: `using
+    # RCall` aborts rather than raising where R is broken, and an abort walks
+    # straight through this try/catch.
+    _gamm_rcall_ok = !_rcall_probe_ok ? false : try
         @eval using RCall
         @eval RCall.reval("library(nlme)")
         true
@@ -1237,7 +1242,8 @@ end
 @eval _inc("test_soap.jl")
 
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
-    _sidecon_rcall_ok = try
+    # Gated on the out-of-process probe above — see the note there.
+    _sidecon_rcall_ok = !_rcall_probe_ok ? false : try
         @eval using RCall
         @eval RCall.reval("library(mgcv)")
         true
