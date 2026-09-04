@@ -977,7 +977,29 @@ end
 # R integration tests — run when RCall and mgcv are available
 # Set GAM_SKIP_RCALL=true to skip these tests
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
-    _rcall_available = try
+    # Probe RCall in a SUBPROCESS before loading it here. `using RCall` maps
+    # libR into this process; where that combination is broken on the machine
+    # it ABORTS, and an abort cannot be caught by the try/catch below — the
+    # whole suite dies with no error, no test failure and no Test Summary.
+    # That is precisely what the CI R job did: it reached this point and
+    # vanished, three runs running, having printed nothing since the inline
+    # testsets above. Probing out of process turns an uncatchable crash into
+    # an ordinary skip, and reports it.
+    TEST_PROGRESS && (println(stderr, "▶ probing RCall out-of-process"); flush(stderr))
+    _rcall_probe_ok = try
+        success(pipeline(`$(Base.julia_cmd()) --startup-file=no
+                          --project=$(Base.active_project())
+                          -e 'using RCall; RCall.reval("library(mgcv)")'`;
+                         stdout = devnull, stderr = devnull))
+    catch
+        false
+    end
+    if !_rcall_probe_ok
+        @warn "Skipping R integration tests: RCall could not load R/mgcv in a " *
+              "subprocess. Loading it here would abort the whole suite rather " *
+              "than raise, so the R comparisons are skipped."
+    end
+    _rcall_available = !_rcall_probe_ok ? false : try
         @eval using RCall
         _ok = @eval RCall.reval("library(mgcv)")
         true
