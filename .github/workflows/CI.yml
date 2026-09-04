@@ -58,6 +58,7 @@ jobs:
       # Locally this subset is 812 assertions in 6m19s against real R, where
       # the whole suite is ~55 minutes.
       GAM_RCALL_ONLY: "true"
+      GAM_TEST_PROGRESS: "true"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

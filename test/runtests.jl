@@ -16,9 +16,20 @@ const _TESTDIR = @__DIR__
 # `Base.include(Main, abspath)` rather than bare `include`: this is called from
 # inside a function, so a relative path would resolve against the caller's
 # context rather than the test directory.
-_inc(f::AbstractString) =
-    (RCALL_ONLY && !occursin("rcall", f)) ? nothing :
-    Base.include(Main, joinpath(_TESTDIR, f))
+# `GAM_TEST_PROGRESS=true` names each file before running it, flushed
+# immediately. The CI R job has now died three times mid-run with no Julia
+# error, no test failure and no Test Summary — the signature of the test
+# process being killed rather than failing — so the log has to say which file
+# was executing at the time.
+const TEST_PROGRESS = get(ENV, "GAM_TEST_PROGRESS", "false") == "true"
+function _inc(f::AbstractString)
+    (RCALL_ONLY && !occursin("rcall", f)) && return nothing
+    if TEST_PROGRESS
+        println(stderr, "▶ ", f)
+        flush(stderr)
+    end
+    return Base.include(Main, joinpath(_TESTDIR, f))
+end
 # CSV is imported here rather than at its first guarded use further down: that
 # guard sits below the include of test_sz_penalties.jl, which reads a vignette
 # CSV at load time and errored with `UndefVarError: CSV` in a single-process
