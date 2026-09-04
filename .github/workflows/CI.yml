@@ -59,6 +59,13 @@ jobs:
       # the whole suite is ~55 minutes.
       GAM_RCALL_ONLY: "true"
       GAM_TEST_PROGRESS: "true"
+      # Do not precompile the whole environment up front. RCall's AxisArrays
+      # extension cannot be built on this image — it has failed every run,
+      # sometimes fatally and sometimes as a warning, while building fine
+      # locally — and it is third-party glue GAM.jl never calls, pulled in
+      # transitively. Without the up-front phase, packages compile on demand
+      # and an extension nothing imports is never reached.
+      JULIA_PKG_PRECOMPILE_AUTO: "0"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
