@@ -51,6 +51,13 @@ jobs:
       # Cap concurrent precompile workers: the default scales with cores and
       # each worker holds its own image, which is the peak-memory driver here.
       JULIA_NUM_PRECOMPILE_TASKS: 2
+      # Run ONLY the R-comparison files (17 of 96). Running all of them here
+      # duplicates the gating `Julia 1 - ubuntu-latest` job, and on top of a
+      # full R installation it exhausted the runner: the test process died
+      # ~8 minutes in with no output, no test failure and no Test Summary.
+      # Locally this subset is 812 assertions in 6m19s against real R, where
+      # the whole suite is ~55 minutes.
+      GAM_RCALL_ONLY: "true"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -4,6 +4,21 @@ using GAM: @formula
 using DataFrames
 using Distributions
 using StableRNGs
+
+# `GAM_RCALL_ONLY=true` runs ONLY the R-comparison files (17 of 96). The CI R
+# job has R installed alongside the full Julia dependency graph, and running
+# every file there duplicates the gating ubuntu job while exhausting the
+# runner — its test process died ~8 minutes in with no output, no test
+# failure and no Test Summary. This keeps that job to the thing only it can
+# do. Unset (the default) runs everything, unchanged.
+const RCALL_ONLY = get(ENV, "GAM_RCALL_ONLY", "false") == "true"
+const _TESTDIR = @__DIR__
+# `Base.include(Main, abspath)` rather than bare `include`: this is called from
+# inside a function, so a relative path would resolve against the caller's
+# context rather than the test directory.
+_inc(f::AbstractString) =
+    (RCALL_ONLY && !occursin("rcall", f)) ? nothing :
+    Base.include(Main, joinpath(_TESTDIR, f))
 # CSV is imported here rather than at its first guarded use further down: that
 # guard sits below the include of test_sz_penalties.jl, which reads a vignette
 # CSV at load time and errored with `UndefVarError: CSV` in a single-process
@@ -918,34 +933,34 @@ end
 end
 
 # BAM tests
-include("test_bam.jl")
+_inc("test_bam.jl")
 
 # t2() tensor product smooth tests
-include("test_t2.jl")
+_inc("test_t2.jl")
 
 # GINLA tests
-include("test_ginla.jl")
+_inc("test_ginla.jl")
 
 # Multi-parameter model tests (evgam)
-include("test_multiparameter.jl")
+_inc("test_multiparameter.jl")
 
 # Parameter recovery from simulated data — failable bands (no R needed)
-@eval include("test_recovery.jl")
-include("test_vignette_bugs.jl")
-include("test_docstrings.jl")
-include("test_ncv.jl")
-include("test_ncv_derivatives.jl")
-include("test_gp_multid.jl")
-include("test_sz_penalties.jl")
-include("test_sz_base.jl")
-include("test_soap_benchmark.jl")
-include("test_sp_optimizer.jl")
-include("test_duchon.jl")
+@eval _inc("test_recovery.jl")
+_inc("test_vignette_bugs.jl")
+_inc("test_docstrings.jl")
+_inc("test_ncv.jl")
+_inc("test_ncv_derivatives.jl")
+_inc("test_gp_multid.jl")
+_inc("test_sz_penalties.jl")
+_inc("test_sz_base.jl")
+_inc("test_soap_benchmark.jl")
+_inc("test_sp_optimizer.jl")
+_inc("test_duchon.jl")
 
 # Derivative audit — hand-coded tables vs ForwardDiff vs Symbolics (heavy
 # Symbolics load; ~30 s). Opt-in: set GAM_DERIVATIVE_AUDIT=true to run.
 if parse(Bool, get(ENV, "GAM_DERIVATIVE_AUDIT", "false"))
-    @eval include("test_derivative_audit.jl")
+    @eval _inc("test_derivative_audit.jl")
 end
 
 # R integration tests — run when RCall and mgcv are available
@@ -961,10 +976,10 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     end
 
     if _rcall_available
-        @eval include("test_rcall.jl")
-        @eval include("test_sz_rcall.jl")
-        @eval include("test_sz_base_rcall.jl")
-        @eval include("test_duchon_rcall.jl")
+        @eval _inc("test_rcall.jl")
+        @eval _inc("test_sz_rcall.jl")
+        @eval _inc("test_sz_base_rcall.jl")
+        @eval _inc("test_duchon_rcall.jl")
 
         # evgam R comparison tests — need evgam and evd packages
         _evgam_available = try
@@ -977,7 +992,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         end
 
         if _evgam_available
-            @eval include("test_evgam_rcall.jl")
+            @eval _inc("test_evgam_rcall.jl")
         end
 
         # EGPD R comparison tests — need egpd package
@@ -990,7 +1005,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         end
 
         if _egpd_available
-            @eval include("test_egpd_rcall.jl")
+            @eval _inc("test_egpd_rcall.jl")
         end
     end
 
@@ -1005,7 +1020,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         end
 
         if _qgam_available
-            @eval include("test_qgam_rcall.jl")
+            @eval _inc("test_qgam_rcall.jl")
         end
     end
 
@@ -1020,7 +1035,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         end
 
      if _scam_available
-         @eval include("test_scam_rcall.jl")
+         @eval _inc("test_scam_rcall.jl")
      end
     end
 
@@ -1035,7 +1050,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         end
 
         if _gamfactory_available
-            @eval include("test_nested_rcall.jl")
+            @eval _inc("test_nested_rcall.jl")
         end
     end
 
@@ -1051,7 +1066,7 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         end
 
         if _scasm_available
-            @eval include("test_scasm_rcall.jl")
+            @eval _inc("test_scasm_rcall.jl")
         end
     end
 
@@ -1066,95 +1081,95 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         end
 
         if _gratia_available
-            @eval include("test_gratia_rcall.jl")
+            @eval _inc("test_gratia_rcall.jl")
         end
     end
 
     # scat (scaled-t) R comparison tests — needs only mgcv, no extra R package
     if _rcall_available
-        @eval include("test_scat_rcall.jl")
+        @eval _inc("test_scat_rcall.jl")
     end
 
     # Vector `sp` transfer to/from mgcv — needs only mgcv
     if _rcall_available
-        @eval include("test_vector_sp_rcall.jl")
+        @eval _inc("test_vector_sp_rcall.jl")
     end
 
     # bam(discrete=true) vs mgcv::bam(discrete=TRUE) — needs only mgcv
     if _rcall_available
-        @eval include("test_discrete_rcall.jl")
+        @eval _inc("test_discrete_rcall.jl")
     end
 end
 
 # EGPD unit tests (no R needed) — must run regardless of GAM_SKIP_RCALL
-@eval include("test_egpd.jl")
+@eval _inc("test_egpd.jl")
 
 # Quantile GAM (qgam) unit tests (no R needed)
-@eval include("test_qgam.jl")
+@eval _inc("test_qgam.jl")
 
 # SCAM unit tests (no R needed)
-@eval include("test_scam.jl")
+@eval _inc("test_scam.jl")
 
 # SCASM unit tests (no R needed)
-@eval include("test_scasm.jl")
+@eval _inc("test_scasm.jl")
 
 # Unified gam() API dispatch tests
-@eval include("test_unified_api.jl")
+@eval _inc("test_unified_api.jl")
 
 # Adaptive smooth tests
-@eval include("test_adaptive.jl")
+@eval _inc("test_adaptive.jl")
 
 # General fit (WPS algorithm) tests
-@eval include("test_general_fit.jl")
+@eval _inc("test_general_fit.jl")
 
 # Targeted regressions (ported from the published main: TPRS null space,
 # multi-penalty REML gradient, RE prediction levels, t2/smooth2random)
-@eval include("test_pirls_invariants.jl")
+@eval _inc("test_pirls_invariants.jl")
 
 # Type-stability / allocation regressions (guards the inference-loss bug class)
-@eval include("test_type_stability.jl")
+@eval _inc("test_type_stability.jl")
 
 # Statistical calibration: interval coverage, null test size, select= shrinkage
-@eval include("test_coverage.jl")
+@eval _inc("test_coverage.jl")
 
 # Analytic REML/GCV gradient vs finite differences (validity domain pinned)
-@eval include("test_reml_gradient.jl")
+@eval _inc("test_reml_gradient.jl")
 
-@eval include("test_regressions.jl")
+@eval _inc("test_regressions.jl")
 
 # Model display: `show` and the mgcv-style `summary`
-@eval include("test_show.jl")
+@eval _inc("test_show.jl")
 
 # Nested effects (s_nest / gam_nl, gamFactory-style)
-@eval include("test_nested.jl")
+@eval _inc("test_nested.jl")
 
 # Seeded configuration fuzz (property test; round-4 regression seeds)
-@eval include("test_fuzz.jl")
+@eval _inc("test_fuzz.jl")
 
 # GAMLSS tests
-@eval include("test_gamlss.jl")
+@eval _inc("test_gamlss.jl")
 
 # GAMLSS comparison tests against mgcv and R gamlss reference outputs
-@eval include("test_gamlss_vs_mgcv.jl")
-@eval include("test_gamlss_vs_rgamlss.jl")
+@eval _inc("test_gamlss_vs_mgcv.jl")
+@eval _inc("test_gamlss_vs_rgamlss.jl")
 
 # Gratia diagnostics unit tests (no R needed)
-@eval include("test_gratia.jl")
+@eval _inc("test_gratia.jl")
 
 # ANOVA / smooth significance tests
-@eval include("test_diagnostics.jl")
+@eval _inc("test_diagnostics.jl")
 
 # Bayesian GAM infrastructure tests (smooth2random, PriorSpec, dispatch)
-@eval include("test_bayes.jl")
+@eval _inc("test_bayes.jl")
 
 # Bayesian GAM end-to-end tests (requires Turing.jl extension)
-@eval include("test_bayes_e2e.jl")
+@eval _inc("test_bayes_e2e.jl")
 
-@eval include("test_formula_support.jl")
+@eval _inc("test_formula_support.jl")
 
-@eval include("test_bayes_gamlss_scam.jl")
+@eval _inc("test_bayes_gamlss_scam.jl")
 
-@eval include("test_gamm.jl")
+@eval _inc("test_gamm.jl")
 
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     # Check availability separately so genuine test failures are NOT swallowed:
@@ -1168,25 +1183,25 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         @warn "Skipping GAMM R comparison tests (nlme/RCall not available)" exception = e
         false
     end
-    _gamm_rcall_ok && @eval include("test_gamm_rcall.jl")
+    _gamm_rcall_ok && @eval _inc("test_gamm_rcall.jl")
 end
 
-@eval include("test_side_constraints.jl")
+@eval _inc("test_side_constraints.jl")
 
 # Spherical spline (sos) tests
-@eval include("test_sos.jl")
+@eval _inc("test_sos.jl")
 
 # Constrained factor smooth (sz) tests
-@eval include("test_sz.jl")
+@eval _inc("test_sz.jl")
 
 # Factor-smooth interaction (fs) tests
-@eval include("test_fs.jl")
+@eval _inc("test_fs.jl")
 
 # Markov random field (mrf) tests
-@eval include("test_mrf.jl")
+@eval _inc("test_mrf.jl")
 
 # Soap film (so) tests
-@eval include("test_soap.jl")
+@eval _inc("test_soap.jl")
 
 if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
     _sidecon_rcall_ok = try
@@ -1197,18 +1212,18 @@ if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
         @warn "Skipping side constraint R comparison tests (RCall/mgcv not available)" exception = e
         false
     end
-    _sidecon_rcall_ok && @eval include("test_side_constraints_rcall.jl")
+    _sidecon_rcall_ok && @eval _inc("test_side_constraints_rcall.jl")
 end
 
-@eval include("test_loess.jl")
+@eval _inc("test_loess.jl")
 
-@eval include("test_fp.jl")
+@eval _inc("test_fp.jl")
 
 # Cyclic P-spline (cps) tests
-@eval include("test_cyclic_ps.jl")
+@eval _inc("test_cyclic_ps.jl")
 
 # SPDE Matérn smooth tests
-@eval include("test_spde.jl")
+@eval _inc("test_spde.jl")
 
 # SPDE R comparison tests (uses pre-generated CSV data, not RCall).
 # Only the CSV availability check is guarded; the include is not, so test
@@ -1220,76 +1235,76 @@ catch e
     @warn "Skipping SPDE R comparison tests (CSV not available)" exception = e
     false
 end
-_spde_csv_ok && @eval include("test_spde_rcall.jl")
+_spde_csv_ok && @eval _inc("test_spde_rcall.jl")
 
 # Input validation tests
-@eval include("test_validation.jl")
+@eval _inc("test_validation.jl")
 
 # Regression tests for code-review fixes (no R needed)
-@eval include("test_review_fixes_core.jl")
-@eval include("test_review_fixes_select_scam.jl")
-@eval include("test_review_fixes_basis.jl")
-@eval include("test_review_fixes_ti.jl")
-@eval include("test_review_fixes_by.jl")
-@eval include("test_review_fixes_extended.jl")
-@eval include("test_review_fixes_serialization.jl")
+@eval _inc("test_review_fixes_core.jl")
+@eval _inc("test_review_fixes_select_scam.jl")
+@eval _inc("test_review_fixes_basis.jl")
+@eval _inc("test_review_fixes_ti.jl")
+@eval _inc("test_review_fixes_by.jl")
+@eval _inc("test_review_fixes_extended.jl")
+@eval _inc("test_review_fixes_serialization.jl")
 
 # TPRS/mgcv basis parity: max_knots rule, translation invariance (no R needed)
-@eval include("test_tprs_parity.jl")
+@eval _inc("test_tprs_parity.jl")
 
 # Binomial GCV/UBRE parity with mgcv 1.9-4 (pinned values, no R needed)
-@eval include("test_gcv_binomial.jl")
+@eval _inc("test_gcv_binomial.jl")
 
 # Vector `sp` for multi-penalty smooths (no R needed)
-@eval include("test_vector_sp.jl")
+@eval _inc("test_vector_sp.jl")
 
 # bs=:gp parity with mgcv's Kammann & Wand Matérn spline (no R needed)
-@eval include("test_gp_parity.jl")
+@eval _inc("test_gp_parity.jl")
 
 # Per-family REML scale profiling vs mgcv (no R needed)
-@eval include("test_reml_families.jl")
+@eval _inc("test_reml_families.jl")
 
 # Stable multi-penalty log|S|+ via mgcv's gam.reparam transform (no R needed)
-@eval include("test_penalty_det.jl")
+@eval _inc("test_penalty_det.jl")
 
 # InverseGaussian / non-canonical-link P-IRLS convergence (no R needed)
-@eval include("test_invgauss.jl")
+@eval _inc("test_invgauss.jl")
 
 # BamDesign abstraction: DenseDesign parity and type stability (no R needed)
-@eval include("test_bam_design.jl")
+@eval _inc("test_bam_design.jl")
 
 # bam(discrete=true): binning, kernels, dense parity (no R needed)
-@eval include("test_discrete.jl")
+@eval _inc("test_discrete.jl")
 
 # by=/random-effect compact representations (no R needed)
-@eval include("test_by_re_representation.jl")
+@eval _inc("test_by_re_representation.jl")
 
 # PenaltyBlock per-sub-penalty offsets (no R needed)
-@eval include("test_penalty_offsets.jl")
+@eval _inc("test_penalty_offsets.jl")
 
 # Discretised tensor smooths (no R needed)
-@eval include("test_discrete_tensor.jl")
+@eval _inc("test_discrete_tensor.jl")
 
 # GamModel.X droppability and model_matrix reassembly (no R needed)
-@eval include("test_model_x.jl")
+@eval _inc("test_model_x.jl")
 
 # Representation guards: discrete blocks must actually engage (no R needed)
-@eval include("test_representation.jl")
+@eval _inc("test_representation.jl")
 
 # Every model-facing consumer on a discrete fit vs dense (no R needed)
-@eval include("test_discrete_consumers.jl")
+@eval _inc("test_discrete_consumers.jl")
 
 # method=:ML criterion parity with mgcv (range-space determinant, Dp/n scale)
-@eval include("test_ml_criterion.jl")
+@eval _inc("test_ml_criterion.jl")
 
 # scat (scaled-t) family unit tests (no R needed)
-@eval include("test_scat.jl")
+@eval _inc("test_scat.jl")
 
 # na.action / weight-and-offset validation tests (no R needed)
-@eval include("test_na_action.jl")
+@eval _inc("test_na_action.jl")
 
 # Vc / edf1 / edf2 smoothing-parameter-uncertainty correction (no R needed)
-@eval include("test_vc.jl")
+@eval _inc("test_vc.jl")
 
 # Plotting tests — run only when Plots.jl (a weak dependency) is available.
 # Availability is checked separately so plotting test failures are not swallowed.
@@ -1300,6 +1315,6 @@ catch
     @info "Skipping plotting tests (Plots.jl not available)"
     false
 end
-_plots_available && @eval include("test_plots.jl")
+_plots_available && @eval _inc("test_plots.jl")
 
 end # @testset "GAM.jl test suite"
