@@ -57,7 +57,6 @@ jobs:
       GAM_RCALL_ONLY: "true"
       GAM_REQUIRE_RCALL: "true"
       GAM_TEST_PROGRESS: "true"
-      GAM_RCALL_LOG: ${{ runner.temp }}/rcall-probe.log
       # Compile on demand instead of precompiling the unused MCMC/plotting
       # test dependencies for this R-only job.
       JULIA_PKG_PRECOMPILE_AUTO: "0"
@@ -95,6 +94,8 @@ jobs:
       - name: Run tests
         # Pkg.test supplies test-only dependencies, including RCall. Strict
         # mode rejects missing packages and empty/skipped comparison files.
+        env:
+          GAM_RCALL_LOG: ${{ runner.temp }}/rcall-probe.log
         run: julia --project=. -e 'using Pkg; Pkg.test()'
       - name: Preserve RCall probe diagnostics
         if: always()
