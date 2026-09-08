@@ -44,27 +44,22 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
   test-rcall:
-    name: Julia 1 - ubuntu-latest - R comparison (informative)
-    continue-on-error: true
+    name: Julia 1 - ubuntu-latest - R comparison
+    permissions:
+      contents: read
     env:
       JULIA_NUM_THREADS: 2
       # Cap concurrent precompile workers: the default scales with cores and
       # each worker holds its own image, which is the peak-memory driver here.
       JULIA_NUM_PRECOMPILE_TASKS: 2
-      # Run ONLY the R-comparison files (17 of 96). Running all of them here
-      # duplicates the gating `Julia 1 - ubuntu-latest` job, and on top of a
-      # full R installation it exhausted the runner: the test process died
-      # ~8 minutes in with no output, no test failure and no Test Summary.
-      # Locally this subset is 812 assertions in 6m19s against real R, where
-      # the whole suite is ~55 minutes.
+      # Run the R comparison files and shared runner/probe checks, without
+      # duplicating the full Julia suite and its large MCMC dependency load.
       GAM_RCALL_ONLY: "true"
+      GAM_REQUIRE_RCALL: "true"
       GAM_TEST_PROGRESS: "true"
-      # Do not precompile the whole environment up front. RCall's AxisArrays
-      # extension cannot be built on this image — it has failed every run,
-      # sometimes fatally and sometimes as a warning, while building fine
-      # locally — and it is third-party glue GAM.jl never calls, pulled in
-      # transitively. Without the up-front phase, packages compile on demand
-      # and an extension nothing imports is never reached.
+      GAM_RCALL_LOG: ${{ runner.temp }}/rcall-probe.log
+      # Compile on demand instead of precompiling the unused MCMC/plotting
+      # test dependencies for this R-only job.
       JULIA_PKG_PRECOMPILE_AUTO: "0"
     runs-on: ubuntu-latest
     steps:
@@ -75,15 +70,19 @@ jobs:
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
-      - name: Install R packages
+      - name: Configure R for RCall
         run: |
-          # Never fail the job on a package that the Julia side already skips
-          # per-package: the point of this job is to run whatever comparisons
-          # ARE available, and report what is missing.
-          Rscript -e 'install.packages(c("mgcv", "scam", "qgam", "gamlss", "evd", "evgam", "gratia", "nlme", "remotes"), Ncpus = 2)' || true
-          Rscript -e 'remotes::install_github("mfasiolo/gamFactory")' || echo "gamFactory install failed (its comparison tests will skip)"
-          Rscript -e 'install.packages("egpd")' || echo "egpd install failed (its comparison tests will skip)"
-          Rscript -e 'for (p in c("mgcv","scam","qgam","gamlss","evd","evgam","gratia","gamFactory","egpd")) cat(sprintf("%-12s %s\n", p, if (requireNamespace(p, quietly = TRUE)) "OK" else "MISSING"))'
+          r_home="$(R RHOME)"
+          echo "R_HOME=$r_home" >> "$GITHUB_ENV"
+          # R's launcher sets this for Rscript, but embedded R in Julia
+          # bypasses that launcher. Posit R's grDevices/stats/etc. otherwise
+          # fail to resolve their libR.so dependency on Ubuntu.
+          echo "LD_LIBRARY_PATH=$r_home/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          Rscript -e 'print(sessionInfo()); print(.libPaths()); stopifnot(file.exists(file.path(R.home("lib"), "libR.so")))'
+      - name: Install R packages
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: Rscript .github/scripts/install-r-dependencies.R
       - uses: actions/cache@v4
         env:
           cache-name: cache-artifacts
@@ -93,28 +92,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rcall-${{ env.cache-name }}-
       - uses: julia-actions/julia-buildpkg@v1
-      - name: Precompile
-        # Separate from the test step so a precompile failure shows its actual
-        # error. `julia-runtest` reported only "Failed to precompile
-        # RCall → RCallAxisArraysExt" with no error body, which is the
-        # signature of the precompile worker being killed rather than erroring.
-        # That extension is third-party glue GAM.jl never calls; it precompiles
-        # fine locally under the same --check-bounds=yes --code-coverage flags,
-        # so the difference is this job's resources, not the code.
-        run: julia --project=. -e 'using Pkg; Pkg.precompile()'
       - name: Run tests
-        # Deliberately NOT julia-actions/julia-runtest here. Evidence: with the
-        # action, `RCall -> RCallAxisArraysExt` fails to precompile with no
-        # error body; the standalone `Precompile` step above, on the same
-        # runner and the same environment, succeeds. So plain precompilation
-        # works and the action's extra flags are what break it — it adds
-        # --warn-overwrite=yes --depwarn=yes --inline=yes --track-allocation=none
-        # on top of the --check-bounds=yes that `Pkg.test()` already uses.
-        # That extension is third-party glue GAM.jl never calls.
-        #
-        # `Pkg.test()` is also exactly what CLAUDE.md declares authoritative,
-        # so this job now runs the same command a developer runs locally.
+        # Pkg.test supplies test-only dependencies, including RCall. Strict
+        # mode rejects missing packages and empty/skipped comparison files.
         run: julia --project=. -e 'using Pkg; Pkg.test()'
+      - name: Preserve RCall probe diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcall-probe
+          path: ${{ runner.temp }}/rcall-probe.log
+          if-no-files-found: warn
+          retention-days: 14
   docs:
     name: Documentation
     runs-on: ubuntu-latest

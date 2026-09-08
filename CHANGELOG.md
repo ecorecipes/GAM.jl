@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **R comparison runs can require real coverage.** `GAM_REQUIRE_RCALL=true`
+  rejects unavailable R/mgcv, missing comparison files, and empty or skipped
+  comparison testsets. The load probe remains out of process and now exposes
+  stdout/stderr, exit status and signals; `GAM_RCALL_LOG` preserves its output.
+  Ubuntu's embedded R now receives `R_HOME/lib` on `LD_LIBRARY_PATH`, matching
+  R's launcher: without it, even base packages such as `grDevices` could not
+  resolve `libR.so`. The repaired R job is gating rather than
+  `continue-on-error`.
+  The CI installer uses authenticated, pinned sources for `gamFactory` and
+  the non-CRAN `egpd` package instead of silently ignoring install failures.
+- **Release automation is prepared, not triggered.** TagBot will create tags
+  and GitHub releases after an approved registration. Maintainer instructions
+  cover registration, release notes and deploy-key setup; the package version
+  and registration state are unchanged.
+
 - **Nested multi-start selection now scores the returned fit.** The stored
   comparator was captured before the final smoothing-parameter update,
   index normalization and coefficient polish, so it could choose a worse

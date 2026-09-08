@@ -2,7 +2,7 @@
 
 GAM.jl is a pure-Julia reimplementation of R's mgcv: penalized regression
 spline GAMs with REML/ML/GCV/UBRE/NCV smoothness selection. 53 source files,
-96 test files, 16 vignettes. Julia 1.11 is the minimum (`Project.toml`).
+97 test files, 16 vignettes. Julia 1.11 is the minimum (`Project.toml`).
 
 Correctness here means **agreement with mgcv**, usually asserted to a stated
 numeric tolerance against values obtained from R. When changing a basis or a
@@ -35,6 +35,9 @@ piping it to `tail` reports the wrapper's status, not the run's.
 R-comparison tests skip themselves when R or the relevant package is missing,
 or with `GAM_SKIP_RCALL=true`. A green local run with R absent is a weaker
 claim than CI's; say which one you mean.
+`GAM_REQUIRE_RCALL=true` makes unavailable, empty, or skipped comparison
+suites an error; combine it with `GAM_RCALL_ONLY=true` for the strict R job.
+`GAM_RCALL_LOG` preserves the crash-safe subprocess probe's diagnostics.
 
 When something fails only under `Pkg.test()`, suspect an over-tight assertion
 (float `==`, or `rtol` at/below ~1e-9) before suspecting the engine.
