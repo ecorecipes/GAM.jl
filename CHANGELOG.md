@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **Nested multi-start selection now scores the returned fit.** The stored
+  comparator was captured before the final smoothing-parameter update,
+  index normalization and coefficient polish, so it could choose a worse
+  candidate while reporting convergence. It now evaluates the negative
+  Fisher-Laplace REML score after polishing, with the scale-dependent
+  likelihood normalization included so different starts are comparable.
+  Ordinary smooths mixed with `s_nest` also retain their fixed `sp=` values
+  and flags, including per-penalty vectors.
+- **Multi-parameter EFS now handles overlapping penalties and extreme
+  smoothing-parameter ratios consistently.** The update uses derivatives
+  of the combined penalty determinant rather than each component's rank,
+  avoiding oversmoothing of tensor/adaptive smooths. Both the determinant
+  and its derivatives reuse the core stable penalty factorization; the
+  null space is determined independently of smoothing parameters. A
+  relative cutoff on the raw penalty sum could still discard real
+  directions and introduce jumps in the score. The same joint derivatives
+  now drive the EFS updates within RS/CG fits. On a Gaussian location-scale
+  tensor fixture, the corrected EFS score is within `1.53e-4` of mgcv outer
+  Newton; at mgcv's fixed smoothing parameters the scores agree to `1.42e-11`.
+- **Seeded posterior-predictive draws no longer reuse coefficient randomness
+  as observation noise.** Both stages now consume successive draws from
+  one RNG, rather than restarting two RNGs at the same seed. This fixes a
+  45.8% predictive-variance inflation in an intercept-only reproduction.
+  Seeded coefficient/fitted draws are unchanged; sampling remains unseeded
+  by default.
+- **Newton preserves fixed smoothing parameters even outside the optimization
+  bounds.** Its solve is restricted to free coordinates, and both trial
+  proposals and step halving leave fixed values unchanged. The regression
+  now includes a free smooth so it actually exercises Newton.
+
 - **`sp_optimizer = :newton` now works on multi-penalty smooths** — `te`/`ti`/
   `t2`, `bs=:ad`, `bs=:fs` and anything under `select = true`. It previously
   threw inside the stable penalty reparameterization and fell back to `:efs`

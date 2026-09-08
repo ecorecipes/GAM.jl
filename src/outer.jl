@@ -924,6 +924,8 @@ function _newton_sp_update(log_sp::Vector{Float64},
 
     n_sp = length(log_sp)
     gamma = control.gamma
+    free = findall(!, penalty.fixed)
+    isempty(free) && return copy(log_sp), 0.0, 0.0
 
     # Precompute XtWX (constant w.r.t. log_sp since w is fixed)
     XtWX = X' * Diagonal(w) * X
@@ -943,7 +945,7 @@ function _newton_sp_update(log_sp::Vector{Float64},
 
     # Stabilize Hessian: eigendecompose and flip negative eigenvalues
     # (same approach as mgcv's fast.REML.fit Newton step)
-    eh = eigen(Symmetric(hess))
+    eh = eigen(Symmetric(hess[free, free]))
     ev = copy(eh.values)
     min_ev = maximum(abs.(ev)) * 1e-6
     @inbounds for i in eachindex(ev)
@@ -951,12 +953,13 @@ function _newton_sp_update(log_sp::Vector{Float64},
     end
 
     # Newton step: Δρ = -H⁻¹ g
-    step = -(eh.vectors * Diagonal(1.0 ./ ev) * eh.vectors') * grad
+    step = zeros(n_sp)
+    step[free] = -(eh.vectors * Diagonal(1.0 ./ ev) * eh.vectors') * grad[free]
     step .= clamp.(step, -5.0, 5.0)
-    # User-fixed smoothing parameters (sp=) do not move
-    step[penalty.fixed] .= 0.0
 
-    log_sp_new = clamp.(log_sp .+ step, -LOG_SP_BOUND, LOG_SP_BOUND)
+    # Bounds constrain optimization, not user-fixed values.
+    log_sp_new = ifelse.(penalty.fixed, log_sp,
+        clamp.(log_sp .+ step, -LOG_SP_BOUND, LOG_SP_BOUND))
 
     # Step halving if score increases
     cur_score = reml_fn(log_sp)
@@ -964,7 +967,8 @@ function _newton_sp_update(log_sp::Vector{Float64},
     for _ in 1:30
         trial_score <= cur_score && break
         step .*= 0.5
-        log_sp_new .= clamp.(log_sp .+ step, -LOG_SP_BOUND, LOG_SP_BOUND)
+        log_sp_new .= ifelse.(penalty.fixed, log_sp,
+            clamp.(log_sp .+ step, -LOG_SP_BOUND, LOG_SP_BOUND))
         trial_score = reml_fn(log_sp_new)
     end
 

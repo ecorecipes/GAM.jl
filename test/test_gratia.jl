@@ -276,6 +276,25 @@ using Distributions
         @test var(vec(pps)) > var(vec(fs))
     end
 
+    @testset "seeded predictive coefficient draws and noise are independent" begin
+        mi = gam(GAM.@formula(y ~ 1), (y=sin.(1.0:16.0),))
+        newdata = (unused=[0.0],)
+        ndraw = 10000
+        mu = vec(fitted_samples(mi; n=ndraw, data=newdata, seed=123))
+        ys = vec(predicted_samples(mi; n=ndraw, data=newdata, seed=123))
+        noise = ys .- mu
+        expected_var = mi.Vp[1, 1] + mi.scale
+
+        # Measured |cor|=0.00990 and variance error 1.53%; bounds leave
+        # at least 4x headroom. Restarting both RNGs at the same seed gave
+        # correlation 1 and a 45.8% variance error on this fixture.
+        @test abs(cor(mu, noise)) < 0.05
+        @test var(ys) ≈ expected_var rtol=0.07
+        @test ys == vec(predicted_samples(mi; n=ndraw, data=newdata, seed=123))
+        @test ys != vec(predicted_samples(mi; n=ndraw, data=newdata, seed=124))
+        @test predicted_samples(mi; n=10) != predicted_samples(mi; n=10)
+    end
+
     # ─── appraise ────────────────────────────────────────────────────────
 
     @testset "appraise" begin

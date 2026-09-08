@@ -420,43 +420,26 @@ one intercept per distribution parameter.
 """
 function _penalty_null_dim(Sl::Vector{Matrix{Float64}}, p::Int)
     isempty(Sl) && return p
-    S = zeros(p, p)
-    for Sj in Sl
-        S .+= Sj
-    end
-    eigs = eigvals(Symmetric(S))
-    mx = maximum(abs, eigs)
-    mx <= 0 && return p
-    rank_S = count(e -> e > 1e-10 * mx, eigs)
-    return p - rank_S
+    pro = _cached_prologue(Sl, Sl)
+    return pro === nothing ? p : p - size(pro.Z, 2)
 end
 
 """Log determinant of penalty (sum of log of non-zero eigenvalues)."""
 function _logdet_penalty(Sl::Vector{Matrix{Float64}}, log_sp::Vector{Float64}, p::Int)
-    S = zeros(p, p)
-    for (j, Sj) in enumerate(Sl)
-        S .+= exp(log_sp[j]) .* Sj
-    end
-    if any(!isfinite, S)
-        return 0.0
-    end
-    eigs = eigvals(Symmetric(S))
-    # Relative threshold, matching the rank convention used elsewhere in this
-    # file (_penalty_null_dim, the pen_ranks computed in mp_efs_outer) rather
-    # than a fixed absolute 1e-10. At extreme lambda (a smoothing parameter
-    # running to the bound, as happens on data that is exactly linear under a
-    # monotone constraint) S = lambda*Sj amplifies floating-point residue in
-    # Sj's nominal null space — an eigenvalue that is ~0 for Sj alone becomes
-    # ~lambda*eps, and a FIXED absolute cutoff lets it cross 1e-10 at some
-    # lambda values and not others, one iteration apart. That flips the
-    # counted rank by one and injects a large, erratic jump into log|S| (and
-    # so into the REML/score used for convergence) with no relation to the
-    # actual fit. Scaling the threshold by the largest eigenvalue keeps the
-    # counted rank constant as lambda grows, which is what should happen.
-    mx = maximum(abs, eigs)
-    mx <= 0 && return 0.0
-    pos = filter(e -> e > 1e-10 * mx, eigs)
-    return isempty(pos) ? 0.0 : sum(log, pos)
+    isempty(Sl) && return 0.0
+    # Rank is independent of positive smoothing parameters. Even a relative
+    # cutoff on the raw sum loses genuine directions at large lambda ratios.
+    st = _stable_penalty_factor(Sl, log_sp; key = Sl)
+    return st === nothing ? 0.0 : _stable_penalty_logdet(st)
+end
+
+function _mp_penalty_stats(Sl::Vector{Matrix{Float64}}, log_sp::Vector{Float64})
+    isempty(Sl) && return 0.0, Float64[]
+    st = _stable_penalty_factor(Sl, log_sp; key = Sl)
+    st === nothing && return 0.0, zeros(length(Sl))
+    derivs = length(Sl) == 1 ? [Float64(size(st.Z, 2))] :
+        _stable_penalty_derivs(st, log_sp)
+    return _stable_penalty_logdet(st), derivs
 end
 
 """
@@ -545,13 +528,6 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
     sp_converged = false
     score_prev = Inf
 
-    # Precompute penalty ranks
-    pen_ranks = Float64[]
-    for Sj in Sl
-        eigs = eigvals(Symmetric(Sj))
-        push!(pen_ranks, Float64(count(e -> e > 1e-10 * maximum(abs, eigs), eigs)))
-    end
-
     for outer_iter in 1:control.outer_maxit
         iterations = outer_iter
         # Build total penalty
@@ -593,17 +569,20 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
         log_sp_new = copy(log_sp)
         max_change = 0.0
 
+        # Overlapping penalties need lambda_j * tr(S_total^+ * S_j), not
+        # rank(S_j). Use the same stable factorization for the score and update.
+        logdetS, ldet_derivs = _mp_penalty_stats(Sl, log_sp)
+
         for j in 1:nsp
             λ = exp(log_sp[j])
             Sj = Sl[j]
-            rank_j = pen_ranks[j]
 
             bSb = dot(β_opt, Sj * β_opt)
             # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(p²), not O(p³)
             trAS = sum(Ainv .* Sj)
 
             # EFS formula: scale_est=1 for multi-parameter (no separate scale)
-            a = max(0.0, rank_j / λ - trAS)
+            a = max(0.0, ldet_derivs[j] / λ - trAS)
 
             if a > 0 && bSb > eps()
                 r = a / bSb  # scale_est = 1 for multi-parameter
@@ -635,7 +614,7 @@ function mp_efs_outer(family::MultiParameterFamily, y::AbstractVector,
         # iteration and it could never settle. Scoring both terms at the same
         # lambda lets the true, nearly-static, REML value show through.
         logdetH = 2.0 * sum(log, diag(F.U))
-        score = nll_pen + 0.5 * logdetH - 0.5 * _logdet_penalty(Sl, log_sp, p)
+        score = nll_pen + 0.5 * logdetH - 0.5 * logdetS
         score_converged = outer_iter > 1 && isfinite(score_prev) &&
                           abs(score - score_prev) < 1e-6 * (abs(score_prev) + 0.1)
         score_prev = score

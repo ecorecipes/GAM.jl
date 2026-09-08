@@ -547,7 +547,7 @@ struct NestedGamModel
     Vp::Matrix{Float64}
     converged::Bool
     iterations::Int
-    criterion::Float64                    # LAML score at the returned fit;
+    criterion::Float64                    # negative Fisher-Laplace REML score;
                                           # the comparator across restarts
 end
 
@@ -567,6 +567,7 @@ Control parameters for [`gam_nl`](@ref) fitting.
 - `tol::Float64`: convergence tolerance for gradients and objective changes
   (default 1e-7)
 - `trace::Bool`: print per-iteration progress (default false)
+- `n_starts::Int`: number of deterministic starting points (default 3)
 
 Construct with [`nested_control`](@ref).
 """
@@ -579,7 +580,8 @@ struct NestedControl
 end
 
 """
-    nested_control(; outer_maxit=100, newton_maxit=200, tol=1e-7, trace=false)
+    nested_control(; outer_maxit=100, newton_maxit=200, tol=1e-7, trace=false,
+                     n_starts=3)
 
 Construct a [`NestedControl`](@ref) for [`gam_nl`](@ref).
 """
@@ -609,6 +611,12 @@ adaptive step multiplier and a conditional-LAML acceptance check.
 The stored covariance `Vp` (used by `predict(se = true)`) is the
 expected-information Bayesian covariance `φ·(Jη'WJη + S_λ)⁻¹` — mgcv's
 convention.
+
+By default, three deterministic starts are compared using `criterion`, the
+negative Fisher-Laplace REML score evaluated after the final coefficient polish.
+It includes the likelihood's scale-dependent normalization and the penalty
+pseudo-determinant, so it is comparable across starts with different estimated
+scales. Lower is better. `nested_control(n_starts = 1)` requests a single fit.
 
 # Arguments
 - `family`: `Normal` (default), `Poisson`, `Bernoulli`/`Binomial`, or `Gamma`
@@ -755,16 +763,14 @@ function gam_nl(gf::GamFormula, data;
     # ── Penalties (full-ζ matrices, one per smoothing parameter) ───────────
     penalties = Matrix{Float64}[]
     pen_ranks = Float64[]
-    if !isempty(std_specs)
-        pen_std = setup_penalties(smooths, p_para)
-        for block in pen_std.blocks
-            for (i_pen, S) in enumerate(block.S)
-                Sfull = zeros(p_tot, p_tot)
-                idx = _sub_penalty_idx(block, i_pen)
-                Sfull[idx, idx] .= S
-                push!(penalties, Sfull)
-                push!(pen_ranks, Float64(rank(S)))
-            end
+    pen_std = setup_penalties(smooths, p_para)
+    for block in pen_std.blocks
+        for (i_pen, S) in enumerate(block.S)
+            Sfull = zeros(p_tot, p_tot)
+            idx = _sub_penalty_idx(block, i_pen)
+            Sfull[idx, idx] .= S
+            push!(penalties, Sfull)
+            push!(pen_ranks, Float64(rank(S)))
         end
     end
     for (j, sp) in enumerate(nested_specs)
@@ -781,8 +787,10 @@ function gam_nl(gf::GamFormula, data;
     end
     nsp = length(penalties)
     log_sp = zeros(nsp)
-    # honor user-fixed sp on nested terms (applies to the outer penalty)
     sp_fixed = falses(nsp)
+    n_std_sp = length(pen_std.sp)
+    log_sp[1:n_std_sp] .= pen_std.sp
+    sp_fixed[1:n_std_sp] .= pen_std.fixed
     # For trans_linear effects the index SCALE is unidentified (standardized
     # away), so their inner-ridge EFS update must work on the normalized
     # direction: bSb evaluated at a/‖a‖ and rank reduced by the one
@@ -1009,7 +1017,6 @@ function gam_nl(gf::GamFormula, data;
 
     # ── EFS outer loop with penalized Gauss–Newton inner loop ──────────────
     S_λ = zeros(p_tot, p_tot)
-    final_score = Inf
     converged = false
     iterations = 0
     efs_mult = 1.0
@@ -1087,7 +1094,6 @@ function gam_nl(gf::GamFormula, data;
         max_change = maximum(abs.(log_sp_new .- log_sp))
 
         score_cur = _cond_score(log_sp, JtWJ, φ)
-        final_score = score_cur
         if max_change > 1e-10
             score_new = _cond_score(log_sp_new, JtWJ, φ)
             if score_new > score_cur + 1e-7 * abs(score_cur)
@@ -1211,6 +1217,15 @@ function gam_nl(gf::GamFormula, data;
     φ = family isa Union{Poisson, Bernoulli, Binomial} ? 1.0 :
         max(dev_final / max(n_eff_obs - edf_total, 1.0), 1e-10)
     Vp = Symmetric(Ainv .* φ) |> Matrix
+
+    # The conditional step score omits terms constant only at fixed scale.
+    # Compare restarts at the returned coefficients, lambda and scale instead.
+    active = wt .> 0
+    ls = _log_saturated_likelihood(family, y[active], wt[active], φ)
+    Mp = _penalty_null_dim(penalties, p_tot)
+    final_score = (dev_final + dot(ζ, S_λ * ζ)) / (2 * φ) - ls +
+        0.5 * logdet(F) - 0.5 * _logdet_penalty(penalties, log_sp, p_tot) -
+        0.5 * Mp * log(2π * φ)
 
     # standardization constants at the optimum, for prediction
     standardize = Tuple{Float64, Float64}[]

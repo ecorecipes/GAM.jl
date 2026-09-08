@@ -135,10 +135,32 @@
     end
 
     @testset "Newton respects fixed smoothing parameters" begin
-        # `sp=` pins a term; the Newton step zeroes those coordinates. If that
-        # guard regressed, the pinned sp would drift.
-        f = GAM.@formulak(y ~ s(x, k = 12, bs = :cr, sp = 0.5))
-        m = fit_with(f, :newton)
-        @test isapprox(exp(m.sp[1]), 0.5; rtol = 1e-8)
+        # A free term is essential: with only the fixed term the outer loop
+        # returns before ever calling Newton, making its guard untested.
+        for sp in (0.5, 1e-16)
+            f = GAM.GamFormula(:y, Symbol[], true, GAM.SmoothSpec[
+                GAM.s(:x; k=12, bs=:cr, sp=sp), GAM.s(:z; k=8, bs=:cr)])
+            m = @test_logs(min_level=Base.CoreLogging.Warn, fit_with(f, :newton))
+            @test m.converged
+            @test m.iterations > 0
+            @test m.sp[1] == log(sp)
+        end
+
+        # Diagonal conditional problem: the free Newton step is capped at
+        # 5 and halved to 2.5. Neither proposal may clamp a fixed coordinate,
+        # including one outside either optimization bound.
+        for fixed in (-40.0, 40.0)
+            lsp = [fixed, log(0.01)]
+            blocks = [GAM.PenaltyBlock([ones(1, 1)], 1, 2, 2),
+                      GAM.PenaltyBlock([ones(1, 1)], 1, 3, 3)]
+            pen = GAM.PenaltySetup(blocks, lsp, BitVector([true, false]))
+            new_sp, change, _ = GAM._newton_sp_update(lsp,
+                Matrix{Float64}(I, 3, 3), [0.0, 0.0, 3.0], ones(3), 0.03^2,
+                pen, Normal(), :REML, 1.0, 3, 3, 2.0, [0.0, 0.0, 3.03],
+                ones(3), gam_control(sp_optimizer=:newton))
+            @test new_sp[1] == fixed
+            @test new_sp[2] == lsp[2] + 2.5
+            @test change == 2.5
+        end
     end
 end

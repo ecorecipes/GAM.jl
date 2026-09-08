@@ -361,6 +361,7 @@ function _efs_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}}
         return
     end
     Ainv = inv(F)
+    _, ldet_derivs = _mp_penalty_stats(Sl, log_sp)
 
     for (j, Sj) in enumerate(Sl)
         Sj_block = @view Sj[s:e, s:e]
@@ -370,14 +371,11 @@ function _efs_update_param!(log_sp::Vector{Float64}, Sl::Vector{Matrix{Float64}}
         λ = exp(log_sp[j])
         Sj_local = Matrix(Sj_block)
 
-        eigs = eigvals(Symmetric(Sj_local))
-        rank_j = Float64(count(e -> e > 1e-10 * maximum(abs, eigs), eigs))
-
         bSb = dot(β_k, Sj_local * β_k)
         # tr(A⁻¹S) = Σᵢⱼ A⁻¹ᵢⱼSᵢⱼ for symmetric S — O(p²), not O(p³)
         trAS = sum(Ainv .* Sj_local)
 
-        a = max(0.0, rank_j / λ - trAS)
+        a = max(0.0, ldet_derivs[j] / λ - trAS)
         if a > 0 && bSb > eps()
             r = a / bSb
             log_sp[j] = clamp(log_sp[j] + log(max(r, 1e-15)), -LOG_SP_BOUND, LOG_SP_BOUND)
