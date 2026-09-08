@@ -1,16 +1,16 @@
 using Test
+include("r_test_support.jl")
+const R_MODE = RTestSupport.mode()
+
 using GAM
 using GAM: @formula
 using DataFrames
 using Distributions
 using StableRNGs
 
-# `GAM_RCALL_ONLY=true` runs ONLY the R-comparison files (17 of 96). The CI R
-# job has R installed alongside the full Julia dependency graph, and running
-# every file there duplicates the gating ubuntu job while exhausting the
-# runner — its test process died ~8 minutes in with no output, no test
-# failure and no Test Summary. This keeps that job to the thing only it can
-# do. Unset (the default) runs everything, unchanged.
+# `GAM_RCALL_ONLY=true` skips non-comparison include files. Shared inline
+# tests and the crash-safe probe regressions still run. This avoids repeating
+# the large MCMC suite in the R job; unset (the default) runs everything.
 const RCALL_ONLY = get(ENV, "GAM_RCALL_ONLY", "false") == "true"
 const _TESTDIR = @__DIR__
 # `Base.include(Main, abspath)` rather than bare `include`: this is called from
@@ -22,11 +22,18 @@ const _TESTDIR = @__DIR__
 # process being killed rather than failing — so the log has to say which file
 # was executing at the time.
 const TEST_PROGRESS = get(ENV, "GAM_TEST_PROGRESS", "false") == "true"
+const COMPLETED_R_COMPARISONS = Set{String}()
 function _inc(f::AbstractString)
     (RCALL_ONLY && !occursin("rcall", f)) && return nothing
     if TEST_PROGRESS
         println(stderr, "▶ ", f)
         flush(stderr)
+    end
+    if f in RTestSupport.COMPARISON_FILES
+        return RTestSupport.run_comparison(f;
+            required=R_MODE.required, completed=COMPLETED_R_COMPARISONS) do
+            Base.include(Main, joinpath(_TESTDIR, f))
+        end
     end
     return Base.include(Main, joinpath(_TESTDIR, f))
 end
@@ -41,6 +48,12 @@ using StatsAPI: fitted, nobs, deviance, dof, dof_residual, loglikelihood, aic, b
     coef, residuals, predict
 
 const rng = StableRNG(42)
+
+# Keep the load probe out of process: a broken libR can abort rather than
+# throw. Required CI runs fail here, before spending time on unrelated tests.
+const _rcall_probe_ok = !R_MODE.skip && RTestSupport.probe(
+    required=R_MODE.required, verbose=TEST_PROGRESS,
+    log_path=get(ENV, "GAM_RCALL_LOG", nothing))
 
 function simulate_tweedie(rng, mu::AbstractVector{<:Real}, p::Real, phi::Real)
     1.0 < p < 2.0 || throw(ArgumentError("simulate_tweedie requires 1 < p < 2"))
@@ -73,6 +86,8 @@ end
 # reports the full summary (and throws, failing CI) once at the very end.
 # The body is deliberately not re-indented to keep diffs reviewable.
 @testset "GAM.jl test suite" begin
+
+include("test_r_test_support.jl")
 
 # Static quality checks
 @eval using Aqua
@@ -975,32 +990,8 @@ if parse(Bool, get(ENV, "GAM_DERIVATIVE_AUDIT", "false"))
 end
 
 # R integration tests — run when RCall and mgcv are available
-# Set GAM_SKIP_RCALL=true to skip these tests
-# Default false so the later R blocks are safe even when this one is skipped.
-_rcall_probe_ok = false
-if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
-    # Probe RCall in a SUBPROCESS before loading it here. `using RCall` maps
-    # libR into this process; where that combination is broken on the machine
-    # it ABORTS, and an abort cannot be caught by the try/catch below — the
-    # whole suite dies with no error, no test failure and no Test Summary.
-    # That is precisely what the CI R job did: it reached this point and
-    # vanished, three runs running, having printed nothing since the inline
-    # testsets above. Probing out of process turns an uncatchable crash into
-    # an ordinary skip, and reports it.
-    TEST_PROGRESS && (println(stderr, "▶ probing RCall out-of-process"); flush(stderr))
-    global _rcall_probe_ok = try
-        success(pipeline(`$(Base.julia_cmd()) --startup-file=no
-                          --project=$(Base.active_project())
-                          -e 'using RCall; RCall.reval("library(mgcv)")'`;
-                         stdout = devnull, stderr = devnull))
-    catch
-        false
-    end
-    if !_rcall_probe_ok
-        @warn "Skipping R integration tests: RCall could not load R/mgcv in a " *
-              "subprocess. Loading it here would abort the whole suite rather " *
-              "than raise, so the R comparisons are skipped."
-    end
+# Set GAM_SKIP_RCALL=true to skip, or GAM_REQUIRE_RCALL=true to reject skips.
+if !R_MODE.skip
     _rcall_available = !_rcall_probe_ok ? false : try
         @eval using RCall
         _ok = @eval RCall.reval("library(mgcv)")
@@ -1206,7 +1197,7 @@ end
 
 @eval _inc("test_gamm.jl")
 
-if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
+if !R_MODE.skip
     # Check availability separately so genuine test failures are NOT swallowed:
     # only the load/availability check is wrapped in try/catch; the include
     # (which runs the @testsets) is not.
@@ -1241,7 +1232,7 @@ end
 # Soap film (so) tests
 @eval _inc("test_soap.jl")
 
-if !parse(Bool, get(ENV, "GAM_SKIP_RCALL", "false"))
+if !R_MODE.skip
     # Gated on the out-of-process probe above — see the note there.
     _sidecon_rcall_ok = !_rcall_probe_ok ? false : try
         @eval using RCall
@@ -1275,6 +1266,13 @@ catch e
     false
 end
 _spde_csv_ok && @eval _inc("test_spde_rcall.jl")
+
+if R_MODE.required
+    RTestSupport.require_complete(COMPLETED_R_COMPARISONS)
+    println("Required R comparison coverage: ",
+        length(COMPLETED_R_COMPARISONS), "/", length(RTestSupport.COMPARISON_FILES),
+        " files completed without skipped assertions")
+end
 
 # Input validation tests
 @eval _inc("test_validation.jl")
