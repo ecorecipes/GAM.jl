@@ -528,6 +528,11 @@ function posterior_samples(m::GamModel;
     unconditional::Bool = false,
 )
     rng = seed === nothing ? default_rng() : MersenneTwister(seed)
+    return _posterior_samples(rng, m; n = n, unconditional = unconditional)
+end
+
+function _posterior_samples(rng::AbstractRNG, m::GamModel;
+    n::Int, unconditional::Bool = false)
     Vcov = _covariance_for(m, unconditional)
     beta_hat = m.coefficients
     p = length(beta_hat)
@@ -570,10 +575,17 @@ function fitted_samples(m::GamModel;
     scale::Symbol = :response,
     unconditional::Bool = false,
 )
+    rng = seed === nothing ? default_rng() : MersenneTwister(seed)
+    return _fitted_samples(rng, m; n = n, data = data, scale = scale,
+        unconditional = unconditional)
+end
+
+function _fitted_samples(rng::AbstractRNG, m::GamModel;
+    n::Int, data, scale::Symbol, unconditional::Bool = false)
     scale in (:response, :link, :linear_predictor) ||
         throw(ArgumentError("scale must be :response or :link"))
 
-    draws = posterior_samples(m; n = n, seed = seed, unconditional = unconditional)
+    draws = _posterior_samples(rng, m; n = n, unconditional = unconditional)
 
     if data === nothing
         X = model_matrix(m)
@@ -638,6 +650,9 @@ end
     predicted_samples(m::GamModel; n=100, data=nothing, seed=nothing)
 
 Draw posterior predictive samples (fitted values + observation noise).
+Coefficient draws and observation noise consume successive draws from one RNG,
+so an explicit `seed` is reproducible without reusing the coefficient draws
+as observation noise.
 
 # Returns
 An `n_obs × n_draws` matrix of predicted values.
@@ -653,7 +668,7 @@ function predicted_samples(m::GamModel;
     seed = nothing,
 )
     rng = seed === nothing ? default_rng() : MersenneTwister(seed)
-    mu_draws = fitted_samples(m; n = n, data = data, seed = seed, scale = :response)
+    mu_draws = _fitted_samples(rng, m; n = n, data = data, scale = :response)
     n_obs, n_draws = size(mu_draws)
 
     y_draws = similar(mu_draws)

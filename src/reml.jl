@@ -412,8 +412,8 @@ function _stable_penalty_prologue(Ss::AbstractVector{<:AbstractMatrix{Float64}})
 end
 
 # Identity-keyed cache for `_stable_penalty_prologue`, holding a small number of
-# entries. The key is the `PenaltyBlock`'s own `S` vector, which is built once in
-# `setup_penalties` and never mutated afterwards, so identity is a sound key.
+# entries. The key is the `PenaltyBlock`'s own `S` vector or a multi-parameter
+# fit's flat penalty vector, both built once and never mutated afterwards.
 #
 # The key is held STRONGLY and the table is bounded: an `objectid` can be reused
 # after collection, so a weak scheme would risk returning another model's

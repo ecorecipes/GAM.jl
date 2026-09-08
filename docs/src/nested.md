@@ -54,6 +54,14 @@ is standardized to mean 0 / variance 1, the outer cubic B-spline lives on a
 fixed symmetric knot range with an ``s(0)=0`` constraint and linear
 extrapolation, and single-index directions are returned unit-norm.
 
+The default `nested_control(n_starts=3)` compares three deterministic starts.
+The returned `criterion` is the negative Fisher-Laplace REML score at the
+**final, polished fit**, including the likelihood's scale-dependent
+normalization and penalty pseudo-determinant; lower is better. It is not the
+conditional score used for EFS step acceptance. Use `n_starts=1` for a single
+fit. Ordinary smooths mixed with `s_nest` honor `sp=` (including per-penalty
+vectors) just as they do in `gam()`.
+
 `gam_nl` supports `offset=` and `weights=` like `gam()`; supported families
 are `Normal`, `Poisson`, `Bernoulli`/`Binomial`, and `Gamma` with
 identity/log/logit links. `select=`, `start=`, and non-REML `method=` are

@@ -371,6 +371,85 @@ using StableRNGs
         @test m_fix.sp[n_std + 1] != m_free.sp[n_std + 1]
     end
 
+    @testset "Restart scores describe the returned fits" begin
+        rng = StableRNG(7)
+        n = 160
+        X = randn(rng, n, 3)
+        u = X * normalize([0.7, -0.5, 0.2])
+        g = repeat(["a", "b", "c", "d"], inner=n ÷ 4)
+        shift = Dict("a"=>0.0, "b"=>1.0, "c"=>-0.5, "d"=>0.3)
+        y = sin.(1.5 .* u) .+ [shift[gi] for gi in g] .+ 0.2 .* randn(rng, n)
+        data = (y=y, g=g, l1=X[:, 1], l2=X[:, 2], l3=X[:, 3])
+        form = GAM.@formulak(y ~ g + s_nest(l1, l2, l3, k=8))
+
+        # Independent Gaussian Fisher-Laplace score. The penalties here are
+        # disjoint, so their unscaled positive eigenvalues give an exact
+        # determinant oracle without any lambda-dependent rank decision.
+        function score_at_returned_fit(m)
+            p = length(m.ζ)
+            S = sum(exp(m.sp[j]) .* m.penalties[j] for j in eachindex(m.sp))
+            rs = rank.(m.penalties)
+            ldS = 0.0
+            for (j, Sj) in enumerate(m.penalties)
+                r = rs[j]
+                r == 0 && continue
+                ev = eigvals(Symmetric(Sj))
+                ldS += sum(log, ev[(end-r+1):end]) + r * m.sp[j]
+            end
+            active = m.wts .> 0
+            Mp = p - sum(rs)
+            ldH = p * log(m.scale) - logdet(Symmetric(m.Vp))
+            return (m.deviance + dot(m.ζ, S * m.ζ)) / (2m.scale) +
+                (count(active) - Mp) / 2 * log(2π * m.scale) -
+                sum(log, m.wts[active]) / 2 + (ldH - ldS) / 2
+        end
+
+        starts = (nothing, [normalize([1.0, 2.0, 3.0])],
+                  [normalize([3.0, 2.0, 1.0])])
+        single = [gam_nl(form, data; control=nested_control(n_starts=1),
+                        inner_start=st) for st in starts]
+        scores = score_at_returned_fit.(single)
+        multi = gam_nl(form, data)
+        @test multi.converged
+        # Measured reconstruction error <=3.6e-13. Allow 1e-8 for eigenvalue
+        # and covariance log-determinant roundoff on other platforms.
+        for (m, score) in zip(single, scores)
+            @test m.criterion ≈ score atol=1e-8 rtol=0
+        end
+        @test multi.criterion ≈ score_at_returned_fit(multi) atol=1e-8 rtol=0
+        @test multi.criterion ≈ minimum(scores) atol=1e-8 rtol=0
+        # No assertion that a particular single start must be bad: it may
+        # improve in future. The selected fit must match the best actual fit.
+        @test multi.ζ ≈ single[argmin(scores)].ζ atol=1e-8 rtol=0
+
+        wt = collect(range(0.5, 1.5; length=n))
+        wt[1:10] .= 0.0
+        mw = gam_nl(form, data; weights=wt, control=nested_control(n_starts=1))
+        @test isfinite(mw.criterion)
+        @test mw.criterion ≈ score_at_returned_fit(mw) atol=1e-8 rtol=0
+    end
+
+    @testset "Fixed ordinary penalties in mixed nested models" begin
+        rng = StableRNG(31)
+        n = 160
+        X = randn(rng, n, 2)
+        x = sort(rand(rng, n))
+        y = sin.(X * normalize([0.8, 0.6])) .+ cos.(2π .* x) .+
+            0.2 .* randn(rng, n)
+        data = (y=y, x=x, z=rand(rng, n), l1=X[:, 1], l2=X[:, 2])
+        ctrl = nested_control(n_starts=1)
+        m = gam_nl(GAM.@formulak(y ~ s(x, bs=:cr, k=8, sp=1000.0) +
+            s_nest(l1, l2, k=8)), data; control=ctrl)
+        @test m.sp[1] == log(1000.0)
+        @test m.iterations > 0
+
+        mt = gam_nl(GAM.@formulak(y ~
+            te(x, z, bs=[:cr, :cr], k=4, sp=[2.0, 7.0]) +
+            s_nest(l1, l2, k=6, sp=3.0)), data; control=ctrl)
+        @test mt.sp[1:3] == log.([2.0, 7.0, 3.0])
+        @test isfinite(mt.criterion)
+    end
+
     @testset "s_nest sp= validation" begin
         # A nested effect has exactly ONE outer penalty, so a vector `sp` is a
         # user error rather than an unsupported feature. It used to surface as

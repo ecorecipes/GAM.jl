@@ -274,6 +274,86 @@ using StatsAPI: predict
         @test length(η_gpd) == 2
         @test all(length(η) == 3 for η in η_gpd)
     end
+    @testset "Penalty rank is independent of smoothing parameters" begin
+        Sl = [diagm([0.0, 1.0, 0.0]), diagm([0.0, 0.0, 1.0])]
+        @test GAM._penalty_null_dim(Sl, 3) == 1
+        for lsp in ([-30.0, -30.0], [-30.0, 30.0], [30.0, -30.0],
+                    [30.0, 30.0], log.([1e12, 1e-3]))
+            # Exact diagonal oracle; measured error 0. Allow 1e-12 for
+            # floating-point log/factorization roundoff across platforms.
+            @test GAM._logdet_penalty(Sl, lsp, 3) ≈ sum(lsp) atol=1e-12 rtol=0
+        end
+
+        # The old relative cutoff dropped the eigenvalue 100 as lambda
+        # crossed 1e12, making log|S| fall by log(100) instead of increasing.
+        lp = log.([1e12 * (1 - 1e-5), 100.0])
+        lq = log.([1e12 * (1 + 1e-5), 100.0])
+        dp = GAM._logdet_penalty(Sl, lp, 3)
+        dq = GAM._logdet_penalty(Sl, lq, 3)
+        @test dq > dp
+        @test dq - dp ≈ sum(lq) - sum(lp) atol=1e-12 rtol=0
+
+        scaled = [1e12 .* Sl[1], 1e-12 .* Sl[2]]
+        @test GAM._penalty_null_dim(scaled, 3) == 1
+        @test GAM._logdet_penalty(scaled, log.([1e-12, 1e12]), 3) ≈ 0.0 atol=1e-12
+        @test GAM._penalty_null_dim([zeros(3, 3)], 3) == 3
+        @test GAM._logdet_penalty([zeros(3, 3)], [30.0], 3) == 0.0
+        @test GAM._penalty_null_dim(Matrix{Float64}[], 3) == 3
+        @test GAM._logdet_penalty(Matrix{Float64}[], Float64[], 3) == 0.0
+    end
+
+    @testset "Joint penalty derivatives also drive RS/CG EFS updates" begin
+        Sl = [diagm([0.0, 1.0, 1.0, 0.0]), diagm([0.0, 0.0, 1.0, 0.0]),
+              diagm([0.0, 0.0, 0.0, 1.0])]
+        lsp = zeros(3)
+        ld, derivs = GAM._mp_penalty_stats(Sl, lsp)
+        # log|S| = rho1 + log(exp(rho1)+exp(rho2)) + rho3.
+        # Exact diagonal oracle; 1e-12 allows factorization roundoff.
+        @test ld ≈ log(2.0) atol=1e-12 rtol=0
+        @test derivs ≈ [1.5, 0.5, 1.0] atol=1e-12 rtol=0
+        GAM._efs_update_param!(lsp, Sl, [0.0, 1.0, 1.0],
+            Matrix{Float64}(I, 3, 3), ones(3), diagm([0.0, 1.0, 2.0]),
+            [0, 3, 4], 1)
+        @test exp.(lsp) ≈ [1/3, 1/6, 1.0] atol=1e-12 rtol=0
+        @test lsp[3] == 0.0  # the second distribution parameter is untouched
+    end
+
+    @testset "Overlapping tensor penalties: EFS vs mgcv" begin
+        n = 225
+        x = ((1:n) .- 0.5) ./ n
+        z = mod.((1:n) .* sqrt(2.0), 1.0)
+        y = sin.(2π .* x) .* cos.(2π .* z) .+ 0.2 .* sin.(29.0 .* (1:n))
+        fs = [GAM.@formulak(y ~ te(x, z, k=5, bs=[:cr, :cr])),
+              GAM.@formulak(y ~ 1)]
+        m = gamlss(fs, (y=y, x=x, z=z), GaussianLS())
+        Sl = build_penalty_matrices(m.smooths, m.param_offsets)
+        p = length(m.coefficients)
+        Mp = GAM._penalty_null_dim(Sl, p)
+        @test sum(rank, Sl) == 30
+        @test p - Mp == 21
+        @test m.converged
+
+        # mgcv 1.9-4, same data and formula:
+        # gam(list(y~te(x,z,k=5,bs=c("cr","cr")),~1),
+        #     family=gaulss(b=0), method="REML")
+        # b=0 matches Julia's log(sigma) link exactly.
+        mgcv_sp = [2.093066556504334, 7.643474615125003]
+        mgcv_reml = -55.55831547561183
+        # EFS vs outer Newton: measured score gap 1.53e-4 and max marginal
+        # sp error 0.75%; allow about 6x and 4x headroom, respectively.
+        # Individual ranks in the EFS numerator gave a 0.873 score gap.
+        @test m.reml ≈ mgcv_reml atol=1e-3 rtol=0
+        @test exp.(m.sp) ≈ mgcv_sp rtol=0.03
+
+        # Fixed-sp parity isolates the likelihood, basis and determinant
+        # from optimization. Measured absolute error 1.42e-11; 1e-8 allows
+        # headroom for the inner Newton solve and platform arithmetic.
+        ref_score, _, _ = GAM.mp_reml(log.(mgcv_sp), m.family, y, m.X_list,
+            Sl, copy(m.coefficients), m.param_offsets,
+            mp_control(inner_tol=1e-8, inner_maxit=200); Mp=Mp)
+        @test ref_score ≈ mgcv_reml atol=1e-8 rtol=0
+    end
+
     @testset "Multi-parameter offsets" begin
         rng_off = Random.MersenneTwister(31)
         n = 300
