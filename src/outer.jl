@@ -24,6 +24,54 @@ using ForwardDiff
 _scale_floor(y::AbstractVector{<:Real}) =
     1e-10 * max(sum(abs2, y .- (sum(y) / length(y))) / max(length(y) - 1, 1), eps())
 
+# Score-based stopping of the smoothing-parameter iteration.
+#
+# Once the criterion stops moving the iteration should end even if a smoothing
+# parameter still wanders (a term on a flat ridge at λ ~ 1e7, or a limit cycle with
+# the step multiplier). But a flat score alone is not convergence: EFS converges
+# linearly and the REML score is very flat near its optimum, so a step that moves
+# the score by a relative 1e-7 can leave the smoothing parameter a factor of two
+# short, and what is computed from the fit follows the smoothing parameter, not the
+# score. With one smooth of a covariate that enters almost linearly, the score at
+# λ = 60 and at the optimum λ = 118 differs in the ninth digit while the effective
+# degrees of freedom are 2.33 and 2.18; the iteration used to stop at 60 (mgcv's
+# Newton iteration stops at 109 at its default tolerance).
+#
+# So the first flat step no longer ends the iteration. It ends at a flat step once
+# the fit has stopped moving as well (effective degrees of freedom steady to
+# `OUTER_EDF_TOL`), and in any case `OUTER_FLAT_GRACE` iterations after the first
+# flat step, which bounds the cost on a ridge or a cycle where the degrees of
+# freedom never settle (an adaptive smooth whose smoothing parameters drift
+# towards zero is one) at that many iterations beyond where it stopped before.
+#
+# `OUTER_EDF_TOL` is not to be tightened without care. A term that should shrink
+# onto its null space sits on a ridge where λ → ∞ and the degrees of freedom
+# approach their limit geometrically: at 1e-8 a quantile fit of a straight line
+# walked to the log-λ clamp, where P-IRLS no longer converged; at 1e-6 it stops
+# as before.
+const OUTER_EDF_TOL = 1e-6
+const OUTER_FLAT_GRACE = 30
+
+mutable struct _FlatScore
+    first_flat::Int      # outer iteration of the first flat step; 0 before it
+    iteration::Int
+    edf::Float64
+end
+_FlatScore() = _FlatScore(0, 0, NaN)
+
+# Call once per outer iteration with whether the score was flat over the step
+# and the current effective degrees of freedom; `true` means stop.
+function _flat_score_stop!(state::_FlatScore, flat::Bool, edf::Float64)
+    previous = state.edf
+    state.edf = edf
+    state.iteration += 1
+    flat && state.first_flat == 0 && (state.first_flat = state.iteration)
+    state.first_flat == 0 && return false
+    state.iteration - state.first_flat >= OUTER_FLAT_GRACE && return true
+    return flat && isfinite(previous) &&
+           abs(edf - previous) < OUTER_EDF_TOL * (1.0 + abs(edf))
+end
+
 """
     outer_iteration(X, y, smooths, penalty, family, link;
                     method, weights, control)
@@ -118,6 +166,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     # ForwardDiff chains through instead — the same route mgcv takes.
     newton_unavailable = false
 
+    flat_score = _FlatScore()
     for outer_iter in 1:(control.outer_maxit)
         # Inner: P-IRLS for current smoothing parameters
         total_penalty!(S_total, penalty, log_sp, p)
@@ -189,9 +238,9 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
                     # at a better criterion than EFS reached: those models have
                     # a smoothing parameter on a flat ridge at λ ~ 1e7, where
                     # log λ keeps moving and the objective does not.
-                    if outer_iter > 1 && isfinite(nsc) &&
-                       nsc < control.epsilon
-                        max_change = 0.0
+                    if outer_iter > 1 && isfinite(nsc)
+                        _flat_score_stop!(flat_score, nsc < control.epsilon,
+                            edf_total) && (max_change = 0.0)
                     end
                     newton_ok = true
                 else
@@ -252,10 +301,10 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
                 # stops moving, declare convergence even if the smoothing
                 # parameters still wander along a flat ridge — sp-change alone
                 # can limit-cycle with the step multiplier.
-                if abs(reml_new - reml_old) <
-                   control.epsilon * (abs(reml_old) + 0.1)
-                    max_change = 0.0
-                end
+                flat = abs(reml_new - reml_old) <
+                       control.epsilon * (abs(reml_old) + 0.1)
+                _flat_score_stop!(flat_score, flat, edf_total) &&
+                    (max_change = 0.0)
             end
         end
 
@@ -292,6 +341,9 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             control = control)
     end
 
+    # A fit whose score went flat before `outer_maxit` ran out has converged in the
+    # criterion, which is what the first flat step used to report.
+    outer_converged |= flat_score.first_flat > 0
     return log_sp, final_result, outer_converged, outer_iters
 end
 
@@ -691,6 +743,7 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
     XtWX_cur_buf = zeros(p, p)
     efs_mult = 1.0
 
+    flat_score = _FlatScore()
     for outer_iter in 1:(control.outer_maxit)
         total_penalty!(S_total, penalty, log_sp, p)
 
@@ -763,10 +816,9 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
             end
 
             # Score-based convergence, matching the standard-family path.
-            if abs(reml_new - reml_old) <
-               control.epsilon * (abs(reml_old) + 0.1)
-                max_change = 0.0
-            end
+            flat = abs(reml_new - reml_old) <
+                   control.epsilon * (abs(reml_old) + 0.1)
+            _flat_score_stop!(flat_score, flat, edf_total) && (max_change = 0.0)
         end
 
         if control.trace
@@ -808,6 +860,9 @@ function outer_iteration(X::Matrix{Float64}, y::Vector{Float64},
         control = control,
         Ain = Ain, bin = bin, Aeq = Aeq, beq = beq)
 
+    # A fit whose score went flat before `outer_maxit` ran out has converged in the
+    # criterion, which is what the first flat step used to report.
+    outer_converged |= flat_score.first_flat > 0
     return log_sp, final_result, outer_converged, outer_iters
 end
 

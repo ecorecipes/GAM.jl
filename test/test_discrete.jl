@@ -67,10 +67,17 @@
         # independently and land 3.9e-9 apart in log sp, giving relc 1.6e-10,
         # fitted 1.8e-10, edf 5.7e-8 — the honest agreement between two
         # different accumulation paths at n = 20,000.
+        #
+        # Loosened again (from 1e-9, 1e-9 and 1e-6) when the smoothing-parameter
+        # iteration stopped ending at the first flat step of the score
+        # (`_flat_score_stop!` in src/outer.jl). It now runs until the fit has
+        # settled, and the two paths can settle one EFS step apart: measured
+        # relc 1.4e-8, fitted 1.5e-8, edf 4.8e-6. One step of a linearly
+        # convergent iteration is what the tolerances now allow.
         relc = maximum(abs.(coef(md) .- coef(mk))) / maximum(abs.(coef(md)))
-        @test relc < 1e-9
-        @test maximum(abs.(fitted(md) .- fitted(mk))) < 1e-9
-        @test abs(md.edf_total - mk.edf_total) < 1e-6
+        @test relc < 1e-7
+        @test maximum(abs.(fitted(md) .- fitted(mk))) < 1e-7
+        @test abs(md.edf_total - mk.edf_total) < 1e-5
         @test abs(md.deviance_val - mk.deviance_val) < 1e-6
     end
 

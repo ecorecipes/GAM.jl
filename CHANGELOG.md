@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **The smoothing-parameter iteration no longer stops at the first flat step
+  of the score.** EFS converges linearly and the REML score is very flat near
+  its optimum, so a step that moved the score by a relative 1e-7 could leave a
+  smoothing parameter a factor of two short: for one smooth of a covariate that
+  enters almost linearly the iteration stopped at λ = 60 where the optimum is
+  118 (mgcv stops at 109 at its default tolerance), and a quantity computed
+  from the fitted values was 6% off. A flat step now ends the iteration only
+  once the effective degrees of freedom have settled as well, and in any case
+  30 iterations after the first flat step (`_flat_score_stop!`); `bam` uses the
+  same rule and now agrees with `gam` to 7e-7 in the fitted values. REML and ML
+  fits move slightly towards their optimum: on the pinned Gaussian reference
+  fit the deviance goes from 27.542518 to 27.543585 against mgcv's 27.543587.
+  Tests re-pinned or loosened for this, each with its measurement:
+  `test_pirls_invariants.jl`, `test_sp_optimizer.jl` (Newton against EFS, now
+  to a relative 1e-6: EFS reaches a slightly lower criterion than Newton's
+  conditional score does), `test_discrete.jl` and `test_discrete_tensor.jl`
+  (two accumulation paths can settle one EFS step apart). GCV, UBRE and NCV
+  are not affected. Not addressed: for tensor products the criterion can have
+  two local minima and GAM.jl and mgcv do not always end in the same one.
 - **R comparison runs can require real coverage.** `GAM_REQUIRE_RCALL=true`
   rejects unavailable R/mgcv, missing comparison files, and empty or skipped
   comparison testsets. The load probe remains out of process and now exposes

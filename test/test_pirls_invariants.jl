@@ -35,10 +35,17 @@ using Statistics, LinearAlgebra
 
     @testset "Gaussian reference fit is unchanged" begin
         m = gam(@formulak(y ~ s(x, k = 12, bs = :cr) + s(z, k = 8, bs = :cr)), df)
-        @test m.deviance_val ≈ 27.542518077223 rtol = 1e-9
-        @test m.edf_total ≈ 11.181589637834 rtol = 1e-9
-        @test m.sp[1] ≈ 2.921439327427 rtol = 1e-7
-        @test m.sp[2] ≈ 6.881308873934 rtol = 1e-7
+        # Re-pinned when the score-based stop of the smoothing-parameter
+        # iteration began to require a settled fit as well as a flat score
+        # (`_flat_score_stop!` in src/outer.jl): the iteration used to stop
+        # short of the REML optimum. Against mgcv 1.9-4 on this exact fit
+        # (deviance 27.543587, edf 11.17688, the same at conv.tol 1e-7 and
+        # 1e-10): previous pins 27.542518 and 11.18159, now 27.543585 and
+        # 11.17688.
+        @test m.deviance_val ≈ 27.543585274041 rtol = 1e-9
+        @test m.edf_total ≈ 11.176884071260 rtol = 1e-9
+        @test m.sp[1] ≈ 2.921497767036 rtol = 1e-7
+        @test m.sp[2] ≈ 6.889751155509 rtol = 1e-7
         @test coef(m)[1] ≈ 0.185438018157 rtol = 1e-9
         # Leverage sums to EDF (hat-diagonal consistency)
         @test sum(leverage(m)) ≈ m.edf_total rtol = 1e-9
@@ -49,11 +56,15 @@ using Statistics, LinearAlgebra
         yp = Float64[rand(rng2, Poisson(exp(0.5 + sin(2π * xi)))) for xi in x]
         mp = gam(@formulak(y ~ s(x, k = 10, bs = :cr)), (y = yp, x = x);
             family = Poisson(), link = LogLink())
-        @test mp.deviance_val ≈ 381.336485934592 rtol = 1e-9
-        @test mp.edf_total ≈ 6.957937392715 rtol = 1e-9
-        @test mp.sp[1] ≈ 4.177641159555 rtol = 1e-7
+        # Re-pinned with the Gaussian fit above (previous pins 381.336485934592,
+        # 6.957937392715, 4.177641159555 and 4 iterations). mgcv 1.9-4 gives
+        # deviance 381.318015 and edf 6.96942 on this fit; the remaining gap
+        # (4.9e-5 in the deviance) was there before and is not from the stop.
+        @test mp.deviance_val ≈ 381.336813430657 rtol = 1e-9
+        @test mp.edf_total ≈ 6.957734300271 rtol = 1e-9
+        @test mp.sp[1] ≈ 4.177826451233 rtol = 1e-7
         # Iteration count is part of the step-control contract
-        @test mp.iterations == 4
+        @test mp.iterations == 8
     end
 
     @testset "Gamma reference fit is unchanged" begin
@@ -75,17 +86,25 @@ using Statistics, LinearAlgebra
         #   sp    1892.53     1948.25       (flat REML ridge)
         #
         # Previous pins were dev 87.828825, edf 3.541309, scale 0.271007.
-        @test mg.deviance_val ≈ 87.866289782686 rtol = 1e-9
-        @test mg.edf_total ≈ 3.482380889071 rtol = 1e-9
-        @test mg.scale ≈ 0.271199414910 rtol = 1e-9
+        #
+        # Re-pinned again when the score-based stop began to require a settled
+        # fit (see the Gaussian fit above). The table's GAM.jl column is the
+        # pin before that; the fit is now nearer mgcv on all four lines:
+        # dev 87.870068, edf 3.476518, scale 0.271219, sp 1910.64.
+        @test mg.deviance_val ≈ 87.870067866796 rtol = 1e-9
+        @test mg.edf_total ≈ 3.476517903261 rtol = 1e-9
+        @test mg.scale ≈ 0.271219082682 rtol = 1e-9
     end
 
     @testset "bam: chunked accumulation ≡ dense gam" begin
         m = gam(@formulak(y ~ s(x, k = 12, bs = :cr) + s(z, k = 8, bs = :cr)), df)
         mb = bam(@formulak(y ~ s(x, k = 12, bs = :cr) + s(z, k = 8, bs = :cr)), df)
-        @test mb.deviance_val ≈ 27.542314103612 rtol = 1e-8
-        @test mb.edf_total ≈ 11.182489027244 rtol = 1e-8
-        @test maximum(abs.(fitted(mb) .- fitted(m))) < 1e-4
+        # Re-pinned with the dense fit above (previous pins 27.542314103612 and
+        # 11.182489027244). Both now run to the same optimum, so the two agree
+        # to 7e-7 in the fitted values, where they agreed to 1e-4 before.
+        @test mb.deviance_val ≈ 27.543579530989 rtol = 1e-8
+        @test mb.edf_total ≈ 11.176909392855 rtol = 1e-8
+        @test maximum(abs.(fitted(mb) .- fitted(m))) < 1e-5
     end
 
     @testset "scam reference fit is unchanged" begin

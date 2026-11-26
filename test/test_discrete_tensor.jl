@@ -67,9 +67,16 @@
             # ~7x and ~30x headroom; a real representation defect shows up
             # orders of magnitude above this, as the 1-D rows of the table in
             # test_discrete_consumers.jl (~1e-15) make clear.
-            @test maximum(abs.(coef(md) .- coef(mq))) / scale < 1e-9
+            #
+            # Coefficient and fitted bounds loosened from 1e-9 when the
+            # smoothing-parameter iteration stopped ending at the first flat
+            # step of the score (`_flat_score_stop!` in src/outer.jl): the two
+            # paths can now settle one EFS step apart on the ridge. Measured
+            # 3.0e-9 and 2.7e-9; a representation defect would still be orders
+            # of magnitude above 1e-8.
+            @test maximum(abs.(coef(md) .- coef(mq))) / scale < 1e-8
             @test md.edf_total ≈ mq.edf_total rtol = 1e-7
-            @test maximum(abs.(fitted(md) .- fitted(mq))) < 1e-9
+            @test maximum(abs.(fitted(md) .- fitted(mq))) < 1e-8
             @test deviance(md) ≈ deviance(mq) rtol = 1e-9
         end
     end
