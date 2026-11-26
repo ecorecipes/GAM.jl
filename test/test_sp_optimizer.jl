@@ -105,7 +105,15 @@
             # on this dataset, and is not a claim that Newton dominates EFS in
             # general — on a non-convex criterion two local optimizers can each
             # win somewhere.
-            @test sp_criterion(m_n) <= sp_criterion(m_e) + 1e-8
+            #
+            # The margin was 1e-8 while EFS stopped at the first flat step of
+            # the score, short of its optimum. EFS now runs until the fit has
+            # settled and reaches a criterion up to 1e-5 below Newton's on
+            # these fixtures: Newton differentiates a conditional score (see
+            # `gam_control`), so its fixed point is near the optimum, not at
+            # it. What is pinned is that the two agree to a relative 1e-6.
+            @test sp_criterion(m_n) <=
+                  sp_criterion(m_e) + 1e-6 * abs(sp_criterion(m_e))
         end
     end
 
@@ -131,7 +139,10 @@
         # this model it lands materially better — measured 103.26466 against
         # EFS's 103.26846, a 3.7e-5 relative gap that the old equality
         # rejected. What is worth pinning is the direction, on this fixture.
-        @test sp_criterion(m_n) <= sp_criterion(fit_with(f, :efs)) + 1e-8
+        # (Relative 1e-6, not 1e-8: see the multi-penalty cases above.)
+        let efs = sp_criterion(fit_with(f, :efs))
+            @test sp_criterion(m_n) <= efs + 1e-6 * abs(efs)
+        end
     end
 
     @testset "Newton respects fixed smoothing parameters" begin

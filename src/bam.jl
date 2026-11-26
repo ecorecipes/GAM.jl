@@ -592,6 +592,7 @@ function outer_iteration_bam(D::BamDesign, y::Vector{Float64},
         end
     end
 
+    flat_score = _FlatScore()
     for outer_iter in 1:(control.outer_maxit)
         S_total = total_penalty(penalty, log_sp, p)
 
@@ -735,10 +736,9 @@ function outer_iteration_bam(D::BamDesign, y::Vector{Float64},
             reml_new = _conditional_reml(log_sp_new, XtWX_cur, beta, result.deviance,
                 penalty, scale_est, n, p, edf_total, method,
                 control.gamma, ls)
-            if abs(reml_new - reml_old) <
-               control.epsilon * (abs(reml_old) + 0.1)
-                max_change = 0.0
-            end
+            flat = abs(reml_new - reml_old) <
+                   control.epsilon * (abs(reml_old) + 0.1)
+            _flat_score_stop!(flat_score, flat, edf_total) && (max_change = 0.0)
         end
 
         log_sp .= log_sp_new
