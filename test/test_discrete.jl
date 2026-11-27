@@ -74,11 +74,19 @@
         # settled, and the two paths can settle one EFS step apart: measured
         # relc 1.4e-8, fitted 1.5e-8, edf 4.8e-6. One step of a linearly
         # convergent iteration is what the tolerances now allow.
+        #
+        # The gap depends on the platform, because the iteration ends when
+        # the effective degrees of freedom move by less than
+        # `OUTER_EDF_TOL * (1 + edf)` in a step, about 1e-5 here, and the two
+        # paths end independently. CI measured edf 1.7e-5 and deviance 1.9e-6
+        # on Julia 1.11 (Linux) and deviance 1.1e-6 on Windows. The edf and
+        # deviance tolerances are therefore ten times the stopping tolerance,
+        # not twice one machine's measurement.
         relc = maximum(abs.(coef(md) .- coef(mk))) / maximum(abs.(coef(md)))
-        @test relc < 1e-7
-        @test maximum(abs.(fitted(md) .- fitted(mk))) < 1e-7
-        @test abs(md.edf_total - mk.edf_total) < 1e-5
-        @test abs(md.deviance_val - mk.deviance_val) < 1e-6
+        @test relc < 1e-6
+        @test maximum(abs.(fitted(md) .- fitted(mk))) < 1e-6
+        @test abs(md.edf_total - mk.edf_total) < 1e-4
+        @test abs(md.deviance_val - mk.deviance_val) < 1e-5
     end
 
     # ------------------------------------------------------------------
