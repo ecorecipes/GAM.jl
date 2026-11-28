@@ -8,7 +8,7 @@ module GAMTuringExt
 
 using GAM
 using Turing
-using Turing: DynamicPPL, MCMCChains
+using Turing: DynamicPPL
 using Distributions
 using LinearAlgebra
 using Random
@@ -208,17 +208,80 @@ _family_tag(f) = error("Bayesian fitting not yet supported for $(typeof(f))")
 _vector_parameter_symbols(base::AbstractString, n::Integer) =
     [Symbol("$(base)[$i]") for i in 1:n]
 
+const _MCMCCHAINS_PKGID = Base.PkgId(
+    Base.UUID("c7f686f2-ff18-58e9-bc7b-31028e88f75d"), "MCMCChains")
+
+function _sample_chains(rng, model, turing_sampler, nsamples::Int, nchains::Int)
+    mc = get(Base.loaded_modules, _MCMCCHAINS_PKGID, nothing)
+    if mc !== nothing && isdefined(mc, :Chains)
+        CT = mc.Chains
+        return nchains > 1 ?
+            sample(rng, model, turing_sampler, MCMCThreads(), nsamples, nchains; chain_type = CT) :
+            sample(rng, model, turing_sampler, nsamples; chain_type = CT)
+    end
+    return nchains > 1 ?
+        sample(rng, model, turing_sampler, MCMCThreads(), nsamples, nchains) :
+        sample(rng, model, turing_sampler, nsamples)
+end
+
+function _is_flexichain(chains)
+    return !applicable(names, chains) || !(names(chains) isa AbstractVector{Symbol})
+end
+
+function _chain_param_names(chains)
+    if !_is_flexichain(chains)
+        return Symbol.(names(chains))
+    end
+    out = Symbol[]
+    for k in keys(chains)
+        nameof(typeof(k)) === :Parameter || continue
+        base = string(k.name)
+        first_val = first(chains[k])
+        if first_val isa AbstractVector
+            for i in eachindex(first_val)
+                push!(out, Symbol("$(base)[$i]"))
+            end
+        else
+            push!(out, Symbol(base))
+        end
+    end
+    return out
+end
+
 function _infer_n_draws(chains, symbol_groups...)
     for group in symbol_groups
         if !isempty(group)
-            return length(vec(chains[first(group)].data))
+            return length(_draw_vector(chains, first(group)))
         end
     end
     throw(ArgumentError("Could not infer posterior draw count from chain parameters"))
 end
 
 function _draw_vector(chains, sym::Symbol)
-    return Float64.(vec(chains[sym].data))
+    if !_is_flexichain(chains)
+        return Float64.(vec(chains[sym].data))
+    end
+    s = string(sym)
+    m = match(r"^(.+)\[(\d+)\]$", s)
+    if m !== nothing
+        base = m.captures[1]
+        idx = parse(Int, m.captures[2])
+        for k in keys(chains)
+            nameof(typeof(k)) === :Parameter || continue
+            if string(k.name) == base
+                raw = vec(Array(chains[k]))
+                return Float64[Float64(x[idx]) for x in raw]
+            end
+        end
+    else
+        for k in keys(chains)
+            nameof(typeof(k)) === :Parameter || continue
+            if string(k.name) == s
+                return Float64.(vec(Array(chains[k])))
+            end
+        end
+    end
+    throw(KeyError(sym))
 end
 
 function _draw_matrix(chains, syms::Vector{Symbol}, n_draws::Union{Int, Nothing} = nothing)
@@ -227,10 +290,12 @@ function _draw_matrix(chains, syms::Vector{Symbol}, n_draws::Union{Int, Nothing}
         return zeros(Float64, n, 0)
     end
 
-    n = n_draws === nothing ? length(vec(chains[syms[1]].data)) : n_draws
+    first_col = _draw_vector(chains, syms[1])
+    n = n_draws === nothing ? length(first_col) : n_draws
     draws = Matrix{Float64}(undef, n, length(syms))
-    for (j, sym) in enumerate(syms)
-        draws[:, j] = _draw_vector(chains, sym)
+    draws[:, 1] = first_col
+    for j in 2:length(syms)
+        draws[:, j] = _draw_vector(chains, syms[j])
     end
     return draws
 end
@@ -549,11 +614,7 @@ function GAM._fit_gam_bayes(formula, data, family, link, priors::GAM.PriorSpec;
     turing_sampler = sampler === nothing ? NUTS() : sampler
 
     # Run MCMC
-    chains = if nchains > 1
-        sample(_mcmc_rng(seed), model, turing_sampler, MCMCThreads(), nsamples, nchains)
-    else
-        sample(_mcmc_rng(seed), model, turing_sampler, nsamples)
-    end
+    chains = _sample_chains(_mcmc_rng(seed), model, turing_sampler, nsamples, nchains)
 
     loglik_obs = _gam_loglik_matrix(chains, y, family, link, X_fixed, Zs_flat; weights = weights)
 
@@ -609,7 +670,7 @@ end
 
 """Find chain symbols for fixed-effect coefficients across all parameter blocks."""
 function _find_beta_symbols(chains, n_names)
-    chain_names = names(chains)
+    chain_names = _chain_param_names(chains)
 
     # Try standard GAM pattern: β[1], β[2], ...
     syms_standard = [Symbol("β[$i]") for i in 1:n_names]
@@ -643,12 +704,13 @@ end
 
 function GAM._bayes_coef_means(m::GAM.BayesGamModel)
     chains = m.chains
+    cnames = _chain_param_names(chains)
     n_fixed = length(m.coef_names)
     syms = _find_beta_symbols(chains, n_fixed)
     means = Float64[]
     for sym in syms
-        if sym in names(chains)
-            push!(means, mean(chains[sym]))
+        if sym in cnames
+            push!(means, mean(_draw_vector(chains, sym)))
         end
     end
     return means
@@ -656,12 +718,13 @@ end
 
 function GAM._bayes_vcov(m::GAM.BayesGamModel)
     chains = m.chains
+    cnames = _chain_param_names(chains)
     n_fixed = length(m.coef_names)
     syms = _find_beta_symbols(chains, n_fixed)
-    valid = [s for s in syms if s in names(chains)]
+    valid = [s for s in syms if s in cnames]
     n = length(valid)
     V = zeros(n, n)
-    vals = [vec(chains[s].data) for s in valid]
+    vals = [_draw_vector(chains, s) for s in valid]
     for i in 1:n, j in 1:n
         V[i, j] = cov(vals[i], vals[j])
     end
@@ -670,6 +733,7 @@ end
 
 function GAM._bayes_coeftable(m::GAM.BayesGamModel)
     chains = m.chains
+    cnames = _chain_param_names(chains)
     n_fixed = length(m.coef_names)
     syms = _find_beta_symbols(chains, n_fixed)
 
@@ -680,8 +744,8 @@ function GAM._bayes_coeftable(m::GAM.BayesGamModel)
     upper = Float64[]
 
     for (idx, sym) in enumerate(syms)
-        if sym in names(chains)
-            vals = vec(chains[sym].data)
+        if sym in cnames
+            vals = _draw_vector(chains, sym)
             name = idx <= length(m.coef_names) ? m.coef_names[idx] : string(sym)
             push!(names_out, name)
             push!(estimates, mean(vals))
@@ -701,14 +765,15 @@ end
 
 function GAM._bayes_credint(m::GAM.BayesGamModel; level::Real = 0.95)
     chains = m.chains
+    cnames = _chain_param_names(chains)
     n_fixed = length(m.coef_names)
     α = (1 - level) / 2
     syms = _find_beta_symbols(chains, n_fixed)
 
     result = Matrix{Float64}(undef, 0, 2)
     for sym in syms
-        if sym in names(chains)
-            vals = vec(chains[sym].data)
+        if sym in cnames
+            vals = _draw_vector(chains, sym)
             q = quantile(vals, [α, 1 - α])
             result = vcat(result, q')
         end
@@ -1026,11 +1091,7 @@ function GAM._fit_gamlss_bayes(formulas, data, family, priors::GAM.PriorSpec;
 
     # Run MCMC
     turing_sampler = sampler === nothing ? NUTS() : sampler
-    chains = if nchains > 1
-        sample(_mcmc_rng(seed), model, turing_sampler, MCMCThreads(), nsamples, nchains)
-    else
-        sample(_mcmc_rng(seed), model, turing_sampler, nsamples)
-    end
+    chains = _sample_chains(_mcmc_rng(seed), model, turing_sampler, nsamples, nchains)
 
     loglik_obs = _gamlss_loglik_matrix(chains, y, fam, param_X, param_smooths, param_block_dims)
 
@@ -1252,11 +1313,7 @@ function GAM._fit_scam_bayes(f, gf, data, family, link, priors::GAM.PriorSpec;
 
     # Run MCMC
     turing_sampler = sampler === nothing ? NUTS() : sampler
-    chains = if nchains > 1
-        sample(_mcmc_rng(seed), model, turing_sampler, MCMCThreads(), nsamples, nchains)
-    else
-        sample(_mcmc_rng(seed), model, turing_sampler, nsamples)
-    end
+    chains = _sample_chains(_mcmc_rng(seed), model, turing_sampler, nsamples, nchains)
 
     loglik_obs = _scam_loglik_matrix(
         chains, y, family, link, X_fixed, Z_uc, uc_block_dims, X_con, con_dims;
@@ -1313,11 +1370,8 @@ function GAM.posterior_samples(m::GAM.BayesGamModel;
     beta_syms = _find_beta_symbols(chains, n_coef)
     isempty(beta_syms) && return Matrix{Float64}(undef, 0, 0)
 
-    n_total = length(vec(chains[beta_syms[1]].data))
-    beta_draws = Matrix{Float64}(undef, n_total, length(beta_syms))
-    for (j, sym) in enumerate(beta_syms)
-        beta_draws[:, j] = vec(chains[sym].data)
-    end
+    beta_draws = _draw_matrix(chains, beta_syms)
+    n_total = size(beta_draws, 1)
 
     if n !== nothing && n < n_total
         idx = sort(Random.randperm(n_total)[1:n])
@@ -1572,11 +1626,7 @@ function _fit_gamm_bayes_impl(y, X_para, smooths, random_effects, labels,
     turing_sampler = sampler === nothing ? NUTS() : sampler
 
     # Run MCMC
-    chains = if nchains > 1
-        sample(_mcmc_rng(seed), model, turing_sampler, MCMCThreads(), nsamples, nchains)
-    else
-        sample(_mcmc_rng(seed), model, turing_sampler, nsamples)
-    end
+    chains = _sample_chains(_mcmc_rng(seed), model, turing_sampler, nsamples, nchains)
 
     Z_smooth = isempty(Zs_smooth) ? zeros(length(y), 0) : hcat(Zs_smooth...)
     smooth_block_dims = [size(Z, 2) for Z in Zs_smooth]

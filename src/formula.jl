@@ -140,6 +140,31 @@ struct GamFormula
     smooth_specs::Vector{SmoothSpec}
 end
 
+"""
+    GamFormula(f::FormulaTerm) -> GamFormula
+
+Convert a StatsModels `FormulaTerm` (such as one produced by `@formula(y ~ x + s(z))`)
+into a [`GamFormula`](@ref).
+"""
+function GamFormula(f::FormulaTerm)
+    resp = f.lhs isa Term ? f.lhs.sym : Symbol(string(f.lhs))
+    smooth_terms, para_terms = _split_formula_terms(f)
+    has_intercept = _formula_has_intercept(para_terms)
+    parametric = Symbol[]
+    for pt in para_terms
+        if pt isa InterceptTerm{true} || pt isa InterceptTerm{false} || pt isa ConstantTerm
+            continue
+        elseif pt isa Term
+            push!(parametric, pt.sym)
+        else
+            throw(ArgumentError(
+                "Cannot convert parametric term $(pt) to GamFormula; use `@formulak` or plain variable terms"))
+        end
+    end
+    specs = SmoothSpec[st.spec for st in smooth_terms]
+    return GamFormula(resp, parametric, has_intercept, specs)
+end
+
 function Base.show(io::IO, gf::GamFormula)
     parts = String[]
     if gf.has_intercept

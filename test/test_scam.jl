@@ -369,4 +369,35 @@ using Test, GAM, DataFrames, Random, Statistics, StatsAPI, LinearAlgebra
         @test isnan(m_reml.criterion)
         @test m_gcv.iterations > 0 && m_reml.iterations > 0
     end
+
+    @testset "GamFormula(::FormulaTerm) and scam(@formula(...))" begin
+        rng_f = StableRNG(12)
+        n_f = 120
+        x_f = sort(rand(rng_f, n_f))
+        z_f = randn(rng_f, n_f)
+        y_f = 2.0 .* x_f .+ 0.5 .* z_f .+ 0.2 .* randn(rng_f, n_f)
+        df_f = DataFrame(x = x_f, z = z_f, y = y_f)
+
+        ft = GAM.@formula(y ~ z + s(x, 8))
+        gf = GAM.GamFormula(ft)
+        @test gf isa GAM.GamFormula
+        @test gf.response == :y
+        @test gf.parametric == [:z]
+        @test gf.has_intercept == true
+        @test length(gf.smooth_specs) == 1
+        @test gf.smooth_specs[1].k == 8
+
+        # Shape-constrained SmoothTerm wrapped in a FormulaTerm (as programmatic callers build)
+        ft_scam = GAM.StatsModels.FormulaTerm(
+            GAM.StatsModels.Term(:y),
+            GAM.SmoothTerm(s(:x; bs = :mpi, k = 8)))
+        m_ft = scam(ft_scam, df_f)
+        @test m_ft.converged
+        preds = StatsAPI.predict(m_ft, df_f)
+        @test all(diff(preds) .>= -1e-8)
+
+        # @formula with unconstrained smooth falls back to gam cleanly
+        m_u = scam(GAM.@formula(y ~ s(x, 8)), df_f)
+        @test m_u.converged
+    end
 end
